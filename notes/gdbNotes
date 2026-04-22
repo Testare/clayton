@@ -1,0 +1,104 @@
+0x22a6b6c
+
+
+32
+
+Seed: 0x760b5c0d
+
+BattleSetup_New is called twice?
+
+## FIRST RAND CALL(x4)
+0x2251056 "bellShimmerReplaceGraphics" (wrong overlay)
+Seems to be in a for loop that iterates 4 times. It is indeed called 4 times
+
+## BATTLESCRIPT CALLS
+scriptFileId = 0
+scriptSeqNo = 221(a lot), 223, 225 (a lot), 226, 230 (a lot), 231, 233 (a lot), 235 (a lot), 236
+
+## SECOND RAND CALL(x2) 
+0x02258606 "ov12_022585B8" <- 0x022532aa "TryAbilityOnEntry" <- BattleControllerPlayer_PokemonAppear <- 0x022486e4 "FieldSystem_UpdateTurnFrameCounter" (wrong overlay)
+
+ov12_022575B8 seems to be looking at abilities and randomly choosing either the player or the opponent. It seems to be related to trace, probably determining ability activation order or something. It activates once per max battler in the battle system, in this case twice.
+
+ov12_022575B8: ./src/battle/overlay_12_0224E4FC.c: 6589
+TryAbilityOnEntry: ./src/battle/overlay_12_0224E4FC.c:3194
+
+## THIRD RAND CALL 
+0x0225e196 "??"
+GDB really struggles with this one
+
+    asm/overlay_12_battle_controller_opponent.o
+Comes from ov12_0225E154.
+
+Not entirely sure what it does, but I see a call to GetMonBaseStat(0x1a), BASE_GREAT_MARSH_RATE. GREAT_MARSH is the Sinnoh equivalent of safari zone, so this very well could be the flee rate.
+
+22253 % 255 = 68 flee rng
+
+Compares this rng to the retrieved flee rate (stage modifiers?), then
+calls ov12_02262F24 with a third parameter of either 5 (if succes) or 4 (if failed)
+
+
+Flee rate IS reduced by bait in this calcultion, which is good because the mod is exactly 60
+
+<ETHAN INPUT TIME>
+
+
+So after seed is created, random is called 6 times in irrelevant manner, then the 7th is the flee check.
+
+
+Load:
+
+So each action is:
+4 quick claw checks (Don't matter)
+Action specific advances:
+* Mud/Bait roll for crit
+* Ball - 1-4 caputre shake checks
+2 other advances
+Flee check
+
+
+0x920b54b5
+
+
+
+
+0x224754a
+r0 - 15 (ballmod)
+r1 - 3
+r2 - 0x2d40
+r3 - 8
+r4 - <addrsess>
+r5 - 0
+r6 - 13?
+
+r1 <- 1 (battlerIdTarget)
+r0 <- c0
+r6 < - c0
+r0 <- 2d90
+r1 <- 2c (44) Magneton's HP
+r0 <- 84 (132) Magneton's max hp * 3
+[sp, #0] <- 0x84
+r0 <- 15 (ball mod from stack)
+r1 <- 10 (constant)
+r0 <- 0 (ball mod * speciesMod)
+r0 <- 0 (0/10 = 0)
+
+0x2247568
+r2 <- 88 (currHp * 2)
+r1 <- 132 (maxHp*3 from stack)
+r1<- 44 (r1 - r2)
+r1 <- 44*0 (0)
+r0 <- 0 (r1)
+r1 <- 132
+r0 <- 0
+r1 <- 0
+
+catchRate IS set to 0
+
+
+0xff0000 / 0 -> 0xff0000 ()
+
+0xff7
+
+0xffff0 / 0x36 => 0x4103 (16643)
+
