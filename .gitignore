@@ -22,3 +22,6 @@ env/
 .idea/
 *.swp
 *.swo
+
+# Generated data
+data/

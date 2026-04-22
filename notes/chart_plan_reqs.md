@@ -1,5 +1,3 @@
-Okay, now we need to do some design work.
-
 One of the main entrance points for chart.py should be the function chart_safari, which generates the "chart" we'll use to find a target seed. It should have the inputs of key_seed, min_target_seconds, max_target_seconds, strategy, success_criteria, safari_pokemon, and an optional project label to separate projects. We should perhaps create a class to contain these different objects, perhaps call it ChartSafariInput.
 
 We'll then use the key_seed to generate a list of times (all in the year 2000) that generate that seed. We already have a function for this. For each of these times we want to create an evaluation chain, which is basically just a sequence of numbers that comes from evaluating all the links in the chain. We will evaluate all of these chains together, since many will share the same links. We won't generate the chains from the beginning unless min_target_seconds is 0, since it will take time to set up anyways, so for each of these times we'll save a link/second offset of X seconds, and add that to the time before constructing the evaluation chains. This collection of chains 

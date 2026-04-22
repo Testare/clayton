@@ -62,8 +62,8 @@ STAGE_MULTIPLIERS: list[Fraction] = [
 class SafariPokemon:
     base_catch_rate: int
     base_flee_rate: int
-    adjusted_flee_rates: list[int] = field(init=False)
-    adjusted_catch_rates_b: list[int] = field(init=False)
+    adjusted_flee_rates: tuple[int, ...] = field(init=False)
+    adjusted_catch_rates_b: tuple[int, ...] = field(init=False)
 
     def __adjusted_catch_rate_b(self, stage_modifier: int):
         species_mod = math.floor(STAGE_MULTIPLIERS[stage_modifier] * self.base_catch_rate)
@@ -72,14 +72,14 @@ class SafariPokemon:
         return math.floor(0xFFFF0 / b_div)
 
     def __post_init__(self):
-        object.__setattr__(self, 'adjusted_flee_rates', [
+        object.__setattr__(self, 'adjusted_flee_rates', tuple(
             min(255, math.floor(STAGE_MULTIPLIERS[i] * self.base_flee_rate))
             for i in range(0, 13)
-        ])
-        object.__setattr__(self, 'adjusted_catch_rates_b', [
+        ))
+        object.__setattr__(self, 'adjusted_catch_rates_b', tuple(
             self.__adjusted_catch_rate_b(i)
             for i in range(0, 13)
-        ])
+        ))
 
 
 @dataclass

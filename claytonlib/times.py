@@ -1,6 +1,10 @@
 import datetime as dt
 import json
 import sys
+from pathlib import Path
+
+_TIMES_DIR = Path('data/times')
+_TIME_FMT = '%Y-%m-%d %H:%M:%S'
 
 
 def calculate_seed(time: dt.datetime, delay: int) -> int:
@@ -37,6 +41,22 @@ def generate_times(key_seed):
             )
 
     return {"delay": delay, "times": sorted(date_times)}
+
+
+def get_times(key_seed: int) -> tuple[int, list[dt.datetime]]:
+    """Return (delay, times) for key_seed, loading from cache if available."""
+    cache_path = _TIMES_DIR / f"{key_seed:08X}.json"
+    if cache_path.exists():
+        with open(cache_path) as f:
+            data = json.load(f)
+    else:
+        data = generate_times(key_seed)
+        _TIMES_DIR.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, 'w') as f:
+            json.dump(data, f, indent=2)
+    delay = data['delay']
+    times = [dt.datetime.strptime(t, _TIME_FMT) for t in data['times']]
+    return delay, times
 
 
 if __name__ == "__main__":
