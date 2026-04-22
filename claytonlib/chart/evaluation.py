@@ -11,7 +11,7 @@ link i is:
 import datetime as dt
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -43,12 +43,14 @@ class CrossChainResult:
 class ChainEvaluationResult:
     max_links_checked: int
     top5: list[TopResult]
+    best5: list[TopResult] = field(default_factory=list)
 
 
 @dataclass
 class EvaluationData:
     results: dict[str, ChainEvaluationResult]  # keyed by chain filename (stem + .chain)
     top10: list[CrossChainResult]
+    best10: list[CrossChainResult] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +68,10 @@ class EvaluationStrategy(Protocol):
         """Apply windowed scoring to a straightened per-frame score list.
         Output length equals input length; edge frames with insufficient
         window coverage are set to 0."""
+        ...
+
+    def score_to_probability(self, score: float) -> float:
+        """Convert a windowed score value to a probability in [0, 1]."""
         ...
 
     def evaluate(
@@ -121,26 +127,59 @@ def straighten_chain(links: list[int]) -> list[float]:
     return flat
 
 
+def _make_top_result(flat_idx: int, score: float, base_delay: int,
+                     setup_delay_seconds: int, initial_time: dt.datetime) -> TopResult:
+    link_idx = flat_idx // FRAMES_PER_LINK
+    frame_idx = flat_idx % FRAMES_PER_LINK
+    delay = base_delay + (setup_delay_seconds + link_idx) * 60 + frame_idx * 2
+    time_str = (
+        initial_time + dt.timedelta(seconds=setup_delay_seconds + link_idx)
+    ).strftime("%H:%M:%S")
+    return TopResult(score=round(score, 2), delay=delay, time=time_str)
+
+
 def _gather_top5(
     scored: list[float],
     base_delay: int,
     setup_delay_seconds: int,
     initial_time: dt.datetime,
 ) -> list[TopResult]:
-    """Pick the top 5 frames from a windowed score list and build TopResult entries.
-
-    Sorted descending by score; ties broken by ascending delay (earlier = easier).
-    """
+    """Pick the top 5 frames by score. Ties broken by ascending delay."""
     top_indices = sorted(range(len(scored)), key=lambda i: (-scored[i], i))[:5]
+    return [_make_top_result(i, scored[i], base_delay, setup_delay_seconds, initial_time)
+            for i in top_indices]
+
+
+def _gather_best(
+    scored: list[float],
+    base_delay: int,
+    setup_delay_seconds: int,
+    initial_time: dt.datetime,
+    n: int,
+) -> list[TopResult]:
+    """Pick up to n results where each successive result has a strictly lower delay
+    than the previous, always choosing the highest score available at that constraint.
+
+    Result 1 is the global best score. Result 2 is the best score among frames with
+    delay strictly below result 1's delay, and so on. Ties on score are broken by
+    lowest delay (to leave the most room for subsequent results).
+    """
+    # Build (delay, score, flat_idx) for all frames with a non-zero score.
+    candidates = [
+        (base_delay + (i // FRAMES_PER_LINK + setup_delay_seconds) * 60 + (i % FRAMES_PER_LINK) * 2,
+         s, i)
+        for i, s in enumerate(scored) if s > 0
+    ]
+
     results = []
-    for flat_idx in top_indices:
-        link_idx = flat_idx // FRAMES_PER_LINK
-        frame_idx = flat_idx % FRAMES_PER_LINK
-        delay = base_delay + (setup_delay_seconds + link_idx) * 60 + frame_idx * 2
-        time_str = (
-            initial_time + dt.timedelta(seconds=setup_delay_seconds + link_idx)
-        ).strftime("%H:%M:%S")
-        results.append(TopResult(score=round(scored[flat_idx], 2), delay=delay, time=time_str))
+    max_delay = None
+    for _ in range(n):
+        pool = [c for c in candidates if max_delay is None or c[0] < max_delay]
+        if not pool:
+            break
+        delay, score, flat_idx = max(pool, key=lambda c: (c[1], -c[0]))
+        results.append(_make_top_result(flat_idx, score, base_delay, setup_delay_seconds, initial_time))
+        max_delay = delay
     return results
 
 
@@ -168,6 +207,9 @@ class SlidingWindowSum:
     @property
     def filename(self) -> str:
         return f"sliding_window_{self.window}"
+
+    def score_to_probability(self, score: float) -> float:
+        return score / self.window
 
     def score(self, flat: list[float]) -> list[float]:
         hw = self.window // 2
@@ -224,6 +266,9 @@ class NormalWindow:
     def filename(self) -> str:
         return f"normal_{self.sigma_frames:g}"
 
+    def score_to_probability(self, score: float) -> float:
+        return score  # already a probability (weighted average with weights summing to 1)
+
     def score(self, flat: list[float]) -> list[float]:
         hw = self._hw
         n = len(flat)
@@ -264,11 +309,13 @@ def read_evaluation(chart_dir: Path, strategy: EvaluationStrategy) -> Evaluation
         chain_name: ChainEvaluationResult(
             max_links_checked=entry["max_links_checked"],
             top5=[TopResult(**r) for r in entry["top5"]],
+            best5=[TopResult(**r) for r in entry.get("best5", [])],
         )
         for chain_name, entry in raw["results"].items()
     }
     top10 = [CrossChainResult(**r) for r in raw.get("top10", [])]
-    return EvaluationData(results=results, top10=top10)
+    best10 = [CrossChainResult(**r) for r in raw.get("best10", [])]
+    return EvaluationData(results=results, top10=top10, best10=best10)
 
 
 def write_evaluation(chart_dir: Path, strategy: EvaluationStrategy, data: EvaluationData) -> None:
@@ -277,10 +324,12 @@ def write_evaluation(chart_dir: Path, strategy: EvaluationStrategy, data: Evalua
     path = evals_dir / f"{strategy.filename}.json"
     raw = {
         "top10": [asdict(r) for r in data.top10],
+        "best10": [asdict(r) for r in data.best10],
         "results": {
             chain_name: {
                 "max_links_checked": result.max_links_checked,
                 "top5": [asdict(r) for r in result.top5],
+                "best5": [asdict(r) for r in result.best5],
             }
             for chain_name, result in data.results.items()
         },

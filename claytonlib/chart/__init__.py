@@ -302,7 +302,9 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
     """
     import time as time_mod
     from claytonlib.chart.chain import LocalChainStore
-    from claytonlib.chart.evaluation import straighten_chain, _gather_top5
+    from claytonlib.chart.evaluation import straighten_chain, _gather_top5, _gather_best
+
+    t_start = time_mod.perf_counter()
 
     if store is None:
         store = LocalChainStore()
@@ -317,18 +319,41 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
         return dt.datetime.strptime(path.stem.split('+')[0], '%Y-%m-%d_%H-%M-%S')
 
     def _flush(data: EvaluationData) -> None:
+        # top10: plain sorted ranking across all chains
         seen: set[tuple] = set()
-        candidates: list[CrossChainResult] = []
+        top_candidates: list[CrossChainResult] = []
         for chain_name, result in data.results.items():
             for r in result.top5:
                 key = (r.delay, r.score)
                 if key not in seen:
                     seen.add(key)
-                    candidates.append(CrossChainResult(
+                    top_candidates.append(CrossChainResult(
                         score=r.score, delay=r.delay, time=r.time, chain=chain_name,
                     ))
-        candidates.sort(key=lambda r: (-r.score, r.delay))
-        data.top10 = candidates[:10]
+        top_candidates.sort(key=lambda r: (-r.score, r.delay))
+        data.top10 = top_candidates[:10]
+
+        # best10: greedy descending-delay chain across all chains,
+        # pooling each chain's top5 and best5 as candidates
+        seen2: set[tuple] = set()
+        best_candidates: list[tuple] = []  # (delay, score, time, chain)
+        for chain_name, result in data.results.items():
+            for r in result.top5 + result.best5:
+                key = (r.delay, r.score, chain_name)
+                if key not in seen2:
+                    seen2.add(key)
+                    best_candidates.append((r.delay, r.score, r.time, chain_name))
+        best10: list[CrossChainResult] = []
+        max_delay = None
+        for _ in range(10):
+            pool = [c for c in best_candidates if max_delay is None or c[0] < max_delay]
+            if not pool:
+                break
+            delay, score, time_str, chain_name = max(pool, key=lambda c: (c[1], -c[0]))
+            best10.append(CrossChainResult(score=score, delay=delay, time=time_str, chain=chain_name))
+            max_delay = delay
+        data.best10 = best10
+
         write_evaluation(chart_dir, strategy, data)
 
     chain_paths = [
@@ -337,7 +362,7 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
     ]
 
     existing = read_evaluation(chart_dir, strategy)
-    data = existing if existing is not None else EvaluationData(results={}, top10=[])
+    data = existing if existing is not None else EvaluationData(results={}, top10=[], best10=[])
 
     # Write stubs for any chains not yet present so the file is immediately
     # interruptable and resumable from the first run.
@@ -347,6 +372,7 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
     _flush(data)
 
     t_total_start = time_mod.perf_counter()
+    t_batch_start = t_total_start
     chains_since_write = 0
 
     for path in chain_paths:
@@ -365,25 +391,77 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
         scored = strategy.score(flat)
         t2 = time_mod.perf_counter()
         top5 = _gather_top5(scored, base_delay, inputs.setup_delay_seconds, initial_time)
+        best5 = _gather_best(scored, base_delay, inputs.setup_delay_seconds, initial_time, n=5)
         t3 = time_mod.perf_counter()
 
         data.results[path.name] = ChainEvaluationResult(
-            max_links_checked=max_links_checked, top5=top5,
+            max_links_checked=max_links_checked, top5=top5, best5=best5,
         )
         logger.info(
-            "chain %s: flatten=%.3fs score=%.3fs top5=%.3fs total=%.3fs",
+            "chain %s: flatten=%.3fs score=%.3fs results=%.3fs total=%.3fs",
             path.name, t1 - t0, t2 - t1, t3 - t2, t3 - t0,
         )
 
         chains_since_write += 1
         if chains_since_write >= _config.evaluation_chains_per_write_cycle:
+            t_before_flush = time_mod.perf_counter()
             _flush(data)
+            t_after_flush = time_mod.perf_counter()
+            logger.info(
+                "checkpoint: evaluated %d chain(s) in %.3fs, wrote in %.3fs",
+                chains_since_write, t_before_flush - t_batch_start, t_after_flush - t_before_flush,
+            )
+            t_batch_start = t_after_flush
             chains_since_write = 0
 
     t_chains_done = time_mod.perf_counter()
     _flush(data)
     t_top10_done = time_mod.perf_counter()
     logger.info(
-        "top10 across %d chain(s): %.3fs  total: %.3fs",
-        len(chain_paths), t_top10_done - t_chains_done, t_top10_done - t_total_start,
+        "top10 across %d chain(s): %.3fs",
+        len(chain_paths), t_top10_done - t_chains_done,
     )
+    logger.info("evaluate_chart complete in %.3fs", t_top10_done - t_start)
+
+
+def evaluate_chart_top_10(inputs: ChartSafariInput, strategy, store=None) -> None:
+    """Run evaluate_chart (if not already up to date) and print the top 10 results."""
+    evaluate_chart(inputs, strategy, store)
+
+    chart_dir = _output_dir(inputs)
+    data = read_evaluation(chart_dir, strategy)
+
+    if not data or not data.top10:
+        print("No results found.")
+        return
+
+    base_delay, _ = get_times(inputs.key_seed)
+
+    def _fmt_time_diff(delay_from_key: int) -> str:
+        total_s = delay_from_key / 60
+        m = int(total_s) // 60
+        s = total_s - m * 60
+        return f"{m}m {s:.3f}s"
+
+    def _fmt_initial_time(chain: str) -> str:
+        time_str = chain.split('+')[0]
+        d = dt.datetime.strptime(time_str, '%Y-%m-%d_%H-%M-%S')
+        return d.strftime('%Y-%m-%d %H:%M:%S')
+
+    def _print_table(rows: list[CrossChainResult], title: str) -> None:
+        header = f"{'#':>2}  {'Score(p)':>14}  {'Delay':>7}  {'Time':>8}  {'Δ Time':>12}  Initial Time"
+        print(title)
+        print(header)
+        print("-" * len(header))
+        for i, r in enumerate(rows, 1):
+            delay_from_key = r.delay - base_delay
+            prob = strategy.score_to_probability(r.score)
+            score_col = f"{r.score}({prob * 100:.1f}%)"
+            print(
+                f"{i:>2}  {score_col:>14}  {r.delay:>7}  "
+                f"{r.time:>8}  {_fmt_time_diff(delay_from_key):>12}  {_fmt_initial_time(r.chain)}"
+            )
+
+    _print_table(data.top10, "Top 10 (by score)")
+    print()
+    _print_table(data.best10, "Best 10 (highest score at each successively lower delay)")
