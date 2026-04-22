@@ -60,6 +60,7 @@ STAGE_MULTIPLIERS: list[Fraction] = [
 
 @dataclass(frozen=True)
 class SafariPokemon:
+    name: str
     base_catch_rate: int
     base_flee_rate: int
     adjusted_flee_rates: tuple[int, ...] = field(init=False)
@@ -219,5 +220,5 @@ def safari_pokemon_by_name(name: str) -> SafariPokemon:
         path = Path(__file__).parent.parent / "safari_pokemon.json"
         with open(path) as f:
             data = json.load(f)
-        _safari_pokemon = {n: SafariPokemon(entry["catch_rate"], entry["flee_rate"]) for n, entry in data.items()}
+        _safari_pokemon = {n: SafariPokemon(n, entry["catch_rate"], entry["flee_rate"]) for n, entry in data.items()}
     return _safari_pokemon[name]

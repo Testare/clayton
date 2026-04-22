@@ -45,9 +45,10 @@ class CompassSafariInput:
     strategy:             Strategy
     criteria:             SuccessCriteria
     window:               int                    # search ±window delay units around target
+    initial_time:         dt.datetime            # starting datetime of the player's chain
     key_seed:             int | None = None
     target_delay:         int | None = None
-    target_seed:          int | None = None      # resolved/validated in __post_init__
+    target_seed:          int | None = None      # optional: verified against initial_time + target_delay
     evaluation_strategy:  Strategy | None = None # None = skip success column
     evaluation_criteria:  SuccessCriteria = CRITERIA_CAPTURE
 ```
