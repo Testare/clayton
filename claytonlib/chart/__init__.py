@@ -20,6 +20,8 @@ from claytonlib.chart.evaluation import (
     ChainEvaluationResult,
     CrossChainResult,
     TopResult,
+    SlidingWindowSum,
+    NormalWindow,
     read_evaluation,
     write_evaluation,
 )
@@ -49,27 +51,27 @@ class SuccessCriteria:
 
 
 STRATEGY_ONLY_BALLS = Strategy(
-    "Only balls",
+    "only-balls",
     lambda ctx: ctx.throw_ball()
 )
 
 STRATEGY_ONE_MUD = Strategy(
-    "One mud then balls",
+    "one-mud-then-balls",
     lambda ctx: ctx.throw_mud() if ctx.turn_count == 0 else ctx.throw_ball()
 )
 
 STRATEGY_SIX_BAIT = Strategy(
-    "Six bait then balls",
+    "six-bait-then-balls",
     lambda ctx: ctx.throw_bait() if ctx.turn_count < 6 else ctx.throw_ball()
 )
 
 CRITERIA_CAPTURE = SuccessCriteria(
-    "Capture",
+    "capture",
     lambda ctx: ctx.captured()
 )
 
 CRITERIA_WONT_FLEE_10_TURNS = SuccessCriteria(
-    "Survived 10 turns without fleeing",
+    "survived-10-turns-without-fleeing",
     lambda ctx: ctx.turn_count >= 10 and ctx.is_watching()
 )
 
@@ -83,7 +85,7 @@ def evaluate_seed(seed: int, pokemon: SafariPokemon, strategy: Strategy, criteri
 
 
 CRITERIA_CAPTURE_MACHETE_AFTER_3_BALLS = SuccessCriteria(
-    "Capture via machete after 3 balls",
+    "capture-via-machete-after-3-balls",
     lambda ctx: True  # TODO: implement
 )
 
@@ -98,6 +100,7 @@ class ChartConfig:
     resume_validation_enabled: bool = False
     resume_validation_frames: int = 2
     resume_strict: bool = False  # True = raise on mismatch, False = warn and continue
+    evaluation_chains_per_write_cycle: int = 5
 
 _config = ChartConfig()
 
@@ -297,5 +300,90 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
     store:
         Optional ChainStore override (defaults to LocalChainStore).
     """
-    # TODO: implement
-    raise NotImplementedError
+    import time as time_mod
+    from claytonlib.chart.chain import LocalChainStore
+    from claytonlib.chart.evaluation import straighten_chain, _gather_top5
+
+    if store is None:
+        store = LocalChainStore()
+
+    chart_dir = _output_dir(inputs)
+    base_delay, _ = get_times(inputs.key_seed)
+
+    def _chain_setup_delay(path: Path) -> int:
+        return int(path.stem.split('+')[1])
+
+    def _chain_initial_time(path: Path) -> dt.datetime:
+        return dt.datetime.strptime(path.stem.split('+')[0], '%Y-%m-%d_%H-%M-%S')
+
+    def _flush(data: EvaluationData) -> None:
+        seen: set[tuple] = set()
+        candidates: list[CrossChainResult] = []
+        for chain_name, result in data.results.items():
+            for r in result.top5:
+                key = (r.delay, r.score)
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(CrossChainResult(
+                        score=r.score, delay=r.delay, time=r.time, chain=chain_name,
+                    ))
+        candidates.sort(key=lambda r: (-r.score, r.delay))
+        data.top10 = candidates[:10]
+        write_evaluation(chart_dir, strategy, data)
+
+    chain_paths = [
+        p for p in store.list_chain_files(chart_dir)
+        if _chain_setup_delay(p) == inputs.setup_delay_seconds
+    ]
+
+    existing = read_evaluation(chart_dir, strategy)
+    data = existing if existing is not None else EvaluationData(results={}, top10=[])
+
+    # Write stubs for any chains not yet present so the file is immediately
+    # interruptable and resumable from the first run.
+    for path in chain_paths:
+        if path.name not in data.results:
+            data.results[path.name] = ChainEvaluationResult(max_links_checked=0, top5=[])
+    _flush(data)
+
+    t_total_start = time_mod.perf_counter()
+    chains_since_write = 0
+
+    for path in chain_paths:
+        links = store.read_all(path)
+        max_links_checked = len(links)
+
+        existing_result = data.results.get(path.name)
+        if existing_result is not None and existing_result.max_links_checked == max_links_checked:
+            continue
+
+        initial_time = _chain_initial_time(path)
+
+        t0 = time_mod.perf_counter()
+        flat = straighten_chain(links)
+        t1 = time_mod.perf_counter()
+        scored = strategy.score(flat)
+        t2 = time_mod.perf_counter()
+        top5 = _gather_top5(scored, base_delay, inputs.setup_delay_seconds, initial_time)
+        t3 = time_mod.perf_counter()
+
+        data.results[path.name] = ChainEvaluationResult(
+            max_links_checked=max_links_checked, top5=top5,
+        )
+        logger.info(
+            "chain %s: flatten=%.3fs score=%.3fs top5=%.3fs total=%.3fs",
+            path.name, t1 - t0, t2 - t1, t3 - t2, t3 - t0,
+        )
+
+        chains_since_write += 1
+        if chains_since_write >= _config.evaluation_chains_per_write_cycle:
+            _flush(data)
+            chains_since_write = 0
+
+    t_chains_done = time_mod.perf_counter()
+    _flush(data)
+    t_top10_done = time_mod.perf_counter()
+    logger.info(
+        "top10 across %d chain(s): %.3fs  total: %.3fs",
+        len(chain_paths), t_top10_done - t_chains_done, t_top10_done - t_total_start,
+    )

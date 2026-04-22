@@ -10,6 +10,7 @@ link i is:
 
 import datetime as dt
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Protocol
@@ -57,7 +58,14 @@ class EvaluationData:
 class EvaluationStrategy(Protocol):
     @property
     def filename(self) -> str:
-        """Base filename (e.g. 'sliding_window_8') for this strategy's output. The .json extension is appended automatically."""
+        """Base filename (e.g. 'sliding_window_8') for this strategy's output.
+        The .json extension is appended automatically."""
+        ...
+
+    def score(self, flat: list[float]) -> list[float]:
+        """Apply windowed scoring to a straightened per-frame score list.
+        Output length equals input length; edge frames with insufficient
+        window coverage are set to 0."""
         ...
 
     def evaluate(
@@ -67,9 +75,7 @@ class EvaluationStrategy(Protocol):
         setup_delay_seconds: int,
         initial_time: dt.datetime,
     ) -> list[TopResult]:
-        """
-        Score every frame in the chain and return the top 5 results sorted
-        by score descending.
+        """Convenience wrapper: straighten → score → gather top 5.
 
         Parameters
         ----------
@@ -86,6 +92,158 @@ class EvaluationStrategy(Protocol):
             initial_time + timedelta(seconds=setup_delay_seconds + i).
         """
         ...
+
+
+# ---------------------------------------------------------------------------
+# Straightening helpers
+# ---------------------------------------------------------------------------
+
+def straighten_link(link: int) -> list[float]:
+    """Convert a 64-bit link bitmask into 30 per-frame probability scores.
+
+    For frame j, bit 2j represents the seed that assumes the player is still
+    in the current second (weight (30-j)/30) and bit 2j+1 represents the seed
+    that assumes the second has already advanced (weight j/30).
+    """
+    scores = []
+    for j in range(FRAMES_PER_LINK):
+        bit0 = (link >> (2 * j)) & 1
+        bit1 = (link >> (2 * j + 1)) & 1
+        scores.append(bit0 * (30 - j) / 30 + bit1 * j / 30)
+    return scores
+
+
+def straighten_chain(links: list[int]) -> list[float]:
+    """Flatten all links into a single per-frame score list (length = 30 * len(links))."""
+    flat = []
+    for link in links:
+        flat.extend(straighten_link(link))
+    return flat
+
+
+def _gather_top5(
+    scored: list[float],
+    base_delay: int,
+    setup_delay_seconds: int,
+    initial_time: dt.datetime,
+) -> list[TopResult]:
+    """Pick the top 5 frames from a windowed score list and build TopResult entries.
+
+    Sorted descending by score; ties broken by ascending delay (earlier = easier).
+    """
+    top_indices = sorted(range(len(scored)), key=lambda i: (-scored[i], i))[:5]
+    results = []
+    for flat_idx in top_indices:
+        link_idx = flat_idx // FRAMES_PER_LINK
+        frame_idx = flat_idx % FRAMES_PER_LINK
+        delay = base_delay + (setup_delay_seconds + link_idx) * 60 + frame_idx * 2
+        time_str = (
+            initial_time + dt.timedelta(seconds=setup_delay_seconds + link_idx)
+        ).strftime("%H:%M:%S")
+        results.append(TopResult(score=round(scored[flat_idx], 2), delay=delay, time=time_str))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Concrete strategies
+# ---------------------------------------------------------------------------
+
+class SlidingWindowSum:
+    """Score each frame as the sum of straightened scores within a fixed window.
+
+    Models timing errors as uniformly distributed within the window.
+
+    Parameters
+    ----------
+    window:
+        Total number of frames in the window. Must be odd so there is a
+        clear centre frame.
+    """
+
+    def __init__(self, window: int):
+        if window % 2 == 0:
+            raise ValueError(f"window must be odd, got {window}")
+        self.window = window
+
+    @property
+    def filename(self) -> str:
+        return f"sliding_window_{self.window}"
+
+    def score(self, flat: list[float]) -> list[float]:
+        hw = self.window // 2
+        n = len(flat)
+        result = [0.0] * n
+        if n < self.window:
+            return result
+        window_sum = sum(flat[:self.window])
+        result[hw] = window_sum
+        for j in range(hw + 1, n - hw):
+            window_sum += flat[j + hw] - flat[j - hw - 1]
+            result[j] = window_sum
+        return result
+
+    def evaluate(
+        self,
+        links: list[int],
+        base_delay: int,
+        setup_delay_seconds: int,
+        initial_time: dt.datetime,
+    ) -> list[TopResult]:
+        flat = straighten_chain(links)
+        scored = self.score(flat)
+        return _gather_top5(scored, base_delay, setup_delay_seconds, initial_time)
+
+
+class NormalWindow:
+    """Score each frame as a Gaussian-weighted average of surrounding frames.
+
+    Models timing errors as normally distributed, making the score an expected
+    success probability for a player whose timing has standard deviation
+    sigma_frames frames.
+
+    Parameters
+    ----------
+    sigma_frames:
+        Standard deviation in frames (not delay units; 1 frame = 2 delay).
+        Must be >= 1.0. The window extends ±floor(2 * sigma_frames) frames
+        (2σ cutoff, retaining ~95.4% of probability mass). Gaussian weights
+        are normalised to sum to 1 within the window.
+    """
+
+    def __init__(self, sigma_frames: float):
+        if sigma_frames < 1.0:
+            raise ValueError(f"sigma_frames must be >= 1.0, got {sigma_frames}")
+        self.sigma_frames = sigma_frames
+        hw = int(2 * sigma_frames)
+        raw = [math.exp(-k * k / (2 * sigma_frames ** 2)) for k in range(-hw, hw + 1)]
+        total = sum(raw)
+        self._weights = [w / total for w in raw]
+        self._hw = hw
+
+    @property
+    def filename(self) -> str:
+        return f"normal_{self.sigma_frames:g}"
+
+    def score(self, flat: list[float]) -> list[float]:
+        hw = self._hw
+        n = len(flat)
+        result = [0.0] * n
+        for j in range(hw, n - hw):
+            result[j] = sum(
+                self._weights[k + hw] * flat[j + k] for k in range(-hw, hw + 1)
+            )
+        return result
+
+    def evaluate(
+        self,
+        links: list[int],
+        base_delay: int,
+        setup_delay_seconds: int,
+        initial_time: dt.datetime,
+    ) -> list[TopResult]:
+        flat = straighten_chain(links)
+        scored = self.score(flat)
+        return _gather_top5(scored, base_delay, setup_delay_seconds, initial_time)
 
 
 # ---------------------------------------------------------------------------
