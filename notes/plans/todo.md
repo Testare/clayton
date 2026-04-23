@@ -1,8 +1,11 @@
 # TODO
-* Optimize machete_all - See resumed session for details
-* compass_metronome (simple vs magikarp) - For now, just narrows down as much as possible using a single metronome move doing 9 advances until the metronome, and rerolling if metronome move is in the do-not-allow list.
-* Flow for making the process more clean.
+* Figure out how to handle the case when we want to narrow down our chart evaluation (reduce max_target_seconds), even if temporarily. For example, if we have data in our chains up to half an hour, but we want to check values with a delay under 15 minutes. Currently when we do the evaluation, we do not consider this input. Should we create a separate evaluation file (strategy)_MAX_{configured_max_seconds}s.json, and make sure when we truncate the chains (in memory, not the files) to that number of links?
+* Add "Flow.adjust()", which allows us to change fields we have already defined. If it is called with an optional parameter, like `Flow.adjust(criteria_name="only-balls")` then we just set it there, otherwise we prompt to ask what field they want to change, and then prompt them for those fields as normal.
+* Flow: For strategies and criteria, it might be easier to offer a numbered list. They can still input the name directly, but if they input a number it chooses that strategy. If the strategy needs number configurations, like sigmaFrames, sliding window, or machete turns, we prompt them for those numbers after.
+* Flow: Potential rename to better fit Safari/Tarzan theme. Perhaps "Cruise" (like Jungle Cruise)?
+* More complex compass calibration flow
 
+# TODO initial details
 ## Flow
 Flow will help us naturally choose inputs for the other tools. Create a `flow.py` file. Inside should be a global dictionary variable that maps names to `Flow` class objects, which contain lots of configurations. When the main function `flow(name)` is called, it should check this dictionary for a Flow object. If it is not there, it checks for `./data/flows/{name}.json`, and if it finds it it loads it into the dictionary object from that file and returns it. Otherwise, it inserts a new dictionary object and returns it.
 

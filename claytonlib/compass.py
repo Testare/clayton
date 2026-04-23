@@ -8,6 +8,7 @@ current RNG state.
 """
 import copy
 import datetime as dt
+import os
 from dataclasses import dataclass, field
 
 from claytonlib.safari import SafariContext, SafariPokemon, SafariStep
@@ -116,6 +117,7 @@ class CompassConfig:
     starting_ball_count:  int = 30
     seeds_displayed:      int = 5
     evaluation_threshold: int = 10
+    suggest_jane:         bool = True  # suggest Jane when seeds < cpu_count (once per run)
 
 
 _config = CompassConfig()
@@ -364,14 +366,20 @@ def _print_success(seed: int, delay: int, target_delay: int,
 # Main loop
 # ---------------------------------------------------------------------------
 
-def compass_safari(inputs: CompassSafariInput) -> None:
-    """Interactive safari zone seed identifier."""
+def compass_safari(inputs: CompassSafariInput) -> list[str]:
+    """Interactive safari zone seed identifier.
+
+    Returns a list of hex seed strings (e.g. ['0xABCD1234']) for all seeds
+    that matched the observed path. Returns an empty list when no seeds
+    matched or the session was quit.
+    """
     candidates = _generate_candidates(inputs)
     total = len(candidates)
 
     cache: list[tuple[str, list]] = [('', candidates)]
     pending: tuple[str, list] | None = None
     path_actions: list[CompassAction] = []
+    _jane_suggested = False
 
     _print_cheatsheet(inputs)
 
@@ -381,11 +389,16 @@ def compass_safari(inputs: CompassSafariInput) -> None:
         _print_status(current, total, inputs.target_delay, path_actions,
                       inputs.evaluation_strategy, inputs.evaluation_criteria)
 
+        if (not _jane_suggested and _config.suggest_jane
+                and 1 < len(current) < (os.cpu_count() or 1)):
+            print("  (Tip: seed count is small enough that Jane could take over — type 'J' to switch)")
+            _jane_suggested = True
+
         if len(current) == 0:
             print()
             print(f"No matching seed found in window \u00b1{inputs.window}.")
             print("Consider expanding the search window or checking for input errors.")
-            return
+            return []
 
         if len(current) == 1:
             ctx, seed, delay = current[0]
@@ -400,11 +413,19 @@ def compass_safari(inputs: CompassSafariInput) -> None:
                         print(f"Machete found a path: {path}")
                     else:
                         print("Machete found no capture path from this state.")
-                    return
+                    return [f"0x{seed:08X}"]
                 elif raw in ('n', 'no'):
-                    return
+                    return [f"0x{seed:08X}"]
 
         raw = input("\n>> ").strip()
+
+        if raw.lower() == 'q':
+            confirm = input("Quit compass? (y/n) ").strip().lower()
+            if confirm in ('y', 'yes'):
+                current = pending[1] if pending is not None else cache[-1][1]
+                return [f"0x{seed:08X}" for _, seed, _ in current]
+            continue
+
         result = parse_input(raw)
 
         if isinstance(result, ParseError):
@@ -414,10 +435,24 @@ def compass_safari(inputs: CompassSafariInput) -> None:
         if any(isinstance(a, JaneAction) for a in result):
             confirm = input("Switching to Jane can take significant time. Are you sure? (y/n) ").strip().lower()
             if confirm in ('y', 'yes'):
-                from claytonlib.machete import machete_jane
+                from claytonlib.machete import machete_jane, machete_config
+                default_turns = machete_config().max_turns_all
+                default_label = str(default_turns) if default_turns is not None else "unlimited"
+                raw_turns = input(
+                    f"Max turn depth? (Enter for default: {default_label}) "
+                ).strip()
+                if raw_turns == '':
+                    jane_max_turns = ...
+                else:
+                    try:
+                        jane_max_turns = int(raw_turns)
+                    except ValueError:
+                        print("  Invalid number; using default.")
+                        jane_max_turns = ...
                 jane_candidates = [(ctx, seed) for ctx, seed, delay in current]
-                machete_jane(jane_candidates, pokemon=inputs.pokemon, interactive=True)
-                return
+                machete_jane(jane_candidates, pokemon=inputs.pokemon, interactive=True,
+                             max_turns=jane_max_turns)
+                return [f"0x{seed:08X}" for _, seed, _ in current]
             continue
 
         terminal = False
@@ -474,9 +509,11 @@ def compass_safari(inputs: CompassSafariInput) -> None:
             by_prox = sorted(final, key=lambda x: (x[2] - inputs.target_delay, x[1]))
             for i, (_, seed, delay) in enumerate(by_prox[:_config.seeds_displayed], 1):
                 print(f"  {i}. seed=0x{seed:08X}  delay={delay}  \u0394={_delta_str(delay - inputs.target_delay)}")
-            return
+            return [f"0x{seed:08X}" for _, seed, _ in by_prox]
 
 
-def compass_metronome(inputs) -> None:
-    """Stub: identify seed from metronome observations."""
-    raise NotImplementedError("compass_metronome is not yet implemented")
+from claytonlib.compass_metronome import (  # noqa: E402, F401
+    compass_metronome as compass_metronome,
+    CompassMetronomeInput as CompassMetronomeInput,
+    MetronomeOpponent as MetronomeOpponent,
+)

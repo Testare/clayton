@@ -394,15 +394,19 @@ class TestMacheteJane(unittest.TestCase):
 
 class TestMacheteConfig(unittest.TestCase):
 
-    def test_default_max_turns(self):
+    def test_default_max_turns_one(self):
         cfg = MacheteConfig()
-        self.assertEqual(cfg.max_turns, 20)
+        self.assertEqual(cfg.max_turns_one, 50)
+
+    def test_default_max_turns_all(self):
+        cfg = MacheteConfig()
+        self.assertEqual(cfg.max_turns_all, 20)
 
     def test_singleton_is_mutable(self):
-        original = machete_config().max_turns
-        machete_config().max_turns = 10
-        self.assertEqual(machete_config().max_turns, 10)
-        machete_config().max_turns = original  # restore
+        original = machete_config().max_turns_all
+        machete_config().max_turns_all = 10
+        self.assertEqual(machete_config().max_turns_all, 10)
+        machete_config().max_turns_all = original  # restore
 
 
 if __name__ == '__main__':

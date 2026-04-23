@@ -17,7 +17,7 @@ def generate_times(key_seed):
     hour  = (key_seed & 0x00FF0000) >> 16
     delay =  key_seed & 0x0000FFFF
 
-    with open('./mdMap.json', 'r') as f:
+    with open(Path(__file__).parent / "basedata" / "mdMap.json", 'r') as f:
         md_map = json.load(f)
 
     mdms2 = (mdms + 138) % 0x100

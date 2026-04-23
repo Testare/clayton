@@ -220,7 +220,7 @@ _safari_pokemon: dict[str, SafariPokemon] | None = None
 def safari_pokemon_by_name(name: str) -> SafariPokemon:
     global _safari_pokemon
     if _safari_pokemon is None:
-        path = Path(__file__).parent.parent / "safari_pokemon.json"
+        path = Path(__file__).parent / "basedata" / "safari_pokemon.json"
         with open(path) as f:
             data = json.load(f)
         _safari_pokemon = {n: SafariPokemon(n, entry["catch_rate"], entry["flee_rate"]) for n, entry in data.items()}
