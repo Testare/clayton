@@ -153,8 +153,8 @@ class SafariContext:
         self.__advance()
         critical = self.__advance() % 10 == 0
         if not critical:
-            self.flee_rate_stages = max(6, self.flee_rate_stages + 1)
-        self.capture_rate_stages = max(6, self.capture_rate_stages + 1)
+            self.flee_rate_stages = min(6, self.flee_rate_stages + 1)
+        self.capture_rate_stages = min(6, self.capture_rate_stages + 1)
         # Ability advances (2)
         self.__advance()
         self.__advance()
