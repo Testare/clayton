@@ -8,13 +8,18 @@ import copy
 import logging
 import time
 from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from fractions import Fraction
 
 from claytonlib.safari import SafariContext, SafariPokemon, SafariStep
+from claytonlib.safari_compact import (
+    CompactPokemon, encode, is_watching as c_is_watching,
+    will_flee as c_will_flee,
+    sim_bait, sim_mud, sim_ball,
+)
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Config
@@ -23,6 +28,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MacheteConfig:
     max_turns: int | None = 20
+    log_interval: int = 500_000  # nodes between progress log lines (0 = disabled)
+    parallel: bool = False        # use ProcessPoolExecutor in machete_jane
 
 
 _config = MacheteConfig()
@@ -104,14 +111,14 @@ def _resolve_ctx(pokemon_or_ctx: SafariPokemon | SafariContext,
 # BFS internals
 # ---------------------------------------------------------------------------
 
-# Action iteration order: mud → ball → bait.
-# Decisive actions are explored first to avoid flooding the queue with
-# long bait-only prefixes.
-_BFS_ACTIONS = [
-    SafariContext.throw_mud,
-    SafariContext.throw_ball,
-    SafariContext.throw_bait,
-]
+# Compact simulation action order: mud → ball → bait.
+# Decisive actions first to avoid flooding the queue with long bait-only prefixes.
+_COMPACT_ACTIONS   = [sim_mud, sim_ball, sim_bait]
+
+# When the pokemon is in WATCHING_WILL_FLEE state, bait and mud both
+# immediately trigger the pending flee check and result in FLED. Only a
+# ball that captures is useful, so we skip bait and mud entirely.
+_COMPACT_BALL_ONLY = [sim_ball]
 
 
 # ---------------------------------------------------------------------------
@@ -137,25 +144,42 @@ def machete_one(
     if max_turns is ...:
         max_turns = machete_config().max_turns
     ctx = _resolve_ctx(pokemon_or_ctx, seed, path)
-    queue: deque[tuple[SafariContext, str, int]] = deque([(ctx, '', 0)])
+    cp = CompactPokemon(ctx.pokemon)
+    s0 = encode(ctx)
+
+    # BFS with a visited set: compact states are plain ints, so "copy" is
+    # free and hashing is O(1). The first time we reach a state is always
+    # via the shortest path, so skipping revisits is safe.
+    visited: set[int] = {s0}
+    queue: deque[tuple[int, str, int]] = deque([(s0, '', 0)])
     while queue:
-        curr, path_so_far, turns = queue.popleft()
-        if not curr.is_watching():
+        s, path_so_far, turns = queue.popleft()
+        if not c_is_watching(s):
             continue
         if max_turns is not None and turns >= max_turns:
             continue
-        for throw in _BFS_ACTIONS:
-            ctx2 = copy.copy(curr)
-            result = throw(ctx2)
-            new_path = path_so_far + result.value
-            if result == SafariStep.CAPTURED:
+        for sim in (_COMPACT_BALL_ONLY if c_will_flee(s) else _COMPACT_ACTIONS):
+            s2, ch = sim(s, cp)
+            new_path = path_so_far + ch
+            if ch == 'C':
                 return new_path
-            if result == SafariStep.FLED:
+            if not c_is_watching(s2) or s2 in visited:
                 continue
+            visited.add(s2)
             if max_turns is not None and turns + 1 >= max_turns:
                 continue
-            queue.append((ctx2, new_path, turns + 1))
+            queue.append((s2, new_path, turns + 1))
     return None
+
+
+# ---------------------------------------------------------------------------
+# machete_all worker (module-level for ProcessPoolExecutor pickling)
+# ---------------------------------------------------------------------------
+
+def _machete_all_worker(args: tuple) -> tuple[list[str], int]:
+    """Module-level worker; must be defined here so ProcessPoolExecutor can pickle it."""
+    ctx, max_turns = args
+    return machete_all(ctx, max_turns=max_turns)
 
 
 # ---------------------------------------------------------------------------
@@ -180,41 +204,80 @@ def machete_all(
     if max_turns is ...:
         max_turns = machete_config().max_turns
     ctx = _resolve_ctx(pokemon_or_ctx, seed, path)
+    cp  = CompactPokemon(ctx.pokemon)
+    s0  = encode(ctx)
+
     paths: list[str] = []
     truncated = 0
-    max_depth_reached = -1
-    t_start = time.monotonic()
-    queue: deque[tuple[SafariContext, str, int]] = deque([(ctx, '', 0)])
-    while queue:
-        curr, path_so_far, turns = queue.popleft()
-        if turns > max_depth_reached:
-            max_depth_reached = turns
-            elapsed = time.monotonic() - t_start
-            logger.debug(
-                "machete_all depth=%d  queue=%d  elapsed=%.3fs",
-                max_depth_reached, len(queue), elapsed,
-            )
-        if not curr.is_watching():
-            continue
-        if max_turns is not None and turns >= max_turns:
+
+    # futile_memo maps a compact state → the largest remaining-turns budget
+    # under which the state was exhaustively explored and found to yield no
+    # captures and no truncations. If we encounter the same state with
+    # budget ≤ that value, exploring it again cannot produce new results.
+    futile_memo: dict[int, int] = {}
+
+    prefix: list[str] = []   # shared mutable path prefix; push/pop on descent/ascent
+
+    t_start       = time.monotonic()
+    nodes_visited = 0
+    log_interval  = _config.log_interval
+    countdown     = log_interval
+
+    def _dfs(s: int, depth: int) -> None:
+        nonlocal truncated, nodes_visited, countdown
+        if not c_is_watching(s):
+            return
+        if max_turns is not None and depth >= max_turns:
             truncated += 1
-            continue
-        for throw in _BFS_ACTIONS:
-            ctx2 = copy.copy(curr)
-            result = throw(ctx2)
-            new_path = path_so_far + result.value
-            if result == SafariStep.CAPTURED:
-                paths.append(new_path)
-            elif result == SafariStep.FLED:
-                pass
-            elif max_turns is not None and turns + 1 >= max_turns:
-                truncated += 1
-            else:
-                queue.append((ctx2, new_path, turns + 1))
+            return
+
+        nodes_visited += 1
+        if log_interval:
+            countdown -= 1
+            if countdown == 0:
+                countdown = log_interval
+                elapsed = time.monotonic() - t_start
+                logger.debug(
+                    "machete_all: %d nodes  %d paths  %d trunc  %.1fs"
+                    "  %.0fk/s  memo=%d",
+                    nodes_visited, len(paths), truncated, elapsed,
+                    nodes_visited / elapsed / 1000, len(futile_memo),
+                )
+
+        paths_snap = len(paths)
+        trunc_snap = truncated
+        child_depth = depth + 1
+
+        for sim in (_COMPACT_BALL_ONLY if c_will_flee(s) else _COMPACT_ACTIONS):
+            s2, ch = sim(s, cp)
+            if ch == 'C':
+                paths.append(''.join(prefix) + 'C')
+            elif c_is_watching(s2):
+                if max_turns is not None and child_depth >= max_turns:
+                    truncated += 1
+                else:
+                    remaining2 = (
+                        (max_turns - child_depth) if max_turns is not None else (1 << 30)
+                    )
+                    if futile_memo.get(s2, 0) < remaining2:
+                        prefix.append(ch)
+                        _dfs(s2, child_depth)
+                        prefix.pop()
+
+        # On exit: if this subtree produced no captures and no truncations,
+        # record it as futile so equal-or-smaller-budget revisits can be skipped.
+        if len(paths) == paths_snap and truncated == trunc_snap:
+            remaining = (max_turns - depth) if max_turns is not None else (1 << 30)
+            if remaining > futile_memo.get(s, 0):
+                futile_memo[s] = remaining
+
+    _dfs(s0, 0)
+    paths.sort(key=len)
+
     elapsed = time.monotonic() - t_start
     logger.debug(
-        "machete_all done: %d path(s), %d truncated, elapsed=%.3fs",
-        len(paths), truncated, elapsed,
+        "machete_all done: %d path(s)  %d truncated  %d nodes  %.3fs  memo=%d",
+        len(paths), truncated, nodes_visited, elapsed, len(futile_memo),
     )
     return paths, truncated
 
@@ -385,26 +448,50 @@ def machete_jane(
     n = len(candidates)
     logger.info("machete_jane: %d candidate(s), max_turns=%s", n, max_turns)
     t_start = time.monotonic()
-    items: list[tuple[SafariContext, list[str]]] = []
-    for i, candidate in enumerate(candidates):
+
+    # Phase 1: resolve all contexts (always sequential — fast).
+    resolved: list[tuple[SafariContext, int]] = []   # (ctx, seed)
+    for candidate in candidates:
         if isinstance(candidate, int):
             if pokemon is None:
                 raise ValueError("pokemon is required when candidates contains plain seed ints")
             seed = candidate
-            ctx = SafariContext.start_encounter(seed, pokemon)
+            ctx  = SafariContext.start_encounter(seed, pokemon)
         else:
-            ctx = copy.copy(candidate[0])
+            ctx  = copy.copy(candidate[0])
             seed = candidate[1]
-        logger.debug("machete_jane: candidate %d/%d", i + 1, n)
-        if interactive:
-            print(f"Jane is considering 0x{seed:08X}...")
-        paths, _ = machete_all(ctx, max_turns=max_turns)
-        if interactive:
-            if paths:
-                print(f"Jane thinks 0x{seed:08X} has some potential ({len(paths)} paths identified).")
-            else:
-                print(f"Jane thinks 0x{seed:08X} is a dead-end.")
-        items.append((copy.copy(ctx), paths))
+        resolved.append((ctx, seed))
+
+    # Phase 2: run machete_all on each context.
+    use_parallel = _config.parallel and not interactive and n > 1
+    if use_parallel:
+        logger.info("machete_jane: using ProcessPoolExecutor across %d workers", n)
+        worker_args = [(copy.copy(ctx), max_turns) for ctx, _ in resolved]
+        with ProcessPoolExecutor() as executor:
+            raw_results = list(executor.map(_machete_all_worker, worker_args))
+    else:
+        raw_results = []
+        for i, (ctx, seed) in enumerate(resolved):
+            logger.debug("machete_jane: candidate %d/%d", i + 1, n)
+            if interactive:
+                print(f"Jane is considering 0x{seed:08X}...")
+            paths, _ = machete_all(copy.copy(ctx), max_turns=max_turns)
+            if interactive:
+                if paths:
+                    print(
+                        f"Jane thinks 0x{seed:08X} has some potential "
+                        f"({len(paths)} paths identified)."
+                    )
+                else:
+                    print(f"Jane thinks 0x{seed:08X} is a dead-end.")
+            raw_results.append((paths, _))
+
+    # Phase 3: assemble items for _jane_tree.
+    items: list[tuple[SafariContext, list[str]]] = [
+        (copy.copy(ctx), paths)
+        for (ctx, _seed), (paths, _trunc) in zip(resolved, raw_results)
+    ]
+
     t_paths = time.monotonic()
     logger.info(
         "machete_jane: paths collected in %.3fs, building tree across %d candidate(s)...",
@@ -467,4 +554,3 @@ def machete_jane(
             node = next_node
 
     return result
-

@@ -1,0 +1,63 @@
+Still seems to be a check in 0x0225e46e at start of battle...
+
+
+METRONOME SEQUENCE
+
+* BEFORE TURN x4
+
+* BtlCmd_Metronome ()
+* CalcDamage
+* CheckMoveHit
+
+* TryCrit
+* ApplyDamage
+* CheckMoveHit
+
+*Battle script rand
+* ov12_022585B8 x4 (3 if they splash I think)
+* ov12_022585B8 x6
+* 0x0225e46ee
+
+(11 advances and then metronome)
+
+
+moveNo <= rand % 0x1d3 + 1
+
+Metronome skips the move if the pokemon already knows that move and re-roll.
+
+if (CheckLegalMetronomeMove == false, reroll)
+
+CheckLegalMetronomeMove
+=> Check move is unuseable in grativy (only pplies if gravity in effect... So only matters if gravity is applied by metronome)
+=> Check move heal blocked (only applies if heal blocked)
+
+checks 
+static const u16 sMetronomeUnuseableMoves[] = {
+    MOVE_METRONOME,
+    MOVE_STRUGGLE,
+    MOVE_SKETCH,
+    MOVE_MIMIC,
+    MOVE_CHATTER,
+    0xFFFE,
+    MOVE_SLEEP_TALK,
+    MOVE_ASSIST,
+    MOVE_MIRROR_MOVE,
+    MOVE_COUNTER,
+    MOVE_MIRROR_COAT,
+    MOVE_PROTECT,
+    MOVE_DETECT,
+    MOVE_ENDURE,
+    MOVE_DESTINY_BOND,
+    MOVE_THIEF,
+    MOVE_FOLLOW_ME,
+    MOVE_SNATCH,
+    MOVE_HELPING_HAND,
+    MOVE_COVET,
+    MOVE_TRICK,
+    MOVE_FOCUS_PUNCH,
+    MOVE_FEINT,
+    MOVE_COPYCAT,
+    MOVE_ME_FIRST,
+    MOVE_SWITCHEROO,
+    0xFFFF
+};

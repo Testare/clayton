@@ -101,6 +101,19 @@ def _make_machete_after_n_balls_criteria(n_balls: int) -> SuccessCriteria:
 CRITERIA_CAPTURE_MACHETE_AFTER_3_BALLS = _make_machete_after_n_balls_criteria(3)
 CRITERIA_CAPTURE_MACHETE_AFTER_5_BALLS = _make_machete_after_n_balls_criteria(5)
 
+def machete_x_turns_n_balls_criteria(turns: int, n_balls: int) -> SuccessCriteria:
+    def _check(ctx: SafariContext) -> bool:
+        from claytonlib.machete import machete_one
+        balls_thrown = 30 - ctx.balls_remaining
+        if balls_thrown != n_balls:
+            return False
+        path = machete_one(ctx, max_turns = turns)
+        if path is not None:
+            return True
+        ctx.force_flee()
+        return False
+    return SuccessCriteria(f"machete-{turns}-turns-after-{n_balls}-balls", _check)
+
 
 # ---------------------------------------------------------------------------
 # ChartConfig

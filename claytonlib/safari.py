@@ -83,7 +83,7 @@ class SafariPokemon:
         ))
 
 
-@dataclass
+@dataclass(slots=True)
 class SafariContext:
     pokemon: SafariPokemon
     rng_state: int
