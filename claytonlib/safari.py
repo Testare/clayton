@@ -105,6 +105,9 @@ class SafariContext:
     def will_flee(self) -> bool:
         return self.state == SafariContextState.WATCHING_WILL_FLEE
 
+    def force_flee(self) -> None:
+        self.state = SafariContextState.FLED
+
     def __advance(self) -> int:
         self.rng_state = advance_rng(self.rng_state)
         return self.rng_state >> 16

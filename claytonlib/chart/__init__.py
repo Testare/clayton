@@ -84,15 +84,22 @@ def evaluate_seed(seed: int, pokemon: SafariPokemon, strategy: Strategy, criteri
     return False
 
 
-CRITERIA_CAPTURE_MACHETE_AFTER_3_BALLS = SuccessCriteria(
-    "capture-via-machete-after-3-balls",
-    lambda ctx: True  # TODO: implement
-)
+def _make_machete_after_n_balls_criteria(n_balls: int) -> SuccessCriteria:
+    def _check(ctx: SafariContext) -> bool:
+        from claytonlib.machete import machete_one
+        balls_thrown = 30 - ctx.balls_remaining
+        if balls_thrown != n_balls:
+            return False
+        path = machete_one(ctx)
+        if path is not None:
+            return True
+        ctx.force_flee()
+        return False
+    return SuccessCriteria(f"capture-via-machete-after-{n_balls}-balls", _check)
 
-CRITERIA_CAPTURE_MACHETE_AFTER_5_BALLS = SuccessCriteria(
-    "capture-via-machete-after-5-balls",
-    lambda ctx: True  # TODO: implement
-)
+
+CRITERIA_CAPTURE_MACHETE_AFTER_3_BALLS = _make_machete_after_n_balls_criteria(3)
+CRITERIA_CAPTURE_MACHETE_AFTER_5_BALLS = _make_machete_after_n_balls_criteria(5)
 
 
 # ---------------------------------------------------------------------------

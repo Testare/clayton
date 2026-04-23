@@ -29,6 +29,10 @@ class UndoAction:
     pass
 
 
+class JaneAction:
+    pass
+
+
 @dataclass
 class ParseError:
     unknown_chars: set[str]
@@ -71,6 +75,9 @@ def parse_input(text: str) -> list | ParseError:
         ch = chars[i]
         if ch == 'u':
             actions.append(UndoAction())
+            i += 1
+        elif ch == 'J':
+            actions.append(JaneAction())
             i += 1
         elif ch == '?':
             i += 1
@@ -289,6 +296,7 @@ def _print_cheatsheet(inputs: CompassSafariInput) -> None:
         ('F',     'Fled (ends)',         f'{pname} fled!'),
         ('u',     'Undo last action',    '—'),
         ('?x',    'Uncertain result',    '—'),
+        ('J',     'Switch to Jane',      '—'),
     ]
     key_w = max(len(r[0]) for r in rows)
     act_w = max(len(r[1]) for r in rows)
@@ -380,16 +388,36 @@ def compass_safari(inputs: CompassSafariInput) -> None:
             return
 
         if len(current) == 1:
-            _, seed, delay = current[0]
+            ctx, seed, delay = current[0]
             print()
             _print_success(seed, delay, inputs.target_delay, path_actions)
-            return
+            while True:
+                raw = input("\nRun Machete to find a capture path from this point? (y/n) ").strip().lower()
+                if raw in ('y', 'yes'):
+                    from claytonlib.machete import machete_one
+                    path = machete_one(ctx)
+                    if path is not None:
+                        print(f"Machete found a path: {path}")
+                    else:
+                        print("Machete found no capture path from this state.")
+                    return
+                elif raw in ('n', 'no'):
+                    return
 
         raw = input("\n>> ").strip()
         result = parse_input(raw)
 
         if isinstance(result, ParseError):
             print(f"  {result}")
+            continue
+
+        if any(isinstance(a, JaneAction) for a in result):
+            confirm = input("Switching to Jane can take significant time. Are you sure? (y/n) ").strip().lower()
+            if confirm in ('y', 'yes'):
+                from claytonlib.machete import machete_jane
+                jane_candidates = [(ctx, seed) for ctx, seed, delay in current]
+                machete_jane(jane_candidates, pokemon=inputs.pokemon, interactive=True)
+                return
             continue
 
         terminal = False
