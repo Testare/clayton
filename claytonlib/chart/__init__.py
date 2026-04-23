@@ -89,6 +89,11 @@ CRITERIA_CAPTURE_MACHETE_AFTER_3_BALLS = SuccessCriteria(
     lambda ctx: True  # TODO: implement
 )
 
+CRITERIA_CAPTURE_MACHETE_AFTER_5_BALLS = SuccessCriteria(
+    "capture-via-machete-after-5-balls",
+    lambda ctx: True  # TODO: implement
+)
+
 
 # ---------------------------------------------------------------------------
 # ChartConfig

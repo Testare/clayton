@@ -396,7 +396,7 @@ class TestMacheteConfig(unittest.TestCase):
 
     def test_default_max_turns(self):
         cfg = MacheteConfig()
-        self.assertEqual(cfg.max_turns, 50)
+        self.assertEqual(cfg.max_turns, 20)
 
     def test_singleton_is_mutable(self):
         original = machete_config().max_turns

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MacheteConfig:
-    max_turns: int | None = 50
+    max_turns: int | None = 20
 
 
 _config = MacheteConfig()
@@ -38,9 +38,10 @@ def machete_config() -> MacheteConfig:
 
 @dataclass
 class JaneNode:
-    action:      str                          # "BALL", "BAIT", "MUD", "CAPTURED", "FUTILE"
-    probability: Fraction
-    branches:    dict[str, 'JaneNode'] | None # None only for terminal nodes
+    action:               str                          # "BALL", "BAIT", "MUD", "CAPTURED", "FUTILE"
+    probability:          Fraction
+    branches:             dict[str, 'JaneNode'] | None # None only for terminal nodes
+    direct_capture_prob:  Fraction | None = None       # BALL nodes only: P(C on this throw)
 
 
 CAPTURED_NODE = JaneNode(action='CAPTURED', probability=Fraction(1), branches=None)
@@ -297,10 +298,19 @@ def _jane_tree(candidates: list[tuple[SafariContext, list[str]]]) -> JaneNode | 
 
         probability = numerator / total
 
+        direct_capture_prob: Fraction | None = None
+        if action_name == 'BALL' and 'C' in buckets:
+            direct_capture_prob = Fraction(len(buckets['C']), total)
+
         if probability == Fraction(0):
             node = FUTILE_NODE
         else:
-            node = JaneNode(action=action_name, probability=probability, branches=branches)
+            node = JaneNode(
+                action=action_name,
+                probability=probability,
+                branches=branches,
+                direct_capture_prob=direct_capture_prob,
+            )
 
         # Strict > means the first action in _JANE_ACTIONS wins ties (ball > mud > bait).
         if best is None or node.probability > best.probability:
@@ -312,19 +322,57 @@ def _jane_tree(candidates: list[tuple[SafariContext, list[str]]]) -> JaneNode | 
 
 
 # ---------------------------------------------------------------------------
+# Interactive display helpers
+# ---------------------------------------------------------------------------
+
+# All outcomes the player can observe per action type, in display order.
+# 'F' (fled) can follow any action via the flee check and is always listed.
+_ACTION_OUTCOMES: dict[str, list[str]] = {
+    'BALL': ['0', '1', '2', '3', 'C', 'F'],
+    'MUD':  ['m', 'M', 'F'],
+    'BAIT': ['b', 'B', 'F'],
+}
+
+
+def _outcome_text(ch: str, pokemon_name: str) -> str:
+    name = pokemon_name.capitalize()
+    descriptions: dict[str, str] = {
+        '0': 'Ball, 0 shakes    Oh, no! The Pokémon broke free!',
+        '1': 'Ball, 1 shake     Aww! It appeared to be caught!',
+        '2': 'Ball, 2 shakes    Aargh! Almost had it!',
+        '3': 'Ball, 3 shakes    Shoot! It was so close, too!',
+        'C': f'Captured          Gotcha! {name} was caught!',
+        'F': f'Fled              {name} fled!',
+        'm': f'Mud, no crit      {name} is angry!',
+        'M': f'Mud, crit         {name} is beside itself with anger!',
+        'b': f'Bait, no crit     {name} is eating!',
+        'B': f'Bait, crit        {name} is busy eating!',
+    }
+    return f'{ch}    {descriptions.get(ch, ch)}'
+
+
+def _print_outcomes(action: str, branches: dict[str, 'JaneNode'], pokemon_name: str) -> None:
+    for ch in _ACTION_OUTCOMES.get(action, []):
+        marker = '*' if ch in branches else ' '
+        print(f'  {marker} {_outcome_text(ch, pokemon_name)}')
+
+
+# ---------------------------------------------------------------------------
 # machete_jane
 # ---------------------------------------------------------------------------
 
 def machete_jane(
-    candidates: list[tuple[SafariContext, int]],
+    candidates: list[tuple[SafariContext, int] | int],
+    pokemon: SafariPokemon | None = None,
     max_turns: int | None = ...,
+    interactive: bool = False,
 ) -> JaneNode | None:
     """Return the optimal decision tree across all candidate seeds.
 
     Args:
-        candidates: list of (ctx, seed) tuples — typically the candidate list
-                    from compass after narrowing. ctx should reflect the current
-                    encounter state; it is never mutated.
+        candidates: list of (ctx, seed) tuples or plain seed ints. When plain
+                    seeds are used, pokemon is required to construct contexts.
+        pokemon:    Required when candidates contains plain seed ints.
         max_turns:  Turn limit passed to machete_all for path generation.
                     Defaults to machete_config().max_turns.
 
@@ -334,8 +382,89 @@ def machete_jane(
     """
     if max_turns is ...:
         max_turns = machete_config().max_turns
+    n = len(candidates)
+    logger.info("machete_jane: %d candidate(s), max_turns=%s", n, max_turns)
+    t_start = time.monotonic()
     items: list[tuple[SafariContext, list[str]]] = []
-    for ctx, _seed in candidates:
+    for i, candidate in enumerate(candidates):
+        if isinstance(candidate, int):
+            if pokemon is None:
+                raise ValueError("pokemon is required when candidates contains plain seed ints")
+            seed = candidate
+            ctx = SafariContext.start_encounter(seed, pokemon)
+        else:
+            ctx = copy.copy(candidate[0])
+            seed = candidate[1]
+        logger.debug("machete_jane: candidate %d/%d", i + 1, n)
+        if interactive:
+            print(f"Jane is considering 0x{seed:08X}...")
         paths, _ = machete_all(ctx, max_turns=max_turns)
+        if interactive:
+            if paths:
+                print(f"Jane thinks 0x{seed:08X} has some potential ({len(paths)} paths identified).")
+            else:
+                print(f"Jane thinks 0x{seed:08X} is a dead-end.")
         items.append((copy.copy(ctx), paths))
-    return _jane_tree(items)
+    t_paths = time.monotonic()
+    logger.info(
+        "machete_jane: paths collected in %.3fs, building tree across %d candidate(s)...",
+        t_paths - t_start, n,
+    )
+    result = _jane_tree(items)
+    logger.info("machete_jane: done in %.3fs total", time.monotonic() - t_start)
+
+    if interactive and result is not None:
+        # Resolve pokemon name for outcome display
+        pokemon_name = 'the Pokémon'
+        if pokemon is not None:
+            pokemon_name = pokemon.name
+        else:
+            for c in candidates:
+                if isinstance(c, tuple):
+                    pokemon_name = c[0].pokemon.name
+                    break
+
+        node: JaneNode = result
+        while True:
+            if node is CAPTURED_NODE:
+                print(f"Gotcha! {pokemon_name.capitalize()} was caught!")
+                break
+            if node is FUTILE_NODE or node.branches is None:
+                print("Bad news I'm afraid...\n\nATTEMPT FAILED")
+                break
+
+            pct = float(node.probability) * 100
+
+            if node.action == 'BALL':
+                if set(node.branches.keys()) == {'C'}:
+                    print("This should be it! Throw the ball!")
+                elif 'C' in node.branches and node.direct_capture_prob is not None:
+                    cap_pct = float(node.direct_capture_prob) * 100
+                    print(
+                        f'Jane suggests "Throw ball, this could be our chance..." '
+                        f'({pct:.1f}% confidence, {cap_pct:.1f}% chance to capture)'
+                    )
+                else:
+                    print(f'Jane suggests "Throw ball" ({pct:.1f}% confidence)')
+            elif node.action == 'MUD':
+                print(f'Jane suggests "Throw mud" ({pct:.1f}% confidence)')
+            else:
+                print(f'Jane suggests "Throw bait" ({pct:.1f}% confidence)')
+
+            _print_outcomes(node.action, node.branches, pokemon_name)
+
+            while True:
+                raw = input("What happened? ").strip().replace(',', '').replace(' ', '')
+                if raw:
+                    break
+            ch = raw[0]
+
+            next_node = node.branches.get(ch)
+            if next_node is None:
+                print("Bad news I'm afraid... ATTEMPT FAILED")
+                break
+
+            node = next_node
+
+    return result
+
