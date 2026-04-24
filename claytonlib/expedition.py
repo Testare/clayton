@@ -1,12 +1,12 @@
 """
-flow.py — High-level workflow manager.
+expedition.py — High-level workflow manager.
 
 Ties together chart, compass, and machete tools with persistent configuration
 so the player doesn't have to manually re-enter parameters each session.
 
 Usage:
-    from claytonlib.flow import flow
-    f = flow("metang")
+    from claytonlib.expedition import expedition
+    x = expedition("metang")
     f.chart_safari()
     f.save()
 """
@@ -83,31 +83,31 @@ _EVAL_TYPES = [
 
 
 # ---------------------------------------------------------------------------
-# Flow registry
+# Expedition registry
 # ---------------------------------------------------------------------------
 
-_flows: dict[str, 'Flow'] = {}
-_FLOWS_DIR = Path('data/flows')
+_expeditions: dict[str, 'Expedition'] = {}
+_EXPEDITIONS_DIR = Path('data/expeditions')
 
 
-def flow(name: str) -> 'Flow':
-    """Return the named Flow, loading from file if necessary, creating if absent."""
-    if name in _flows:
-        return _flows[name]
-    path = _FLOWS_DIR / f"{name}.json"
+def expedition(name: str) -> 'Expedition':
+    """Return the named Expedition, loading from file if necessary, creating if absent."""
+    if name in _expeditions:
+        return _expeditions[name]
+    path = _EXPEDITIONS_DIR / f"{name}.json"
     if path.exists():
-        f = Flow._load(name, path)
+        f = Expedition._load(name, path)
     else:
-        f = Flow(name=name)
-    _flows[name] = f
+        f = Expedition(name=name)
+    _expeditions[name] = f
     return f
 
 
 # ---------------------------------------------------------------------------
-# Flow class
+# Expedition class
 # ---------------------------------------------------------------------------
 
-class Flow:
+class Expedition:
     """Persistent configuration and workflow manager for a single run."""
 
     def __init__(self, name: str):
@@ -159,7 +159,7 @@ class Flow:
         }
 
     @classmethod
-    def _from_dict(cls, data: dict) -> 'Flow':
+    def _from_dict(cls, data: dict) -> 'Expedition':
         f = cls(name=data['name'])
         f.pokemon_name             = data.get('pokemon_name')
         f.key_seed                 = data.get('key_seed')
@@ -178,28 +178,28 @@ class Flow:
         return f
 
     @classmethod
-    def _load(cls, name: str, path: Path) -> 'Flow':
+    def _load(cls, name: str, path: Path) -> 'Expedition':
         with open(path) as fh:
             data = json.load(fh)
         return cls._from_dict(data)
 
     def save(self) -> None:
-        """Persist this Flow to data/flows/{name}.json."""
-        _FLOWS_DIR.mkdir(parents=True, exist_ok=True)
-        path = _FLOWS_DIR / f"{self.name}.json"
+        """Persist this Expedition to data/expeditions/{name}.json."""
+        _EXPEDITIONS_DIR.mkdir(parents=True, exist_ok=True)
+        path = _EXPEDITIONS_DIR / f"{self.name}.json"
         with open(path, 'w') as fh:
             json.dump(self._to_dict(), fh, indent=2)
-        print(f"[flow] Saved to {path}")
+        print(f"[expedition] Saved to {path}")
 
     def reload(self) -> None:
         """Reload config from file, discarding in-memory changes."""
-        path = _FLOWS_DIR / f"{self.name}.json"
+        path = _EXPEDITIONS_DIR / f"{self.name}.json"
         if not path.exists():
-            print(f"[flow] No saved file at {path}; nothing to reload.")
+            print(f"[expedition] No saved file at {path}; nothing to reload.")
             return
-        loaded = Flow._load(self.name, path)
+        loaded = Expedition._load(self.name, path)
         self.__dict__.update(loaded.__dict__)
-        print(f"[flow] Reloaded from {path}")
+        print(f"[expedition] Reloaded from {path}")
 
     def print(self) -> None:  # noqa: A003
         """Pretty-print current configuration."""
@@ -218,7 +218,7 @@ class Flow:
             ("metronome_histsz", self.compass_metronome_histsize if self.compass_metronome_histsize is not None else "(not set)"),
         ]
         label_w = max(len(k) for k, _ in fields)
-        print(f"=== Flow: {self.name} ===")
+        print(f"=== Expedition: {self.name} ===")
         for key, val in fields:
             print(f"  {key:<{label_w}}  {val}")
         if self.key_seed is not None and self.target_delay is not None:
@@ -393,7 +393,7 @@ class Flow:
     def _ensure_target(self) -> None:
         if self.target_delay is not None and self.initial_time is not None:
             return
-        print("[flow] No target set. Run choose_target() first.")
+        print("[expedition] No target set. Run choose_target() first.")
         choice = input("  Run choose_target() now? (y/n) ").strip().lower()
         if choice in ('y', 'yes'):
             self.choose_target()
@@ -441,8 +441,8 @@ class Flow:
     def adjust(self, **kwargs) -> None:
         """Change one or more already-set fields.
 
-        Keyword form:  flow.adjust(criteria_name="only-balls")
-        Interactive:   flow.adjust()  — prompts for which field to change.
+        Keyword form:  expedition.adjust(criteria_name="only-balls")
+        Interactive:   expedition.adjust()  — prompts for which field to change.
         """
         if kwargs:
             valid = {f for f, *_ in self._ADJUSTABLE_FIELDS}
@@ -450,7 +450,7 @@ class Flow:
                 if key not in valid:
                     raise ValueError(f"Unknown field {key!r}. Adjustable fields: {sorted(valid)}")
                 setattr(self, key, val)
-                print(f"[flow] {key} = {val!r}")
+                print(f"[expedition] {key} = {val!r}")
             return
 
         # Interactive
@@ -520,7 +520,7 @@ class Flow:
 
     def chart_safari(self) -> None:
         """Chart seeds for this pokemon. Prompts for missing config fields."""
-        print(f"[flow] === chart_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === chart_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_setup_delay_seconds()
@@ -530,11 +530,11 @@ class Flow:
 
         from claytonlib.chart import chart_safari as _chart_safari
         inputs = self._get_chart_input()
-        print(f"[flow] Charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
+        print(f"[expedition] Charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
               f"delay={self.setup_delay_seconds}-{self.max_target_seconds}s "
               f"strategy={self.strategy_name} criteria={self.criteria_name}")
         _chart_safari(inputs)
-        print("[flow] chart_safari complete.")
+        print("[expedition] chart_safari complete.")
 
     # ------------------------------------------------------------------
     # evaluate_chart
@@ -542,16 +542,16 @@ class Flow:
 
     def evaluate_chart(self) -> None:
         """Evaluate the chart. Runs chart_safari() first if needed."""
-        print(f"[flow] === evaluate_chart ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === evaluate_chart ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self.chart_safari()
         self._ensure_eval_strategy()
 
         from claytonlib.chart import evaluate_chart as _evaluate_chart
         inputs = self._get_chart_input()
         eval_strat = _resolve_eval_strategy(self.eval_strategy_name)
-        print(f"[flow] Evaluating with strategy={self.eval_strategy_name}")
+        print(f"[expedition] Evaluating with strategy={self.eval_strategy_name}")
         _evaluate_chart(inputs, eval_strat, eval_max_seconds=self.max_target_seconds)
-        print("[flow] evaluate_chart complete.")
+        print("[expedition] evaluate_chart complete.")
 
     # ------------------------------------------------------------------
     # choose_target
@@ -559,7 +559,7 @@ class Flow:
 
     def choose_target(self) -> None:
         """Present top10/best10 results and prompt the user to pick a target."""
-        print(f"[flow] === choose_target ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === choose_target ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self.evaluate_chart()
 
         from claytonlib.chart import _output_dir
@@ -572,7 +572,7 @@ class Flow:
         data = read_evaluation(chart_dir, eval_strat, filename_override=self._eval_filename_override(eval_strat, chart_dir))
 
         if data is None or (not data.top10 and not data.best10):
-            print("[flow] No evaluation data found. Run evaluate_chart() first.")
+            print("[expedition] No evaluation data found. Run evaluate_chart() first.")
             return
 
         base_delay, _ = get_times(self.key_seed)
@@ -626,8 +626,8 @@ class Flow:
                 parsed = dt.datetime.strptime(time_str, '%Y-%m-%d_%H-%M-%S')
                 self.initial_time = parsed.isoformat()
                 delay_from_key = self.target_delay - base_delay
-                print(f"[flow] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
-                print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+                print(f"[expedition] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
+                print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
                 return
             # Try as hex seed
             try:
@@ -642,8 +642,8 @@ class Flow:
                 raw_time = input("  Initial time (YYYY-MM-DD HH:MM:SS): ").strip()
                 self.initial_time = dt.datetime.strptime(raw_time, '%Y-%m-%d %H:%M:%S').isoformat()
                 delay_from_key = self.target_delay - base_delay
-                print(f"[flow] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
-                print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+                print(f"[expedition] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
+                print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
                 return
             except ValueError:
                 pass
@@ -655,7 +655,7 @@ class Flow:
 
     def compass_safari(self) -> None:
         """Run compass_safari using stored config. Saves resulting seeds."""
-        print(f"[flow] === compass_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === compass_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_strategy()
@@ -673,7 +673,7 @@ class Flow:
 
         base_delay, _ = get_times(self.key_seed)
         delay_from_key = self.target_delay - base_delay
-        print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+        print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
         inputs = CompassSafariInput(
@@ -692,9 +692,9 @@ class Flow:
         if seeds:
             self.target_seeds = seeds
             self.target_seeds_path = f"compass_safari/{self.name}"
-            print(f"[flow] Saved {len(seeds)} seed(s) to target_seeds.")
+            print(f"[expedition] Saved {len(seeds)} seed(s) to target_seeds.")
         else:
-            print("[flow] No seeds returned from compass_safari.")
+            print("[expedition] No seeds returned from compass_safari.")
 
     # ------------------------------------------------------------------
     # compass_metronome
@@ -702,7 +702,7 @@ class Flow:
 
     def compass_metronome(self) -> None:
         """Run compass_metronome using stored config. (History saving: stub.)"""
-        print(f"[flow] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
         self._ensure_target()
@@ -717,7 +717,7 @@ class Flow:
 
         base_delay, _ = get_times(self.key_seed)
         delay_from_key = self.target_delay - base_delay
-        print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+        print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
         inputs = CompassMetronomeInput(
@@ -733,11 +733,11 @@ class Flow:
     def compass_m_clear(self) -> None:
         """Clear the compass metronome history."""
         self.compass_m_history = []
-        print("[flow] Metronome history cleared.")
+        print("[expedition] Metronome history cleared.")
 
     def compass_m_suggest(self) -> None:
         """Suggest most likely time based on metronome history. (Not yet implemented.)"""
-        print("[flow] compass_m_suggest: not yet implemented.")
+        print("[expedition] compass_m_suggest: not yet implemented.")
 
     # ------------------------------------------------------------------
     # _pick_seed — shared by machete methods
@@ -778,7 +778,7 @@ class Flow:
 
     def machete_one(self) -> None:
         """Find shortest capture path for the chosen seed via BFS."""
-        print(f"[flow] === machete_one ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === machete_one ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         seed_hex = self._pick_seed()
         seed = int(seed_hex, 16)
@@ -787,12 +787,12 @@ class Flow:
         from claytonlib.machete import machete_one as _machete_one
 
         pokemon = safari_pokemon_by_name(self.pokemon_name)
-        print(f"[flow] Running machete_one for seed {seed_hex} ...")
+        print(f"[expedition] Running machete_one for seed {seed_hex} ...")
         path = _machete_one(pokemon, seed=seed)
         if path is not None:
-            print(f"[flow] Capture path: {path}")
+            print(f"[expedition] Capture path: {path}")
         else:
-            print("[flow] No capture path found.")
+            print("[expedition] No capture path found.")
 
     # ------------------------------------------------------------------
     # machete_all
@@ -800,7 +800,7 @@ class Flow:
 
     def machete_all(self) -> None:
         """Find all capture paths for the chosen seed via DFS."""
-        print(f"[flow] === machete_all ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === machete_all ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         seed_hex = self._pick_seed()
         seed = int(seed_hex, 16)
@@ -809,16 +809,16 @@ class Flow:
         from claytonlib.machete import machete_all as _machete_all
 
         pokemon = safari_pokemon_by_name(self.pokemon_name)
-        print(f"[flow] Running machete_all for seed {seed_hex} ...")
+        print(f"[expedition] Running machete_all for seed {seed_hex} ...")
         paths, truncated = _machete_all(pokemon, seed=seed)
         if paths:
-            print(f"[flow] {len(paths)} capture path(s) found:")
+            print(f"[expedition] {len(paths)} capture path(s) found:")
             for p in paths:
                 print(f"  {p}")
         else:
-            print("[flow] No capture paths found.")
+            print("[expedition] No capture paths found.")
         if truncated:
-            print(f"[flow] {truncated} branch(es) were depth-limited.")
+            print(f"[expedition] {truncated} branch(es) were depth-limited.")
 
     # ------------------------------------------------------------------
     # machete_jane
@@ -826,7 +826,7 @@ class Flow:
 
     def machete_jane(self) -> None:
         """Run Jane (optimal decision tree) across all target seeds."""
-        print(f"[flow] === machete_jane ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === machete_jane ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         if not self.target_seeds:
             raise RuntimeError("No target_seeds set. Run compass_safari() first.")
@@ -839,5 +839,5 @@ class Flow:
             (SafariContext.start_encounter(int(s, 16), pokemon), int(s, 16))
             for s in self.target_seeds
         ]
-        print(f"[flow] Running machete_jane across {len(candidates)} seed(s) ...")
+        print(f"[expedition] Running machete_jane across {len(candidates)} seed(s) ...")
         _machete_jane(candidates, pokemon=pokemon, interactive=True)
