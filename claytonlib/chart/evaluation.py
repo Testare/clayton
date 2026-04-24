@@ -299,8 +299,9 @@ def _evaluations_dir(chart_dir: Path) -> Path:
     return chart_dir / "evaluations"
 
 
-def read_evaluation(chart_dir: Path, strategy: EvaluationStrategy) -> EvaluationData | None:
-    path = _evaluations_dir(chart_dir) / f"{strategy.filename}.json"
+def read_evaluation(chart_dir: Path, strategy: EvaluationStrategy, filename_override: str | None = None) -> EvaluationData | None:
+    basename = filename_override if filename_override is not None else strategy.filename
+    path = _evaluations_dir(chart_dir) / f"{basename}.json"
     if not path.exists():
         return None
     with open(path) as f:
@@ -318,10 +319,11 @@ def read_evaluation(chart_dir: Path, strategy: EvaluationStrategy) -> Evaluation
     return EvaluationData(results=results, top10=top10, best10=best10)
 
 
-def write_evaluation(chart_dir: Path, strategy: EvaluationStrategy, data: EvaluationData) -> None:
+def write_evaluation(chart_dir: Path, strategy: EvaluationStrategy, data: EvaluationData, filename_override: str | None = None) -> None:
     evals_dir = _evaluations_dir(chart_dir)
     evals_dir.mkdir(parents=True, exist_ok=True)
-    path = evals_dir / f"{strategy.filename}.json"
+    basename = filename_override if filename_override is not None else strategy.filename
+    path = evals_dir / f"{basename}.json"
     raw = {
         "top10": [asdict(r) for r in data.top10],
         "best10": [asdict(r) for r in data.best10],

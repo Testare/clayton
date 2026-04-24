@@ -304,13 +304,17 @@ def chart_safari(inputs: ChartSafariInput, store=None) -> None:
 # evaluate_chart
 # ---------------------------------------------------------------------------
 
-def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
+def evaluate_chart(inputs: ChartSafariInput, strategy, store=None, eval_max_seconds: int | None = None) -> None:
     """
     Evaluate a completed chart and write results to the evaluations subdirectory.
 
     Reads all chain files in the chart directory, scores each frame using
     the given EvaluationStrategy, and writes a JSON file at:
         <chart_dir>/evaluations/<strategy.filename>.json
+
+    If eval_max_seconds is set and less than the full chain length, only links
+    up to that many seconds are scored, and the output is written to:
+        <chart_dir>/evaluations/<strategy.filename>_MAX_<eval_max_seconds>s.json
 
     The output contains per-chain top-5 results and a cross-chain top-10
     (deduplicated by (delay, score)) with the source chain name included.
@@ -324,6 +328,10 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
         output filename.
     store:
         Optional ChainStore override (defaults to LocalChainStore).
+    eval_max_seconds:
+        If set, truncate chains to this many seconds (from time 0) before
+        scoring. Uses a suffixed filename unless this equals the full chain
+        length.
     """
     import time as time_mod
     from claytonlib.chart.chain import LocalChainStore
@@ -379,14 +387,24 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
             max_delay = delay
         data.best10 = best10
 
-        write_evaluation(chart_dir, strategy, data)
+        write_evaluation(chart_dir, strategy, data, filename_override=_filename_override)
 
     chain_paths = [
         p for p in store.list_chain_files(chart_dir)
         if _chain_setup_delay(p) == inputs.setup_delay_seconds
     ]
 
-    existing = read_evaluation(chart_dir, strategy)
+    # Determine filename override and link truncation limit.
+    _filename_override: str | None = None
+    _max_links: int | None = None
+    if eval_max_seconds is not None and chain_paths:
+        _eval_max_links = eval_max_seconds - inputs.setup_delay_seconds + 1
+        _full_links = store.file_size(chain_paths[0]) // 8
+        if _eval_max_links < _full_links:
+            _filename_override = f"{strategy.filename}_MAX_{eval_max_seconds}s"
+            _max_links = _eval_max_links
+
+    existing = read_evaluation(chart_dir, strategy, filename_override=_filename_override)
     data = existing if existing is not None else EvaluationData(results={}, top10=[], best10=[])
 
     # Write stubs for any chains not yet present so the file is immediately
@@ -402,6 +420,8 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None) -> None:
 
     for path in chain_paths:
         links = store.read_all(path)
+        if _max_links is not None:
+            links = links[:_max_links]
         max_links_checked = len(links)
 
         existing_result = data.results.get(path.name)

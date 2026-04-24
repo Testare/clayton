@@ -76,6 +76,12 @@ def _resolve_eval_strategy(name: str):
     raise ValueError(f"Unknown evaluation strategy filename: {name!r}")
 
 
+_EVAL_TYPES = [
+    ("sliding_window", "sliding window sum  (prompts for window size, must be odd)"),
+    ("normal",         "Gaussian window  (prompts for sigma frames, e.g. 3.0)"),
+]
+
+
 # ---------------------------------------------------------------------------
 # Flow registry
 # ---------------------------------------------------------------------------
@@ -215,6 +221,12 @@ class Flow:
         print(f"=== Flow: {self.name} ===")
         for key, val in fields:
             print(f"  {key:<{label_w}}  {val}")
+        if self.key_seed is not None and self.target_delay is not None:
+            from claytonlib.times import get_times
+            base_delay, _ = get_times(self.key_seed)
+            delay_from_key = self.target_delay - base_delay
+            print(f"  {'---'}")
+            print(f"  {'delay_from_key':<{label_w}}  {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -269,25 +281,60 @@ class Flow:
             return
         reg = _build_strategy_registry()
         names = list(reg)
-        print(f"  Strategies: {', '.join(names)}")
+        print("  Strategies:")
+        for i, name in enumerate(names, 1):
+            print(f"    {i}. {name}")
         while True:
-            name = input("Strategy name: ").strip()
-            if name in reg:
-                self.strategy_name = name
+            raw = input("  Strategy (number or name): ").strip()
+            try:
+                idx = int(raw)
+                if 1 <= idx <= len(names):
+                    self.strategy_name = names[idx - 1]
+                    return
+                print(f"  Enter a number 1-{len(names)}.")
+                continue
+            except ValueError:
+                pass
+            if raw in reg:
+                self.strategy_name = raw
                 return
-            print(f"  Unknown strategy {name!r}.")
+            print(f"  Unknown strategy {raw!r}.")
 
     def _ensure_criteria(self) -> None:
         if self.criteria_name is not None:
             return
         reg = _build_criteria_registry()
-        names = list(reg) + ["machete-<turns>-turns-after-<n>-balls"]
-        print(f"  Criteria: {', '.join(names)}")
+        names = list(reg)
+        print("  Criteria:")
+        for i, name in enumerate(names, 1):
+            print(f"    {i}. {name}")
+        custom_idx = len(names) + 1
+        print(f"    {custom_idx}. machete (custom)  —  prompts for turns and balls")
         while True:
-            name = input("Criteria name: ").strip()
+            raw = input("  Criteria (number or name): ").strip()
             try:
-                _resolve_criteria(name)
-                self.criteria_name = name
+                idx = int(raw)
+                if 1 <= idx <= len(names):
+                    self.criteria_name = names[idx - 1]
+                    return
+                if idx == custom_idx:
+                    turns = self._prompt_int("  Machete turns: ")
+                    balls = self._prompt_int("  Balls before machete: ")
+                    name = f"machete-{turns}-turns-after-{balls}-balls"
+                    try:
+                        _resolve_criteria(name)
+                        self.criteria_name = name
+                        return
+                    except ValueError as e:
+                        print(f"  {e}")
+                    continue
+                print(f"  Enter a number 1-{custom_idx}.")
+                continue
+            except ValueError:
+                pass
+            try:
+                _resolve_criteria(raw)
+                self.criteria_name = raw
                 return
             except ValueError as e:
                 print(f"  {e}")
@@ -295,12 +342,45 @@ class Flow:
     def _ensure_eval_strategy(self) -> None:
         if self.eval_strategy_name is not None:
             return
-        print("  Evaluation strategy examples: sliding_window_9, sliding_window_15, normal_3")
+        print("  Evaluation strategies:")
+        for i, (key, desc) in enumerate(_EVAL_TYPES, 1):
+            print(f"    {i}. {key}  —  {desc}")
+        print("  (Or enter a full name like sliding_window_9 or normal_3.0)")
         while True:
-            name = input("Evaluation strategy: ").strip()
+            raw = input("  Eval strategy (number or full name): ").strip()
             try:
-                _resolve_eval_strategy(name)
-                self.eval_strategy_name = name
+                idx = int(raw)
+                if 1 <= idx <= len(_EVAL_TYPES):
+                    key, _ = _EVAL_TYPES[idx - 1]
+                    if key == "sliding_window":
+                        while True:
+                            n = self._prompt_int("  Window size (odd integer, e.g. 9): ")
+                            name = f"sliding_window_{n}"
+                            try:
+                                _resolve_eval_strategy(name)
+                                self.eval_strategy_name = name
+                                return
+                            except ValueError as e:
+                                print(f"  {e}")
+                    else:  # normal
+                        while True:
+                            s_raw = input("  Sigma frames (e.g. 3.0): ").strip()
+                            try:
+                                sigma = float(s_raw)
+                                name = f"normal_{sigma:g}"
+                                _resolve_eval_strategy(name)
+                                self.eval_strategy_name = name
+                                return
+                            except ValueError as e:
+                                print(f"  {e}")
+                    continue
+                print(f"  Enter a number 1-{len(_EVAL_TYPES)}.")
+                continue
+            except ValueError:
+                pass
+            try:
+                _resolve_eval_strategy(raw)
+                self.eval_strategy_name = raw
                 return
             except ValueError as e:
                 print(f"  {e}")
@@ -327,6 +407,83 @@ class Flow:
             "Compass metronome history size (0 to disable): "
         )
 
+    def _prompt_target_delay(self) -> None:
+        self.target_delay = self._prompt_int("Target delay (frames): ")
+
+    def _prompt_initial_time(self) -> None:
+        while True:
+            raw = input("Initial time (YYYY-MM-DD HH:MM:SS): ").strip()
+            try:
+                self.initial_time = dt.datetime.strptime(raw, '%Y-%m-%d %H:%M:%S').isoformat()
+                return
+            except ValueError:
+                print("  Use format YYYY-MM-DD HH:MM:SS.")
+
+    # ------------------------------------------------------------------
+    # adjust
+    # ------------------------------------------------------------------
+
+    # Ordered list of (field_name, display_label, clear_attr, setter_method_name)
+    _ADJUSTABLE_FIELDS = [
+        ("pokemon_name",              "pokemon",            "pokemon_name",              "_ensure_pokemon"),
+        ("key_seed",                  "key_seed",           "key_seed",                  "_ensure_key_seed"),
+        ("setup_delay_seconds",       "setup_delay_s",      "setup_delay_seconds",       "_ensure_setup_delay_seconds"),
+        ("max_target_seconds",        "max_target_s",       "max_target_seconds",        "_ensure_max_target_seconds"),
+        ("strategy_name",             "strategy",           "strategy_name",             "_ensure_strategy"),
+        ("criteria_name",             "criteria",           "criteria_name",             "_ensure_criteria"),
+        ("eval_strategy_name",        "eval_strategy",      "eval_strategy_name",        "_ensure_eval_strategy"),
+        ("window",                    "window",             "window",                    "_ensure_window"),
+        ("target_delay",              "target_delay",       "target_delay",              "_prompt_target_delay"),
+        ("initial_time",              "initial_time",       "initial_time",              "_prompt_initial_time"),
+        ("compass_metronome_histsize","metronome_histsz",   "compass_metronome_histsize","_ensure_metronome_histsize"),
+    ]
+
+    def adjust(self, **kwargs) -> None:
+        """Change one or more already-set fields.
+
+        Keyword form:  flow.adjust(criteria_name="only-balls")
+        Interactive:   flow.adjust()  — prompts for which field to change.
+        """
+        if kwargs:
+            valid = {f for f, *_ in self._ADJUSTABLE_FIELDS}
+            for key, val in kwargs.items():
+                if key not in valid:
+                    raise ValueError(f"Unknown field {key!r}. Adjustable fields: {sorted(valid)}")
+                setattr(self, key, val)
+                print(f"[flow] {key} = {val!r}")
+            return
+
+        # Interactive
+        label_w = max(len(lbl) for _, lbl, *_ in self._ADJUSTABLE_FIELDS)
+        print("Fields:")
+        for i, (attr, lbl, _, _) in enumerate(self._ADJUSTABLE_FIELDS, 1):
+            val = getattr(self, attr)
+            if attr == "key_seed" and val is not None:
+                display = f"0x{val:08X}"
+            else:
+                display = val if val is not None else "(not set)"
+            print(f"  {i:2}. {lbl:<{label_w}}  {display}")
+
+        while True:
+            raw = input("Field to change (number or name): ").strip()
+            match = None
+            try:
+                idx = int(raw)
+                if 1 <= idx <= len(self._ADJUSTABLE_FIELDS):
+                    match = self._ADJUSTABLE_FIELDS[idx - 1]
+            except ValueError:
+                for entry in self._ADJUSTABLE_FIELDS:
+                    if raw in (entry[0], entry[1]):
+                        match = entry
+                        break
+            if match is None:
+                print(f"  Unrecognised {raw!r}.")
+                continue
+            attr, lbl, clear_attr, setter = match
+            setattr(self, clear_attr, None)
+            getattr(self, setter)()
+            break
+
     def _get_chart_input(self):
         from claytonlib.chart import ChartSafariInput
         from claytonlib.safari import safari_pokemon_by_name
@@ -339,13 +496,31 @@ class Flow:
             pokemon=safari_pokemon_by_name(self.pokemon_name),
         )
 
+    def _eval_filename_override(self, eval_strat, chart_dir) -> str | None:
+        """Return the eval JSON basename override when max_target_seconds truncates chains."""
+        if self.max_target_seconds is None or self.setup_delay_seconds is None:
+            return None
+        from claytonlib.chart.chain import LocalChainStore
+        store = LocalChainStore()
+        chain_paths = [
+            p for p in store.list_chain_files(chart_dir)
+            if int(p.stem.split('+')[1]) == self.setup_delay_seconds
+        ]
+        if not chain_paths:
+            return None
+        eval_max_links = self.max_target_seconds - self.setup_delay_seconds + 1
+        full_links = store.file_size(chain_paths[0]) // 8
+        if eval_max_links >= full_links:
+            return None
+        return f"{eval_strat.filename}_MAX_{self.max_target_seconds}s"
+
     # ------------------------------------------------------------------
     # chart_safari
     # ------------------------------------------------------------------
 
     def chart_safari(self) -> None:
         """Chart seeds for this pokemon. Prompts for missing config fields."""
-        print("[flow] === chart_safari ===")
+        print(f"[flow] === chart_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_setup_delay_seconds()
@@ -367,7 +542,7 @@ class Flow:
 
     def evaluate_chart(self) -> None:
         """Evaluate the chart. Runs chart_safari() first if needed."""
-        print("[flow] === evaluate_chart ===")
+        print(f"[flow] === evaluate_chart ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self.chart_safari()
         self._ensure_eval_strategy()
 
@@ -375,7 +550,7 @@ class Flow:
         inputs = self._get_chart_input()
         eval_strat = _resolve_eval_strategy(self.eval_strategy_name)
         print(f"[flow] Evaluating with strategy={self.eval_strategy_name}")
-        _evaluate_chart(inputs, eval_strat)
+        _evaluate_chart(inputs, eval_strat, eval_max_seconds=self.max_target_seconds)
         print("[flow] evaluate_chart complete.")
 
     # ------------------------------------------------------------------
@@ -384,7 +559,7 @@ class Flow:
 
     def choose_target(self) -> None:
         """Present top10/best10 results and prompt the user to pick a target."""
-        print("[flow] === choose_target ===")
+        print(f"[flow] === choose_target ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self.evaluate_chart()
 
         from claytonlib.chart import _output_dir
@@ -394,7 +569,7 @@ class Flow:
         inputs = self._get_chart_input()
         chart_dir = _output_dir(inputs)
         eval_strat = _resolve_eval_strategy(self.eval_strategy_name)
-        data = read_evaluation(chart_dir, eval_strat)
+        data = read_evaluation(chart_dir, eval_strat, filename_override=self._eval_filename_override(eval_strat, chart_dir))
 
         if data is None or (not data.top10 and not data.best10):
             print("[flow] No evaluation data found. Run evaluate_chart() first.")
@@ -402,20 +577,34 @@ class Flow:
 
         base_delay, _ = get_times(self.key_seed)
 
-        def _fmt(r) -> str:
+        def _make_row(label: str, r) -> tuple:
             prob = eval_strat.score_to_probability(r.score)
-            delay_s = (r.delay - base_delay) / 60
-            return f"score={r.score}({prob*100:.1f}%)  delay={r.delay}  time={r.time}  +{delay_s:.2f}s"
+            delay_from_key_s = (r.delay - base_delay) / 60
+            return (label, str(r.score), f"{prob*100:.1f}%", str(r.delay), r.time, f"+{delay_from_key_s:.2f}s")
+
+        headers = ("", "score", "prob", "delay", "time", "+key_s")
+        top_rows  = [_make_row(f"t{i}", r) for i, r in enumerate(data.top10, 1)]
+        best_rows = [_make_row(f"b{i}", r) for i, r in enumerate(data.best10, 1)]
+        all_rows  = top_rows + best_rows
+
+        col_w = [
+            max(len(headers[c]), max((len(row[c]) for row in all_rows), default=0))
+            for c in range(len(headers))
+        ]
+
+        def _fmt_row(row: tuple) -> str:
+            return "  " + "  ".join(f"{v:<{col_w[ci]}}" for ci, v in enumerate(row))
+
+        def _print_table(title: str, rows: list) -> None:
+            print(title)
+            print(_fmt_row(headers))
+            for row in rows:
+                print(_fmt_row(row))
 
         print()
-        print("Top 10 (t1-t10):")
-        for i, r in enumerate(data.top10, 1):
-            print(f"  t{i:<2} {_fmt(r)}")
-
+        _print_table("Top 10 (t1-t10):", top_rows)
         print()
-        print("Best 10 (b1-b10):")
-        for i, r in enumerate(data.best10, 1):
-            print(f"  b{i:<2} {_fmt(r)}")
+        _print_table("Best 10 (b1-b10):", best_rows)
 
         # Build lookup: label -> CrossChainResult
         options: dict[str, object] = {}
@@ -436,7 +625,9 @@ class Flow:
                 time_str = r.chain.split('+')[0]
                 parsed = dt.datetime.strptime(time_str, '%Y-%m-%d_%H-%M-%S')
                 self.initial_time = parsed.isoformat()
+                delay_from_key = self.target_delay - base_delay
                 print(f"[flow] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
+                print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
                 return
             # Try as hex seed
             try:
@@ -450,7 +641,9 @@ class Flow:
                 self.target_delay = int(raw_delay)
                 raw_time = input("  Initial time (YYYY-MM-DD HH:MM:SS): ").strip()
                 self.initial_time = dt.datetime.strptime(raw_time, '%Y-%m-%d %H:%M:%S').isoformat()
+                delay_from_key = self.target_delay - base_delay
                 print(f"[flow] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
+                print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
                 return
             except ValueError:
                 pass
@@ -462,7 +655,7 @@ class Flow:
 
     def compass_safari(self) -> None:
         """Run compass_safari using stored config. Saves resulting seeds."""
-        print("[flow] === compass_safari ===")
+        print(f"[flow] === compass_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_strategy()
@@ -476,6 +669,11 @@ class Flow:
             compass_safari as _compass_safari,
             CompassSafariInput,
         )
+        from claytonlib.times import get_times
+
+        base_delay, _ = get_times(self.key_seed)
+        delay_from_key = self.target_delay - base_delay
+        print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
         inputs = CompassSafariInput(
@@ -504,7 +702,7 @@ class Flow:
 
     def compass_metronome(self) -> None:
         """Run compass_metronome using stored config. (History saving: stub.)"""
-        print("[flow] === compass_metronome ===")
+        print(f"[flow] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
         self._ensure_target()
@@ -515,6 +713,11 @@ class Flow:
             CompassMetronomeInput,
             MetronomeOpponent,
         )
+        from claytonlib.times import get_times
+
+        base_delay, _ = get_times(self.key_seed)
+        delay_from_key = self.target_delay - base_delay
+        print(f"[flow] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
         inputs = CompassMetronomeInput(
@@ -575,7 +778,7 @@ class Flow:
 
     def machete_one(self) -> None:
         """Find shortest capture path for the chosen seed via BFS."""
-        print("[flow] === machete_one ===")
+        print(f"[flow] === machete_one ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         seed_hex = self._pick_seed()
         seed = int(seed_hex, 16)
@@ -597,7 +800,7 @@ class Flow:
 
     def machete_all(self) -> None:
         """Find all capture paths for the chosen seed via DFS."""
-        print("[flow] === machete_all ===")
+        print(f"[flow] === machete_all ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         seed_hex = self._pick_seed()
         seed = int(seed_hex, 16)
@@ -623,7 +826,7 @@ class Flow:
 
     def machete_jane(self) -> None:
         """Run Jane (optimal decision tree) across all target seeds."""
-        print("[flow] === machete_jane ===")
+        print(f"[flow] === machete_jane ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         if not self.target_seeds:
             raise RuntimeError("No target_seeds set. Run compass_safari() first.")
