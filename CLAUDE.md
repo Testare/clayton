@@ -33,6 +33,7 @@ The main library is `claytonlib/`, which auto-exports all public names via `__in
 
 ### Key conventions
 
+- **Terminology**: "Delays" are the fundamental unit — the delay counter increments once per hardware VBlank at ~59.8261 Hz. "Frames" are game frames, which occur approximately every 2 delays (~29.913/sec). The codebase is being migrated from the incorrect assumption of 60 delays/second to the correct 59.8261.
 - **Delay is always absolute** (not relative to setup_delay).
 - **Two seeds per delay** for frame j>0: one where the second hasn't ticked, one where it has.
 - **RNG**: `advance_rng(state) = (state * 1103515245 + 24691) & 0xFFFFFFFF` (standard LCRNG).

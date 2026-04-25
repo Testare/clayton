@@ -121,7 +121,7 @@ def machete_x_turns_n_balls_criteria(turns: int, n_balls: int) -> SuccessCriteri
 
 @dataclass
 class ChartConfig:
-    evaluation_frames_per_write_cycle: int = 60
+    evaluation_frames_per_write_cycle: int = 30
     resume_validation_enabled: bool = False
     resume_validation_frames: int = 2
     resume_strict: bool = False  # True = raise on mismatch, False = warn and continue
@@ -227,9 +227,12 @@ def _initialize_writers(inputs: ChartSafariInput, store) -> tuple:
     writers = []
     for path, time, _ in incomplete:
         start_offset = inputs.setup_delay_seconds + already_written
+        from claytonlib.chart.evaluation import delay_at_second
+        start_delay = delay_at_second(delay, start_offset)
         gen = chain_at_time(
             time + dt.timedelta(seconds=start_offset),
-            delay + start_offset * 60,
+            start_delay,
+            start_second=start_offset,
         )
         writers.append(ChainWriter(path=path, generator=gen))
 
@@ -245,9 +248,12 @@ def _validate_resume(writers, inputs: ChartSafariInput, store, links_done: int) 
     for writer, time in zip(writers, times):
         # Reconstruct a generator starting n links before the resume point
         recheck_offset = inputs.setup_delay_seconds + links_done - n
+        from claytonlib.chart.evaluation import delay_at_second
+        recheck_delay = delay_at_second(delay, recheck_offset)
         gen = chain_at_time(
             time + dt.timedelta(seconds=recheck_offset),
-            delay + recheck_offset * 60,
+            recheck_delay,
+            start_second=recheck_offset,
         )
         expected = [evaluate_chain_link(next(gen), inputs.pokemon, inputs.strategy, inputs.criteria) for _ in range(n)]
         actual = store.read_tail(writer.path, n)
@@ -335,7 +341,7 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None, eval_max_seco
     """
     import time as time_mod
     from claytonlib.chart.chain import LocalChainStore
-    from claytonlib.chart.evaluation import straighten_chain, _gather_top5, _gather_best
+    from claytonlib.chart.evaluation import straighten_chain, _gather_top5, _gather_best, _build_frame_info
 
     t_start = time_mod.perf_counter()
 
@@ -431,12 +437,13 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None, eval_max_seco
         initial_time = _chain_initial_time(path)
 
         t0 = time_mod.perf_counter()
-        flat = straighten_chain(links)
+        flat = straighten_chain(links, inputs.setup_delay_seconds)
         t1 = time_mod.perf_counter()
         scored = strategy.score(flat)
+        delays_table, link_indices = _build_frame_info(links, base_delay, inputs.setup_delay_seconds)
         t2 = time_mod.perf_counter()
-        top5 = _gather_top5(scored, base_delay, inputs.setup_delay_seconds, initial_time)
-        best5 = _gather_best(scored, base_delay, inputs.setup_delay_seconds, initial_time, n=5)
+        top5 = _gather_top5(scored, delays_table, link_indices, initial_time, inputs.setup_delay_seconds)
+        best5 = _gather_best(scored, delays_table, link_indices, initial_time, inputs.setup_delay_seconds, n=5)
         t3 = time_mod.perf_counter()
 
         data.results[path.name] = ChainEvaluationResult(
@@ -483,7 +490,8 @@ def evaluate_chart_top_10(inputs: ChartSafariInput, strategy, store=None) -> Non
     base_delay, _ = get_times(inputs.key_seed)
 
     def _fmt_time_diff(delay_from_key: int) -> str:
-        total_s = delay_from_key / 60
+        from claytonlib.chart.evaluation import DPS
+        total_s = delay_from_key / DPS
         m = int(total_s) // 60
         s = total_s - m * 60
         return f"{m}m {s:.3f}s"

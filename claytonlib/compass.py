@@ -183,27 +183,45 @@ class CompassSafariInput:
 # Seed generation helpers
 # ---------------------------------------------------------------------------
 
+def _delay_offset_to_second_frame(offset: int) -> tuple[int, int]:
+    """Return (second_idx, frame_j) for a delay offset from base_delay.
+
+    Iterates the variable-width second table to find which second the
+    given delay offset falls in and the frame index within that second.
+    """
+    from claytonlib.chart.evaluation import frames_in_second
+    s = 0
+    cum = 0
+    while True:
+        n = frames_in_second(s)
+        if cum + n * 2 > offset:
+            return s, (offset - cum) // 2
+        cum += n * 2
+        s += 1
+
+
 def _seed_reachable(target_seed: int, target_delay: int, base_delay: int,
                     initial_time: dt.datetime) -> bool:
     offset = target_delay - base_delay
     if offset < 0:
         return False
-    second_idx = offset // 60
-    frame_j = (offset % 60) // 2
+    from claytonlib.chart.evaluation import frames_in_second, delay_at_second
+    second_idx, frame_j = _delay_offset_to_second_frame(offset)
+    n = frames_in_second(second_idx)
     time_at = initial_time + dt.timedelta(seconds=second_idx)
-    f = calculate_seed(time_at, base_delay + second_idx * 60)
-    if f + 2 * frame_j == target_seed:
+    seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
+    if seed_a_base + 2 * frame_j == target_seed:
         return True
-    if frame_j > 0:
-        t2 = calculate_seed(time_at + dt.timedelta(seconds=1),
-                            base_delay + (second_idx + 1) * 60)
-        if t2 - 2 * (30 - frame_j) == target_seed:
-            return True
+    to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
+                             delay_at_second(base_delay, second_idx + 1))
+    if to_seed - 2 * (n - frame_j) == target_seed:
+        return True
     return False
 
 
 def _generate_candidates(inputs: CompassSafariInput) -> list[tuple]:
     """Return sorted (SafariContext, seed, delay) triples for the search window."""
+    from claytonlib.chart.evaluation import frames_in_second, delay_at_second
     base_delay, _ = get_times(inputs.key_seed)
     results: list[tuple] = []
     # Only iterate delays on valid frame boundaries (spacing = 2, same parity as base_delay).
@@ -215,23 +233,22 @@ def _generate_candidates(inputs: CompassSafariInput) -> list[tuple]:
         offset = d - base_delay
         if offset < 0:
             continue
-        second_idx = offset // 60
-        frame_j = (offset % 60) // 2
+        second_idx, frame_j = _delay_offset_to_second_frame(offset)
+        n = frames_in_second(second_idx)
         time_at = inputs.initial_time + dt.timedelta(seconds=second_idx)
-        f = calculate_seed(time_at, base_delay + second_idx * 60)
+        seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
 
-        seed_a = f + 2 * frame_j
+        seed_a = seed_a_base + 2 * frame_j
         ctx = SafariContext.start_encounter(seed_a, inputs.pokemon)
         ctx.balls_remaining = _config.starting_ball_count
         results.append((ctx, seed_a, d))
 
-        if frame_j > 0:
-            t2 = calculate_seed(time_at + dt.timedelta(seconds=1),
-                                base_delay + (second_idx + 1) * 60)
-            seed_b = t2 - 2 * (30 - frame_j)
-            ctx = SafariContext.start_encounter(seed_b, inputs.pokemon)
-            ctx.balls_remaining = _config.starting_ball_count
-            results.append((ctx, seed_b, d))
+        to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
+                                 delay_at_second(base_delay, second_idx + 1))
+        seed_b = to_seed - 2 * (n - frame_j)
+        ctx = SafariContext.start_encounter(seed_b, inputs.pokemon)
+        ctx.balls_remaining = _config.starting_ball_count
+        results.append((ctx, seed_b, d))
 
     results.sort(key=lambda x: (x[2], x[1]))
     return results

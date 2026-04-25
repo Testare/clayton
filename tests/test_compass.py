@@ -309,11 +309,11 @@ class TestGenerateCandidates(unittest.TestCase):
         for _, _, d in cands:
             self.assertEqual((d - BASE_DELAY) % 2, 0)
 
-    def test_frame0_delay_has_one_seed(self):
-        # A delay where (delay - base) % 60 == 0 → frame_j = 0 → one seed
+    def test_frame0_delay_has_two_seeds(self):
+        # A delay at frame_j = 0 now generates both seed_a and seed_b
         frame0_delay = BASE_DELAY + 10 * 60  # exactly frame 0 of second 10
         cands, _ = self._candidates(target_delay=frame0_delay, window=0)
-        self.assertEqual(len(cands), 1)
+        self.assertEqual(len(cands), 2)
 
     def test_nonzero_frame_delay_has_two_seeds(self):
         # A delay where frame_j > 0 → two seeds
@@ -325,11 +325,11 @@ class TestGenerateCandidates(unittest.TestCase):
     def test_seeds_are_correct_at_frame0(self):
         frame0_delay = BASE_DELAY + 10 * 60
         cands, _ = self._candidates(target_delay=frame0_delay, window=0)
-        _, seed, _ = cands[0]
+        seeds = [s for _, s, _ in cands]
         second_idx = 10
         time_at = TIME_A + dt.timedelta(seconds=second_idx)
         expected = calculate_seed(time_at, BASE_DELAY + second_idx * 60)
-        self.assertEqual(seed, expected)
+        self.assertIn(expected, seeds)
 
     def test_starting_ball_count_applied(self):
         from claytonlib.compass import compass_config

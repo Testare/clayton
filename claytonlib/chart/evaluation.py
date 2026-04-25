@@ -2,10 +2,8 @@
 evaluation.py — Chart evaluation tools.
 
 Reads completed chain files and ranks individual frames by success likelihood.
-Each link in a chain file is a 64-bit bitmask covering 30 frames × 2 seeds:
-bits 2j and 2j+1 belong to frame j (0-29). The actual delay for frame j in
-link i is:
-    base_delay + (setup_delay_seconds + i) * 60 + j * 2
+Each link in a chain file is a 64-bit bitmask. Bits 2j and 2j+1 belong to
+frame j. Bit 62 is the width flag: 0 = 30-frame link, 1 = 29-frame link.
 """
 
 import datetime as dt
@@ -16,8 +14,45 @@ from pathlib import Path
 from typing import Protocol
 
 
-FRAMES_PER_LINK = 30
-SEEDS_PER_LINK  = 60   # 2 per frame
+# ---------------------------------------------------------------------------
+# Frame rate constants and helpers
+# ---------------------------------------------------------------------------
+
+DPS      = 59.8261        # hardware VBlank rate (delays per second)
+FPS      = DPS / 2        # game frames per second (~29.91305)
+FPS_CEIL = 30             # ceil(FPS)
+OFPS     = FPS_CEIL - FPS # fractional frames missed per second (~0.08695)
+SPF      = 1.0 / FPS      # seconds per frame
+_FPS_FRAC = FPS % 1       # threshold for 29-frame seconds (~0.91305)
+
+
+def offset_frames(s: int) -> float:
+    """Fractional frame offset accumulated by the start of second s."""
+    return (s * OFPS) % 1.0
+
+
+def frames_in_second(s: int) -> int:
+    """Number of game frames in second s (29 or 30)."""
+    return 30 if offset_frames(s) < _FPS_FRAC else 29
+
+
+def cumulative_frames(s: int) -> int:
+    """Total game frames elapsed before second s."""
+    return sum(frames_in_second(k) for k in range(s))
+
+
+def delay_at_second(base_delay: int, s: int) -> int:
+    """Delay value at the start of second s."""
+    return base_delay + 2 * cumulative_frames(s)
+
+
+MAX_FRAMES_PER_LINK = 30
+
+_WIDTH_BIT = 62  # bit 62 of the packed bitmask flags a 29-frame link
+
+
+def _link_n_frames(link: int) -> int:
+    return 29 if (link >> _WIDTH_BIT) & 1 else 30
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +122,10 @@ class EvaluationStrategy(Protocol):
         ----------
         links:
             Per-link bitmasks in order. Bit 2j and 2j+1 of links[i] indicate
-            whether seeds for frame j of link i led to success.
+            whether seeds for frame j of link i led to success. Bit 62 flags
+            29-frame links (0 = 30 frames, 1 = 29 frames).
         base_delay:
-            The delay value from get_times(key_seed)[0]. The delay for frame j
-            of link i is: base_delay + (setup_delay_seconds + i) * 60 + j * 2
+            The delay value from get_times(key_seed)[0].
         setup_delay_seconds:
             Seconds between key seed and the first link (link 0).
         initial_time:
@@ -104,34 +139,71 @@ class EvaluationStrategy(Protocol):
 # Straightening helpers
 # ---------------------------------------------------------------------------
 
-def straighten_link(link: int) -> list[float]:
-    """Convert a 64-bit link bitmask into 30 per-frame probability scores.
+def straighten_link(link: int, s: int) -> list[float]:
+    """Convert a packed link bitmask into per-frame probability scores.
 
-    For frame j, bit 2j represents the seed that assumes the player is still
-    in the current second (weight (30-j)/30) and bit 2j+1 represents the seed
-    that assumes the second has already advanced (weight j/30).
+    Parameters
+    ----------
+    link:
+        64-bit bitmask. Bit 62 = width flag (1 → 29 frames, 0 → 30 frames).
+        For frame j: bit 2j = seed_a result, bit 2j+1 = seed_b result.
+    s:
+        The second index of this link (0-based from key seed).
+        Used to compute the weight for the seed_b (next-second) contribution.
     """
+    n = _link_n_frames(link)
+    off = offset_frames(s)
     scores = []
-    for j in range(FRAMES_PER_LINK):
+    for j in range(n):
         bit0 = (link >> (2 * j)) & 1
         bit1 = (link >> (2 * j + 1)) & 1
-        scores.append(bit0 * (30 - j) / 30 + bit1 * j / 30)
+        wb = min(1.0, SPF * (j + off))
+        wa = 1.0 - wb
+        scores.append(bit0 * wa + bit1 * wb)
     return scores
 
 
-def straighten_chain(links: list[int]) -> list[float]:
-    """Flatten all links into a single per-frame score list (length = 30 * len(links))."""
+def straighten_chain(links: list[int], setup_delay_seconds: int) -> list[float]:
+    """Flatten all links into a single per-frame score list."""
     flat = []
-    for link in links:
-        flat.extend(straighten_link(link))
+    for i, link in enumerate(links):
+        flat.extend(straighten_link(link, setup_delay_seconds + i))
     return flat
 
 
-def _make_top_result(flat_idx: int, score: float, base_delay: int,
-                     setup_delay_seconds: int, initial_time: dt.datetime) -> TopResult:
-    link_idx = flat_idx // FRAMES_PER_LINK
-    frame_idx = flat_idx % FRAMES_PER_LINK
-    delay = base_delay + (setup_delay_seconds + link_idx) * 60 + frame_idx * 2
+def _build_frame_info(
+    links: list[int],
+    base_delay: int,
+    setup_delay_seconds: int,
+) -> tuple[list[int], list[int]]:
+    """Return (delays, link_indices) lists, one entry per flat frame.
+
+    delays[i]       — the delay value for flat frame i
+    link_indices[i] — which link (0-based within links[]) flat frame i belongs to
+    """
+    delays: list[int] = []
+    link_indices: list[int] = []
+    cum = cumulative_frames(setup_delay_seconds)
+    link_cum = 0
+    for idx, link in enumerate(links):
+        n = _link_n_frames(link)
+        for j in range(n):
+            delays.append(base_delay + 2 * (cum + link_cum + j))
+            link_indices.append(idx)
+        link_cum += n
+    return delays, link_indices
+
+
+def _make_top_result(
+    flat_idx: int,
+    score: float,
+    delays: list[int],
+    link_indices: list[int],
+    initial_time: dt.datetime,
+    setup_delay_seconds: int,
+) -> TopResult:
+    delay = delays[flat_idx]
+    link_idx = link_indices[flat_idx]
     time_str = (
         initial_time + dt.timedelta(seconds=setup_delay_seconds + link_idx)
     ).strftime("%H:%M:%S")
@@ -140,37 +212,37 @@ def _make_top_result(flat_idx: int, score: float, base_delay: int,
 
 def _gather_top5(
     scored: list[float],
-    base_delay: int,
-    setup_delay_seconds: int,
+    delays: list[int],
+    link_indices: list[int],
     initial_time: dt.datetime,
+    setup_delay_seconds: int,
 ) -> list[TopResult]:
     """Pick the top 5 frames by score. Ties broken by ascending delay."""
     top_indices = sorted(range(len(scored)), key=lambda i: (-scored[i], i))[:5]
-    return [_make_top_result(i, scored[i], base_delay, setup_delay_seconds, initial_time)
-            for i in top_indices]
+    return [
+        _make_top_result(i, scored[i], delays, link_indices, initial_time, setup_delay_seconds)
+        for i in top_indices
+    ]
 
 
 def _gather_best(
     scored: list[float],
-    base_delay: int,
-    setup_delay_seconds: int,
+    delays: list[int],
+    link_indices: list[int],
     initial_time: dt.datetime,
+    setup_delay_seconds: int,
     n: int,
 ) -> list[TopResult]:
-    """Pick up to n results where each successive result has a strictly lower delay
-    than the previous, always choosing the highest score available at that constraint.
+    """Pick up to n results where each successive result has a strictly lower delay.
 
     Result 1 is the global best score. Result 2 is the best score among frames with
     delay strictly below result 1's delay, and so on. Ties on score are broken by
     lowest delay (to leave the most room for subsequent results).
     """
-    # Build (delay, score, flat_idx) for all frames with a non-zero score.
     candidates = [
-        (base_delay + (i // FRAMES_PER_LINK + setup_delay_seconds) * 60 + (i % FRAMES_PER_LINK) * 2,
-         s, i)
+        (delays[i], s, i)
         for i, s in enumerate(scored) if s > 0
     ]
-
     results = []
     max_delay = None
     for _ in range(n):
@@ -178,7 +250,7 @@ def _gather_best(
         if not pool:
             break
         delay, score, flat_idx = max(pool, key=lambda c: (c[1], -c[0]))
-        results.append(_make_top_result(flat_idx, score, base_delay, setup_delay_seconds, initial_time))
+        results.append(_make_top_result(flat_idx, score, delays, link_indices, initial_time, setup_delay_seconds))
         max_delay = delay
     return results
 
@@ -231,9 +303,10 @@ class SlidingWindowSum:
         setup_delay_seconds: int,
         initial_time: dt.datetime,
     ) -> list[TopResult]:
-        flat = straighten_chain(links)
+        delays, link_indices = _build_frame_info(links, base_delay, setup_delay_seconds)
+        flat = straighten_chain(links, setup_delay_seconds)
         scored = self.score(flat)
-        return _gather_top5(scored, base_delay, setup_delay_seconds, initial_time)
+        return _gather_top5(scored, delays, link_indices, initial_time, setup_delay_seconds)
 
 
 class NormalWindow:
@@ -286,9 +359,10 @@ class NormalWindow:
         setup_delay_seconds: int,
         initial_time: dt.datetime,
     ) -> list[TopResult]:
-        flat = straighten_chain(links)
+        delays, link_indices = _build_frame_info(links, base_delay, setup_delay_seconds)
+        flat = straighten_chain(links, setup_delay_seconds)
         scored = self.score(flat)
-        return _gather_top5(scored, base_delay, setup_delay_seconds, initial_time)
+        return _gather_top5(scored, delays, link_indices, initial_time, setup_delay_seconds)
 
 
 # ---------------------------------------------------------------------------

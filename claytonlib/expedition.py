@@ -16,6 +16,26 @@ import re
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# CheckConfig
+# ---------------------------------------------------------------------------
+
+class CheckConfig:
+    """Persistent configuration for the CheckHelper utilities."""
+
+    def __init__(self):
+        self.target_window: int = 30
+
+    def _to_dict(self) -> dict:
+        return {'target_window': self.target_window}
+
+    @classmethod
+    def _from_dict(cls, data: dict) -> 'CheckConfig':
+        cfg = cls()
+        cfg.target_window = data.get('target_window', 30)
+        return cfg
+
+
+# ---------------------------------------------------------------------------
 # Strategy / criteria name registry
 # ---------------------------------------------------------------------------
 
@@ -135,6 +155,9 @@ class Expedition:
         self.compass_metronome_histsize: int | None = None
         self.compass_m_history:          list       = []
 
+        # Check utilities
+        self.check_config: CheckConfig = CheckConfig()
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
@@ -156,6 +179,7 @@ class Expedition:
             'target_seeds_path':        self.target_seeds_path,
             'compass_metronome_histsize': self.compass_metronome_histsize,
             'compass_m_history':        self.compass_m_history,
+            'check':                    self.check_config._to_dict(),
         }
 
     @classmethod
@@ -175,6 +199,7 @@ class Expedition:
         f.target_seeds_path        = data.get('target_seeds_path')
         f.compass_metronome_histsize = data.get('compass_metronome_histsize')
         f.compass_m_history        = data.get('compass_m_history') or []
+        f.check_config             = CheckConfig._from_dict(data.get('check') or {})
         return f
 
     @classmethod
@@ -841,3 +866,158 @@ class Expedition:
         ]
         print(f"[expedition] Running machete_jane across {len(candidates)} seed(s) ...")
         _machete_jane(candidates, pokemon=pokemon, interactive=True)
+
+    # ------------------------------------------------------------------
+    # check
+    # ------------------------------------------------------------------
+
+    def check(self) -> 'CheckHelper':
+        """Return a CheckHelper for validating implementation against this expedition's config."""
+        return CheckHelper(self)
+
+
+# ---------------------------------------------------------------------------
+# CheckHelper
+# ---------------------------------------------------------------------------
+
+class CheckHelper:
+    """Validation utilities for an Expedition. Returned by Expedition.check()."""
+
+    def __init__(self, expedition: Expedition):
+        self._exp = expedition
+
+    @property
+    def check_config(self) -> CheckConfig:
+        return self._exp.check_config
+
+    def chart_check_target_window(self, window: int | None = None) -> None:
+        """Show per-delay seed evaluation and sliding window scores around the target delay.
+
+        For each delay in [target_delay - window, ..., target_delay + window] (step 2),
+        displays:
+          - delay value and signed delta from target
+          - second index (s), frame index within that second (j), frames in that second (n)
+          - clock time (HH:MM:SS) at that second
+          - seconds elapsed from key seed (3 decimal places)
+          - seed_a and seed_b values with pass/fail under expedition strategy/criteria
+          - straightened (blended) score: eval_a * wa + eval_b * wb
+          - sliding window score from the expedition eval strategy
+
+        Parameters
+        ----------
+        window:
+            Number of delays on each side to examine.
+            Falls back to check_config.target_window (default 30).
+        """
+        exp = self._exp
+        cfg = exp.check_config
+
+        if window is None:
+            window = cfg.target_window
+
+        # Validate prerequisites
+        missing = [
+            label for attr, label in [
+                ('key_seed',           'key_seed'),
+                ('target_delay',       'target_delay'),
+                ('initial_time',       'initial_time'),
+                ('pokemon_name',       'pokemon_name'),
+                ('strategy_name',      'strategy_name'),
+                ('criteria_name',      'criteria_name'),
+                ('eval_strategy_name', 'eval_strategy_name'),
+            ] if getattr(exp, attr) is None
+        ]
+        if missing:
+            raise RuntimeError(f"check: expedition fields not set: {', '.join(missing)}")
+
+        from claytonlib.chart import evaluate_seed
+        from claytonlib.chart.evaluation import (
+            DPS, SPF, frames_in_second, offset_frames, delay_at_second,
+        )
+        from claytonlib.compass import _delay_offset_to_second_frame
+        from claytonlib.safari import safari_pokemon_by_name
+        from claytonlib.times import get_times, calculate_seed
+
+        base_delay, _ = get_times(exp.key_seed)
+        initial_time = dt.datetime.fromisoformat(exp.initial_time)
+        pokemon = safari_pokemon_by_name(exp.pokemon_name)
+        strategy = _resolve_strategy(exp.strategy_name)
+        criteria = _resolve_criteria(exp.criteria_name)
+        eval_strat = _resolve_eval_strategy(exp.eval_strategy_name)
+
+        # Build delay range: step 2, aligned to base_delay parity, clipped to >= base_delay
+        start = exp.target_delay - window
+        if (start - base_delay) % 2 != 0:
+            start += 1
+        delays = [d for d in range(start, exp.target_delay + window + 1, 2)
+                  if d >= base_delay]
+
+        # Per-frame evaluation
+        rows = []
+        straight_scores = []
+        for d in delays:
+            offset = d - base_delay
+            second_idx, frame_j = _delay_offset_to_second_frame(offset)
+            n = frames_in_second(second_idx)
+            time_at = initial_time + dt.timedelta(seconds=second_idx)
+
+            seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
+            seed_a = seed_a_base + 2 * frame_j
+
+            to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
+                                     delay_at_second(base_delay, second_idx + 1))
+            seed_b = to_seed - 2 * (n - frame_j)
+
+            eval_a = evaluate_seed(seed_a, pokemon, strategy, criteria)
+            eval_b = evaluate_seed(seed_b, pokemon, strategy, criteria)
+
+            off = offset_frames(second_idx)
+            wb = min(1.0, SPF * (frame_j + off))
+            wa = 1.0 - wb
+            straight = eval_a * wa + eval_b * wb
+
+            rows.append({
+                'delay':      d,
+                'delta':      d - exp.target_delay,
+                'second_idx': second_idx,
+                'frame_j':    frame_j,
+                'n':          n,
+                'time':       time_at.strftime("%H:%M:%S"),
+                'key_s':      offset / DPS,
+                'seed_a':     seed_a,
+                'eval_a':     eval_a,
+                'seed_b':     seed_b,
+                'eval_b':     eval_b,
+                'straight':   straight,
+            })
+            straight_scores.append(straight)
+
+        # Apply sliding window across the local frame range
+        windowed = eval_strat.score(straight_scores)
+
+        # Print
+        header = (
+            f"{'Delay':>7}  {'Δ':>5}  {'s':>4}  {'j':>3}  {'n':>2}  "
+            f"{'Time':>8}  {'key_s':>9}  "
+            f"{'seed_a':>10}  {'A'}  {'seed_b':>10}  {'B'}  "
+            f"{'raw':>6}  {'score':>7}"
+        )
+        print(f"\nchart_check_target_window  ±{window} delays  eval={exp.eval_strategy_name}")
+        print(f"key_seed=0x{exp.key_seed:08X}  base_delay={base_delay}  "
+              f"target_delay={exp.target_delay}  initial_time={exp.initial_time}")
+        print(header)
+        print("-" * len(header))
+
+        for row, wscore in zip(rows, windowed):
+            delta_str = f"{row['delta']:+d}" if row['delta'] != 0 else "  0"
+            score_str = f"{wscore:7.3f}" if wscore > 0 else "      -"
+            marker = "  ←" if row['delay'] == exp.target_delay else ""
+            print(
+                f"{row['delay']:>7}  {delta_str:>5}  "
+                f"{row['second_idx']:>4}  {row['frame_j']:>3}  {row['n']:>2}  "
+                f"{row['time']:>8}  {row['key_s']:>9.3f}  "
+                f"0x{row['seed_a']:08X}  {'✓' if row['eval_a'] else '✗'}  "
+                f"0x{row['seed_b']:08X}  {'✓' if row['eval_b'] else '✗'}  "
+                f"{row['straight']:>6.3f}  {score_str}"
+                f"{marker}"
+            )
