@@ -154,6 +154,7 @@ class Expedition:
         # Compass metronome
         self.compass_metronome_histsize: int | None = None
         self.compass_m_history:          list       = []
+        self.compass_m_delay:            int | None = None  # saved calibration delay
 
         # Check utilities
         self.check_config: CheckConfig = CheckConfig()
@@ -179,6 +180,7 @@ class Expedition:
             'target_seeds_path':        self.target_seeds_path,
             'compass_metronome_histsize': self.compass_metronome_histsize,
             'compass_m_history':        self.compass_m_history,
+            'compass_m_delay':          self.compass_m_delay,
             'check':                    self.check_config._to_dict(),
         }
 
@@ -199,6 +201,7 @@ class Expedition:
         f.target_seeds_path        = data.get('target_seeds_path')
         f.compass_metronome_histsize = data.get('compass_metronome_histsize')
         f.compass_m_history        = data.get('compass_m_history') or []
+        f.compass_m_delay          = data.get('compass_m_delay')
         f.check_config             = CheckConfig._from_dict(data.get('check') or {})
         return f
 
@@ -241,6 +244,7 @@ class Expedition:
             ("initial_time",     self.initial_time        or "(not set)"),
             ("target_seeds",     self.target_seeds        or "(none)"),
             ("metronome_histsz", self.compass_metronome_histsize if self.compass_metronome_histsize is not None else "(not set)"),
+            ("compass_m_delay",  self.compass_m_delay            if self.compass_m_delay            is not None else "(not set)"),
         ]
         label_w = max(len(k) for k, _ in fields)
         print(f"=== Expedition: {self.name} ===")
@@ -425,6 +429,11 @@ class Expedition:
         else:
             raise RuntimeError("Aborted: target_delay/initial_time not set.")
 
+    def _ensure_initial_time(self) -> None:
+        if self.initial_time is not None:
+            return
+        self._prompt_initial_time()
+
     def _ensure_metronome_histsize(self) -> None:
         if self.compass_metronome_histsize is not None:
             return
@@ -579,6 +588,23 @@ class Expedition:
         print("[expedition] evaluate_chart complete.")
 
     # ------------------------------------------------------------------
+    # choose_target helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_alternate_times(data, delay: int, score) -> list:
+        """Return list of (chain_name, TopResult) where top5 or best5 contains delay+score."""
+        matches = []
+        for chain_name, chain_result in data.results.items():
+            for top_r in chain_result.top5 + chain_result.best5:
+                if top_r.delay == delay and top_r.score == score:
+                    matches.append((chain_name, top_r))
+                    break  # one entry per chain is enough
+        # Sort by chain_name (chronological)
+        matches.sort(key=lambda x: x[0])
+        return matches
+
+    # ------------------------------------------------------------------
     # choose_target
     # ------------------------------------------------------------------
 
@@ -653,6 +679,36 @@ class Expedition:
                 delay_from_key = self.target_delay - base_delay
                 print(f"[expedition] Target set: delay={self.target_delay}  initial_time={self.initial_time}")
                 print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+
+                # Offer to scan for alternate chains with the same delay+score
+                alt_choice = input("  See other times with the same score for this delay? (y/n) ").strip().lower()
+                if alt_choice in ('y', 'yes'):
+                    alts = self._find_alternate_times(data, r.delay, r.score)
+                    other_alts = [x for x in alts if x[0] != r.chain]
+                    if not other_alts:
+                        print("  No other times found with the same delay and score.")
+                    else:
+                        print(f"  Found {len(alts)} time(s) (including chosen):")
+                        for ai, (chain_name, top_r) in enumerate(alts, 1):
+                            chain_date = chain_name.split('+')[0]  # "YYYY-MM-DD_HH-MM-SS"
+                            chain_parsed = dt.datetime.strptime(chain_date, '%Y-%m-%d_%H-%M-%S')
+                            marker = "  ← default" if chain_name == r.chain else ""
+                            print(f"    {ai:2}. {chain_parsed.strftime('%Y-%m-%d %H:%M:%S')} → {top_r.time}{marker}")
+                        print("  Enter a number to switch, or press Enter to keep default.")
+                        raw2 = input("  Choice: ").strip()
+                        if raw2:
+                            try:
+                                ai = int(raw2)
+                                if 1 <= ai <= len(alts):
+                                    alt_chain_name, _ = alts[ai - 1]
+                                    alt_date = alt_chain_name.split('+')[0]
+                                    alt_parsed = dt.datetime.strptime(alt_date, '%Y-%m-%d_%H-%M-%S')
+                                    self.initial_time = alt_parsed.isoformat()
+                                    print(f"[expedition] initial_time updated to {self.initial_time}")
+                                else:
+                                    print(f"  Number out of range; keeping {self.initial_time}.")
+                            except ValueError:
+                                print(f"  Not a number; keeping {self.initial_time}.")
                 return
             # Try as hex seed
             try:
@@ -722,6 +778,61 @@ class Expedition:
             print("[expedition] No seeds returned from compass_safari.")
 
     # ------------------------------------------------------------------
+    # compass_metronome helpers
+    # ------------------------------------------------------------------
+
+    def _pick_metronome_delay(self) -> int:
+        """Interactively resolve which target delay to use for compass_metronome.
+
+        Priority order:
+          1. Main target_delay (if set) — user may accept or decline.
+          2. Evaluation results — offered if no target_delay set.
+          3. Saved compass_m_delay — offered as fallback when user declines (1) or (2).
+          4. Manual entry — frames (integer) or seconds (decimal, converted via DPS).
+
+        Sets self.initial_time if not already set.
+        Saves manually-entered delays to self.compass_m_delay.
+        """
+        from claytonlib.chart.evaluation import DPS
+        from claytonlib.times import get_times
+
+        if self.target_delay is not None:
+            ans = input(f"  Use target delay {self.target_delay}? (y/n) ").strip().lower()
+            if ans in ('y', 'yes'):
+                self._ensure_initial_time()
+                return self.target_delay
+        else:
+            ans = input("  No target set. Choose a delay from evaluation results? (y/n) ").strip().lower()
+            if ans in ('y', 'yes'):
+                self.choose_target()   # sets target_delay + initial_time
+                return self.target_delay
+
+        # User declined — offer saved calibration delay first
+        if self.compass_m_delay is not None:
+            ans2 = input(f"  Re-use last calibration delay {self.compass_m_delay}? (y/n) ").strip().lower()
+            if ans2 in ('y', 'yes'):
+                self._ensure_initial_time()
+                return self.compass_m_delay
+
+        # Manual entry
+        base_delay, _ = get_times(self.key_seed)
+        print("  Enter a delay in frames (integer) or seconds (decimal, e.g. 5.32).")
+        while True:
+            raw = input("  Delay: ").strip()
+            try:
+                if '.' in raw:
+                    seconds = float(raw)
+                    delay = base_delay + round(seconds * DPS)
+                    print(f"  → {seconds}s ≈ delay {delay}  (base {base_delay} + {delay - base_delay})")
+                else:
+                    delay = int(raw)
+                self.compass_m_delay = delay
+                self._ensure_initial_time()
+                return delay
+            except ValueError:
+                print("  Enter an integer (frames) or a decimal number (seconds).")
+
+    # ------------------------------------------------------------------
     # compass_metronome
     # ------------------------------------------------------------------
 
@@ -730,7 +841,6 @@ class Expedition:
         print(f"[expedition] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
-        self._ensure_target()
         self._ensure_metronome_histsize()
 
         from claytonlib.compass import (
@@ -740,15 +850,17 @@ class Expedition:
         )
         from claytonlib.times import get_times
 
+        target_delay = self._pick_metronome_delay()
+
         base_delay, _ = get_times(self.key_seed)
-        delay_from_key = self.target_delay - base_delay
-        print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+        delay_from_key = target_delay - base_delay
+        print(f"[expedition] target_delay={target_delay}  Δ from key: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
         inputs = CompassMetronomeInput(
             opponent=MetronomeOpponent.MAGIKARP,
             key_seed=self.key_seed,
-            target_delay=self.target_delay,
+            target_delay=target_delay,
             initial_time=initial_time,
             window=self.window,
         )
@@ -801,7 +913,7 @@ class Expedition:
     # machete_one
     # ------------------------------------------------------------------
 
-    def machete_one(self) -> None:
+    def machete_one(self, max_turns: int | None = None) -> None:
         """Find shortest capture path for the chosen seed via BFS."""
         print(f"[expedition] === machete_one ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
@@ -813,7 +925,7 @@ class Expedition:
 
         pokemon = safari_pokemon_by_name(self.pokemon_name)
         print(f"[expedition] Running machete_one for seed {seed_hex} ...")
-        path = _machete_one(pokemon, seed=seed)
+        path = _machete_one(pokemon, seed=seed, max_turns=max_turns)
         if path is not None:
             print(f"[expedition] Capture path: {path}")
         else:

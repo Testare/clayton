@@ -61,3 +61,16 @@ static const u16 sMetronomeUnuseableMoves[] = {
     MOVE_SWITCHEROO,
     0xFFFF
 };
+
+0x0225e46e
+
+
+ov12_022585B8 - 0x02258606
+
+None - 0x0225e46e (ends each)
+
+bellShimmerReplaceGraphics - 0x02251056
+BtlCmd_PlayFaintAnimation
+FieldMove_CheckSweetScent 
+
+

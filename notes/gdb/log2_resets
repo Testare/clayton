@@ -1,0 +1,899 @@
+❌️ No symbol "hello" in current context.
+Continuing.
+$1026 = 0x6dd8b61
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1027 = 0xdad246c0
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1028 = 0xb5970033
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1029 = 0x6dcd002a
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+❌️ Remote connection closed
+Remote debugging using 192.168.0.12:3333
+Ignoring packet error, continuing...
+⚠️ warning: unrecognized item "timeout" in "qSupported" response
+❌️ Remote communication error.  Target disconnected: error while reading: Connection reset by peer.
+Remote debugging using 192.168.0.12:3333
+GetSubstruct (boxMon=0x227c458, pid=0, which=0 '\000') at Z:\home\testare\arch\pokeheartgold\src\/pokemon.c:3951
+3951	in Z:\home\testare\arch\pokeheartgold\src\/pokemon.c
+Continuing.
+Sweet Scent Clicked$1030 = 1897
+BattleSetup_New$1031 = 2152
+$1032 = 0x82150882
+0x2251056  ->  bellShimmerReplaceGraphics
+$1033 = 0x62189bcd
+0x2251056  ->  bellShimmerReplaceGraphics
+$1034 = 0xd1812cbc
+0x2251056  ->  bellShimmerReplaceGraphics
+$1035 = 0xe509b47f
+0x2251056  ->  bellShimmerReplaceGraphics
+$1036 = 0x535aec86
+0x2258606  ->  ov12_022585B8
+$1037 = 0x276be981
+0x2258606  ->  ov12_022585B8
+$1038 = 0x4de1a60
+0x225e46e  ->  None
+$1039 = 0x84dadb53
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1040 = 0xf5350cca
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1041 = 0xbfb85e75
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1042 = 0x91c63e44
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1043 = 2636
+BattleSetup_New$1044 = 2891
+$1045 = 0x9a150b65
+0x2251056  ->  bellShimmerReplaceGraphics
+$1046 = 0x798d0074
+0x2251056  ->  bellShimmerReplaceGraphics
+$1047 = 0x84e4e9d7
+0x2251056  ->  bellShimmerReplaceGraphics
+$1048 = 0xc80172fe
+0x2251056  ->  bellShimmerReplaceGraphics
+$1049 = 0x81bba99
+0x2258606  ->  ov12_022585B8
+$1050 = 0x11ff7198
+0x2258606  ->  ov12_022585B8
+$1051 = 0xf1f00e2b
+0x225e46e  ->  None
+$1052 = 0x7c982c2
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1053 = 0x1ab0290d
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1054 = 0x1691d0fc
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1055 = 0xa8ab23bf
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1056 = 1548
+BattleSetup_New$1057 = 1803
+$1058 = 0x76150725
+0x2251056  ->  bellShimmerReplaceGraphics
+$1059 = 0x9abfb134
+0x2251056  ->  bellShimmerReplaceGraphics
+$1060 = 0x8dd4ab97
+0x2251056  ->  bellShimmerReplaceGraphics
+$1061 = 0x3d9f71be
+0x2251056  ->  bellShimmerReplaceGraphics
+$1062 = 0x87fb259
+0x2258606  ->  ov12_022585B8
+$1063 = 0x108c6e58
+0x2258606  ->  ov12_022585B8
+$1064 = 0x857a2beb
+0x225e46e  ->  None
+$1065 = 0xb128ad82
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1066 = 0x7bbdccd
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1067 = 0x5bd1d9bc
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1068 = 0x2c195d7f
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1069 = 1548
+BattleSetup_New$1070 = 1803
+$1071 = 0x76150725
+0x2251056  ->  bellShimmerReplaceGraphics
+$1072 = 0x9abfb134
+0x2251056  ->  bellShimmerReplaceGraphics
+$1073 = 0x8dd4ab97
+0x2251056  ->  bellShimmerReplaceGraphics
+$1074 = 0x3d9f71be
+0x2251056  ->  bellShimmerReplaceGraphics
+$1075 = 0x87fb259
+0x2258606  ->  ov12_022585B8
+$1076 = 0x108c6e58
+0x2258606  ->  ov12_022585B8
+$1077 = 0x857a2beb
+0x225e46e  ->  None
+$1078 = 0xb128ad82
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1079 = 0x7bbdccd
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1080 = 0x5bd1d9bc
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1081 = 0x2c195d7f
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1082 = 1546
+BattleSetup_New$1083 = 1801
+$1084 = 0x76150723
+0x2251056  ->  bellShimmerReplaceGraphics
+$1085 = 0x1733145a
+0x2251056  ->  bellShimmerReplaceGraphics
+$1086 = 0x88f76c5
+0x2251056  ->  bellShimmerReplaceGraphics
+$1087 = 0x3ca3f854
+0x2251056  ->  bellShimmerReplaceGraphics
+$1088 = 0x2c72b437
+0x2258606  ->  ov12_022585B8
+$1089 = 0x3949ddde
+0x2258606  ->  ov12_022585B8
+$1090 = 0xddc17bf9
+0x225e46e  ->  None
+$1091 = 0x7abe0778
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1092 = 0x68001e8b
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1093 = 0x3bddbba2
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1094 = 0x4de0a06d
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1095 = 1549
+BattleSetup_New$1096 = 1804
+$1097 = 0x76150726
+0x2251056  ->  bellShimmerReplaceGraphics
+$1098 = 0xdc85ffa1
+0x2251056  ->  bellShimmerReplaceGraphics
+$1099 = 0x50774600
+0x2251056  ->  bellShimmerReplaceGraphics
+$1100 = 0xbe1d2e73
+0x2251056  ->  bellShimmerReplaceGraphics
+$1101 = 0xf686316a
+0x2258606  ->  ov12_022585B8
+$1102 = 0xfc2db695
+0x2258606  ->  ov12_022585B8
+$1103 = 0x595683e4
+0x225e46e  ->  None
+$1104 = 0x4c5e0087
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1105 = 0xd799bbee
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1106 = 0x6bcbe8c9
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1107 = 0x1b35bc08
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1108 = 1549
+BattleSetup_New$1109 = 1804
+$1110 = 0x76150726
+0x2251056  ->  bellShimmerReplaceGraphics
+$1111 = 0xdc85ffa1
+0x2251056  ->  bellShimmerReplaceGraphics
+$1112 = 0x50774600
+0x2251056  ->  bellShimmerReplaceGraphics
+$1113 = 0xbe1d2e73
+0x2251056  ->  bellShimmerReplaceGraphics
+$1114 = 0xf686316a
+0x2258606  ->  ov12_022585B8
+$1115 = 0xfc2db695
+0x2258606  ->  ov12_022585B8
+$1116 = 0x595683e4
+0x225e46e  ->  None
+$1117 = 0x4c5e0087
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1118 = 0xd799bbee
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1119 = 0x6bcbe8c9
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1120 = 0x1b35bc08
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1121 = 1547
+BattleSetup_New$1122 = 1802
+$1123 = 0x76150724
+0x2251056  ->  bellShimmerReplaceGraphics
+$1124 = 0x58f962c7
+0x2251056  ->  bellShimmerReplaceGraphics
+$1125 = 0xcb32112e
+0x2251056  ->  bellShimmerReplaceGraphics
+$1126 = 0xbd21b509
+0x2251056  ->  bellShimmerReplaceGraphics
+$1127 = 0x1a793348
+0x2258606  ->  ov12_022585B8
+$1128 = 0x24eb261b
+0x2258606  ->  ov12_022585B8
+$1129 = 0xb19dd3f2
+0x225e46e  ->  None
+$1130 = 0x15f35a7d
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1131 = 0x37ddfdac
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1132 = 0x4bd7caaf
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1133 = 0x3cfcfef6
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1134 = 1548
+BattleSetup_New$1135 = 1803
+$1136 = 0x76150725
+0x2251056  ->  bellShimmerReplaceGraphics
+$1137 = 0x9abfb134
+0x2251056  ->  bellShimmerReplaceGraphics
+$1138 = 0x8dd4ab97
+0x2251056  ->  bellShimmerReplaceGraphics
+$1139 = 0x3d9f71be
+0x2251056  ->  bellShimmerReplaceGraphics
+$1140 = 0x87fb259
+0x2258606  ->  ov12_022585B8
+$1141 = 0x108c6e58
+0x2258606  ->  ov12_022585B8
+$1142 = 0x857a2beb
+0x225e46e  ->  None
+$1143 = 0xb128ad82
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1144 = 0x7bbdccd
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1145 = 0x5bd1d9bc
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1146 = 0x2c195d7f
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1147 = 1548
+BattleSetup_New$1148 = 1803
+$1149 = 0x76150725
+0x2251056  ->  bellShimmerReplaceGraphics
+$1150 = 0x9abfb134
+0x2251056  ->  bellShimmerReplaceGraphics
+$1151 = 0x8dd4ab97
+0x2251056  ->  bellShimmerReplaceGraphics
+$1152 = 0x3d9f71be
+0x2251056  ->  bellShimmerReplaceGraphics
+$1153 = 0x87fb259
+0x2258606  ->  ov12_022585B8
+$1154 = 0x108c6e58
+0x2258606  ->  ov12_022585B8
+$1155 = 0x857a2beb
+0x225e46e  ->  None
+$1156 = 0xb128ad82
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1157 = 0x7bbdccd
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1158 = 0x5bd1d9bc
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1159 = 0x2c195d7f
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1160 = 1600
+BattleSetup_New$1161 = 1855
+$1162 = 0x78150759
+0x2251056  ->  bellShimmerReplaceGraphics
+$1163 = 0xd1079f58
+0x2251056  ->  bellShimmerReplaceGraphics
+$1164 = 0xe8dc08eb
+0x2251056  ->  bellShimmerReplaceGraphics
+$1165 = 0xc129c682
+0x2251056  ->  bellShimmerReplaceGraphics
+$1166 = 0x83d181cd
+0x2258606  ->  ov12_022585B8
+$1167 = 0x674f1abc
+0x2258606  ->  ov12_022585B8
+$1168 = 0x803c0a7f
+0x225e46e  ->  None
+$1169 = 0x41fd8a86
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1170 = 0x82cd2f81
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1171 = 0xb49ce860
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1172 = 0xcfdc9153
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1173 = 2204
+BattleSetup_New$1174 = 2459
+$1175 = 0x8c1509b5
+0x2251056  ->  bellShimmerReplaceGraphics
+$1176 = 0x84e8a884
+0x2251056  ->  bellShimmerReplaceGraphics
+$1177 = 0x548058a7
+0x2251056  ->  bellShimmerReplaceGraphics
+$1178 = 0xdd3018e
+0x2251056  ->  bellShimmerReplaceGraphics
+$1179 = 0x6f254de9
+0x2258606  ->  ov12_022585B8
+$1180 = 0x1bd58aa8
+0x2258606  ->  ov12_022585B8
+$1181 = 0xd01b99fb
+0x225e46e  ->  None
+$1182 = 0xd7cd6a52
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1183 = 0x8647a15d
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1184 = 0x6a986b0c
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1185 = 0xaacb9c8f
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1186 = 2057
+BattleSetup_New$1187 = 2312
+$1188 = 0x87150922
+0x2251056  ->  bellShimmerReplaceGraphics
+$1189 = 0x9f099fed
+0x2251056  ->  bellShimmerReplaceGraphics
+$1190 = 0x8421ae5c
+0x2251056  ->  bellShimmerReplaceGraphics
+$1191 = 0xbc9fa59f
+0x2251056  ->  bellShimmerReplaceGraphics
+$1192 = 0x6c6a5726
+0x2258606  ->  ov12_022585B8
+$1193 = 0x9d390fa1
+0x2258606  ->  ov12_022585B8
+$1194 = 0x4b951600
+0x225e46e  ->  None
+$1195 = 0x9f2ebe73
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1196 = 0x84e0816a
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1197 = 0xfd01c695
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1198 = 0xb08153e4
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x0206e6a2 in GetBoxMonDataInternal (boxMon=0x39, attr=36160560, dest=0x0) at Z:\home\testare\arch\pokeheartgold\src\/pokemon.c:481
+481	in Z:\home\testare\arch\pokeheartgold\src\/pokemon.c
+Source directories searched: /home/testare/arch/pokeheartgold/src:$cdir:$cwd
+Breakpoint 5 at 0x20010f6: file Z:\home\testare\arch\pokeheartgold\src\/main.c, line 283.
+Continuing.
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020b92d4 in ?? ()
+Type commands for breakpoint(s) 5, one per line.
+End with a line saying just "end".
+Continuing.
+Sweet Scent Clicked$1199 = 1334
+BattleSetup_New$1200 = 1589
+$1201 = 0xaa15064f
+0x2251056  ->  bellShimmerReplaceGraphics
+$1202 = 0xc2fa2216
+0x2251056  ->  bellShimmerReplaceGraphics
+$1203 = 0x2de797d1
+0x2251056  ->  bellShimmerReplaceGraphics
+$1204 = 0x9883b270
+0x2251056  ->  bellShimmerReplaceGraphics
+$1205 = 0x83117a23
+0x2258606  ->  ov12_022585B8
+$1206 = 0x7bba0b5a
+0x2258606  ->  ov12_022585B8
+$1207 = 0xff48a1c5
+0x225e46e  ->  None
+$1208 = 0xf6954754
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1209 = 0xf8435737
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1210 = 0xa4c944de
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1211 = 0x1e6256f9
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x0206e6a2 in GetBoxMonDataInternal (boxMon=0x39, attr=36160560, dest=0x0) at Z:\home\testare\arch\pokeheartgold\src\/pokemon.c:481
+481	static u32 GetBoxMonDataInternal(BoxPokemon *boxMon, int attr, void *dest) {
+$1212 = 0x210f6cc
+$1213 = 624
+$1214 = 0x21d15ac
+❌️ A syntax error in expression, near `/x sMTRNG_State[0]'.
+$1215 = 0x9b150427
+Num     Type           Disp Enb Address    What
+1       breakpoint     keep y   0x0223bd9a in BattleSystem_Random at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_system.c:1113
+	breakpoint already hit 1030 times
+        silent
+        p/x battleSystem->rand
+        python print(hex(gdb.newest_frame().older().pc()), " -> ", gdb.newest_frame().older().name())
+        continue
+2       breakpoint     keep y   0x020518de in BattleSetup_New at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_setup.c:41
+	breakpoint already hit 90 times
+        silent
+        printf "BattleSetup_New"
+        p *0x21d1138
+        continue
+3       breakpoint     keep y   0x02068752 in FieldMove_CheckSweetScent at Z:\home\testare\arch\pokeheartgold\src\/field_move.c:550
+	breakpoint already hit 90 times
+        silent
+        printf "Sweet Scent Clicked"
+        p *0x21d1138
+        continue
+4       breakpoint     keep y   0x0223e290 in BtlCmd_PlayFaintAnimation at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_command.c:955
+	breakpoint already hit 1 time
+5       breakpoint     keep y   0x020010f6 in InitializeMainRNG at Z:\home\testare\arch\pokeheartgold\src\/main.c:283
+        silent
+        printf "SEED SET"
+        p/x seed
+Type commands for definition of "seedcheck".
+End with a line saying just "end".
+❌️ Invalid argument syntax
+Cycles: 624❌️ Invalid argument syntax
+Cycles: 624
+Type commands for definition of "seedcheck".
+End with a line saying just "end".
+❌️ No symbol "sMTRNG" in current context.
+Type commands for definition of "seedcheck".
+End with a line saying just "end".
+Cycles: 624
+Seed: -1693121497
+At Cycle: 917504
+Type commands for definition of "seedcheck".
+End with a line saying just "end".
+Cycles: 624
+Seed: 9b150427
+At Cycle: e0000
+Continuing.
+Sweet Scent Clicked$1216 = 7044
+BattleSetup_New$1217 = 7299
+$1218 = 0xa2151c9d
+0x2251056  ->  bellShimmerReplaceGraphics
+$1219 = 0x7023654c
+0x2251056  ->  bellShimmerReplaceGraphics
+$1220 = 0x2cb7a9cf
+0x2251056  ->  bellShimmerReplaceGraphics
+$1221 = 0xe50abf96
+0x2251056  ->  bellShimmerReplaceGraphics
+$1222 = 0xff7a751
+0x2258606  ->  ov12_022585B8
+$1223 = 0x3b134bf0
+0x2258606  ->  ov12_022585B8
+$1224 = 0xb3fad5a3
+0x225e46e  ->  None
+$1225 = 0xadf700da
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1226 = 0x570a2945
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1227 = 0x9844f8d4
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1228 = 0x2126eab7
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020bac24 in ?? ()
+Cycles: 624
+Seed: 9b150427
+At Cycle: e0000
+Continuing.
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020bab94 in ?? ()
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+⚠️ warning: 17	Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c: No such file or directory
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1229 = 1592
+BattleSetup_New$1230 = 1847
+$1231 = 0x75150751
+0x2251056  ->  bellShimmerReplaceGraphics
+$1232 = 0x7bd52bf0
+0x2251056  ->  bellShimmerReplaceGraphics
+$1233 = 0x98c735a3
+0x2251056  ->  bellShimmerReplaceGraphics
+$1234 = 0x9e3be0da
+0x2251056  ->  bellShimmerReplaceGraphics
+$1235 = 0xe09d8945
+0x2258606  ->  ov12_022585B8
+$1236 = 0x5344d8d4
+0x2258606  ->  ov12_022585B8
+$1237 = 0xf6594ab7
+0x225e46e  ->  None
+$1238 = 0x5952f25e
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1239 = 0xa0de3679
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1240 = 0xdcc6ff8
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1241 = 0xbbf99d0b
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x02024f6c in SpriteList_DrawSprite_Active (spriteList=0x2385248, sprite=0x2385aa8) at Z:\home\testare\arch\pokeheartgold\src\/sprite.c:626
+626	        NNS_G2dTranslate(-sprite->affineMatrix.x, -sprite->affineMatrix.y, -sprite->affineMatrix.z);
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1242 = 1420
+BattleSetup_New$1243 = 1675
+$1244 = 0xac1506a5
+0x2251056  ->  bellShimmerReplaceGraphics
+$1245 = 0xb5987ab4
+0x2251056  ->  bellShimmerReplaceGraphics
+$1246 = 0x62877717
+0x2251056  ->  bellShimmerReplaceGraphics
+$1247 = 0x2cc1173e
+0x2251056  ->  bellShimmerReplaceGraphics
+$1248 = 0x9b4029d9
+0x2258606  ->  ov12_022585B8
+$1249 = 0x1de84fd8
+0x2258606  ->  ov12_022585B8
+$1250 = 0x1d4e2f6b
+0x225e46e  ->  None
+$1251 = 0x247f2b02
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1252 = 0xecc4c4d
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1253 = 0x1cca533c
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1254 = 0x83ea18ff
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020d4894 in ?? ()
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1255 = 1590
+BattleSetup_New$1256 = 1845
+$1257 = 0x7615074f
+0x2251056  ->  bellShimmerReplaceGraphics
+$1258 = 0x65488f16
+0x2251056  ->  bellShimmerReplaceGraphics
+$1259 = 0x7c8200d1
+0x2251056  ->  bellShimmerReplaceGraphics
+$1260 = 0x52406770
+0x2251056  ->  bellShimmerReplaceGraphics
+$1261 = 0x15908b23
+0x2258606  ->  ov12_022585B8
+$1262 = 0xb902485a
+0x2258606  ->  ov12_022585B8
+$1263 = 0x47a09ac5
+0x225e46e  ->  None
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+⚠️ warning: 17	Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c: No such file or directory
+Cycles: 624
+Seed: 9b150427
+At Cycle: a0000
+Continuing.
+$1264 = 0x27e84c54
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1265 = 0x22227837
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1266 = 0xfad851de
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1267 = 0x66c0dff9
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+Sweet Scent Clicked$1268 = 1327
+BattleSetup_New$1269 = 1582
+$1270 = 0xaa150648
+0x2251056  ->  bellShimmerReplaceGraphics
+$1271 = 0xf68dfd1b
+0x2251056  ->  bellShimmerReplaceGraphics
+$1272 = 0xdb755ef2
+0x2251056  ->  bellShimmerReplaceGraphics
+$1273 = 0x1513897d
+0x2251056  ->  bellShimmerReplaceGraphics
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+17	in Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c
+Cycles: 624
+Seed: 9b150427
+At Cycle: e0000
+Continuing.
+$1274 = 0xe400ac
+0x2258606  ->  ov12_022585B8
+$1275 = 0xa5111af
+0x2258606  ->  ov12_022585B8
+$1276 = 0x344239f6
+0x225e46e  ->  None
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+GetMonDataInternal (mon=0x227c430, attr=36160560, dest=0x227c430) at Z:\home\testare\arch\pokeheartgold\src\/pokemon.c:459
+459	        return GetBoxMonDataInternal(&mon->box, attr, dest);
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1277 = 1408
+BattleSetup_New$1278 = 1663
+$1279 = 0x72150699
+0x2251056  ->  bellShimmerReplaceGraphics
+$1280 = 0xee4ccd98
+0x2251056  ->  bellShimmerReplaceGraphics
+$1281 = 0x78e83a2b
+0x2251056  ->  bellShimmerReplaceGraphics
+$1282 = 0x24dc3ec2
+0x2251056  ->  bellShimmerReplaceGraphics
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020bbb10 in ?? ()
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1283 = 1448
+BattleSetup_New$1284 = 1703
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020dd5ec in ?? ()
+Continuing.
+$1285 = 0x731506c1
+0x2251056  ->  bellShimmerReplaceGraphics
+$1286 = 0xa2490ea0
+0x2251056  ->  bellShimmerReplaceGraphics
+$1287 = 0x4b505a93
+0x2251056  ->  bellShimmerReplaceGraphics
+$1288 = 0xed81bb0a
+0x2251056  ->  bellShimmerReplaceGraphics
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+SpriteList_DrawSprite_Active (spriteList=0x2385248, sprite=0x2385aa8) at Z:\home\testare\arch\pokeheartgold\src\/sprite.c:615
+615	    NNS_G2dSetRndCoreAffineOverwriteMode(&spriteList->renderer->rendererCore, (NNSG2dRendererAffineTypeOverwiteMode)sprite->affine);
+Cycles: 624
+Seed: 9b150427
+At Cycle: 10000
+Continuing.
+Sweet Scent Clicked$1289 = 1525
+BattleSetup_New$1290 = 1780
+$1291 = 0x7315070e
+0x2251056  ->  bellShimmerReplaceGraphics
+$1292 = 0x6aeea569
+0x2251056  ->  bellShimmerReplaceGraphics
+$1293 = 0xd638cc28
+0x2251056  ->  bellShimmerReplaceGraphics
+$1294 = 0x93537d7b
+0x2251056  ->  bellShimmerReplaceGraphics
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+⚠️ warning: 17	Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c: No such file or directory
+Continuing.
+$1295 = 0x72ea47d2
+0x2258606  ->  ov12_022585B8
+$1296 = 0x2e0ef0dd
+0x2258606  ->  ov12_022585B8
+$1297 = 0x91ae448c
+0x225e46e  ->  None
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+17	in Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c
+NOTE: Going to try saving right before seed is setNOTE: Going to try saving right before seed is setContinuing.
+❌️ Remote connection closed
+❌️ Quit
+❌️ Quit
+Remote debugging using 192.168.0.12:3333
+
+Program received signal SIGINT, Interrupt.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+17	in Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c
+Continuing.
+SEED SET$1298 = 0x6415001a
+Num     Type           Disp Enb Address    What
+1       breakpoint     keep y   0x0223bd98 in BattleSystem_Random at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_system.c:1112
+	breakpoint already hit 1096 times
+        silent
+        p/x battleSystem->rand
+        python print(hex(gdb.newest_frame().older().pc()), " -> ", gdb.newest_frame().older().name())
+        continue
+2       breakpoint     keep y   0x020518d8 in BattleSetup_New at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_setup.c:39
+	breakpoint already hit 98 times
+        silent
+        printf "BattleSetup_New"
+        p *0x21d1138
+        continue
+3       breakpoint     keep y   0x02068750 in FieldMove_CheckSweetScent at Z:\home\testare\arch\pokeheartgold\src\/field_move.c:549
+	breakpoint already hit 98 times
+        silent
+        printf "Sweet Scent Clicked"
+        p *0x21d1138
+        continue
+4       breakpoint     keep y   0x0223e290 in BtlCmd_PlayFaintAnimation at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_command.c:955
+	breakpoint already hit 1 time
+5       breakpoint     keep y   0x020010f6 in InitializeMainRNG at Z:\home\testare\arch\pokeheartgold\src\/main.c:283
+	breakpoint already hit 1 time
+        silent
+        printf "SEED SET"
+        p/x seed
+Type commands for breakpoint(s) 5, one per line.
+End with a line saying just "end".
+Continuing.
+Sweet Scent Clicked$1299 = 1983
+BattleSetup_New$1300 = 2238
+$1301 = 0x9c1508d8
+0x2251056  ->  bellShimmerReplaceGraphics
+$1302 = 0x8cb6f46b
+0x2251056  ->  bellShimmerReplaceGraphics
+$1303 = 0xde210c02
+0x2251056  ->  bellShimmerReplaceGraphics
+$1304 = 0x7147194d
+0x2251056  ->  bellShimmerReplaceGraphics
+$1305 = 0x3899c3c
+0x2258606  ->  ov12_022585B8
+$1306 = 0x819a2dff
+0x2258606  ->  ov12_022585B8
+$1307 = 0x7ae3a806
+0x225e46e  ->  None
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+17	in Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c
+Num     Type           Disp Enb Address    What
+1       breakpoint     keep y   0x0223bd98 in BattleSystem_Random at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_system.c:1112
+	breakpoint already hit 1103 times
+        silent
+        p/x battleSystem->rand
+        python print(hex(gdb.newest_frame().older().pc()), " -> ", gdb.newest_frame().older().name())
+        continue
+2       breakpoint     keep y   0x020518d8 in BattleSetup_New at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_setup.c:39
+	breakpoint already hit 99 times
+        silent
+        printf "BattleSetup_New"
+        p *0x21d1138
+        continue
+3       breakpoint     keep y   0x02068750 in FieldMove_CheckSweetScent at Z:\home\testare\arch\pokeheartgold\src\/field_move.c:549
+	breakpoint already hit 99 times
+        silent
+        printf "Sweet Scent Clicked"
+        p *0x21d1138
+        continue
+4       breakpoint     keep y   0x0223e290 in BtlCmd_PlayFaintAnimation at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_command.c:955
+	breakpoint already hit 1 time
+5       breakpoint     keep y   0x020010f6 in InitializeMainRNG at Z:\home\testare\arch\pokeheartgold\src\/main.c:283
+	breakpoint already hit 1 time
+        silent
+        printf "SEED SET: %x\n" seed
+        continue
+Type commands for breakpoint(s) 5, one per line.
+End with a line saying just "end".
+Continuing.
+SEED SET: 6415001a
+DELAY: 1421
+Sweet Scent Clicked$1308 = 1776
+BattleSetup_New$1309 = 2031
+$1310 = 0x9b150809
+0x2251056  ->  bellShimmerReplaceGraphics
+$1311 = 0xf05d8a48
+0x2251056  ->  bellShimmerReplaceGraphics
+$1312 = 0x13a6311b
+0x2251056  ->  bellShimmerReplaceGraphics
+$1313 = 0xd69b82f2
+0x2251056  ->  bellShimmerReplaceGraphics
+$1314 = 0x7b48dd7d
+0x2258606  ->  ov12_022585B8
+$1315 = 0xbd30c4ac
+0x2258606  ->  ov12_022585B8
+$1316 = 0x32b885af
+0x225e46e  ->  None
+$1317 = 0xa5a69df6
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1318 = 0xee569631
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1319 = 0x77874150
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+$1320 = 0xee5d8f83
+0x224941c  ->  BattleControllerPlayer_BeforeTurn
+SEED SET: 6415001a
+DELAY: 1695
+Sweet Scent Clicked$1321 = 2596
+BattleSetup_New$1322 = 2851
+$1323 = 0xb1150b3d
+0x2251056  ->  bellShimmerReplaceGraphics
+$1324 = 0xfd90bf6c
+0x2251056  ->  bellShimmerReplaceGraphics
+$1325 = 0x8a7cc96f
+0x2251056  ->  bellShimmerReplaceGraphics
+$1326 = 0xf75bf6b6
+0x2251056  ->  bellShimmerReplaceGraphics
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+OS_Halt () at Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c:17
+17	in Z:\home\testare\arch\pokeheartgold\lib\NitroSDK\src\os\/os_terminate_proc.c
+❌️ No symbol "seed" in current context.
+Continuing.
+$1327 = 0x5e17dff1
+0x2258606  ->  ov12_022585B8
+$1328 = 0xbbcc2810
+0x2258606  ->  ov12_022585B8
+$1329 = 0x36824f43
+0x225e46e  ->  None
+SEED SET: 6415001a
+DELAY: 1649
+Sweet Scent Clicked$1330 = 1911
+BattleSetup_New$1331 = 2166
+$1332 = 0x9b150890
+0x2251056  ->  bellShimmerReplaceGraphics
+$1333 = 0x9ff0e5c3
+0x2251056  ->  bellShimmerReplaceGraphics
+$1334 = 0xb7659e7a
+0x2251056  ->  bellShimmerReplaceGraphics
+$1335 = 0x98ea0665
+0x2251056  ->  bellShimmerReplaceGraphics
+$1336 = 0xb5df74
+0x2258606  ->  ov12_022585B8
+$1337 = 0xff3ddcd7
+0x2258606  ->  ov12_022585B8
+$1338 = 0xebeae9fe
+0x225e46e  ->  None
+SEED SET: 6415001a
+DELAY: 1581
+SEED SET: 6415001a
+DELAY: 1525
+SEED SET: 6415001a
+DELAY: 1403
+SEED SET: 6415001a
+DELAY: 1501
+SEED SET: 6415001a
+DELAY: 1791
+
+Program received signal SIGTRAP, Trace/breakpoint trap.
+0x020bac68 in ?? ()
+Num     Type           Disp Enb Address    What
+1       breakpoint     keep y   0x0223bd98 in BattleSystem_Random at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_system.c:1112
+	breakpoint already hit 1128 times
+        silent
+        p/x battleSystem->rand
+        python print(hex(gdb.newest_frame().older().pc()), " -> ", gdb.newest_frame().older().name())
+        continue
+2       breakpoint     keep y   0x020518d8 in BattleSetup_New at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_setup.c:39
+	breakpoint already hit 102 times
+        silent
+        printf "BattleSetup_New"
+        p *0x21d1138
+        continue
+3       breakpoint     keep y   0x02068750 in FieldMove_CheckSweetScent at Z:\home\testare\arch\pokeheartgold\src\/field_move.c:549
+	breakpoint already hit 102 times
+        silent
+        printf "Sweet Scent Clicked"
+        p *0x21d1138
+        continue
+4       breakpoint     keep y   0x0223e290 in BtlCmd_PlayFaintAnimation at Z:\home\testare\arch\pokeheartgold\src\battle\/battle_command.c:955
+	breakpoint already hit 1 time
+5       breakpoint     keep y   0x020010f6 in InitializeMainRNG at Z:\home\testare\arch\pokeheartgold\src\/main.c:283
+	breakpoint already hit 9 times
+        silent
+        printf "SEED SET: %x\nDELAY: %d\n", seed, *0x21d1138
+        c
+Continuing.
+Sweet Scent Clicked$1339 = 2616
+BattleSetup_New$1340 = 2871
+$1341 = 0xb1150b51
+0x2251056  ->  bellShimmerReplaceGraphics
+$1342 = 0x210edff0
+0x2251056  ->  bellShimmerReplaceGraphics
+$1343 = 0xbf30d9a3
+0x2251056  ->  bellShimmerReplaceGraphics
+$1344 = 0x12eb4da
+0x2251056  ->  bellShimmerReplaceGraphics
+$1345 = 0xf699cd45
+0x2258606  ->  ov12_022585B8
+$1346 = 0x2465ccd4
+0x2258606  ->  ov12_022585B8
+$1347 = 0xc3b92eb7
+0x225e46e  ->  None
+SEED SET: 6415001a
+DELAY: 1431
+Sweet Scent Clicked$1348 = 1639
+BattleSetup_New$1349 = 1894
+$1350 = 0x96150780
+0x2251056  ->  bellShimmerReplaceGraphics
+$1351 = 0x9c3d91f3
+0x2251056  ->  bellShimmerReplaceGraphics
+$1352 = 0xdda18eea
+0x2251056  ->  bellShimmerReplaceGraphics
+$1353 = 0x8a518615
+0x2251056  ->  bellShimmerReplaceGraphics
+$1354 = 0xc4cedd64
+0x2258606  ->  ov12_022585B8
+$1355 = 0x72e11c07
+0x2258606  ->  ov12_022585B8
+$1356 = 0xf4cd716e
+0x225e46e  ->  None
+SEED SET: 6415001a
+DELAY: 1407
+SEED SET: 6415001a
+DELAY: 1415
+SEED SET: 6415001a
+DELAY: 1399
+SEED SET: 6415001a
+DELAY: 1417
+SEED SET: 6415001a
+DELAY: 1399

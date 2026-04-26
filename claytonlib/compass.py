@@ -340,8 +340,8 @@ def _print_status(candidates: list[tuple], total: int, target_delay: int,
     print(f"Path:  {path_str}")
     print(f"Balls: {balls}")
 
-    by_proximity = sorted(candidates, key=lambda x: (x[2] - target_delay, x[1]))
-    display = by_proximity[:cfg.seeds_displayed]
+    nearest = sorted(candidates, key=lambda x: (abs(x[2] - target_delay), x[1]))[:cfg.seeds_displayed]
+    display = sorted(nearest, key=lambda x: (x[2] - target_delay, x[1]))
     show_eval = eval_strategy is not None and len(candidates) <= cfg.evaluation_threshold
 
     if show_eval:
@@ -523,8 +523,9 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             event = "captured" if path_actions[-1].step == SafariStep.CAPTURED else "fled"
             print()
             print(f"Pokémon {event}. {len(final)} seed(s) matched this path:")
-            by_prox = sorted(final, key=lambda x: (x[2] - inputs.target_delay, x[1]))
-            for i, (_, seed, delay) in enumerate(by_prox[:_config.seeds_displayed], 1):
+            nearest_final = sorted(final, key=lambda x: (abs(x[2] - inputs.target_delay), x[1]))[:_config.seeds_displayed]
+            by_prox = sorted(nearest_final, key=lambda x: (x[2] - inputs.target_delay, x[1]))
+            for i, (_, seed, delay) in enumerate(by_prox, 1):
                 print(f"  {i}. seed=0x{seed:08X}  delay={delay}  \u0394={_delta_str(delay - inputs.target_delay)}")
             return [f"0x{seed:08X}" for _, seed, _ in by_prox]
 

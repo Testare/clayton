@@ -1,0 +1,155 @@
+## Attempt Alpha (Using emulator)
+Note: Using clefable with Cute Charm
+FPS might not match exactly?
+
+Seed: b30d023b
+Time: 4/25/2026 13:40ish
+
+
+13 => __0d ____
+
+0x21d1138 = vblank address
+
+VBlank counter at start = 545 (0x221)
+
+## First sweet scent (messed up)
+Seed hit by sweet scent: 0x8b0d04ee
+Delay when sweet scent target begins: 1367
+
+
+## Second sweet scent
+Delay when hit SweetScent: 4255
+Seed hit by second sweet scent: 0x9b0d11b8
+Delay when sweet scent target begins: 4641
+Magikarp: Lvl 11
+
+
+### Turn 0
+* Roll BELLs x4
+* Roll x3
+### Turn 1
+* <Save state 5>
+* Roll BeforeTurn x4
+* Roll Metronome => returned 13120, 13120 % 0x1d3 + 1 => 45 => GROWL
+* Roll => CheckMoveHit
+* <Growl used>
+* Roll <TryAbilityOnentry> x4 
+  -> 15454
+  -> 02193
+  -> 07256
+  -> 49798
+* Magikarp used splash, but nothing happened
+* Roll <TryAbilityOnEntry> x4
+* <Message clears>
+* Roll <TryAbilityOnEntry> x2
+* <Battle screen displays>
+* Roll <0x0225e46e>
+* <Battle screen accessible>
+
+### Turn 2
+IIII - Starting rolls
+* Roll BeforeTurn x4
+* Roll Metronome- 36897 %1d3 + 1 => 5 => MEGA PUNCH
+* Roll - TryCritHit
+* Roll - ApplyDamageRange
+* Roll - CheckMoveHit
+* It hits, no crit, faints Magikarp
+
+### Learnings
+* (Definitely 7 rolls before start)
+* FieldMove_CheckSweetScent is the correct target for "when user clicks"
+* Metronome calculation is as expected.
+* Accuracy check still run for metronome-selected Growl, despite 100% accuracy
+
+## Sweet Scent 3
+* Delay when clicked: 13313
+* Seed: 0x8a0d351a
+* Delay when rand generated: 13699
+* (Seed is 105 off of delay? Is the year set to 105 somehow?)
+* Magikarp: 11 (again)
+
+## Turn 0
+* Roll BELLs x4
+* Roll <TryAbilityOnEntry> x2
+* Roll <0x0225e46e>
+## Turn 1
+* Roll BeforeTurn x4
+* <msg: Used Metronome>
+* Roll Metronome: 38255 -> Mirror Shot
+* Roll TryCrit: 13987
+* Roll ApplyDamageRange
+* Roll CheckMoveHit: 33627
+* <Magikarp fainted>
+## Learnings
+* Need to remember to save-state 
+
+
+### Sweet Scent 4
+* Accidentally continued check
+* Seed: 0xa00d45e1
+* Seed delay:  17994
+* Magikarp: 17
+
+### Turn 0
+* Roll Bells x4
+* <Send out poemon>
+* Roll TryAbilityOnEntry x2
+* Roll <?>
+### Turn 1
+* Roll BeforeTurn x4
+* Roll Metronome: 40509 -> Leaf Blade
+* Roll TryCrit: 8650
+* Roll DmgRng
+* Roll 2hit: 42079
+* Magikarp Faints
+## Learnings
+* Still keep forgetting to save state
+* It takes 105 - 26 delay between when the seed is generated and when the first rand is calcualted
+* Try checking delay at BattleSetup_New
+
+### Sweet Scent 5
+* Click Delay: 20953
+* BattleSetup Delay: 21208 (EVEN?)
+* Seed: 0xa10d52f2 (last 4 hexdigits matches battelSetup Delay+26)
+* First Rand delay: 21339
+* Magikarp: Lvl 18
+
+## Turn 1 <Save state 6>
+* Roll BeforeTurn x4
+* Roll Metronome: 46102 -> Dragon Claw
+* Roll TryCrit:  18439
+* Roll DmgRang
+* Roll hit: 51136
+* <Dragon claw, Magikarp is hit but SURVIVES>
+* TryAbility On Entry
+  -> 55248
+  -> 16798
+  -> 41690
+  -> 45580
+* <Magikarp used splash, but nothing happened>
+* Roll x7
+
+## Turn 2
+* Roll x4
+* Metronome: 15671: Will-o-wisp
+* Roll Hit: 40151
+* <Will-o-wisp hits>
+* TryAbilityOnEntry
+   -> 54146
+   -> 33336
+   -> 17800
+   -> 32273
+* Roll Crit: 46203
+* Roll dmg
+* Roll hit: 51328
+* <Magikarp used Tackle>
+* Roll CheckAbilityEffectOnHit: 30103
+* TryAbilityOnEntry x4
+* <Magikarp faints to burn>
+
+## Learnings
+* Need to double check assumption that delay is always odd/even!
+
+
+
+
