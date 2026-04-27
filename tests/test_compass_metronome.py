@@ -240,21 +240,16 @@ class TestGenerateMetronomeCandidates(unittest.TestCase):
             self.assertGreaterEqual(d, inp.target_delay - window)
             self.assertLessEqual(d, inp.target_delay + window)
 
-    def test_delays_step_by_two(self):
+    def test_delays_step_by_one(self):
         cands, _ = _candidates(window=10)
         delays = sorted(set(d for _, d in cands))
         for i in range(len(delays) - 1):
-            self.assertEqual(delays[i + 1] - delays[i], 2)
+            self.assertEqual(delays[i + 1] - delays[i], 1)
 
-    def test_delay_parity_matches_base(self):
-        cands, _ = _candidates(window=10)
-        for _, d in cands:
-            self.assertEqual((d - BASE_DELAY) % 2, 0)
-
-    def test_frame0_delay_has_one_seed(self):
+    def test_frame0_delay_has_two_seeds(self):
         frame0_delay = BASE_DELAY + 10 * 60
         cands, _ = _candidates(target_delay=frame0_delay, window=0)
-        self.assertEqual(len(cands), 1)
+        self.assertEqual(len(cands), 2)
 
     def test_nonzero_frame_delay_has_two_seeds(self):
         frame15_delay = BASE_DELAY + 10 * 60 + 30
@@ -275,6 +270,36 @@ class TestGenerateMetronomeCandidates(unittest.TestCase):
             seed, delay = item
             self.assertIsInstance(seed, int)
             self.assertIsInstance(delay, int)
+
+    # second_window tests
+
+    def test_second_window_zero_default(self):
+        inp = _make_inputs(window=0)
+        self.assertEqual(inp.second_window, 0)
+
+    def test_second_window_increases_candidate_count(self):
+        base_cands, _ = _candidates(window=4, second_window=0)
+        wider_cands, _ = _candidates(window=4, second_window=2)
+        self.assertGreater(len(wider_cands), len(base_cands))
+
+    def test_second_window_no_duplicates(self):
+        cands, _ = _candidates(window=4, second_window=2)
+        seeds = [s for s, _ in cands]
+        self.assertEqual(len(seeds), len(set(seeds)))
+
+    def test_second_window_base_seeds_included(self):
+        # All seeds from window=0/second_window=0 are present in a wider window
+        base_cands, _ = _candidates(window=4, second_window=0)
+        wider_cands, _ = _candidates(window=4, second_window=2)
+        base_seeds = {s for s, _ in base_cands}
+        wider_seeds = {s for s, _ in wider_cands}
+        self.assertTrue(base_seeds.issubset(wider_seeds))
+
+    def test_second_window_sorted_by_delay_then_seed(self):
+        cands, _ = _candidates(window=4, second_window=2)
+        for i in range(len(cands) - 1):
+            self.assertLessEqual((cands[i][1], cands[i][0]),
+                                 (cands[i + 1][1], cands[i + 1][0]))
 
 
 # ---------------------------------------------------------------------------

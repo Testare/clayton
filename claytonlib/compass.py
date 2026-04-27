@@ -194,9 +194,9 @@ def _delay_offset_to_second_frame(offset: int) -> tuple[int, int]:
     cum = 0
     while True:
         n = frames_in_second(s)
-        if cum + n * 2 > offset:
-            return s, (offset - cum) // 2
-        cum += n * 2
+        if cum + n > offset:
+            return s, offset - cum
+        cum += n
         s += 1
 
 
@@ -210,11 +210,11 @@ def _seed_reachable(target_seed: int, target_delay: int, base_delay: int,
     n = frames_in_second(second_idx)
     time_at = initial_time + dt.timedelta(seconds=second_idx)
     seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
-    if seed_a_base + 2 * frame_j == target_seed:
+    if seed_a_base + frame_j == target_seed:
         return True
     to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
                              delay_at_second(base_delay, second_idx + 1))
-    if to_seed - 2 * (n - frame_j) == target_seed:
+    if (to_seed - n) + frame_j == target_seed:
         return True
     return False
 
@@ -224,12 +224,9 @@ def _generate_candidates(inputs: CompassSafariInput) -> list[tuple]:
     from claytonlib.chart.evaluation import frames_in_second, delay_at_second
     base_delay, _ = get_times(inputs.key_seed)
     results: list[tuple] = []
-    # Only iterate delays on valid frame boundaries (spacing = 2, same parity as base_delay).
     start = inputs.target_delay - inputs.window
-    if (start - base_delay) % 2 != 0:
-        start += 1
 
-    for d in range(start, inputs.target_delay + inputs.window + 1, 2):
+    for d in range(start, inputs.target_delay + inputs.window + 1):
         offset = d - base_delay
         if offset < 0:
             continue
@@ -238,14 +235,14 @@ def _generate_candidates(inputs: CompassSafariInput) -> list[tuple]:
         time_at = inputs.initial_time + dt.timedelta(seconds=second_idx)
         seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
 
-        seed_a = seed_a_base + 2 * frame_j
+        seed_a = seed_a_base + frame_j
         ctx = SafariContext.start_encounter(seed_a, inputs.pokemon)
         ctx.balls_remaining = _config.starting_ball_count
         results.append((ctx, seed_a, d))
 
         to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
                                  delay_at_second(base_delay, second_idx + 1))
-        seed_b = to_seed - 2 * (n - frame_j)
+        seed_b = (to_seed - n) + frame_j
         ctx = SafariContext.start_encounter(seed_b, inputs.pokemon)
         ctx.balls_remaining = _config.starting_ball_count
         results.append((ctx, seed_b, d))

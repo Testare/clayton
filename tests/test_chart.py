@@ -76,13 +76,13 @@ class TestChartSafari(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertEqual(len(store.read_all(files[0])), TOTAL_LINKS)
 
-    def test_file_size_is_multiple_of_8(self):
+    def test_file_size_is_multiple_of_16(self):
         store = FakeChainStore()
         inputs = _make_inputs()
         self._run(inputs, store)
 
         for path, data in store._files.items():
-            self.assertEqual(len(data) % 8, 0, f"{path} has non-multiple-of-8 size")
+            self.assertEqual(len(data) % 16, 0, f"{path} has non-multiple-of-16 size")
 
     # ------------------------------------------------------------------
     # Resume / interrupt
@@ -122,8 +122,8 @@ class TestChartSafari(unittest.TestCase):
         full_size = store.file_size(path)
 
         # Inflate by one extra link
-        store._files[path] += struct.pack('<Q', 0xDEADBEEF_DEADBEEF)
-        self.assertEqual(store.file_size(path), full_size + 8)
+        store._files[path] += (0xDEADBEEF_DEADBEEF).to_bytes(16, 'little')
+        self.assertEqual(store.file_size(path), full_size + 16)
 
         self._run(inputs, store)
         self.assertEqual(store.file_size(path), full_size)
@@ -196,8 +196,8 @@ class TestChartSafari(unittest.TestCase):
         # Corrupt the second-to-last link, then truncate the last link so the
         # chain looks incomplete but still contains the corrupted data.
         path = store.list_chain_files(_chart_dir(inputs))[0]
-        store._files[path][-16:-8] = struct.pack('<Q', 0xDEAD)
-        store.truncate(path, store.file_size(path) - 8)
+        store._files[path][-32:-16] = (0xDEAD).to_bytes(16, 'little')
+        store.truncate(path, store.file_size(path) - 16)
 
         chart_config().resume_validation_enabled = True
         chart_config().resume_strict = True

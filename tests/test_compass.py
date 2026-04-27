@@ -298,16 +298,11 @@ class TestGenerateCandidates(unittest.TestCase):
             self.assertGreaterEqual(d, inp.target_delay - window)
             self.assertLessEqual(d, inp.target_delay + window)
 
-    def test_delays_step_by_two(self):
+    def test_delays_step_by_one(self):
         cands, _ = self._candidates(window=10)
         delays = sorted(set(d for _, _, d in cands))
         for i in range(len(delays) - 1):
-            self.assertEqual(delays[i + 1] - delays[i], 2)
-
-    def test_delay_parity_matches_base(self):
-        cands, _ = self._candidates(window=10)
-        for _, _, d in cands:
-            self.assertEqual((d - BASE_DELAY) % 2, 0)
+            self.assertEqual(delays[i + 1] - delays[i], 1)
 
     def test_frame0_delay_has_two_seeds(self):
         # A delay at frame_j = 0 now generates both seed_a and seed_b

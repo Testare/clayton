@@ -13,7 +13,6 @@ Bit 62 is set when the link has 29 frames.
 
 import datetime as dt
 import functools
-import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Protocol
@@ -26,10 +25,10 @@ from . import Strategy, SuccessCriteria, evaluate_seed
 from claytonlib.safari import SafariPokemon
 from claytonlib.times import calculate_seed
 
-ChainLink = tuple[int, int, int]  # (from_seed, to_seed, n_frames)
+ChainLink = tuple[int, int, int]  # (from_seed, to_seed, n_delays)
 
-_LINK_STRUCT = struct.Struct('<Q')
-_WIDTH_BIT = 62
+_LINK_SIZE = 16  # bytes per link (128-bit integer, little-endian)
+_WIDTH_BIT = 120
 
 
 # ---------------------------------------------------------------------------
@@ -56,23 +55,23 @@ class LocalChainStore:
 
     def read_all(self, path: Path) -> list[int]:
         size = self.file_size(path)
-        n_links = size // _LINK_STRUCT.size
+        n_links = size // _LINK_SIZE
         if n_links == 0:
             return []
         with open(path, 'rb') as f:
-            data = f.read(n_links * _LINK_STRUCT.size)
-        return [_LINK_STRUCT.unpack_from(data, i * _LINK_STRUCT.size)[0] for i in range(n_links)]
+            data = f.read(n_links * _LINK_SIZE)
+        return [int.from_bytes(data[i*_LINK_SIZE:(i+1)*_LINK_SIZE], 'little') for i in range(n_links)]
 
     def read_tail(self, path: Path, n_links: int) -> list[int]:
         size = self.file_size(path)
-        n_links = min(n_links, size // _LINK_STRUCT.size)
+        n_links = min(n_links, size // _LINK_SIZE)
         if n_links == 0:
             return []
-        offset = size - n_links * _LINK_STRUCT.size
+        offset = size - n_links * _LINK_SIZE
         with open(path, 'rb') as f:
             f.seek(offset)
-            data = f.read(n_links * _LINK_STRUCT.size)
-        return [_LINK_STRUCT.unpack_from(data, i * _LINK_STRUCT.size)[0] for i in range(n_links)]
+            data = f.read(n_links * _LINK_SIZE)
+        return [int.from_bytes(data[i*_LINK_SIZE:(i+1)*_LINK_SIZE], 'little') for i in range(n_links)]
 
     def truncate(self, path: Path, size: int) -> None:
         with open(path, 'ab') as f:
@@ -80,7 +79,7 @@ class LocalChainStore:
 
     def append(self, path: Path, values: list[int]) -> None:
         with open(path, 'ab') as f:
-            f.write(b''.join(_LINK_STRUCT.pack(v) for v in values))
+            f.write(b''.join(v.to_bytes(_LINK_SIZE, 'little') for v in values))
 
     def ensure_dir(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -128,7 +127,7 @@ def chain_at_time(time: dt.datetime, delay: int, start_second: int = 0) -> Itera
     s = start_second
     while True:
         n = frames_in_second(s)
-        next_delay = delay + n * 2
+        next_delay = delay + n
         next_time = time + dt.timedelta(seconds=1)
         to_seed = calculate_seed(next_time, next_delay)
         yield (from_seed, to_seed, n)
@@ -140,7 +139,7 @@ def chain_at_time(time: dt.datetime, delay: int, start_second: int = 0) -> Itera
 
 def link_at_time(time: dt.datetime, delay: int, s: int) -> ChainLink:
     n = frames_in_second(s)
-    to_seed = calculate_seed(time + dt.timedelta(seconds=1), delay + n * 2)
+    to_seed = calculate_seed(time + dt.timedelta(seconds=1), delay + n)
     return (calculate_seed(time, delay), to_seed, n)
 
 
@@ -155,7 +154,7 @@ def evaluate_chain_link(link: ChainLink, pokemon: SafariPokemon, strategy: Strat
     for bit_idx, seed in enumerate(expand_chain_link(link)):
         if evaluate_seed(seed, pokemon, strategy, criteria):
             result |= (1 << bit_idx)
-    if n == 29:
+    if n == 59:
         result |= (1 << _WIDTH_BIT)
     return result
 
@@ -168,8 +167,9 @@ def expand_chain_link(link: ChainLink) -> list[int]:
       seed_b(j) = to_seed - 2*(n-j) = calculate_seed(T+1, D + 2j)
     """
     f, t, n = link
+    t_base = t - n
     result = []
     for j in range(n):
-        result.append(f + 2 * j)          # seed_a: current second
-        result.append(t - 2 * (n - j))    # seed_b: next second
+        result.append(f + j)        # seed_a: current second
+        result.append(t_base + j)   # seed_b: next second
     return result

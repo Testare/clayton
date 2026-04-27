@@ -152,9 +152,10 @@ class Expedition:
         self.target_seeds_path:   str | None = None
 
         # Compass metronome
-        self.compass_metronome_histsize: int | None = None
-        self.compass_m_history:          list       = []
-        self.compass_m_delay:            int | None = None  # saved calibration delay
+        self.compass_metronome_histsize:  int | None = None
+        self.metronome_second_window:     int        = 0
+        self.compass_m_history:           list       = []
+        self.compass_m_delay:             int | None = None  # saved calibration delay
 
         # Check utilities
         self.check_config: CheckConfig = CheckConfig()
@@ -179,6 +180,7 @@ class Expedition:
             'target_seeds':             self.target_seeds,
             'target_seeds_path':        self.target_seeds_path,
             'compass_metronome_histsize': self.compass_metronome_histsize,
+            'metronome_second_window':   self.metronome_second_window,
             'compass_m_history':        self.compass_m_history,
             'compass_m_delay':          self.compass_m_delay,
             'check':                    self.check_config._to_dict(),
@@ -200,6 +202,7 @@ class Expedition:
         f.target_seeds             = data.get('target_seeds') or []
         f.target_seeds_path        = data.get('target_seeds_path')
         f.compass_metronome_histsize = data.get('compass_metronome_histsize')
+        f.metronome_second_window    = data.get('metronome_second_window') or 0
         f.compass_m_history        = data.get('compass_m_history') or []
         f.compass_m_delay          = data.get('compass_m_delay')
         f.check_config             = CheckConfig._from_dict(data.get('check') or {})
@@ -243,8 +246,9 @@ class Expedition:
             ("target_delay",     self.target_delay        if self.target_delay        is not None else "(not set)"),
             ("initial_time",     self.initial_time        or "(not set)"),
             ("target_seeds",     self.target_seeds        or "(none)"),
-            ("metronome_histsz", self.compass_metronome_histsize if self.compass_metronome_histsize is not None else "(not set)"),
-            ("compass_m_delay",  self.compass_m_delay            if self.compass_m_delay            is not None else "(not set)"),
+            ("metronome_histsz",  self.compass_metronome_histsize if self.compass_metronome_histsize is not None else "(not set)"),
+            ("metronome_second_window", self.metronome_second_window),
+            ("compass_m_delay",   self.compass_m_delay            if self.compass_m_delay            is not None else "(not set)"),
         ]
         label_w = max(len(k) for k, _ in fields)
         print(f"=== Expedition: {self.name} ===")
@@ -441,6 +445,11 @@ class Expedition:
             "Compass metronome history size (0 to disable): "
         )
 
+    def _ensure_metronome_second_window(self) -> None:
+        self.metronome_second_window = self._prompt_int(
+            f"Metronome second window (current={self.metronome_second_window}): "
+        )
+
     def _prompt_target_delay(self) -> None:
         self.target_delay = self._prompt_int("Target delay (frames): ")
 
@@ -469,7 +478,8 @@ class Expedition:
         ("window",                    "window",             "window",                    "_ensure_window"),
         ("target_delay",              "target_delay",       "target_delay",              "_prompt_target_delay"),
         ("initial_time",              "initial_time",       "initial_time",              "_prompt_initial_time"),
-        ("compass_metronome_histsize","metronome_histsz",   "compass_metronome_histsize","_ensure_metronome_histsize"),
+        ("compass_metronome_histsize","metronome_histsz",    "compass_metronome_histsize","_ensure_metronome_histsize"),
+        ("metronome_second_window",  "metronome_second_window", "metronome_second_window", "_ensure_metronome_second_window"),
     ]
 
     def adjust(self, **kwargs) -> None:
@@ -836,14 +846,17 @@ class Expedition:
     # compass_metronome
     # ------------------------------------------------------------------
 
-    def compass_metronome(self) -> None:
-        """Run compass_metronome using stored config. (History saving: stub.)"""
+    def compass_metronome(self, *, second_window: int | None = None) -> None:
+        """Run compass_metronome using stored config. (History saving: stub.)
+
+        second_window overrides self.metronome_second_window for this call only.
+        """
         print(f"[expedition] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
         self._ensure_metronome_histsize()
 
-        from claytonlib.compass import (
+        from claytonlib.compass_metronome import (
             compass_metronome as _compass_metronome,
             CompassMetronomeInput,
             MetronomeOpponent,
@@ -863,6 +876,7 @@ class Expedition:
             target_delay=target_delay,
             initial_time=initial_time,
             window=self.window,
+            second_window=self.metronome_second_window if second_window is None else second_window,
         )
         _compass_metronome(inputs)
         # TODO: save results to compass_m_history when histsize > 0
@@ -1057,11 +1071,9 @@ class CheckHelper:
         criteria = _resolve_criteria(exp.criteria_name)
         eval_strat = _resolve_eval_strategy(exp.eval_strategy_name)
 
-        # Build delay range: step 2, aligned to base_delay parity, clipped to >= base_delay
+        # Build delay range clipped to >= base_delay
         start = exp.target_delay - window
-        if (start - base_delay) % 2 != 0:
-            start += 1
-        delays = [d for d in range(start, exp.target_delay + window + 1, 2)
+        delays = [d for d in range(start, exp.target_delay + window + 1)
                   if d >= base_delay]
 
         # Per-frame evaluation
@@ -1074,11 +1086,11 @@ class CheckHelper:
             time_at = initial_time + dt.timedelta(seconds=second_idx)
 
             seed_a_base = calculate_seed(time_at, delay_at_second(base_delay, second_idx))
-            seed_a = seed_a_base + 2 * frame_j
+            seed_a = seed_a_base + frame_j
 
             to_seed = calculate_seed(time_at + dt.timedelta(seconds=1),
                                      delay_at_second(base_delay, second_idx + 1))
-            seed_b = to_seed - 2 * (n - frame_j)
+            seed_b = (to_seed - n) + frame_j
 
             eval_a = evaluate_seed(seed_a, pokemon, strategy, criteria)
             eval_b = evaluate_seed(seed_b, pokemon, strategy, criteria)

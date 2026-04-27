@@ -42,13 +42,13 @@ def _make_tables(n_frames):
 
 class TestFrameRateHelpers(unittest.TestCase):
 
-    def test_frames_in_second_returns_30_for_early_seconds(self):
-        # First 29-frame second is around s=11
-        for s in range(11):
-            self.assertEqual(frames_in_second(s), 30, f"expected 30 at s={s}")
+    def test_frames_in_second_returns_60_for_early_seconds(self):
+        # First 59-delay second is s=5
+        for s in range(5):
+            self.assertEqual(frames_in_second(s), 60, f"expected 60 at s={s}")
 
-    def test_frames_in_second_returns_29_at_s11(self):
-        self.assertEqual(frames_in_second(11), 29)
+    def test_frames_in_second_returns_59_at_s5(self):
+        self.assertEqual(frames_in_second(5), 59)
 
     def test_sum_of_frames_approximates_fps(self):
         N = 1000
@@ -94,23 +94,23 @@ class TestStraightenLink(unittest.TestCase):
         self.assertAlmostEqual(result[1], 1.0)
 
     def test_frame29_bit1_full_weight(self):
-        # bit 59 set → frame 29, seed B, weight_b = min(1, SPF * 29)
+        # bit 59 set → delay 29, seed B, weight_b = min(1, SPF * 29)
         result = straighten_link(1 << 59, 0)
         self.assertAlmostEqual(result[29], min(1.0, SPF * 29))
 
-    def test_29_frame_link_output_length(self):
-        # Bit 62 set → 29-frame link
-        result = straighten_link(1 << 62, 0)
-        self.assertEqual(len(result), 29)
+    def test_59_delay_link_output_length(self):
+        # Bit 120 set → 59-delay link
+        result = straighten_link(1 << 120, 0)
+        self.assertEqual(len(result), 59)
 
-    def test_30_frame_link_output_length(self):
-        # Bit 62 clear → 30-frame link
+    def test_60_delay_link_output_length(self):
+        # Bit 120 clear → 60-delay link
         result = straighten_link(0, 0)
         self.assertEqual(len(result), MAX_FRAMES_PER_LINK)
 
     def test_scores_in_range(self):
-        # All bits set except bit 62 (30-frame link)
-        mask = 0xBFFF_FFFF_FFFF_FFFF
+        # All data bits set (bits 0-119), width bit (120) clear → 60-delay link
+        mask = (1 << 120) - 1
         for score in straighten_link(mask, 0):
             self.assertGreaterEqual(score, 0.0)
             self.assertLessEqual(score, 1.0)
@@ -145,11 +145,11 @@ class TestStraightenChain(unittest.TestCase):
         self.assertAlmostEqual(result[0], 1.0)
         self.assertEqual(result[MAX_FRAMES_PER_LINK:], [0.0] * MAX_FRAMES_PER_LINK)
 
-    def test_29_frame_link_shorter(self):
-        # A single 29-frame link produces 29 entries
-        link_29 = 1 << 62  # bit 62 set = 29-frame
-        result = straighten_chain([link_29], 0)
-        self.assertEqual(len(result), 29)
+    def test_59_delay_link_shorter(self):
+        # A single 59-delay link produces 59 entries
+        link_59 = 1 << 120  # bit 120 set = 59-delay
+        result = straighten_chain([link_59], 0)
+        self.assertEqual(len(result), 59)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ class TestGatherTop5(unittest.TestCase):
         scored[3] = 1.0  # frame 3, link 0 (second _SETUP)
         delays, link_indices = _make_tables(MAX_FRAMES_PER_LINK)
         results = _gather_top5(scored, delays, link_indices, _T0, _SETUP)
-        expected_delay = _BASE_DELAY + 2 * (cumulative_frames(_SETUP) + 3)
+        expected_delay = _BASE_DELAY + (cumulative_frames(_SETUP) + 3)
         self.assertEqual(results[0].delay, expected_delay)
 
     def test_time_string_format(self):

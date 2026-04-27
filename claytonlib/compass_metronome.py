@@ -79,11 +79,12 @@ class MetronomeOpponent(Enum):
 
 @dataclass
 class CompassMetronomeInput:
-    opponent:     MetronomeOpponent
-    key_seed:     int
-    target_delay: int
-    initial_time: dt.datetime
-    window:       int
+    opponent:      MetronomeOpponent
+    key_seed:      int
+    target_delay:  int
+    initial_time:  dt.datetime
+    window:        int
+    second_window: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -91,31 +92,33 @@ class CompassMetronomeInput:
 # ---------------------------------------------------------------------------
 
 def _generate_metronome_candidates(inputs: CompassMetronomeInput) -> list[tuple[int, int]]:
-    """Return sorted (seed, delay) pairs for the search window."""
+    """Return sorted (seed, delay) pairs for the search window.
+
+    For each delay d, the two canonical seeds come from the two RTC seconds that
+    straddle that delay (second_idx and second_idx+1).  With second_window > 0,
+    additional seeds from second_idx ± second_window are included, which handles
+    cases where the observed time differs from the calculated one.
+    """
+    from claytonlib.compass import _delay_offset_to_second_frame
     base_delay, _ = get_times(inputs.key_seed)
+    seen: set[int] = set()
     results: list[tuple[int, int]] = []
 
-    start = inputs.target_delay - inputs.window
-    if (start - base_delay) % 2 != 0:
-        start += 1
-
-    for d in range(start, inputs.target_delay + inputs.window + 1, 2):
+    for d in range(inputs.target_delay - inputs.window,
+                   inputs.target_delay + inputs.window + 1):
         offset = d - base_delay
         if offset < 0:
             continue
-        second_idx = offset // 60
-        frame_j = (offset % 60) // 2
-        time_at = inputs.initial_time + dt.timedelta(seconds=second_idx)
-        f = calculate_seed(time_at, base_delay + second_idx * 60)
+        second_idx, _ = _delay_offset_to_second_frame(offset)
 
-        seed_a = f + 2 * frame_j
-        results.append((seed_a, d))
-
-        if frame_j > 0:
-            t2 = calculate_seed(time_at + dt.timedelta(seconds=1),
-                                base_delay + (second_idx + 1) * 60)
-            seed_b = t2 - 2 * (30 - frame_j)
-            results.append((seed_b, d))
+        for s in range(second_idx - inputs.second_window,
+                       second_idx + inputs.second_window + 2):
+            if s < 0:
+                continue
+            seed = calculate_seed(inputs.initial_time + dt.timedelta(seconds=s), d)
+            if seed not in seen:
+                seen.add(seed)
+                results.append((seed, d))
 
     results.sort(key=lambda x: (x[1], x[0]))
     return results
@@ -208,7 +211,8 @@ def compass_metronome(inputs: CompassMetronomeInput) -> None:
 
     print("=== Compass: Metronome Seed Identifier ===")
     print(f"Opponent: {inputs.opponent.value.capitalize()}")
-    print(f"Window:   ±{inputs.window} frames ({total} initial candidates)")
+    sw = f"  second_window=±{inputs.second_window}" if inputs.second_window else ""
+    print(f"Window:   ±{inputs.window} delays{sw}  ({total} initial candidates)")
     print()
 
     while True:

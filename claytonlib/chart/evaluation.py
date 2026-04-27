@@ -19,11 +19,11 @@ from typing import Protocol
 # ---------------------------------------------------------------------------
 
 DPS      = 59.8261        # hardware VBlank rate (delays per second)
-FPS      = DPS / 2        # game frames per second (~29.91305)
-FPS_CEIL = 30             # ceil(FPS)
-OFPS     = FPS_CEIL - FPS # fractional frames missed per second (~0.08695)
-SPF      = 1.0 / FPS      # seconds per frame
-_FPS_FRAC = FPS % 1       # threshold for 29-frame seconds (~0.91305)
+FPS      = DPS            # delays per second (game delay = game frame)
+FPS_CEIL = 60             # ceil(FPS)
+OFPS     = FPS_CEIL - FPS # fractional delays missed per second (~0.1739)
+SPF      = 1.0 / FPS      # seconds per delay
+_FPS_FRAC = FPS % 1       # threshold for 59-delay seconds (~0.8261)
 
 
 def offset_frames(s: int) -> float:
@@ -32,8 +32,8 @@ def offset_frames(s: int) -> float:
 
 
 def frames_in_second(s: int) -> int:
-    """Number of game frames in second s (29 or 30)."""
-    return 30 if offset_frames(s) < _FPS_FRAC else 29
+    """Number of game delays in second s (59 or 60)."""
+    return 60 if offset_frames(s) < _FPS_FRAC else 59
 
 
 def cumulative_frames(s: int) -> int:
@@ -43,16 +43,16 @@ def cumulative_frames(s: int) -> int:
 
 def delay_at_second(base_delay: int, s: int) -> int:
     """Delay value at the start of second s."""
-    return base_delay + 2 * cumulative_frames(s)
+    return base_delay + cumulative_frames(s)
 
 
-MAX_FRAMES_PER_LINK = 30
+MAX_FRAMES_PER_LINK = 60
 
-_WIDTH_BIT = 62  # bit 62 of the packed bitmask flags a 29-frame link
+_WIDTH_BIT = 120  # bit 120 of the packed bitmask flags a 59-delay link
 
 
 def _link_n_frames(link: int) -> int:
-    return 29 if (link >> _WIDTH_BIT) & 1 else 30
+    return 59 if (link >> _WIDTH_BIT) & 1 else 60
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ def _build_frame_info(
     for idx, link in enumerate(links):
         n = _link_n_frames(link)
         for j in range(n):
-            delays.append(base_delay + 2 * (cum + link_cum + j))
+            delays.append(base_delay + (cum + link_cum + j))
             link_indices.append(idx)
         link_cum += n
     return delays, link_indices

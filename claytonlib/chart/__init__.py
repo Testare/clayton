@@ -187,7 +187,7 @@ def _initialize_writers(inputs: ChartSafariInput, store) -> tuple:
     output_dir = _output_dir(inputs)
     store.ensure_dir(output_dir)
 
-    complete_size = (inputs.max_target_seconds - inputs.setup_delay_seconds + 1) * 8
+    complete_size = (inputs.max_target_seconds - inputs.setup_delay_seconds + 1) * 16
     paths = [_chain_path(inputs, t) for t in times]
     sizes = [store.file_size(p) for p in paths]
 
@@ -214,8 +214,8 @@ def _initialize_writers(inputs: ChartSafariInput, store) -> tuple:
 
     # Square off incomplete chains: truncate all to the smallest safe size among them.
     min_size = min(s for _, _, s in incomplete)
-    safe_size = (min_size // 8) * 8
-    already_written = safe_size // 8
+    safe_size = (min_size // 16) * 16
+    already_written = safe_size // 16
 
     for path, _, size in incomplete:
         if size > safe_size:
@@ -405,7 +405,7 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None, eval_max_seco
     _max_links: int | None = None
     if eval_max_seconds is not None and chain_paths:
         _eval_max_links = eval_max_seconds - inputs.setup_delay_seconds + 1
-        _full_links = store.file_size(chain_paths[0]) // 8
+        _full_links = store.file_size(chain_paths[0]) // 16
         if _eval_max_links < _full_links:
             _filename_override = f"{strategy.filename}_MAX_{eval_max_seconds}s"
             _max_links = _eval_max_links

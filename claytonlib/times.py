@@ -9,7 +9,7 @@ _TIME_FMT = '%Y-%m-%d %H:%M:%S'
 
 def calculate_seed(time: dt.datetime, delay: int) -> int:
     mdms = (time.month * time.day + time.minute + time.second) & 0xFF
-    return (mdms << 24) | (time.hour << 16) | (delay & 0xFFFF)
+    return ((mdms << 24) | (time.hour << 16)) + delay
 
 
 def generate_times(key_seed):
