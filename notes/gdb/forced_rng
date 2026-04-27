@@ -1,0 +1,18 @@
+Need to test how RNG works for several things by forcing RNG to return certain results
+
+Pretty simple process
+
+* Breakpoint BattleSystem_Rand
+* when I hit the rand point I want, fin -> set r0 <result I want to use>
+observe BattleSytem_Rand breakpoints
+
+
+## Things to observe
+* Wake-up rolls
+* Confusion rolls (esp. snapping out vs continuing vs hitting)
+* Thaw rolls (whether )
+* Full Paralysis rolls
+* Infatuation rolls
+* Flinching rolls (Do hit/miss/crit rolls still happen?)
+* Magnitude rolls
+

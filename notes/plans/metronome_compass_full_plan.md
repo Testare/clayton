@@ -69,20 +69,37 @@ class MultiHit(PathToken):
     count: int
     def render(self): return f"x{self.count}"
 
-# Singleton tokens (zero-field frozen dataclasses, module-level instances)
+# Player-move outcome tokens
 Hit        → "h"
 Miss       → "-"
-Crit       → "!"   # implies hit; never combined with h
+Crit       → "!"    # implies hit; never combined with Hit
 EffectProc → "~"
-Fainted    → "F"
-PAR        → "PAR"   # Magikarp couldn't move: paralyzed
-FRZ        → "FRZ"   # frozen
-CFZ        → "CFZ"   # confused (hurt itself)
+
+# Magikarp action tokens (appear where MagikarpMove would, when a selected move
+# is not possible or is replaced by a forced action)
+PAR        → "PAR"   # fully paralyzed, couldn't move
+FRZ        → "FRZ"   # frozen, couldn't move
+SLP        → "SLP"   # asleep, couldn't move
+FLN        → "FLN"   # flinched from our move's secondary effect
+LV         → "LV"    # immobilized by love (Attract)
+CFZ        → "CFZ"   # hurt itself in confusion (action replaced by self-hit)
+SCFZ       → "SCFZ"  # snapped out of confusion; must be followed by action token
+Struggle   → "STR"   # forced action when no usable moves remain (not a selected move)
+
+# Path-end token
+PathEnd    → "_"     # battle ended (Magikarp fainted, PP exhausted, etc.)
+                     # always last; dropped before prefix-matching against precomputed paths
 ```
 
 **Only emit tokens for events that represent an actual RNG roll.** A move with no accuracy check doesn't produce a Hit/Miss token. A move with no effect chance doesn't produce an EffectProc token. This keeps paths minimal.
 
 **Crit vs hit**: `!` (crit) implies the move hit. `h` is hit without crit. `-` is miss; crit is not observable on a miss and is never emitted.
+
+**Confusion has three observable outcomes**: `CFZ` (hurt itself, no action follows), `SCFZ` + action token (snapped out then acted), or just an action token (stayed confused but acted — implied by absence of `SCFZ`, tracked via `battle_state`).
+
+**Struggle vs MagikarpMove**: `Struggle` is a forced action, not a move Magikarp selected, so it is a standalone token rather than a `MagikarpMove` variant.
+
+**PathEnd vs old Fainted (`F`)**: `_` marks the end of the *observed* path for any reason. Precomputed paths (up to 10 turns, capped by Metronome PP) contain no `PathEnd`. When comparing, strip `_` and prefix-match the last partial turn against the precomputed path. Metronome PP is tracked as a field on `BattleContext`; when it reaches 0 the precomputed path ends naturally.
 
 #### Path structure and rendering
 
@@ -111,28 +128,38 @@ class BattleContext(ABC):
     _path: list[list[PathToken]]   # accumulated turns
     _current_turn: list[PathToken] # tokens for the turn in progress
 
+    def advance_unobservable(self, n: int = 1) -> None:
+        """Consume n non-observable RNG rolls. RngContext advances RNG; InteractiveContext no-ops."""
+        ...
+
+    def advance_observable(self) -> int:
+        """Consume one observable RNG roll and return the raw value.
+        RngContext advances RNG and returns the value.
+        InteractiveContext raises — effect scripts must not call this directly."""
+        ...
+
     def emit(self,
-             rng_to_token: Callable[[int], PathToken],
+             rng_to_token: Callable[['BattleContext'], PathToken],
              question: str,
              input_to_token: Callable[[str], PathToken]) -> PathToken:
-        """Advance one observable RNG event. Appends resulting token to current turn."""
+        """Resolve one observable event into a token and append it to the current turn.
+        rng_to_token receives the context (not a raw number) so it can call
+        advance_observable()/advance_unobservable() as needed and access battle_state.
+        RngContext calls rng_to_token(self); InteractiveContext asks the question."""
         ...
 
     def raw_emit(self, token: PathToken) -> PathToken:
         """Append a token directly, for cases where one question per token isn't appropriate."""
         ...
 
-    def advance(self, n: int = 1) -> None:
-        """Consume n non-observable RNG rolls (no token emitted)."""
-        ...
-
     def end_turn(self) -> tuple[PathToken, ...]:
         """Snapshot the current turn's tokens and start a new turn."""
         ...
 
-    # --- Emit helpers (common token patterns, defined once) ---
-    def hit_crit_or_miss(self, accuracy: int) -> PathToken:
-        """Single question: h/!/- covering both accuracy and crit rolls."""
+    # --- Emit helpers (common token patterns defined once on the base class) ---
+    def hit_crit_or_miss(self, move: 'Move') -> PathToken:
+        """Covers the 3-roll sequence (crit, damage, hit check) with a single h/!/- question.
+        rng_to_token calls advance_observable() x2 + advance_unobservable() x1 internally."""
         ...
 
     def effect_proc(self, chance: int) -> PathToken | None:
@@ -144,9 +171,9 @@ class BattleContext(ABC):
         ...
 ```
 
-**`RngContext`**: implements `emit()` by advancing the internal RNG state and applying `rng_to_token`. `advance()` increments RNG without emitting. Exposes `.rng` for reading current state. The `battle_state` dict and token accumulation are inherited.
+**`RngContext`**: implements `advance_observable()` by advancing internal RNG and returning the value; `advance_unobservable()` advances without returning. `emit()` calls `rng_to_token(self)`. Exposes `.rng` for reading final state.
 
-**`InteractiveContext`**: implements `emit()` by printing `question`, reading user input, and applying `input_to_token`. `advance()` is a no-op. No RNG state. Filtering against pre-computed paths happens outside the context, at turn boundaries after `end_turn()` is called.
+**`InteractiveContext`**: `advance_unobservable()` is a no-op; `advance_observable()` raises `RuntimeError` (effect scripts must use helpers, not raw advances). `emit()` prints `question`, reads input, calls `input_to_token`. Filtering against pre-computed paths happens outside the context, at turn boundaries after `end_turn()`.
 
 ### Effect-based move modeling
 
