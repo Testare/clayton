@@ -156,6 +156,7 @@ class Expedition:
         self.metronome_second_window:     int        = 0
         self.compass_m_history:           list       = []
         self.compass_m_delay:             int | None = None  # saved calibration delay
+        self.known_moves:                 list[int]  = []    # move numbers Metronome can't pick
 
         # Check utilities
         self.check_config: CheckConfig = CheckConfig()
@@ -183,6 +184,7 @@ class Expedition:
             'metronome_second_window':   self.metronome_second_window,
             'compass_m_history':        self.compass_m_history,
             'compass_m_delay':          self.compass_m_delay,
+            'known_moves':              self.known_moves,
             'check':                    self.check_config._to_dict(),
         }
 
@@ -205,6 +207,7 @@ class Expedition:
         f.metronome_second_window    = data.get('metronome_second_window') or 0
         f.compass_m_history        = data.get('compass_m_history') or []
         f.compass_m_delay          = data.get('compass_m_delay')
+        f.known_moves              = data.get('known_moves') or []
         f.check_config             = CheckConfig._from_dict(data.get('check') or {})
         return f
 
@@ -889,6 +892,57 @@ class Expedition:
     def compass_m_suggest(self) -> None:
         """Suggest most likely time based on metronome history. (Not yet implemented.)"""
         print("[expedition] compass_m_suggest: not yet implemented.")
+
+    # ------------------------------------------------------------------
+    # metronome_compass_full
+    # ------------------------------------------------------------------
+
+    def metronome_compass_full(self, *, second_window: int | None = None) -> None:
+        """Run metronome_compass_full using stored config.
+
+        Prompts for Magikarp level (session parameter, not saved).
+        second_window overrides self.metronome_second_window for this call only.
+        """
+        print(f"[expedition] === metronome_compass_full ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        self._ensure_key_seed()
+        self._ensure_window()
+
+        from claytonlib.metronome_compass_full import (
+            metronome_compass_full as _metronome_compass_full,
+            CompassMetronomeFullInput,
+        )
+        from claytonlib.compass_metronome import MetronomeOpponent
+        from claytonlib.times import get_times
+
+        # Prompt for Magikarp level (session parameter, not stored)
+        while True:
+            raw = input("  Magikarp level (2-20): ").strip()
+            try:
+                level = int(raw)
+                if 2 <= level <= 20:
+                    break
+                print("  Enter a level between 2 and 20.")
+            except ValueError:
+                print("  Please enter a whole number.")
+
+        target_delay = self._pick_metronome_delay()
+
+        base_delay, _ = get_times(self.key_seed)
+        delay_from_key = target_delay - base_delay
+        print(f"[expedition] target_delay={target_delay}  Δ from key: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+
+        initial_time = dt.datetime.fromisoformat(self.initial_time)
+        inputs = CompassMetronomeFullInput(
+            opponent=MetronomeOpponent.MAGIKARP,
+            key_seed=self.key_seed,
+            target_delay=target_delay,
+            initial_time=initial_time,
+            window=self.window,
+            magikarp_level=level,
+            known_moves=tuple(self.known_moves),
+            second_window=self.metronome_second_window if second_window is None else second_window,
+        )
+        _metronome_compass_full(inputs)
 
     # ------------------------------------------------------------------
     # _pick_seed — shared by machete methods

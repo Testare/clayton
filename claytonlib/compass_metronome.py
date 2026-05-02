@@ -85,6 +85,7 @@ class CompassMetronomeInput:
     initial_time:  dt.datetime
     window:        int
     second_window: int = 0
+    magikarp_level: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -131,36 +132,67 @@ def _generate_metronome_candidates(inputs: CompassMetronomeInput) -> list[tuple[
 _METRONOME_POOL = 0x1d3  # 467 — total moves in the roll range
 
 
-def _simulate_metronome(seed: int) -> int:
-    """Return the move number Metronome would select for this raw seed.
+def _simulate_turn_start(seed: int, magikarp_level: int) -> tuple[int, int]:
+    """Return (metronome_move_number, magikarp_move_idx) for the first battle turn.
 
-    Advances: 7 (battle start, mirroring start_encounter) + 4 (before-turn),
-    then rolls rand % 0x1d3 + 1, rerolling on disallowed moves.
+    Sequence before Metronome rolls:
+      6 battle-start advances (graphics + ability checks)
+      1 Magikarp move selection: idx = (rng >> 16) % num_moves
+        num_moves = 2 (Splash/Tackle) if magikarp_level >= 15, else 1 (Splash only)
+        This advance was previously misidentified as a 7th battle-start advance.
+      4 BeforeTurn advances (BattleControllerPlayer_BeforeTurn, purpose unknown)
+
+    magikarp_move_idx: 0 = Splash, 1 = Tackle.
     """
     state = seed
     by_number = _moves_by_number()
 
-    # 7 battle-start advances (mirrors start_encounter: 4 graphics + 2 ability + 1 flee)
-    for _ in range(7):
+    # 6 battle-start advances
+    for _ in range(6):
         state = advance_rng(state)
 
-    # 4 before-turn advances (mirrors throw_bait/mud/ball pattern)
+    # Magikarp move selection (advance 7)
+    state = advance_rng(state)
+    num_moves = 2 if magikarp_level >= 15 else 1
+    magikarp_move_idx = (state >> 16) % num_moves
+
+    # 4 BeforeTurn advances (BattleControllerPlayer_BeforeTurn)
     for _ in range(4):
         state = advance_rng(state)
 
-    # Roll metronome, rerolling on disallowed moves
+    # Roll Metronome, rerolling on disallowed moves
     while True:
         state = advance_rng(state)
         move_num = (state >> 16) % _METRONOME_POOL + 1
         move = by_number.get(move_num)
         if move is not None and move.metronome_usable:
-            return move_num
+            return move_num, magikarp_move_idx
+
+
+def _simulate_metronome(seed: int) -> int:
+    """Return the move number Metronome would select for this raw seed."""
+    move_num, _ = _simulate_turn_start(seed, magikarp_level=0)
+    return move_num
+
+
+def _filter_by_turn_start(candidates: list[tuple[int, int]],
+                           move_number: int,
+                           magikarp_move_idx: int | None,
+                           magikarp_level: int) -> list[tuple[int, int]]:
+    results = []
+    for seed, delay in candidates:
+        m_num, m_idx = _simulate_turn_start(seed, magikarp_level)
+        if m_num != move_number:
+            continue
+        if magikarp_move_idx is not None and m_idx != magikarp_move_idx:
+            continue
+        results.append((seed, delay))
+    return results
 
 
 def _filter_by_move(candidates: list[tuple[int, int]],
                     move_number: int) -> list[tuple[int, int]]:
-    return [(seed, delay) for seed, delay in candidates
-            if _simulate_metronome(seed) == move_number]
+    return _filter_by_turn_start(candidates, move_number, None, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -187,16 +219,23 @@ def _print_metronome_status(candidates: list[tuple[int, int]],
 # analyze_compass_metronome
 # ---------------------------------------------------------------------------
 
-def analyze_compass_metronome(inputs: CompassMetronomeInput) -> list[tuple[int, str]]:
-    """Return (seed, move_name) for every candidate in the window.
+_MAGIKARP_MOVE_NAMES = {0: "Splash", 1: "Tackle"}
+
+
+def analyze_compass_metronome(inputs: CompassMetronomeInput) -> list[tuple[int, str, str]]:
+    """Return (seed, move_name, magikarp_move) for every candidate in the window.
 
     Does not filter — useful for inspecting the distribution of Metronome
     outcomes across all seeds in the search window.
+    magikarp_move is always "Splash" when magikarp_level < 15.
     """
     by_number = _moves_by_number()
     return [
-        (seed, by_number[_simulate_metronome(seed)].name)
+        (seed,
+         by_number[move_num].name,
+         _MAGIKARP_MOVE_NAMES[m_idx])
         for seed, _delay in _generate_metronome_candidates(inputs)
+        for move_num, m_idx in [_simulate_turn_start(seed, inputs.magikarp_level)]
     ]
 
 
@@ -243,7 +282,21 @@ def compass_metronome(inputs: CompassMetronomeInput) -> None:
             print(f"  {move.name} cannot be selected by Metronome.")
             continue
 
-        candidates = _filter_by_move(candidates, move.number)
+        magikarp_move_idx = None
+        if inputs.magikarp_level >= 15:
+            while True:
+                raw_k = input("Magikarp used Splash (s) or Tackle (t)? ").strip().lower()
+                if raw_k in ('s', 'splash'):
+                    magikarp_move_idx = 0
+                    break
+                elif raw_k in ('t', 'tackle'):
+                    magikarp_move_idx = 1
+                    break
+                else:
+                    print("  Enter 's' for Splash or 't' for Tackle.")
+
+        candidates = _filter_by_turn_start(candidates, move.number,
+                                           magikarp_move_idx, inputs.magikarp_level)
 
         # Only one loop iteration for now; loop structure in place for future observations.
         break

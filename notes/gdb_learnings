@@ -1,0 +1,1 @@
+The roll in ?? determines the move Magikarp uses, presumably that move % NUM_OF_MOVES. So if Magikarp's level is 15 or more, if this number is odd, it will tackle.

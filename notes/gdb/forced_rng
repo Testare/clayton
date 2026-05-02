@@ -15,4 +15,52 @@ observe BattleSytem_Rand breakpoints
 * Infatuation rolls
 * Flinching rolls (Do hit/miss/crit rolls still happen?)
 * Magnitude rolls
+* Go through effects
+* Do no-miss moves roll accuracy still?
+
+
+Hypnosis - (Effect 1)
+
+BtlCmd Random? Is this determining how many sleep turns there are?
+Yes, it takes the roll %4 + 2 to determine sleep turns, though the last turn of sleep is when the pokemon wakes up. (For example, if I rolled a 4, it would modulo to 0, 0+2=> 2, meaning magikarp stays asleep one turn and then wakes up the next)
+This roll does not happen if sleeping fails
+
+Well, it seems I was wrong.
+
+Following rolls continue as normal
+
+
+False swipe  - (Effect 101)
+Hit/miss/crit, no other rolls
+
+Wait, are more random checks happening on magikarp's turn?
+Hmm, There are 4 before "still sleeping", 4 after still sleeping, and then e46e
+
+Yes, there are definitely 2 less rolls when Magikarp is asleep.
+
+Sand attack - Just hit chec
+Growl (m 45, e 18)-  Just hit check
+
+Sing (made it miss)
+
+This time splash only took 2 random checks before being selected? Then 6 rolls after?
+
+
+When asleep:
+4 rolls
+<asleep>
+4 rolls, then e46e
+
+When woke up:
+2 rolls
+<Wakes up, uses splash>
+6 rolls, then e46e
+
+Next turn:
+4 rolls
+<splash>
+6 rolls, then e46e
+
+
+So many random rolls, trying to figure out which one determine's Magikarp's move is difficult.
 
