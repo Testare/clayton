@@ -13,7 +13,7 @@ from pathlib import Path
 
 from claytonlib.safari import advance_rng
 from claytonlib.times import get_times, calculate_seed
-from claytonlib.compass_metronome import MetronomeOpponent
+from claytonlib.compass_premetronome import MetronomeOpponent
 
 from .path import (
     Path as BattlePath, Turn, render_path,

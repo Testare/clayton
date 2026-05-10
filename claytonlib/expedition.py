@@ -151,8 +151,8 @@ class Expedition:
         self.target_seeds:        list[str] = []
         self.target_seeds_path:   str | None = None
 
-        # Compass metronome
-        self.compass_metronome_histsize:  int | None = None
+        # Compass premetronome
+        self.compass_premetronome_histsize:  int | None = None
         self.metronome_second_window:     int        = 0
         self.compass_m_history:           list       = []
         self.compass_m_delay:             int | None = None  # saved calibration delay
@@ -180,7 +180,7 @@ class Expedition:
             'initial_time':             self.initial_time,
             'target_seeds':             self.target_seeds,
             'target_seeds_path':        self.target_seeds_path,
-            'compass_metronome_histsize': self.compass_metronome_histsize,
+            'compass_premetronome_histsize': self.compass_premetronome_histsize,
             'metronome_second_window':   self.metronome_second_window,
             'compass_m_history':        self.compass_m_history,
             'compass_m_delay':          self.compass_m_delay,
@@ -203,7 +203,7 @@ class Expedition:
         f.initial_time             = data.get('initial_time')
         f.target_seeds             = data.get('target_seeds') or []
         f.target_seeds_path        = data.get('target_seeds_path')
-        f.compass_metronome_histsize = data.get('compass_metronome_histsize')
+        f.compass_premetronome_histsize = data.get('compass_premetronome_histsize')
         f.metronome_second_window    = data.get('metronome_second_window') or 0
         f.compass_m_history        = data.get('compass_m_history') or []
         f.compass_m_delay          = data.get('compass_m_delay')
@@ -249,7 +249,7 @@ class Expedition:
             ("target_delay",     self.target_delay        if self.target_delay        is not None else "(not set)"),
             ("initial_time",     self.initial_time        or "(not set)"),
             ("target_seeds",     self.target_seeds        or "(none)"),
-            ("metronome_histsz",  self.compass_metronome_histsize if self.compass_metronome_histsize is not None else "(not set)"),
+            ("metronome_histsz",  self.compass_premetronome_histsize if self.compass_premetronome_histsize is not None else "(not set)"),
             ("metronome_second_window", self.metronome_second_window),
             ("compass_m_delay",   self.compass_m_delay            if self.compass_m_delay            is not None else "(not set)"),
         ]
@@ -442,9 +442,9 @@ class Expedition:
         self._prompt_initial_time()
 
     def _ensure_metronome_histsize(self) -> None:
-        if self.compass_metronome_histsize is not None:
+        if self.compass_premetronome_histsize is not None:
             return
-        self.compass_metronome_histsize = self._prompt_int(
+        self.compass_premetronome_histsize = self._prompt_int(
             "Compass metronome history size (0 to disable): "
         )
 
@@ -481,7 +481,7 @@ class Expedition:
         ("window",                    "window",             "window",                    "_ensure_window"),
         ("target_delay",              "target_delay",       "target_delay",              "_prompt_target_delay"),
         ("initial_time",              "initial_time",       "initial_time",              "_prompt_initial_time"),
-        ("compass_metronome_histsize","metronome_histsz",    "compass_metronome_histsize","_ensure_metronome_histsize"),
+        ("compass_premetronome_histsize","metronome_histsz",    "compass_premetronome_histsize","_ensure_metronome_histsize"),
         ("metronome_second_window",  "metronome_second_window", "metronome_second_window", "_ensure_metronome_second_window"),
     ]
 
@@ -791,11 +791,11 @@ class Expedition:
             print("[expedition] No seeds returned from compass_safari.")
 
     # ------------------------------------------------------------------
-    # compass_metronome helpers
+    # compass_premetronome helpers
     # ------------------------------------------------------------------
 
     def _pick_metronome_delay(self) -> int:
-        """Interactively resolve which target delay to use for compass_metronome.
+        """Interactively resolve which target delay to use for compass_premetronome.
 
         Priority order:
           1. Main target_delay (if set) — user may accept or decline.
@@ -846,22 +846,22 @@ class Expedition:
                 print("  Enter an integer (frames) or a decimal number (seconds).")
 
     # ------------------------------------------------------------------
-    # compass_metronome
+    # compass_premetronome
     # ------------------------------------------------------------------
 
-    def compass_metronome(self, *, second_window: int | None = None) -> None:
-        """Run compass_metronome using stored config. (History saving: stub.)
+    def compass_premetronome(self, *, second_window: int | None = None) -> None:
+        """Run compass_premetronome using stored config. (History saving: stub.)
 
         second_window overrides self.metronome_second_window for this call only.
         """
-        print(f"[expedition] === compass_metronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === compass_premetronome ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
         self._ensure_metronome_histsize()
 
-        from claytonlib.compass_metronome import (
-            compass_metronome as _compass_metronome,
-            CompassMetronomeInput,
+        from claytonlib.compass_premetronome import (
+            compass_premetronome as _compass_premetronome,
+            CompassPremetronomeInput,
             MetronomeOpponent,
         )
         from claytonlib.times import get_times
@@ -873,7 +873,7 @@ class Expedition:
         print(f"[expedition] target_delay={target_delay}  Δ from key: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
-        inputs = CompassMetronomeInput(
+        inputs = CompassPremetronomeInput(
             opponent=MetronomeOpponent.MAGIKARP,
             key_seed=self.key_seed,
             target_delay=target_delay,
@@ -881,7 +881,7 @@ class Expedition:
             window=self.window,
             second_window=self.metronome_second_window if second_window is None else second_window,
         )
-        _compass_metronome(inputs)
+        _compass_premetronome(inputs)
         # TODO: save results to compass_m_history when histsize > 0
 
     def compass_m_clear(self) -> None:
@@ -911,7 +911,7 @@ class Expedition:
             metronome_compass_full as _metronome_compass_full,
             CompassMetronomeFullInput,
         )
-        from claytonlib.compass_metronome import MetronomeOpponent
+        from claytonlib.compass_premetronome import MetronomeOpponent
         from claytonlib.times import get_times
 
         # Prompt for Magikarp level (session parameter, not stored)

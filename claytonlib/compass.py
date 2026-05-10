@@ -527,8 +527,8 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             return [f"0x{seed:08X}" for _, seed, _ in by_prox]
 
 
-from claytonlib.compass_metronome import (  # noqa: E402, F401
-    compass_metronome as compass_metronome,
-    CompassMetronomeInput as CompassMetronomeInput,
+from claytonlib.compass_premetronome import (  # noqa: E402, F401
+    compass_premetronome as compass_premetronome,
+    CompassPremetronomeInput as CompassPremetronomeInput,
     MetronomeOpponent as MetronomeOpponent,
 )

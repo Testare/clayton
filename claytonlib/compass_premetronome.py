@@ -1,5 +1,5 @@
 """
-compass_metronome.py — Seed identification via Metronome observation.
+compass_premetronome.py — Seed identification via Metronome observation.
 
 Given a starting seed window and an observed Metronome move, narrows down
 the candidate seed list by simulating which seeds would produce that move.
@@ -74,11 +74,11 @@ class MetronomeOpponent(Enum):
 
 
 # ---------------------------------------------------------------------------
-# CompassMetronomeInput
+# CompassPremetronomeInput
 # ---------------------------------------------------------------------------
 
 @dataclass
-class CompassMetronomeInput:
+class CompassPremetronomeInput:
     opponent:      MetronomeOpponent
     key_seed:      int
     target_delay:  int
@@ -92,7 +92,7 @@ class CompassMetronomeInput:
 # Seed generation (raw seeds, no SafariContext needed)
 # ---------------------------------------------------------------------------
 
-def _generate_metronome_candidates(inputs: CompassMetronomeInput) -> list[tuple[int, int]]:
+def _generate_metronome_candidates(inputs: CompassPremetronomeInput) -> list[tuple[int, int]]:
     """Return sorted (seed, delay) pairs for the search window.
 
     For each delay d, the two canonical seeds come from the two RTC seconds that
@@ -216,13 +216,13 @@ def _print_metronome_status(candidates: list[tuple[int, int]],
 
 
 # ---------------------------------------------------------------------------
-# analyze_compass_metronome
+# analyze_compass_premetronome
 # ---------------------------------------------------------------------------
 
 _MAGIKARP_MOVE_NAMES = {0: "Splash", 1: "Tackle"}
 
 
-def analyze_compass_metronome(inputs: CompassMetronomeInput) -> list[tuple[int, str, str]]:
+def analyze_compass_premetronome(inputs: CompassPremetronomeInput) -> list[tuple[int, str, str]]:
     """Return (seed, move_name, magikarp_move) for every candidate in the window.
 
     Does not filter — useful for inspecting the distribution of Metronome
@@ -240,10 +240,10 @@ def analyze_compass_metronome(inputs: CompassMetronomeInput) -> list[tuple[int, 
 
 
 # ---------------------------------------------------------------------------
-# compass_metronome
+# compass_premetronome
 # ---------------------------------------------------------------------------
 
-def compass_metronome(inputs: CompassMetronomeInput) -> None:
+def compass_premetronome(inputs: CompassPremetronomeInput) -> None:
     """Interactive seed identifier using Metronome move observations."""
     candidates = _generate_metronome_candidates(inputs)
     total = len(candidates)

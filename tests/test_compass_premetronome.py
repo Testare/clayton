@@ -1,12 +1,12 @@
 """
-Unit tests for compass_metronome.py — move resolution, simulation, and filtering.
+Unit tests for compass_premetronome.py — move resolution, simulation, and filtering.
 """
 import datetime as dt
 import unittest
 from unittest.mock import patch
 
-from claytonlib.compass_metronome import (
-    CompassMetronomeInput,
+from claytonlib.compass_premetronome import (
+    CompassPremetronomeInput,
     MetronomeOpponent,
     Move,
     _filter_by_move,
@@ -36,12 +36,12 @@ def _make_inputs(**kwargs):
         window=4,
     )
     defaults.update(kwargs)
-    return CompassMetronomeInput(**defaults)
+    return CompassPremetronomeInput(**defaults)
 
 
 def _candidates(**kwargs):
     inp = _make_inputs(**kwargs)
-    with patch('claytonlib.compass_metronome.get_times', side_effect=_fake_get_times):
+    with patch('claytonlib.compass_premetronome.get_times', side_effect=_fake_get_times):
         return _generate_metronome_candidates(inp), inp
 
 
@@ -165,12 +165,12 @@ class TestMetronomeUsability(unittest.TestCase):
     def test_shadow_force_allowed(self):      self._assert_allowed('Shadow Force')
 
     def test_disallowed_count(self):
-        from claytonlib.compass_metronome import _load_moves
+        from claytonlib.compass_premetronome import _load_moves
         disallowed = [m for m in _load_moves() if not m.metronome_usable]
         self.assertEqual(len(disallowed), 25)
 
     def test_total_move_count(self):
-        from claytonlib.compass_metronome import _load_moves
+        from claytonlib.compass_premetronome import _load_moves
         self.assertEqual(len(_load_moves()), 467)
 
 
@@ -194,7 +194,7 @@ class TestSimulateMetronome(unittest.TestCase):
         )
 
     def test_result_is_usable_move(self):
-        from claytonlib.compass_metronome import _moves_by_number
+        from claytonlib.compass_premetronome import _moves_by_number
         move_num = _simulate_metronome(self.FIXTURE_SEED)
         move = _moves_by_number()[move_num]
         self.assertTrue(move.metronome_usable)
@@ -213,7 +213,7 @@ class TestSimulateMetronome(unittest.TestCase):
         self.assertGreaterEqual(b, 1)
 
     def test_result_never_disallowed(self):
-        from claytonlib.compass_metronome import _moves_by_number
+        from claytonlib.compass_premetronome import _moves_by_number
         by_num = _moves_by_number()
         # Sample a spread of seeds
         for seed in [0x00000000, 0x12345678, 0xDEADBEEF, 0xFFFFFFFF, 0xABCD1234]:
