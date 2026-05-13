@@ -22,22 +22,15 @@ from claytonlib.safari_compact import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Config
+# Options
 # ---------------------------------------------------------------------------
 
 @dataclass
-class MacheteConfig:
+class MacheteOptions:
     max_turns_one: int | None = 50  # turn limit for machete_one (BFS, single seed)
     max_turns_all: int | None = 20  # turn limit for machete_all (DFS, exhaustive)
     log_interval: int = 500_000  # nodes between progress log lines (0 = disabled)
     parallel: bool = False        # use ProcessPoolExecutor in machete_jane
-
-
-_config = MacheteConfig()
-
-
-def machete_config() -> MacheteConfig:
-    return _config
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +124,7 @@ def machete_one(
     seed: int | None = None,
     path: str = '',
     max_turns: int | None = ...,
+    options: MacheteOptions | None = None,
 ) -> str | None:
     """Return the shortest capture path via BFS, or None if no path exists.
 
@@ -140,10 +134,11 @@ def machete_one(
         path:           Compass-syntax actions already taken (e.g. '010'). Applied
                         before searching. Ignored when SafariContext is passed.
         max_turns:      Turn limit per branch. None = unlimited.
-                        Defaults to machete_config().max_turns.
+                        Defaults to MacheteOptions().max_turns_one.
+        options:        Tuning parameters. Uses MacheteOptions defaults if not provided.
     """
     if max_turns is ...:
-        max_turns = machete_config().max_turns_one
+        max_turns = (options or MacheteOptions()).max_turns_one
     ctx = _resolve_ctx(pokemon_or_ctx, seed, path)
     cp = CompactPokemon(ctx.pokemon)
     s0 = encode(ctx)
@@ -192,6 +187,7 @@ def machete_all(
     seed: int | None = None,
     path: str = '',
     max_turns: int | None = ...,
+    options: MacheteOptions | None = None,
 ) -> tuple[list[str], int]:
     """Return all capture paths and the count of depth-limited branches.
 
@@ -202,8 +198,9 @@ def machete_all(
 
     Args: same as machete_one.
     """
+    _opts = options or MacheteOptions()
     if max_turns is ...:
-        max_turns = machete_config().max_turns_all
+        max_turns = _opts.max_turns_all
     ctx = _resolve_ctx(pokemon_or_ctx, seed, path)
     cp  = CompactPokemon(ctx.pokemon)
     s0  = encode(ctx)
@@ -221,132 +218,85 @@ def machete_all(
 
     t_start       = time.monotonic()
     nodes_visited = 0
-    log_interval  = _config.log_interval
+    log_interval  = _opts.log_interval
     countdown     = log_interval
 
     # Try numba-JIT sims (~2.5x faster); fall back to pure Python on ImportError.
+    # Numba sims use a different return convention: sim_ball_nb → (s2, shakes_int)
+    # where shakes==4 means captured and shakes==-1 means no balls remaining;
+    # sim_bait_nb / sim_mud_nb → (s2, crit_int).  Adapter closures normalise
+    # these to the same (s2, ch_str) API as the pure-Python sims so a single
+    # _dfs body handles both paths.
     try:
         from claytonlib.safari_compact_nb import sim_bait_nb, sim_mud_nb, sim_ball_nb, make_arrays
         import numpy as np  # noqa: F401 (needed by make_arrays)
         fr_np, cr_np = make_arrays(cp)
-        _use_numba = True
+
+        def _sim_ball_w(s, _cp):
+            s2, shakes = sim_ball_nb(s, fr_np, cr_np)
+            if shakes == 4:  return s2, 'C'
+            if shakes >= 0:  return s2, '0123'[shakes]
+            return s2, '\x00'   # shakes==-1: no balls left → FLED, won't be pushed
+
+        def _sim_mud_w(s, _cp):
+            s2, crit = sim_mud_nb(s, fr_np, cr_np)
+            return s2, 'M' if crit else 'm'
+
+        def _sim_bait_w(s, _cp):
+            s2, crit = sim_bait_nb(s, fr_np, cr_np)
+            return s2, 'B' if crit else 'b'
+
+        _actions_normal    = [_sim_mud_w, _sim_ball_w, _sim_bait_w]
+        _actions_ball_only = [_sim_ball_w]
     except Exception:
-        _use_numba = False
+        _actions_normal    = _COMPACT_ACTIONS
+        _actions_ball_only = _COMPACT_BALL_ONLY
 
-    if _use_numba:
-        _WSH = 45
+    def _dfs(s: int, depth: int) -> None:
+        nonlocal truncated, nodes_visited, countdown
+        if not c_is_watching(s):
+            return
+        if max_turns is not None and depth >= max_turns:
+            truncated += 1
+            return
 
-        def _dfs(s: int, depth: int) -> None:
-            nonlocal truncated, nodes_visited, countdown
-            w = (s >> _WSH) & 3
-            if w >= 2:
-                return
-            if max_turns is not None and depth >= max_turns:
-                truncated += 1
-                return
+        nodes_visited += 1
+        if log_interval:
+            countdown -= 1
+            if countdown == 0:
+                countdown = log_interval
+                elapsed = time.monotonic() - t_start
+                logger.debug(
+                    "machete_all: %d nodes  %d paths  %d trunc  %.1fs"
+                    "  %.0fk/s  memo=%d",
+                    nodes_visited, len(paths), truncated, elapsed,
+                    nodes_visited / elapsed / 1000, len(futile_memo),
+                )
 
-            nodes_visited += 1
-            if log_interval:
-                countdown -= 1
-                if countdown == 0:
-                    countdown = log_interval
-                    elapsed = time.monotonic() - t_start
-                    logger.debug(
-                        "machete_all: %d nodes  %d paths  %d trunc  %.1fs"
-                        "  %.0fk/s  memo=%d",
-                        nodes_visited, len(paths), truncated, elapsed,
-                        nodes_visited / elapsed / 1000, len(futile_memo),
+        paths_snap  = len(paths)
+        trunc_snap  = truncated
+        child_depth = depth + 1
+
+        for sim in (_actions_ball_only if c_will_flee(s) else _actions_normal):
+            s2, ch = sim(s, cp)
+            if ch == 'C':
+                paths.append(''.join(prefix) + 'C')
+            elif c_is_watching(s2):
+                if max_turns is not None and child_depth >= max_turns:
+                    truncated += 1
+                else:
+                    remaining2 = (
+                        (max_turns - child_depth) if max_turns is not None else (1 << 30)
                     )
-
-            paths_snap  = len(paths)
-            trunc_snap  = truncated
-            child_depth = depth + 1
-            at_max      = max_turns is not None and child_depth >= max_turns
-            rem2        = (
-                0 if at_max else
-                ((max_turns - child_depth) if max_turns is not None else (1 << 30))
-            )
-
-            def _push(s2: int, ch: str) -> None:
-                nonlocal truncated
-                if (s2 >> _WSH) & 3 < 2:
-                    if at_max:
-                        truncated += 1
-                    elif futile_memo.get(s2, 0) < rem2:
+                    if futile_memo.get(s2, 0) < remaining2:
                         prefix.append(ch)
                         _dfs(s2, child_depth)
                         prefix.pop()
 
-            if w == 1:  # WILL_FLEE: ball only
-                s2, shakes = sim_ball_nb(s, fr_np, cr_np)
-                if shakes == 4:
-                    paths.append(''.join(prefix) + 'C')
-                elif shakes >= 0:
-                    _push(s2, '0123'[shakes])
-            else:       # WONT_FLEE: mud → ball → bait
-                s2, crit = sim_mud_nb(s, fr_np, cr_np)
-                _push(s2, 'M' if crit else 'm')
-
-                s2, shakes = sim_ball_nb(s, fr_np, cr_np)
-                if shakes == 4:
-                    paths.append(''.join(prefix) + 'C')
-                elif shakes >= 0:
-                    _push(s2, '0123'[shakes])
-
-                s2, crit = sim_bait_nb(s, fr_np, cr_np)
-                _push(s2, 'B' if crit else 'b')
-
-            if len(paths) == paths_snap and truncated == trunc_snap:
-                remaining = (max_turns - depth) if max_turns is not None else (1 << 30)
-                if remaining > futile_memo.get(s, 0):
-                    futile_memo[s] = remaining
-
-    else:
-        def _dfs(s: int, depth: int) -> None:
-            nonlocal truncated, nodes_visited, countdown
-            if not c_is_watching(s):
-                return
-            if max_turns is not None and depth >= max_turns:
-                truncated += 1
-                return
-
-            nodes_visited += 1
-            if log_interval:
-                countdown -= 1
-                if countdown == 0:
-                    countdown = log_interval
-                    elapsed = time.monotonic() - t_start
-                    logger.debug(
-                        "machete_all: %d nodes  %d paths  %d trunc  %.1fs"
-                        "  %.0fk/s  memo=%d",
-                        nodes_visited, len(paths), truncated, elapsed,
-                        nodes_visited / elapsed / 1000, len(futile_memo),
-                    )
-
-            paths_snap  = len(paths)
-            trunc_snap  = truncated
-            child_depth = depth + 1
-
-            for sim in (_COMPACT_BALL_ONLY if c_will_flee(s) else _COMPACT_ACTIONS):
-                s2, ch = sim(s, cp)
-                if ch == 'C':
-                    paths.append(''.join(prefix) + 'C')
-                elif c_is_watching(s2):
-                    if max_turns is not None and child_depth >= max_turns:
-                        truncated += 1
-                    else:
-                        remaining2 = (
-                            (max_turns - child_depth) if max_turns is not None else (1 << 30)
-                        )
-                        if futile_memo.get(s2, 0) < remaining2:
-                            prefix.append(ch)
-                            _dfs(s2, child_depth)
-                            prefix.pop()
-
-            if len(paths) == paths_snap and truncated == trunc_snap:
-                remaining = (max_turns - depth) if max_turns is not None else (1 << 30)
-                if remaining > futile_memo.get(s, 0):
-                    futile_memo[s] = remaining
+        if len(paths) == paths_snap and truncated == trunc_snap:
+            remaining = (max_turns - depth) if max_turns is not None else (1 << 30)
+            if remaining > futile_memo.get(s, 0):
+                futile_memo[s] = remaining
 
     _dfs(s0, 0)
     paths.sort(key=len)
@@ -506,6 +456,7 @@ def machete_jane(
     pokemon: SafariPokemon | None = None,
     max_turns: int | None = ...,
     interactive: bool = False,
+    options: MacheteOptions | None = None,
 ) -> JaneNode | None:
     """Return the optimal decision tree across all candidate seeds.
 
@@ -514,14 +465,16 @@ def machete_jane(
                     seeds are used, pokemon is required to construct contexts.
         pokemon:    Required when candidates contains plain seed ints.
         max_turns:  Turn limit passed to machete_all for path generation.
-                    Defaults to machete_config().max_turns.
+                    Defaults to MacheteOptions().max_turns_all.
+        options:    Tuning parameters. Uses MacheteOptions defaults if not provided.
 
     Returns:
         The optimal JaneNode tree, FUTILE_NODE if no seed has a viable path,
         or None if candidates is empty.
     """
+    _opts = options or MacheteOptions()
     if max_turns is ...:
-        max_turns = machete_config().max_turns_all
+        max_turns = _opts.max_turns_all
     n = len(candidates)
     logger.info("machete_jane: %d candidate(s), max_turns=%s", n, max_turns)
     t_start = time.monotonic()
@@ -540,7 +493,7 @@ def machete_jane(
         resolved.append((ctx, seed))
 
     # Phase 2: run machete_all on each context.
-    use_parallel = _config.parallel and not interactive and n > 1
+    use_parallel = _opts.parallel and not interactive and n > 1
     if use_parallel:
         logger.info("machete_jane: using ProcessPoolExecutor across %d workers", n)
         worker_args = [(copy.copy(ctx), max_turns) for ctx, _ in resolved]

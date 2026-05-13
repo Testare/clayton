@@ -6,63 +6,15 @@ the candidate seed list by simulating which seeds would produce that move.
 """
 import copy
 import datetime as dt
-import json
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 
 from claytonlib.safari import advance_rng
 from claytonlib.times import get_times, calculate_seed
-
-
-# ---------------------------------------------------------------------------
-# Move data
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class Move:
-    number: int
-    name: str
-    metronome_usable: bool
-
-
-_moves: list[Move] | None = None
-
-
-def _load_moves() -> list[Move]:
-    global _moves
-    if _moves is None:
-        path = Path(__file__).parent / "basedata" / "moves.json"
-        with open(path) as f:
-            data = json.load(f)
-        _moves = [Move(number=m["number"], name=m["name"],
-                       metronome_usable=m["metronome_usable"]) for m in data]
-    return _moves
-
-
-def _moves_by_number() -> dict[int, Move]:
-    return {m.number: m for m in _load_moves()}
-
-
-def _moves_by_name() -> dict[str, Move]:
-    """Lowercase-normalised name → Move."""
-    return {m.name.lower(): m for m in _load_moves()}
-
-
-def _normalise(s: str) -> str:
-    return s.strip().lower().replace('-', ' ').replace('_', ' ')
-
-
-def resolve_move(text: str) -> Move | None:
-    """Return a Move for the given name string, or None if not found."""
-    key = _normalise(text)
-    return _moves_by_name().get(key)
-
-
-def suggest_moves(text: str, n: int = 3) -> list[Move]:
-    """Return up to n moves whose names contain the query as a substring."""
-    key = _normalise(text)
-    return [m for m in _load_moves() if key in m.name.lower()][:n]
+from claytonlib.moves import (
+    Move, _load_moves, _moves_by_number, _moves_by_name,
+    resolve_move, suggest_moves,
+)
 
 
 # ---------------------------------------------------------------------------

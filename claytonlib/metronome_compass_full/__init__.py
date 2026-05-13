@@ -6,14 +6,13 @@ Phase 1: Filters candidates by the Metronome move selected each turn.
 """
 from __future__ import annotations
 import datetime as dt
-import json
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 
 from claytonlib.safari import advance_rng
 from claytonlib.times import get_times, calculate_seed
 from claytonlib.compass_premetronome import MetronomeOpponent
+from claytonlib.moves import Move, _load_moves, _moves_by_number
 
 from .path import (
     Path as BattlePath, Turn, render_path,
@@ -22,38 +21,7 @@ from .path import (
     PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, PathEnd, Unsupported,
 )
 from .context import BattleContext, RngContext, InteractiveContext
-from .effects import Move, move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL
-
-
-# ---------------------------------------------------------------------------
-# Move data loading
-# ---------------------------------------------------------------------------
-
-_moves_cache: list[Move] | None = None
-
-
-def _load_moves() -> list[Move]:
-    global _moves_cache
-    if _moves_cache is None:
-        path = Path(__file__).parent.parent / "basedata" / "moves.json"
-        with open(path) as f:
-            data = json.load(f)
-        _moves_cache = [
-            Move(
-                number=m["number"],
-                name=m["name"],
-                metronome_usable=m["metronome_usable"],
-                effect=m["effect"],
-                effect_chance=m["effect_chance"],
-                accuracy=m["accuracy"],
-            )
-            for m in data
-        ]
-    return _moves_cache
-
-
-def _moves_by_number() -> dict[int, Move]:
-    return {m.number: m for m in _load_moves()}
+from .effects import move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL
 
 
 # ---------------------------------------------------------------------------
@@ -166,31 +134,42 @@ def _simulate_turn_rng(
     return ctx.end_turn()
 
 
-def _precompute_first_move(
+def _precompute_turn_move(
     seed: int,
     moves_by_num: dict[int, Move],
-    known_moves: frozenset[int],
+    known: frozenset[int],
+    turn_n: int,
+    magikarp_level: int,
 ) -> int | None:
-    """Return the move number Metronome would select on turn 1 for this seed.
+    """Return the move number Metronome would select on turn_n for this seed.
 
-    Returns None if something went wrong (should not happen in practice).
+    Simulates turns 1 through turn_n-1 in full (including EOT), then extracts
+    the metronome roll for turn_n. Returns None if an unsupported move ends the
+    path before turn_n.
     """
     ctx = RngContext(seed)
     ctx.advance_unobservable(_BATTLE_START_ADVANCES)
+    for _ in range(turn_n - 1):
+        _simulate_turn_rng(ctx, moves_by_num, known, magikarp_level)
+        if ctx.battle_state.get('unsupported'):
+            return None
     ctx.advance_unobservable(_BEFORE_TURN_ADVANCES)
-    move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
+    move = simulate_metronome_roll(ctx, moves_by_num, known)
     return move.number
 
 
-def _precompute_all(
+def _precompute_for_turn(
     candidates: list[tuple[int, int]],
     inputs: CompassMetronomeFullInput,
     moves_by_num: dict[int, Move],
-) -> dict[int, int]:
-    """Return {seed: move_number} for all candidates."""
+    turn_n: int,
+) -> dict[int, int | None]:
+    """Return {seed: move_number} predicting each candidate's metronome roll on turn_n."""
     known = frozenset(inputs.known_moves)
-    return {seed: _precompute_first_move(seed, moves_by_num, known)
-            for seed, _ in candidates}
+    return {
+        seed: _precompute_turn_move(seed, moves_by_num, known, turn_n, inputs.magikarp_level)
+        for seed, _ in candidates
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +267,9 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
     """Interactive multi-turn seed identification via Metronome move observation.
 
     Phase 1: filters by Metronome move selection only. Each observation narrows
-    the candidate set. 'Go again' re-runs a fresh session on the same window
-    (useful for calibration across multiple battle attempts).
+    the candidate set. Supports undo (u) and continues across turns until the
+    seed is identified or the user quits. 'Go again' re-runs a fresh session on
+    the same window (useful for calibration across multiple battle attempts).
     """
     moves_by_num = _moves_by_number()
     initial_candidates = _generate_candidates(inputs)
@@ -307,15 +287,22 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
         print(f"Known moves:    {names}")
     print()
 
-    while True:
-        # Fresh session: reset candidates and pre-compute
-        candidates = list(initial_candidates)
-        seed_to_move = _precompute_all(candidates, inputs, moves_by_num)
-        turn = 1
+    # Pre-compute turn 1 move predictions once; reused across sessions.
+    initial_seed_to_move = _precompute_for_turn(initial_candidates, inputs, moves_by_num, 1)
 
-        print(f"--- Session ---")
+    while True:
+        # history: list of (label, candidates, seed_to_move) snapshots.
+        # history[-1] is always the current state. len(history) == current turn number.
+        history: list[tuple[str, list[tuple[int, int]], dict[int, int | None]]] = [
+            ('', list(initial_candidates), dict(initial_seed_to_move)),
+        ]
+
+        print("--- Session ---")
 
         while True:
+            _, candidates, seed_to_move = history[-1]
+            turn = len(history)
+
             print()
             _print_candidates(candidates, seed_to_move, moves_by_num,
                               inputs.target_delay, total)
@@ -337,8 +324,13 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
 
             if raw.lower() in ('q', 'quit'):
                 return
+
             if raw.lower() == 'u':
-                print("  (Undo not yet implemented for Phase 1)")
+                if len(history) > 1:
+                    history.pop()
+                    print(f"  Undone. Back to turn {len(history)}.")
+                else:
+                    print("  Nothing to undo.")
                 continue
 
             move = _resolve_move_input(raw, moves_by_num)
@@ -355,26 +347,15 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
                 print(f"  {move.name} cannot be selected by Metronome.")
                 continue
 
-            # Filter candidates by the observed move
-            candidates = [(seed, delay) for seed, delay in candidates
-                          if seed_to_move.get(seed) == move.number]
-            turn += 1
+            # Filter candidates by the observed move on this turn.
+            new_candidates = [(s, d) for s, d in candidates
+                              if seed_to_move.get(s) == move.number]
 
-            # NOTE (Phase 2): After filtering, advance RNG through this turn for each
-            # remaining candidate to pre-compute turn 2's metronome move.
-            # For now, the loop ends after one observation (single-turn Phase 1).
-            print()
-            _print_candidates(candidates, seed_to_move, moves_by_num,
-                              inputs.target_delay, total)
-            if len(candidates) == 1:
-                seed, delay = candidates[0]
-                delta = delay - inputs.target_delay
-                print()
-                print(f"Seed identified: 0x{seed:08X}  delay={delay}  Δ={_delta_str(delta)}")
-            elif not candidates:
-                print()
-                print("No matching seeds. Check for input errors or expand the window.")
-            break  # Phase 1: single observation per session
+            # Pre-compute the next turn's metronome roll for each surviving seed.
+            next_seed_to_move = _precompute_for_turn(
+                new_candidates, inputs, moves_by_num, turn + 1
+            )
+            history.append((f"T{turn}={move.name}", new_candidates, next_seed_to_move))
 
         print()
         again = input("Go again? (y/n): ").strip().lower()

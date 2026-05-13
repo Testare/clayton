@@ -9,6 +9,7 @@ from unittest.mock import patch
 from claytonlib.chart import STRATEGY_ONLY_BALLS, CRITERIA_CAPTURE
 from claytonlib.compass import (
     CompassAction,
+    CompassOptions,
     CompassSafariInput,
     ParseError,
     UndoAction,
@@ -46,7 +47,7 @@ def _make_inputs(**kwargs):
         target_delay=TARGET_DELAY,
     )
     defaults.update(kwargs)
-    with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+    with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
         return CompassSafariInput(**defaults)
 
 
@@ -217,14 +218,14 @@ class TestCompassSafariInputValidation(unittest.TestCase):
         )
 
     def test_valid_construction(self):
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             inp = CompassSafariInput(**self._base_kwargs())
         self.assertEqual(inp.target_delay, TARGET_DELAY)
 
     def test_missing_target_delay_raises(self):
         kw = self._base_kwargs()
         kw['target_delay'] = None
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             with self.assertRaises(ValueError):
                 CompassSafariInput(**kw)
 
@@ -241,14 +242,14 @@ class TestCompassSafariInputValidation(unittest.TestCase):
         expected_seed = calculate_seed(time_at, BASE_DELAY + second_idx * 60)
         kw = self._base_kwargs()
         kw['target_seed'] = expected_seed
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             inp = CompassSafariInput(**kw)
         self.assertEqual(inp.target_seed, expected_seed)
 
     def test_mismatched_target_seed_raises(self):
         kw = self._base_kwargs()
         kw['target_seed'] = 0xDEADBEEF
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             with self.assertRaises(ValueError):
                 CompassSafariInput(**kw)
 
@@ -262,7 +263,7 @@ class TestCompassSafariInputValidation(unittest.TestCase):
             criteria=CRITERIA_CAPTURE,
             pokemon=safari_pokemon_by_name('metang'),
         )
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             inp = CompassSafariInput.from_chart(
                 chart,
                 window=4,
@@ -283,7 +284,7 @@ class TestGenerateCandidates(unittest.TestCase):
 
     def _candidates(self, **kwargs):
         inp = _make_inputs(**kwargs)
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             return _generate_candidates(inp), inp
 
     def test_no_duplicate_seeds(self):
@@ -327,15 +328,9 @@ class TestGenerateCandidates(unittest.TestCase):
         self.assertIn(expected, seeds)
 
     def test_starting_ball_count_applied(self):
-        from claytonlib.compass import compass_config
-        original = compass_config().starting_ball_count
-        compass_config().starting_ball_count = 25
-        try:
-            cands, _ = self._candidates(window=0)
-            for ctx, _, _ in cands:
-                self.assertEqual(ctx.balls_remaining, 25)
-        finally:
-            compass_config().starting_ball_count = original
+        cands, _ = self._candidates(window=0, options=CompassOptions(starting_ball_count=25))
+        for ctx, _, _ in cands:
+            self.assertEqual(ctx.balls_remaining, 25)
 
     def test_sorted_by_delay_then_seed(self):
         cands, _ = self._candidates(window=10)
@@ -353,7 +348,7 @@ class TestApplyAction(unittest.TestCase):
 
     def setUp(self):
         inp = _make_inputs(window=30)
-        with patch('claytonlib.compass.get_times', side_effect=_fake_get_times):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
             self.candidates = _generate_candidates(inp)
         self.pokemon = safari_pokemon_by_name('metang')
 

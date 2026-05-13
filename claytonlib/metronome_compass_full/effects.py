@@ -10,26 +10,10 @@ then implement the handler when the GDB-verified RNG sequence is known.
 from __future__ import annotations
 from typing import TYPE_CHECKING, Callable
 
+from claytonlib.moves import Move
+
 if TYPE_CHECKING:
     from .context import BattleContext
-
-
-# ---------------------------------------------------------------------------
-# Move data type used by effect scripts
-# ---------------------------------------------------------------------------
-
-class Move:
-    """Move metadata needed by effect scripts."""
-    __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy')
-
-    def __init__(self, number: int, name: str, metronome_usable: bool,
-                 effect: int = 0, effect_chance: int = 0, accuracy: int = 0):
-        self.number = number
-        self.name = name
-        self.metronome_usable = metronome_usable
-        self.effect = effect
-        self.effect_chance = effect_chance
-        self.accuracy = accuracy  # 0 = always hits (bypasses accuracy check)
 
 
 # ---------------------------------------------------------------------------

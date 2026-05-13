@@ -7,8 +7,7 @@ from fractions import Fraction
 
 from claytonlib.safari import SafariContext, SafariPokemon, SafariStep, SafariContextState
 from claytonlib.machete import (
-    MacheteConfig,
-    machete_config,
+    MacheteOptions,
     JaneNode,
     CAPTURED_NODE,
     FUTILE_NODE,
@@ -389,24 +388,24 @@ class TestMacheteJane(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestMacheteConfig
+# TestMacheteOptions
 # ---------------------------------------------------------------------------
 
-class TestMacheteConfig(unittest.TestCase):
+class TestMacheteOptions(unittest.TestCase):
 
     def test_default_max_turns_one(self):
-        cfg = MacheteConfig()
-        self.assertEqual(cfg.max_turns_one, 50)
+        opts = MacheteOptions()
+        self.assertEqual(opts.max_turns_one, 50)
 
     def test_default_max_turns_all(self):
-        cfg = MacheteConfig()
-        self.assertEqual(cfg.max_turns_all, 20)
+        opts = MacheteOptions()
+        self.assertEqual(opts.max_turns_all, 20)
 
-    def test_singleton_is_mutable(self):
-        original = machete_config().max_turns_all
-        machete_config().max_turns_all = 10
-        self.assertEqual(machete_config().max_turns_all, 10)
-        machete_config().max_turns_all = original  # restore
+    def test_options_are_independent(self):
+        opts_a = MacheteOptions(max_turns_all=10)
+        opts_b = MacheteOptions()
+        self.assertEqual(opts_a.max_turns_all, 10)
+        self.assertEqual(opts_b.max_turns_all, 20)
 
 
 if __name__ == '__main__':

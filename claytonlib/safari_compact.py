@@ -107,8 +107,16 @@ def will_flee(s: int) -> bool:
 # Pure-function simulation
 # ---------------------------------------------------------------------------
 
-def sim_bait(s: int, cp: CompactPokemon) -> tuple[int, str]:
-    """Simulate throw_bait; return (new_compact_state, outcome_char)."""
+def _sim_item(
+    s: int,
+    cp: CompactPokemon,
+    delta: int,        # -1 for bait, +1 for mud
+    flee_always: bool, # True = flee stage changes even on critical (bait)
+    cap_always: bool,  # True = cap stage changes even on critical (mud)
+    crit_char: str,
+    norm_char: str,
+) -> tuple[int, str]:
+    """Shared core for sim_bait and sim_mud."""
     rng      = s & _MASK
     flee_idx = (s >> _FLEE_SH)  & 0xF
     cap_idx  = (s >> _CAP_SH)   & 0xF
@@ -125,10 +133,14 @@ def sim_bait(s: int, cp: CompactPokemon) -> tuple[int, str]:
     critical = (rng >> 16) % 10 == 0
 
     # Stage updates (clamped in index space: 0 = stage −6, 12 = stage +6)
-    if not critical and cap_idx > 0:
-        cap_idx -= 1   # capture stage decreases on non-critical bait
-    if flee_idx > 0:
-        flee_idx -= 1  # flee stage always decreases on bait
+    if flee_always or not critical:
+        new = flee_idx + delta
+        if 0 <= new <= 12:
+            flee_idx = new
+    if cap_always or not critical:
+        new = cap_idx + delta
+        if 0 <= new <= 12:
+            cap_idx = new
 
     # 2 ability advances
     rng = (rng * _MULT + _ADD) & _MASK
@@ -144,47 +156,19 @@ def sim_bait(s: int, cp: CompactPokemon) -> tuple[int, str]:
 
     return (rng | (flee_idx << _FLEE_SH) | (cap_idx << _CAP_SH)
             | (balls << _BALLS_SH) | (watch << _WATCH_SH),
-            'B' if critical else 'b')
+            crit_char if critical else norm_char)
+
+
+def sim_bait(s: int, cp: CompactPokemon) -> tuple[int, str]:
+    """Simulate throw_bait; return (new_compact_state, outcome_char)."""
+    return _sim_item(s, cp, delta=-1, flee_always=True, cap_always=False,
+                     crit_char='B', norm_char='b')
 
 
 def sim_mud(s: int, cp: CompactPokemon) -> tuple[int, str]:
     """Simulate throw_mud; return (new_compact_state, outcome_char)."""
-    rng      = s & _MASK
-    flee_idx = (s >> _FLEE_SH)  & 0xF
-    cap_idx  = (s >> _CAP_SH)   & 0xF
-    balls    = (s >> _BALLS_SH) & 0x1F
-    watch    = (s >> _WATCH_SH) & 0x3
-
-    # 4 pre-turn advances
-    rng = (rng * _MULT + _ADD) & _MASK
-    rng = (rng * _MULT + _ADD) & _MASK
-    rng = (rng * _MULT + _ADD) & _MASK
-    rng = (rng * _MULT + _ADD) & _MASK
-    # critical check
-    rng = (rng * _MULT + _ADD) & _MASK
-    critical = (rng >> 16) % 10 == 0
-
-    # Stage updates
-    if not critical and flee_idx < 12:
-        flee_idx += 1  # flee stage increases on non-critical mud
-    if cap_idx < 12:
-        cap_idx += 1   # capture stage always increases on mud
-
-    # 2 ability advances
-    rng = (rng * _MULT + _ADD) & _MASK
-    rng = (rng * _MULT + _ADD) & _MASK
-
-    # flee check
-    if watch == WONT_FLEE:
-        rng = (rng * _MULT + _ADD) & _MASK
-        if (rng >> 16) % 255 <= cp.flee_rates[flee_idx]:
-            watch = WILL_FLEE
-    elif watch == WILL_FLEE:
-        watch = FLED
-
-    return (rng | (flee_idx << _FLEE_SH) | (cap_idx << _CAP_SH)
-            | (balls << _BALLS_SH) | (watch << _WATCH_SH),
-            'M' if critical else 'm')
+    return _sim_item(s, cp, delta=+1, flee_always=False, cap_always=True,
+                     crit_char='M', norm_char='m')
 
 
 def sim_ball(s: int, cp: CompactPokemon) -> tuple[int, str]:

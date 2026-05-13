@@ -6,21 +6,28 @@ from pathlib import Path
 _TIMES_DIR = Path('data/times')
 _TIME_FMT = '%Y-%m-%d %H:%M:%S'
 
+_MDMS_SHIFT   = 24       # bit position of the mdms byte in the seed
+_HOUR_SHIFT   = 16       # bit position of the hour byte in the seed
+_BYTE_MOD     = 0x100    # modulo for byte wrap-around (256)
+_BYTE_MASK    = 0xFF     # mask for a single byte
+_DELAY_MASK   = 0xFFFF   # mask for the 16-bit delay field
+_MDMS_WINDOW  = 138      # game constant: number of mdms slots to search forward
+
 
 def calculate_seed(time: dt.datetime, delay: int) -> int:
-    mdms = (time.month * time.day + time.minute + time.second) & 0xFF
-    return ((mdms << 24) | (time.hour << 16)) + delay
+    mdms = (time.month * time.day + time.minute + time.second) & _BYTE_MASK
+    return ((mdms << _MDMS_SHIFT) | (time.hour << _HOUR_SHIFT)) + delay
 
 
 def generate_times(key_seed):
-    mdms  = (key_seed & 0xFF000000) >> 24
-    hour  = (key_seed & 0x00FF0000) >> 16
-    delay =  key_seed & 0x0000FFFF
+    mdms  = (key_seed >> _MDMS_SHIFT) & _BYTE_MASK
+    hour  = (key_seed >> _HOUR_SHIFT) & _BYTE_MASK
+    delay =  key_seed & _DELAY_MASK
 
     with open(Path(__file__).parent / "basedata" / "mdMap.json", 'r') as f:
         md_map = json.load(f)
 
-    mdms2 = (mdms + 138) % 0x100
+    mdms2 = (mdms + _MDMS_WINDOW) % _BYTE_MOD
 
     if mdms2 > mdms:
         slots = md_map[:mdms+1] + md_map[mdms2:]
@@ -32,7 +39,7 @@ def generate_times(key_seed):
 
     date_times = []
     for month, day in pairs:
-        ms = (0x100 + mdms - (month * day)) % 0x100
+        ms = (_BYTE_MOD + mdms - (month * day)) % _BYTE_MOD
         # All [minute, second] where minute + second == ms, both in [0, 59]
         for minute in range(max(0, ms - 59), min(59, ms) + 1):
             second = ms - minute

@@ -8,11 +8,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from claytonlib.chart import (
+    ChartOptions,
     ChartSafariInput,
     STRATEGY_ONLY_BALLS,
     CRITERIA_CAPTURE,
     chart_safari,
-    chart_config,
 )
 from claytonlib.safari import safari_pokemon_by_name
 from tests.testingutils import FakeChainStore
@@ -180,13 +180,8 @@ class TestChartSafari(unittest.TestCase):
         inputs = _make_inputs()
         self._run(inputs, store)
 
-        chart_config().resume_validation_enabled = True
-        chart_config().resume_strict = True
-        try:
-            self._run(inputs, store)
-        finally:
-            chart_config().resume_validation_enabled = False
-            chart_config().resume_strict = False
+        inputs_val = _make_inputs(options=ChartOptions(resume_validation_enabled=True, resume_strict=True))
+        self._run(inputs_val, store)
 
     def test_resume_validation_raises_on_corrupt_data(self):
         store = FakeChainStore()
@@ -199,14 +194,9 @@ class TestChartSafari(unittest.TestCase):
         store._files[path][-32:-16] = (0xDEAD).to_bytes(16, 'little')
         store.truncate(path, store.file_size(path) - 16)
 
-        chart_config().resume_validation_enabled = True
-        chart_config().resume_strict = True
-        try:
-            with self.assertRaises(RuntimeError):
-                self._run(inputs, store)
-        finally:
-            chart_config().resume_validation_enabled = False
-            chart_config().resume_strict = False
+        inputs_val = _make_inputs(options=ChartOptions(resume_validation_enabled=True, resume_strict=True))
+        with self.assertRaises(RuntimeError):
+            self._run(inputs_val, store)
 
 
 if __name__ == '__main__':

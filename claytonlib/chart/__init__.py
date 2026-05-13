@@ -116,21 +116,16 @@ def machete_x_turns_n_balls_criteria(turns: int, n_balls: int) -> SuccessCriteri
 
 
 # ---------------------------------------------------------------------------
-# ChartConfig
+# ChartOptions
 # ---------------------------------------------------------------------------
 
 @dataclass
-class ChartConfig:
+class ChartOptions:
     evaluation_frames_per_write_cycle: int = 30
     resume_validation_enabled: bool = False
     resume_validation_frames: int = 2
     resume_strict: bool = False  # True = raise on mismatch, False = warn and continue
     evaluation_chains_per_write_cycle: int = 5
-
-_config = ChartConfig()
-
-def chart_config() -> ChartConfig:
-    return _config
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +141,7 @@ class ChartSafariInput:
     criteria: SuccessCriteria
     pokemon: SafariPokemon
     project_label: str | None = None
+    options: ChartOptions = field(default_factory=ChartOptions)
 
 
 def _evaluation_code(inputs: ChartSafariInput) -> str:
@@ -242,7 +238,7 @@ def _initialize_writers(inputs: ChartSafariInput, store) -> tuple:
 def _validate_resume(writers, inputs: ChartSafariInput, store, links_done: int) -> None:
     from claytonlib.chart.chain import chain_at_time, evaluate_chain_link
 
-    n = min(_config.resume_validation_frames, links_done)
+    n = min(inputs.options.resume_validation_frames, links_done)
     delay, times = get_times(inputs.key_seed)
 
     for writer, time in zip(writers, times):
@@ -259,7 +255,7 @@ def _validate_resume(writers, inputs: ChartSafariInput, store, links_done: int) 
         actual = store.read_tail(writer.path, n)
         if expected != actual:
             msg = "Resume validation failed for %s: expected %s, got %s"
-            if _config.resume_strict:
+            if inputs.options.resume_strict:
                 raise RuntimeError(msg % (writer.path, expected, actual))
             else:
                 logger.warning(msg, writer.path, expected, actual)
@@ -280,13 +276,13 @@ def chart_safari(inputs: ChartSafariInput, store=None) -> None:
         logger.info("All chains already complete, nothing to do.")
         return
 
-    if _config.resume_validation_enabled and links_done > 0:
+    if inputs.options.resume_validation_enabled and links_done > 0:
         _validate_resume(writers, inputs, store, links_done)
 
     logger.info("Charting %d chain(s), links %d-%d.", len(writers), links_done, total_links - 1)
 
     while links_done < total_links:
-        batch = min(_config.evaluation_frames_per_write_cycle, total_links - links_done)
+        batch = min(inputs.options.evaluation_frames_per_write_cycle, total_links - links_done)
 
         t0 = time_mod.perf_counter()
         for _ in range(batch):
@@ -455,7 +451,7 @@ def evaluate_chart(inputs: ChartSafariInput, strategy, store=None, eval_max_seco
         )
 
         chains_since_write += 1
-        if chains_since_write >= _config.evaluation_chains_per_write_cycle:
+        if chains_since_write >= inputs.options.evaluation_chains_per_write_cycle:
             t_before_flush = time_mod.perf_counter()
             _flush(data)
             t_after_flush = time_mod.perf_counter()
