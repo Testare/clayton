@@ -6,23 +6,27 @@ The current `compass_metronome` (simple) takes one Metronome move observation, f
 
 The key challenge is accurately modeling every RNG call in a battle turn so the simulated state stays in sync with the game's actual RNG state across turns.
 
-## GDB-verified turn RNG sequence (from `notes/gdb/metronome`)
+## Verified turn RNG sequence
 
 **Battle start**: 4 bellShimmer + 2 ability + 1 flee = **7 advances** (same as safari `start_encounter`)
 
-**Each turn** (observed with a standard damaging move + Magikarp Tackle):
+**Each turn** (supersedes earlier GDB notes, which were fast-and-loose):
 ```
-BEFORE TURN x4                          # quick claw checks
-BtlCmd_Metronome()                      # 1+ rolls (reroll if disallowed/known)
-CalcDamage / CheckMoveHit / TryCrit / ApplyDamage   # move execution (variable)
-CheckMoveHit                            # opponent's move accuracy
-Battle script rand                      # 1
-ov12_022585B8 x4 (x3 if Splash)        # post-turn ability processing
-ov12_022585B8 x6                        # more ability processing
-0x0225e46e                              # flee check
+1 roll   Magikarp move selection       # only if Magikarp has useable moves; skipped for Struggle
+4 rolls  BeforeTurn                    # quick claw checks
+N rolls  BtlCmd_Metronome()            # 1+ rolls (reroll if gravity-blocked or known move)
+N rolls  Metronome move execution      # variable; depends on move profile + observations
+2 rolls  IF Metronome move successful  # skipped on miss / move failure
+2 rolls  Magikarp turn start           # always (even if Magikarp is prevented)
+N rolls  Magikarp's move               # Splash: 0; Tackle (not prevented): accuracy check,
+                                       #   then IF hit: crit + damage (CheckMoveHit/TryCrit still apply)
+                                       # Struggle (not prevented): crit + damage (always hits, no accuracy check)
+2 rolls  IF Magikarp move successful   # skipped if Magikarp was prevented or move failed
+4 rolls  End of turn
 ```
 
-**Important uncertainty**: The "x3 if they splash I think" comment in GDB notes needs verification. Getting end-of-turn count wrong means state diverges after turn 1.
+Note: "successful" means the move animation played — misses, status moves that fail, being
+asleep/frozen/disabled/taunted/gravitated/paralyzed/infatuated do NOT count as successful.
 
 ## Architecture
 
@@ -133,8 +137,8 @@ class BattleContext(ABC):
         ...
 
     def advance_observable(self) -> int:
-        """Consume one observable RNG roll and return the raw value.
-        RngContext advances RNG and returns the value.
+        """Consume one observable RNG roll and return the shifted (top 16 bits) value.
+        RngContext advances RNG and returns (val >> 16).
         InteractiveContext raises — effect scripts must not call this directly."""
         ...
 
@@ -224,6 +228,8 @@ class MetronomeBattleState:
     target_confused: bool = False
 ```
 
+Magikarp's per-turn status is tracked separately in `MagikarpStatus` (see Turn simulation section).
+
 ### Turn simulation (`effects.py`)
 
 Effect scripts are plain functions that take a `BattleContext` and call `ctx.emit()`, `ctx.advance()`, and helpers. They are mode-agnostic — the context implementation handles whether to roll RNG or ask the user.
@@ -275,38 +281,218 @@ Observable outcomes determine which code paths the game took, which determines h
 - Hit without crit (`h`): advance for crit roll + damage roll
 - Hit with crit (`!`): advance for crit roll (validated) + damage roll
 
-### Magikarp simulation
+### Full turn simulation skeleton
 
 ```python
-def _simulate_magikarp(rng, obs_tokens, magikarp_level):
-    if magikarp_level >= 15:
-        rng = advance_rng(rng)
-        selected_idx = (rng >> 16) % 2
-        # Validate: does selected_idx map to the observed move?
-        # Move order (Splash=0, Tackle=1?) needs GDB verification
+def _simulate_turn(ctx: BattleContext, magikarp_status: MagikarpStatus,
+                   known_moves: tuple, magikarp_level: int) -> MagikarpStatus:
+    # 1. Magikarp move selection (only if useable moves exist; skipped if Struggle)
+    # The roll happens here, but the observation (move name) is only known later.
+    mk_move_roll = None
+    if magikarp_has_useable_moves(magikarp_status, magikarp_level):
+        mk_move_roll = ctx.advance_observable()
 
-    if magikarp_move == "tackle":
-        rng = advance_rng(rng)  # accuracy check
-        if hit:
-            rng = advance_rng(rng)  # crit
-            rng = advance_rng(rng)  # damage
-    # Splash: 0 additional RNG
-    return rng
+    # 2. [Player chooses move]
+
+    # 3. BeforeTurn x4
+    ctx.advance_unobservable(4)
+
+    # 4. Metronome roll (1+ advances with reroll on gravity-blocked / known moves)
+    move = ctx.emit_metronome_roll(known_moves, ctx.battle_state.get("gravity_turns", 0) > 0)
+
+    # 5. Metronome move effect (variable; handled by EFFECT_HANDLERS[move.effect])
+    handler = EFFECT_HANDLERS.get(move.effect, effect_unsupported)
+    move_succeeded = handler(ctx, move)
+
+    # 6. IF Metronome move successful: 2 more rolls
+    if move_succeeded:
+        ctx.advance_unobservable(2)
+
+    # 7. Magikarp turn start: 2 rolls always
+    ctx.advance_unobservable(2)
+
+    # 8. Magikarp's action (status checks in order, then move or replacement)
+    magikarp_status, magikarp_succeeded = _simulate_magikarp_turn(
+        ctx, magikarp_status, magikarp_level, mk_move_roll
+    )
+
+    # 9. IF Magikarp move successful: 2 more rolls
+    if magikarp_succeeded:
+        ctx.advance_unobservable(2)
+
+    # 10. End of turn: 4 rolls
+    ctx.advance_unobservable(4)
+
+    # 11. End of turn maintenance (ticks regardless of other prevention)
+    if ctx.battle_state.get("gravity_turns", 0) > 0:
+        ctx.battle_state["gravity_turns"] -= 1
+
+    _tick_disable_taunt(magikarp_status)
+
+    return magikarp_status
+```
+
+### Magikarp turn simulation
+
+```python
+def _simulate_magikarp_turn(ctx, status: MagikarpStatus, magikarp_level: int,
+                             mk_move_roll: int | None) -> tuple[MagikarpStatus, bool]:
+    """Simulate Magikarp's action including all status checks.
+    Returns (updated_status, move_succeeded).
+    Status effects checked in order per effect_status.md."""
+
+    status = status.copy()
+
+    # Sleep
+    if status.status == NonVolatileStatus.SLEEP:
+        if status.sleep_turns == 1:
+            status.sleep_turns = 0
+            status.status = NonVolatileStatus.NONE  # wakes up; fall through to move
+        else:
+            status.sleep_turns -= 1
+            ctx.raw_emit(SLP)
+            return status, False
+
+    # Freeze
+    if status.status == NonVolatileStatus.FROZEN:
+        thaw = ctx.emit(
+            rng_to_token=lambda c: FRZ if c.advance_observable() % 5 != 0 else SCFZ,
+            question="Magikarp thawed? (y/n): ",
+            input_to_token=lambda s: SCFZ if s.startswith('y') else FRZ,
+        )
+        if isinstance(thaw, FRZ):
+            return status, False
+        status.status = NonVolatileStatus.NONE  # thawed; fall through to move
+
+    # Flinch (current-turn only)
+    if status.flinched:
+        status.flinched = False
+        ctx.raw_emit(FLN)
+        return status, False
+
+    # Disable / Taunt / Gravity — prevent specific moves (emit P)
+    prevented = _check_prevented(ctx, status, magikarp_level)
+    if prevented:
+        return status, False
+
+    # Confusion
+    if status.confusion_turns > 0:
+        confused_roll = ctx.emit(
+            rng_to_token=lambda c: CFZ if (c.advance_observable() & 1) == 0 else None,
+            question="Magikarp snapped out / acted / hit itself? (snap/act/cfz): ",
+            input_to_token=...,
+        )
+        status.confusion_turns -= 1
+        if status.confusion_turns == 0:
+            ctx.raw_emit(SCFZ)  # snapped out before acting
+        if isinstance(confused_roll, CFZ):
+            ctx.advance_unobservable()  # damage roll (no hit/crit check for confusion self-hit)
+            return status, False  # hit itself; not "successful" in the game's terms
+
+    # Paralysis
+    if status.status == NonVolatileStatus.PARALYZED:
+        para_roll = ctx.emit(
+            rng_to_token=lambda c: PAR if c.advance_observable() % 4 == 0 else None,
+            question="Fully paralyzed? (y/n): ",
+            input_to_token=lambda s: PAR if s.startswith('y') else None,
+        )
+        if isinstance(para_roll, PAR):
+            return status, False
+
+    # Attract
+    if status.infatuated:
+        attract_roll = ctx.emit(
+            rng_to_token=lambda c: LV if (c.advance_observable() & 1) == 0 else None,
+            question="Immobilized by love? (y/n): ",
+            input_to_token=lambda s: LV if s.startswith('y') else None,
+        )
+        if isinstance(attract_roll, LV):
+            return status, False
+
+    # Magikarp's move executes
+    return _simulate_magikarp_move(ctx, status, magikarp_level, mk_move_roll)
+
+
+def _tick_disable_taunt(status: MagikarpStatus) -> None:
+    """Disable and taunt tick down every turn regardless of other prevention."""
+    if status.disable_turns > 0:
+        status.disable_turns -= 1
+        if status.disable_turns == 0:
+            status.disabled_move = None
+            # path token DIS_END emitted by caller
+    if status.taunt_turns > 0:
+        status.taunt_turns -= 1
+        # path token TNT_END emitted by caller when it reaches 0
+```
+
+### Magikarp move execution (Tackle / Splash / Struggle)
+
+```python
+def _simulate_magikarp_move(ctx, status: MagikarpStatus, magikarp_level: int,
+                              mk_move_roll: int | None) -> tuple[MagikarpStatus, bool]:
+    # Move selection roll was consumed at turn start (mk_move_roll).
+    # If no usable moves remain, it's a forced Struggle (no roll).
+
+    if not magikarp_has_useable_moves(status, magikarp_level):
+        ctx.raw_emit(Struggle())
+        ctx.emit_crit()             # struggle always hits; only crit is observable
+        ctx.advance_unobservable()  # damage roll
+        return status, True
+
+    # Has useable moves: resolve the selected one
+    def rng_to_token(ctx: BattleContext) -> PathToken:
+        # Use roll from step 1 (RngContext) or advance if missing (fallback)
+        r = mk_move_roll if mk_move_roll is not None else ctx.advance_observable()
+        return MagikarpMove("sp" if r % 2 == 0 else "tk")
+
+    token = ctx.emit(
+        rng_to_token=rng_to_token,
+        question="Magikarp used? (sp/tk):",
+        input_to_token=lambda s: MagikarpMove(s.strip()),
+    )
+
+    if isinstance(token, MagikarpMove) and token.move == "tk":
+        # Tackle: accuracy check + (crit + damage if hit)
+        outcome = ctx.hit_crit_or_miss(TACKLE_ACCURACY)
+        return status, not isinstance(outcome, Miss)
+
+    # Splash (MagikarpMove("sp")) always fails
+    return status, False
+```
+
+### MagikarpStatus dataclass
+
+```python
+class NonVolatileStatus(Enum):
+    NONE = 0
+    SLEEP = 1
+    FROZEN = 2
+    BURN = 3
+    POISON = 4
+    PARALYZED = 5
+
+@dataclass
+class MagikarpStatus:
+    status: NonVolatileStatus = NonVolatileStatus.NONE
+    sleep_turns: int = 0          # 1 = wakes up next turn; 2+ = still sleeping
+    flinched: bool = False        # cleared each turn
+    disable_turns: int = 0        # ticks every turn; disabled_move cleared when 0
+    disabled_move: int | None = None
+    taunt_turns: int = 0          # ticks every turn
+    confusion_turns: int = 0      # ticks only when Magikarp attempts to act
+    infatuated: bool = False
 ```
 
 ### End-of-turn processing
 
+End of turn is a fixed **4 rolls** (unconditional). Previous GDB notes showing a variable count
+(`ov12_022585B8 x4/x3 + x6 + flee check`) were inaccurate — superseded by verified observation.
+
 ```python
-def _simulate_end_of_turn(rng, magikarp_splashed, target_fainted):
-    rng = advance_rng(rng)           # battle script rand
-    ability_block_1 = 3 if magikarp_splashed else 4
-    rng = advance_n(rng, ability_block_1)
-    rng = advance_n(rng, 6)          # ov12_022585B8 x6
-    rng = advance_rng(rng)           # flee check
-    return rng
+ctx.advance_unobservable(4)  # end of turn, always
 ```
 
-**Open question**: Does end-of-turn processing change when Magikarp faints?
+Whether this changes when Magikarp faints is still an open question.
 
 ### User input
 
@@ -355,9 +541,9 @@ Cute Charm (Cleffa/Clefairy/Clefable) and Serene Grace (Happiny/Chansey/Togepi/T
 
 **Phase 1**: PathToken hierarchy + path rendering + move effect registry + pre-compute paths per seed from the metronome roll only (no post-move RNG). Basic interactive loop that filters on the `MetronomeMove` token. "Go again" loop. This already provides multi-turn filtering equivalent to running the simple compass multiple times.
 
-**Phase 2**: Full dual-mode turn simulation — move execution RNG, Magikarp RNG, end-of-turn RNG. Requires GDB verification of exact RNG call counts and ordering.
+**Phase 2**: Full dual-mode turn simulation — move execution RNG (hit/crit/damage), Magikarp RNG (move select + Tackle execution), fixed pre/post rolls (BeforeTurn x4, post-metronome x2, Magikarp-start x2, post-Magikarp x2, end-of-turn x4). Does not require status tracking.
 
-**Phase 3**: Gravity tracking (move pool + accuracy modifier), weather effects, stat stage tracking, status condition effects on Magikarp. Uses `MetronomeBattleState`.
+**Phase 3**: Magikarp status condition effects (sleep/freeze/flinch/disable/taunt/gravity/confusion/paralysis/attract). Uses `MagikarpStatus`. Gravity move-pool filtering and accuracy modifier. Weather effects, stat stage tracking. Uses `MetronomeBattleState`.
 
 **Phase 4**: Expedition integration, history saving, calibration suggestions, polish.
 
@@ -372,10 +558,12 @@ Cute Charm (Cleffa/Clefairy/Clefable) and Serene Grace (Happiny/Chansey/Togepi/T
 1. **Magikarp's level**: Session parameter. Blackthorn City = levels 2-20. Level <15 = Splash only, 15-20 = Splash+Tackle. Flail (30+) not supported → `BLACKTHORN_MAGIKARP`.
 2. **Known moves**: Part of input + expedition config. Metronome always implicit. Max 3 additional.
 3. **Magikarp fainting**: Halts compass. Hit/crit from killing move still observable. No further turns tracked.
-4. **End-of-turn uncertainty**: All GDB numbers need re-verification.
-5. **Tackle accuracy**: 95% in Gen IV. Needs GDB verification whether accuracy roll is consumed.
+4. **End-of-turn roll count**: Fixed 4 rolls. Supersedes earlier GDB notes.
+5. **Tackle accuracy**: 95% in Gen IV. CheckMoveHit still rolled (verified).
 6. **Two paths per seed**: Not needed. Level is a session parameter declared upfront.
 7. **Effect modeling**: Use effect numbers from decompiled source, not hand-crafted profile dataclass. `move_effect(effect, effect_chance) -> str` for display; effect handlers for simulation.
+8. **Turn structure**: Verified sequence — 1 Magikarp-select, 4 BeforeTurn, Metronome roll, move effect, 2 if-successful, 2 Magikarp-start, Magikarp move, 2 if-successful, 4 end-of-turn.
+9. **Magikarp status effects**: Detailed mechanics documented in `notes/refined/effect_status.md`. Checked in order: sleep → freeze → flinch → disable → taunt → gravity → confusion → paralysis → attract.
 
 ## Things to confirm (before Phase 2)
 
@@ -383,7 +571,6 @@ Cute Charm (Cleffa/Clefairy/Clefable) and Serene Grace (Happiny/Chansey/Togepi/T
 - Do accuracy rolls happen for 100% accurate moves (not to be confused with always-hit moves)?
 - What order do crit/accuracy/damage rolls happen? Does miss skip crit and damage rolls?
 - Exact formula for miss/crit checks (including stage modifiers and gravity with C integer arithmetic).
-- How confusion/paralysis/infatuation/sleep/freeze prevent or modify moves.
 - For moves with multiple effects (Ice Fang, Tri Attack), what order are effect rolls done in?
 - What is the exact RNG call count when Magikarp faints (end-of-turn processing)?
 - Tackle move order in Magikarp's moveset (Splash=0, Tackle=1?).

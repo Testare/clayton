@@ -1,8 +1,7 @@
 """metronome_compass_full — Multi-turn seed identification via Metronome battle observation.
 
-Phase 1: Filters candidates by the Metronome move selected each turn.
-         Post-move RNG tracking (hit/crit/miss, Magikarp turn) is infrastructure-ready
-         but not yet used for filtering (pending GDB verification in Phase 2).
+Full dual-mode turn simulation (move outcomes and Magikarp turns).
+Filters candidates by comparing full turn paths.
 """
 from __future__ import annotations
 import datetime as dt
@@ -18,7 +17,8 @@ from .path import (
     Path as BattlePath, Turn, render_path,
     PathToken, MetronomeMove, MagikarpMove, MultiHit,
     Hit, Miss, Crit, EffectProc,
-    PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, PathEnd, Unsupported,
+    PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, Prevented, StatusEnd, PathEnd, Unsupported,
+    NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
 )
 from .context import BattleContext, RngContext, InteractiveContext
 from .effects import move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL
@@ -38,7 +38,7 @@ class MagikarpGender(Enum):
 # ---------------------------------------------------------------------------
 
 @dataclass
-class CompassMetronomeFullInput:
+class CompassMetronomeInput:
     opponent:       MetronomeOpponent
     key_seed:       int
     target_delay:   int
@@ -53,7 +53,7 @@ class CompassMetronomeFullInput:
 # Candidate generation
 # ---------------------------------------------------------------------------
 
-def _generate_candidates(inputs: CompassMetronomeFullInput) -> list[tuple[int, int]]:
+def _generate_candidates(inputs: CompassMetronomeInput) -> list[tuple[int, int]]:
     """Return sorted (seed, delay) pairs for the search window."""
     from claytonlib.compass import _delay_offset_to_second_frame
     base_delay, _ = get_times(inputs.key_seed)
@@ -80,101 +80,231 @@ def _generate_candidates(inputs: CompassMetronomeFullInput) -> list[tuple[int, i
 
 
 # ---------------------------------------------------------------------------
-# Path pre-computation
+# Turn simulation
 # ---------------------------------------------------------------------------
 
-_BATTLE_START_ADVANCES = 7   # 4 bellShimmer + 2 ability + 1 flee
+_BATTLE_START_ADVANCES = 6   # 4 bellShimmer + 2 ability
 _BEFORE_TURN_ADVANCES  = 4   # quick claw checks
 
-# End-of-turn advance counts (all approximate — needs GDB verification for Phase 2)
-_EOT_SCRIPT_RAND    = 1
-_EOT_ABILITY_SPLASH = 3   # "x4 (x3 if Splash)"
-_EOT_ABILITY_TACKLE = 4
-_EOT_ABILITY_BLOCK2 = 6
-_EOT_FLEE_CHECK     = 1
+# Verified advance counts
+_POST_METRONOME_SUCCESS_ADVANCES = 2
+_MAGIKARP_TURN_START_ADVANCES    = 2
+_POST_MAGIKARP_SUCCESS_ADVANCES  = 2
+_END_OF_TURN_ADVANCES            = 4
 
 
-def _simulate_turn_rng(
-    ctx: RngContext,
+def simulate_turn(
+    ctx: BattleContext,
+    state: MetronomeBattleState,
     moves_by_num: dict[int, Move],
     known_moves: frozenset[int],
     magikarp_level: int,
-) -> 'Turn':
-    """Simulate one full battle turn and return its token tuple.
-
-    Advances RNG through: before-turn checks, metronome roll, move execution,
-    Magikarp's turn, and end-of-turn processing. Calls ctx.end_turn().
-
-    NOTE: Move execution and Magikarp tackle use placeholder advance counts
-    (Phase 1). Phase 2 replaces these with GDB-verified effect scripts.
-    """
+) -> Turn:
+    """Simulate one full battle turn and return its token tuple."""
     from .effects import simulate_move_execution
 
+    # 1. Magikarp move selection (if level >= 15 and has useable moves)
+    mk_can_move = _magikarp_has_useable_moves(state, magikarp_level)
+    mk_move_roll = None
+    if magikarp_level >= 15 and mk_can_move:
+        mk_move_roll = ctx.consume_observable_roll()
+
+    # 2. BeforeTurn checks
     ctx.advance_unobservable(_BEFORE_TURN_ADVANCES)
 
+    # 3. Metronome roll
     move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
-    simulate_move_execution(ctx, move)  # Phase 1: placeholder advances only
 
+    # 4. Metronome move execution
+    move_success = simulate_move_execution(ctx, move)
     if ctx.battle_state.get('unsupported'):
-        return ctx.end_turn()  # path ends here; caller stops the loop
+        return ctx.end_turn()
 
-    mk_move = ctx.magikarp_move_select(magikarp_level)
+    # 5. IF successful: post-metronome rolls
+    if move_success:
+        ctx.advance_unobservable(_POST_METRONOME_SUCCESS_ADVANCES)
 
-    # Magikarp tackle execution (approximate — Phase 2 will verify)
-    if mk_move.move == 'tk':
-        ctx.advance_unobservable(3)  # accuracy + crit + damage TODO: verify
+    # 6. Magikarp turn start rolls
+    ctx.advance_unobservable(_MAGIKARP_TURN_START_ADVANCES)
 
-    # End of turn (approximate — Phase 2 will verify)
-    splashed = (mk_move.move == 'sp')
-    ctx.advance_unobservable(_EOT_SCRIPT_RAND)
-    ctx.advance_unobservable(_EOT_ABILITY_SPLASH if splashed else _EOT_ABILITY_TACKLE)
-    ctx.advance_unobservable(_EOT_ABILITY_BLOCK2)
-    ctx.advance_unobservable(_EOT_FLEE_CHECK)
+    # 7. Magikarp's status checks & move execution
+    mk_success = _simulate_magikarp_turn(ctx, state, magikarp_level, mk_move_roll, mk_can_move)
+
+    # 8. IF successful: post-magikarp rolls
+    if mk_success:
+        ctx.advance_unobservable(_POST_MAGIKARP_SUCCESS_ADVANCES)
+
+    # 9. End of turn maintenance
+    ctx.advance_unobservable(_END_OF_TURN_ADVANCES)
+    
+    # Tick down durations
+    if state.gravity_turns > 0:
+        state.gravity_turns -= 1
+        if state.gravity_turns == 0:
+            ctx.raw_emit(StatusEnd("GRV"))
+    if state.mk_status.disable_turns > 0:
+        state.mk_status.disable_turns -= 1
+        if state.mk_status.disable_turns == 0:
+            state.mk_status.disabled_move = None
+            ctx.raw_emit(StatusEnd("DIS"))
+    if state.mk_status.taunt_turns > 0:
+        state.mk_status.taunt_turns -= 1
+        if state.mk_status.taunt_turns == 0:
+            ctx.raw_emit(StatusEnd("TNT"))
 
     return ctx.end_turn()
 
 
-def _precompute_turn_move(
-    seed: int,
-    moves_by_num: dict[int, Move],
-    known: frozenset[int],
-    turn_n: int,
-    magikarp_level: int,
-) -> int | None:
-    """Return the move number Metronome would select on turn_n for this seed.
-
-    Simulates turns 1 through turn_n-1 in full (including EOT), then extracts
-    the metronome roll for turn_n. Returns None if an unsupported move ends the
-    path before turn_n.
-    """
-    ctx = RngContext(seed)
-    ctx.advance_unobservable(_BATTLE_START_ADVANCES)
-    for _ in range(turn_n - 1):
-        _simulate_turn_rng(ctx, moves_by_num, known, magikarp_level)
-        if ctx.battle_state.get('unsupported'):
-            return None
-    ctx.advance_unobservable(_BEFORE_TURN_ADVANCES)
-    move = simulate_metronome_roll(ctx, moves_by_num, known)
-    return move.number
+def _magikarp_has_useable_moves(state: MetronomeBattleState, level: int) -> bool:
+    """True if Magikarp can use Splash or Tackle (not prevented by Disable/Taunt/Gravity)."""
+    # Splash (150)
+    splash_prevented = state.gravity_turns > 0 or state.mk_status.taunt_turns > 0
+    if not splash_prevented and state.mk_status.disabled_move != 150:
+        return True
+    # Tackle (33)
+    if level >= 15:
+        if state.mk_status.disabled_move != 33:
+            return True
+    return False
 
 
-def _precompute_for_turn(
-    candidates: list[tuple[int, int]],
-    inputs: CompassMetronomeFullInput,
-    moves_by_num: dict[int, Move],
-    turn_n: int,
-) -> dict[int, int | None]:
-    """Return {seed: move_number} predicting each candidate's metronome roll on turn_n."""
-    known = frozenset(inputs.known_moves)
-    return {
-        seed: _precompute_turn_move(seed, moves_by_num, known, turn_n, inputs.magikarp_level)
-        for seed, _ in candidates
-    }
+def _simulate_magikarp_turn(
+    ctx: BattleContext,
+    state: MetronomeBattleState,
+    level: int,
+    mk_move_roll: int | None,
+    mk_can_move: bool,
+) -> bool:
+    """Run through Magikarp's turn status checks and action. Returns True if move successful."""
+    status = state.mk_status
 
 
-# ---------------------------------------------------------------------------
-# Display
-# ---------------------------------------------------------------------------
+    # Sleep
+    if status.status == NonVolatileStatus.SLEEP:
+        if status.sleep_turns == 1:
+            status.sleep_turns = 0
+            status.status = NonVolatileStatus.NONE
+            # Wakes up; continues to move
+        else:
+            status.sleep_turns -= 1
+            ctx.raw_emit(SLP())
+            state.mk_last_move_prevented = True
+            return False
+
+    # Freeze
+    if status.status == NonVolatileStatus.FROZEN:
+        thaw = ctx.emit(
+            rng_to_token=lambda c: SCFZ() if c.advance_observable() % 5 == 0 else FRZ(),
+            question="Magikarp thawed? (y/n): ",
+            input_to_token=lambda s: SCFZ() if s.strip().lower() == 'y' else FRZ(),
+        )
+        if isinstance(thaw, FRZ):
+            state.mk_last_move_prevented = True
+            return False
+        status.status = NonVolatileStatus.NONE
+        # Thawed; continues to move
+
+    # Flinch
+    if status.flinched:
+        status.flinched = False
+        ctx.raw_emit(FLN())
+        state.mk_last_move_prevented = True
+        return False
+
+    # Prevented by Disable/Taunt/Gravity
+    # If the selected move is prevented, it fails.
+    # Note: we need to resolve the selected move first to see if IT is prevented.
+    
+    # Resolve move
+    if not mk_can_move:
+        # Forced Struggle because it had no usable moves at start of turn
+        ctx.raw_emit(Struggle())
+        state.mk_last_move = None # Struggle is not disable-able
+        state.mk_last_move_prevented = False
+        # Struggle always hits, but rolls crit + damage
+        ctx.advance_unobservable(2)
+        return True
+
+    # Has useable moves: resolve the selected one
+    selected_move = ctx.magikarp_move_select(level, mk_move_roll)
+    move_num = 150 if selected_move.move == 'sp' else 33
+    
+    # Check if this SPECIFIC move is prevented
+    is_prevented = False
+    if move_num == 150:
+        if state.gravity_turns > 0 or status.taunt_turns > 0 or status.disabled_move == 150:
+            is_prevented = True
+    elif move_num == 33:
+        if status.disabled_move == 33:
+            is_prevented = True
+            
+    if is_prevented:
+        ctx.raw_emit(Prevented())
+        state.mk_last_move_prevented = True
+        return False
+
+    # Confusion
+    if status.confusion_turns > 0:
+        hit_self = ctx.emit(
+            rng_to_token=lambda c: CFZ() if (c.advance_observable() & 1) == 0 else None,
+            question="Magikarp hit itself in confusion? (y/n): ",
+            input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
+        )
+        status.confusion_turns -= 1
+        if status.confusion_turns == 0:
+            ctx.raw_emit(SCFZ())
+            
+        if isinstance(hit_self, CFZ):
+            ctx.advance_unobservable(1) # damage roll
+            state.mk_last_move_prevented = True
+            return False
+
+    # Paralysis
+    if status.status == NonVolatileStatus.PARALYZED:
+        paralyzed = ctx.emit(
+            rng_to_token=lambda c: PAR() if c.advance_observable() % 4 == 0 else None,
+            question="Magikarp fully paralyzed? (y/n): ",
+            input_to_token=lambda s: PAR() if s.strip().lower() == 'y' else None,
+        )
+        if isinstance(paralyzed, PAR):
+            state.mk_last_move_prevented = True
+            return False
+
+    # Attract
+    if status.infatuated:
+        attract = ctx.emit(
+            rng_to_token=lambda c: LV() if (c.advance_observable() & 1) == 0 else None,
+            question="Magikarp immobilized by love? (y/n): ",
+            input_to_token=lambda s: LV() if s.strip().lower() == 'y' else None,
+        )
+        if isinstance(attract, LV):
+            state.mk_last_move_prevented = True
+            return False
+
+    # Move executes
+    state.mk_last_move = move_num
+    state.mk_last_move_prevented = False
+    
+    if move_num == 33: # Tackle
+        # 95% accuracy
+        def rng_to_hit(ctx: BattleContext) -> PathToken:
+            roll = ctx.advance_observable()
+            is_hit = roll % 256 < 95 * 255 // 100
+            return Hit() if is_hit else Miss()
+            
+        hit_token = ctx.emit(
+            rng_to_token=rng_to_hit,
+            question="Tackle hit? (h/-):",
+            input_to_token=lambda s: Hit() if s.strip().lower() == 'h' else Miss(),
+        )
+        if isinstance(hit_token, Hit):
+            ctx.advance_unobservable(2) # Crit + Damage
+            return True
+        return False
+        
+    # Splash (80) always fails to play animation/effect
+    return False
+
 
 def _delta_str(delta: int) -> str:
     return f"+{delta}" if delta > 0 else str(delta)
@@ -182,23 +312,33 @@ def _delta_str(delta: int) -> str:
 
 def _print_candidates(
     candidates: list[tuple[int, int]],
-    seed_to_move: dict[int, int],
+    seed_to_path: dict[int, BattlePath],
     moves_by_num: dict[int, Move],
     target_delay: int,
     total: int,
+    current_turn: int,
 ) -> None:
     print(f"Seeds: {len(candidates)} / {total} remaining")
     by_proximity = sorted(candidates, key=lambda x: (abs(x[1] - target_delay), x[0]))
     display = by_proximity[:10]
-    print(f"  {'#':>2}  {'Seed':>10}  {'Delay':>7}  {'Δ':>5}  Path")
+    print(f"  {'#':>2}  {'Seed':>10}  {'Delay':>7}  {'Δ':>5}  Turn {current_turn} Path")
     for i, (seed, delay) in enumerate(display, 1):
         delta = delay - target_delay
         marker = " ← target" if delta == 0 else ""
-        move_num = seed_to_move.get(seed)
-        move_name = moves_by_num[move_num].name if move_num else "?"
-        path_str = f"M{move_num:03d}"
+        path = seed_to_path.get(seed, ())
+        turn_path = ""
+        move_name = "?"
+        if len(path) >= current_turn:
+            turn = path[current_turn - 1]
+            turn_path = "".join(t.render() for t in turn)
+            # Find the MetronomeMove token to get the move name
+            for token in turn:
+                if isinstance(token, MetronomeMove):
+                    move_name = moves_by_num[token.move_num].name
+                    break
+        
         print(f"  {i:>2}. 0x{seed:08X}  {delay:>7}  {_delta_str(delta):>5}  "
-              f"{path_str}  ({move_name}){marker}")
+              f"{turn_path:<15} ({move_name}){marker}")
     if len(candidates) > 10:
         print(f"  ... and {len(candidates) - 10} more")
 
@@ -214,27 +354,16 @@ def precompute_path(
     known_moves: tuple[int, ...] = (),
     n_turns: int = 10,
 ) -> BattlePath:
-    """Pre-compute the battle path for a single seed.
-
-    Returns a Path (tuple of turns) representing the observable RNG events for
-    this seed over n_turns turns. Each turn contains a MetronomeMove token and
-    a MagikarpMove token (Ksp or Ktk depending on magikarp_level and the roll).
-
-    opposite_gender: True if Magikarp is the opposite gender to the Metronome
-    user (i.e. Attract can land). Stored in battle_state for effect scripts to
-    read when Attract is selected (Phase 2/3). Derive this from the Metronome
-    user's gender (expedition config) and Magikarp's gender (prompted per run).
-
-    Phase 1: post-move and end-of-turn RNG uses placeholder advance counts
-    (GDB-verified counts pending for Phase 2).
-    """
+    """Pre-compute the battle path for a single seed."""
     moves_by_num = _moves_by_number()
     known = frozenset(known_moves)
     ctx = RngContext(seed)
+    state = MetronomeBattleState()
     ctx.battle_state['opposite_gender'] = opposite_gender
+    ctx.battle_state['state'] = state
     ctx.advance_unobservable(_BATTLE_START_ADVANCES)
     for _ in range(n_turns):
-        _simulate_turn_rng(ctx, moves_by_num, known, magikarp_level)
+        simulate_turn(ctx, state, moves_by_num, known, magikarp_level)
         if ctx.battle_state.get('unsupported'):
             break
     return ctx.path
@@ -254,29 +383,54 @@ def _resolve_move_input(raw: str, moves_by_num: dict[int, Move]) -> Move | None:
     for move in moves_by_num.values():
         if move.name.lower() == key:
             return move
-    # Substring suggestions
     return None
 
 
-def _suggest_moves(raw: str, moves_by_num: dict[int, Move], n: int = 3) -> list[Move]:
-    key = raw.strip().lower().replace('-', ' ').replace('_', ' ')
-    return [m for m in moves_by_num.values() if key in m.name.lower()][:n]
+def _parse_turn_tokens(raw: str, moves_by_num: dict[int, Move]) -> tuple[PathToken, ...]:
+    """Parse a space-separated string of tokens like 'M053 h sp'."""
+    from .path import Hit, Miss, Crit, EffectProc, MagikarpMove
+    parts = raw.split()
+    tokens: list[PathToken] = []
+    for p in parts:
+        p = p.strip()
+        if not p: continue
+        
+        # Metronome move
+        if p.upper().startswith('M') and p[1:].isdigit():
+            num = int(p[1:])
+            if num in moves_by_num:
+                tokens.append(MetronomeMove(num))
+                continue
+        
+        # Shortcuts / specific tokens
+        match p.lower():
+            case 'h': tokens.append(Hit())
+            case '-': tokens.append(Miss())
+            case '!': tokens.append(Crit())
+            case '~': tokens.append(EffectProc())
+            case 'sp': tokens.append(MagikarpMove('sp'))
+            case 'tk': tokens.append(MagikarpMove('tk'))
+            case _:
+                # Try move name
+                move = _resolve_move_input(p, moves_by_num)
+                if move:
+                    tokens.append(MetronomeMove(move.number))
+                else:
+                    raise ValueError(f"Unknown token: {p}")
+    return tuple(tokens)
 
 
-def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
-    """Interactive multi-turn seed identification via Metronome move observation.
+def metronome_compass(inputs: CompassMetronomeInput) -> list[str]:
+    """Interactive multi-turn seed identification via Metronome battle observation.
 
-    Phase 1: filters by Metronome move selection only. Each observation narrows
-    the candidate set. Supports undo (u) and continues across turns until the
-    seed is identified or the user quits. 'Go again' re-runs a fresh session on
-    the same window (useful for calibration across multiple battle attempts).
+    Filters by full turn paths with status and battle state tracking.
     """
     moves_by_num = _moves_by_number()
     initial_candidates = _generate_candidates(inputs)
     total = len(initial_candidates)
     moveset = "Splash only" if inputs.magikarp_level < 15 else "Splash + Tackle"
 
-    print("=== Metronome Compass (Full) — Phase 1 ===")
+    print("=== Metronome Compass ===")
     print(f"Opponent:       {inputs.opponent.value.capitalize()}")
     print(f"Magikarp level: {inputs.magikarp_level} ({moveset})")
     sw = f"  second_window=±{inputs.second_window}" if inputs.second_window else ""
@@ -285,27 +439,38 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
         names = ', '.join(moves_by_num[n].name for n in inputs.known_moves
                           if n in moves_by_num)
         print(f"Known moves:    {names}")
-    print()
+    
+    # Magikarp gender determines if Attract (selected via Metronome) can land.
+    while True:
+        g = input("Magikarp gender? (m/f): ").strip().lower()
+        if g in ('m', 'f'):
+            opp = input("Is Magikarp opposite gender to your Pokemon? (y/n): ").strip().lower()
+            opposite_gender = (opp == 'y')
+            break
+        print("  Please enter 'm' or 'f'.")
 
-    # Pre-compute turn 1 move predictions once; reused across sessions.
-    initial_seed_to_move = _precompute_for_turn(initial_candidates, inputs, moves_by_num, 1)
+    print("\nPre-computing paths for all candidates...")
+    seed_to_path = {
+        seed: precompute_path(seed, inputs.magikarp_level, opposite_gender, inputs.known_moves)
+        for seed, delay in initial_candidates
+    }
+    print("Done.\n")
 
     while True:
-        # history: list of (label, candidates, seed_to_move) snapshots.
-        # history[-1] is always the current state. len(history) == current turn number.
-        history: list[tuple[str, list[tuple[int, int]], dict[int, int | None]]] = [
-            ('', list(initial_candidates), dict(initial_seed_to_move)),
+        # history: list of (observed_path, candidates) snapshots.
+        history: list[tuple[BattlePath, list[tuple[int, int]]]] = [
+            ((), list(initial_candidates)),
         ]
 
         print("--- Session ---")
 
         while True:
-            _, candidates, seed_to_move = history[-1]
-            turn = len(history)
+            observed_path, candidates = history[-1]
+            turn_n = len(observed_path) + 1
 
             print()
-            _print_candidates(candidates, seed_to_move, moves_by_num,
-                              inputs.target_delay, total)
+            _print_candidates(candidates, seed_to_path, moves_by_num,
+                              inputs.target_delay, total, turn_n)
 
             if not candidates:
                 print()
@@ -317,13 +482,14 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
                 delta = delay - inputs.target_delay
                 print()
                 print(f"Seed identified: 0x{seed:08X}  delay={delay}  Δ={_delta_str(delta)}")
-                break
+                return [f"0x{seed:08X}"]
 
             print()
-            raw = input(f"Turn {turn} — Metronome move (or u=undo, q=quit): ").strip()
+            print(f"Turn {turn_n} — enter observations (e.g. 'Flamethrower h sp')")
+            raw = input("  (or u=undo, q=quit): ").strip()
 
             if raw.lower() in ('q', 'quit'):
-                return
+                return [f"0x{s:08X}" for s, d in candidates]
 
             if raw.lower() == 'u':
                 if len(history) > 1:
@@ -333,32 +499,35 @@ def metronome_compass_full(inputs: CompassMetronomeFullInput) -> None:
                     print("  Nothing to undo.")
                 continue
 
-            move = _resolve_move_input(raw, moves_by_num)
-            if move is None:
-                suggestions = _suggest_moves(raw, moves_by_num)
-                if suggestions:
-                    names = ', '.join(f'"{m.name}"' for m in suggestions)
-                    print(f"  Unknown move. Did you mean: {names}?")
-                else:
-                    print(f"  Unknown move {raw!r}. Check spelling and try again.")
+            try:
+                observed_turn = _parse_turn_tokens(raw, moves_by_num)
+            except ValueError as e:
+                print(f"  Error: {e}")
                 continue
 
-            if not move.metronome_usable:
-                print(f"  {move.name} cannot be selected by Metronome.")
+            if not observed_turn:
+                print("  No tokens entered.")
                 continue
 
-            # Filter candidates by the observed move on this turn.
-            new_candidates = [(s, d) for s, d in candidates
-                              if seed_to_move.get(s) == move.number]
+            # Filter candidates by comparing their pre-computed turn against the observed turn.
+            def matches(seed_seed: int, obs_turn: tuple[PathToken, ...]) -> bool:
+                path = seed_to_path.get(seed_seed, ())
+                if len(path) < turn_n:
+                    return False
+                cand_turn = path[turn_n - 1]
+                # Prefix match
+                if len(cand_turn) < len(obs_turn):
+                    return False
+                return cand_turn[:len(obs_turn)] == obs_turn
 
-            # Pre-compute the next turn's metronome roll for each surviving seed.
-            next_seed_to_move = _precompute_for_turn(
-                new_candidates, inputs, moves_by_num, turn + 1
-            )
-            history.append((f"T{turn}={move.name}", new_candidates, next_seed_to_move))
+            new_candidates = [(s, d) for s, d in candidates if matches(s, observed_turn)]
+            
+            new_path = observed_path + (observed_turn,)
+            history.append((new_path, new_candidates))
 
+        _, candidates = history[-1]
         print()
         again = input("Go again? (y/n): ").strip().lower()
         if again != 'y':
-            break
+            return [f"0x{s:08X}" for s, d in candidates]
         print()

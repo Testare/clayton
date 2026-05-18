@@ -44,11 +44,19 @@ class BattleContext(ABC):
 
     @abstractmethod
     def advance_observable(self) -> int:
-        """Consume one observable RNG roll and return the raw 32-bit value.
+        """Consume one observable RNG roll and return the shifted (top 16 bits) value.
 
-        RngContext: advances RNG and returns the new state.
+        RngContext: advances RNG and returns the shifted value.
         InteractiveContext: raises RuntimeError. Effect scripts must use
         emit() helpers rather than calling this directly.
+        """
+
+    @abstractmethod
+    def consume_observable_roll(self) -> int | None:
+        """Advance observable RNG and return value (RngContext) or None (Interactive).
+
+        Use for rolls that happen early in a turn but whose results are only
+        observed (and thus emitted as tokens) later.
         """
 
     @abstractmethod
@@ -75,10 +83,10 @@ class BattleContext(ABC):
 
     def emit(
         self,
-        rng_to_token: Callable[['BattleContext'], PathToken],
+        rng_to_token: Callable[['BattleContext'], any],
         question: str,
-        input_to_token: Callable[[str], PathToken],
-    ) -> PathToken:
+        input_to_token: Callable[[str], any],
+    ) -> any:
         """Resolve one observable event into a token and append it to the current turn.
 
         rng_to_token receives the context so it can call advance_observable() /
@@ -89,8 +97,10 @@ class BattleContext(ABC):
         InteractiveContext prints question and calls input_to_token on the answer.
         """
         token = self._resolve_emit(rng_to_token, question, input_to_token)
-        self._current_turn.append(token)
+        if token is not None and isinstance(token, PathToken):
+            self._current_turn.append(token)
         return token
+
 
     def raw_emit(self, token: PathToken) -> PathToken:
         """Append a token directly — no RNG roll and no user prompt.
@@ -123,16 +133,16 @@ class BattleContext(ABC):
         A single h/!/- question covers all three outcomes in interactive mode.
         accuracy=0 means the move always hits (no accuracy roll consumed).
 
-        TODO (Phase 2): verify roll order and exact C integer thresholds with GDB.
+        TODO: verify roll order and exact C integer thresholds with GDB.
         """
         def rng_to_token(ctx: BattleContext) -> PathToken:
             crit_roll = ctx.advance_observable()
             ctx.advance_unobservable()  # damage roll is not observable
-            is_crit = (crit_roll >> 16) % 256 < 17  # TODO: verify threshold + stage formula
+            is_crit = crit_roll % 256 < 17  # TODO: verify threshold + stage formula
             if accuracy == 0:
                 return Crit() if is_crit else Hit()
             hit_roll = ctx.advance_observable()
-            is_hit = (hit_roll >> 16) % 256 < accuracy * 255 // 100  # TODO: verify formula
+            is_hit = hit_roll % 256 < accuracy * 255 // 100  # TODO: verify formula
             if not is_hit:
                 return Miss()
             return Crit() if is_crit else Hit()
@@ -161,7 +171,7 @@ class BattleContext(ABC):
         """
         def rng_to_token(ctx: BattleContext) -> PathToken:
             roll = ctx.advance_observable()
-            r = (roll >> 16) % 20
+            r = roll % 20
             count = 2 if r < 7 else 3 if r < 14 else 4 if r < 17 else 5
             return MultiHit(count)
 
@@ -173,19 +183,21 @@ class BattleContext(ABC):
         assert isinstance(token, MultiHit)
         return token.count
 
-    def magikarp_move_select(self, magikarp_level: int) -> MagikarpMove:
+    def magikarp_move_select(self, magikarp_level: int, roll: int | None = None) -> MagikarpMove:
         """Roll/ask which move Magikarp chose. Emits MagikarpMove token.
 
         Level < 15: Splash only — no RNG roll consumed.
         Level 15+: Splash or Tackle — one RNG roll for move selection.
+        If 'roll' is provided, it is used instead of advancing RNG (RngContext only).
+
         TODO: verify move index order (Splash=0, Tackle=1?) with GDB.
         """
         if magikarp_level < 15:
             return self.raw_emit(MagikarpMove("sp"))  # type: ignore[return-value]
 
         def rng_to_token(ctx: BattleContext) -> PathToken:
-            roll = ctx.advance_observable()
-            idx = (roll >> 16) % 2  # TODO: verify Splash=0, Tackle=1
+            r = roll if roll is not None else ctx.advance_observable()
+            idx = r % 2  # TODO: verify Splash=0, Tackle=1
             return MagikarpMove("sp" if idx == 0 else "tk")
 
         token = self.emit(
@@ -214,14 +226,17 @@ class RngContext(BattleContext):
 
     def advance_observable(self) -> int:
         self.rng = advance_rng(self.rng)
-        return self.rng
+        return self.rng >> 16
+
+    def consume_observable_roll(self) -> int | None:
+        return self.advance_observable()
 
     def _resolve_emit(self, rng_to_token, question, input_to_token) -> PathToken:
         return rng_to_token(self)
 
     def _resolve_proc(self, chance: int) -> bool:
         roll = self.advance_observable()
-        return (roll >> 16) % 100 < chance
+        return roll % 100 < chance
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +254,9 @@ class InteractiveContext(BattleContext):
             "advance_observable() must not be called on InteractiveContext. "
             "Effect scripts must use emit() helpers, not advance_observable() directly."
         )
+
+    def consume_observable_roll(self) -> int | None:
+        return None
 
     def _resolve_emit(self, rng_to_token, question, input_to_token) -> PathToken:
         while True:

@@ -26,6 +26,18 @@ class Move:
         self.effect_chance = effect_chance
         self.accuracy = accuracy  # 0 = always hits (bypasses accuracy check)
 
+    def is_gravity_blocked(self) -> bool:
+        """Returns True if this move is blocked by Gravity (Gen IV list)."""
+        # HGSS gravity-blocked moves
+        return self.number in {
+            19,   # Fly
+            26,   # Jump Kick
+            136,  # Hi Jump Kick
+            150,  # Splash
+            340,  # Bounce
+            393,  # Magnet Rise
+        }
+
 
 # ---------------------------------------------------------------------------
 # Loading and caching

@@ -1,41 +1,72 @@
 Effect statuses are checked in a specific order.
 
 # Effects that might affect Magikarp
+
+For each of these effects, they are checked in this order, and if any of them prevents a move from happening the following effects are not checked.
+
 ## Sleep
 When a move that applies sleep hits, a random number is generated to determine how many turns it will last. The formula is 2 + (RAND % 4). The last turn of sleep, the pokemon wakes up, so if RAND % 4 is 0, the result is 2, meaning the pokemon will sleep one turn and wake up the next.
+
+Fails if Magikarp is already asleep, frozen, burned, poisoned, or badly poisoned.
 
 ## Freeze
 Unlike sleep, freeze turns are not pre-determined. Instead, before the pokemon moves, a thaw check is done, and the pokemon thaws if (RAND % 5) is 0.
 
+Fails if Magikarp is already asleep, frozen, burned, poisoned, or badly poisoned.
+
 ## Flinch
 <Prevents Magikarp from taking an action>
 
+Duration is always only THIS turn.
+
+Struggle is prevented by flinch.
+
 ## Disable
 <Prevents move used last turn>
-TO CONFIRM: Do disable turns tick down when asleep/frozen?
 
-A roll is performed to determine duration
+A hit roll is done, even if disable won't be successful.
 
-TO CONFIRM: Random duration determination
+Disable fails if any of the following is true:
+* The opponent is already disabled
+* The opponent hasn't made a move yet
+* The opponent's last move was prevented, such as by paralysis, gravity, etc.
+* The opponent's last move was Struggle
+
+If disable is successful, A roll is performed to determine duration. 
+
+Duration: 4 + (RAND % 4)
+
+Disable turns tick down, even if the user is asleep, frozen, or flinches. It can even end while Magikarp is frozen or asleep as well. 
+
+We should have a path token for when disable ends.
 
 ## Taunt
 <Prevents splash>
-TO CONFIRM: Do taunt turns tick down when asleep/frozen?
 
-TO CONFIRM: Roll for duration (3-5 turns?)
+A hit roll is done, even if taunt won't be successful.
+
+Taunt fails if the pokemon is already taunted.
+
+Duration: 3 + (RAND % 3)
+
+Taunt turns tick down, even if the user is asleep, frozen, or flinches. It can even end while Magikarp is frozen or asleep. 
+
+We should have a path token for when taunt ends.
 
 ## Gravity
-<Prevents splash>
+<Prevents splash for Magikarp, as well as effects on user>
+
+Lasts 5 turns, including the turn it is used. Fails if gravity is already in effect.
+
+We don't need a path token for when gravity ends, since the duration is always 5.
 
 ## Confusion
 When a move applies confusion, a random number is generated to determine how many turns it will last. The formula is 2 + (RAND % 4). The last turn of confusion, the pokemon snaps out of confusion.
-* While asleep, confusion turns do not decrease
+While confused, and if no previous condition prevents the move from happening, a roll is performed to see if the user hits themself. If RAND is even, (RAND & 1 == 0), the user hits themself in their confusion instead, which means a damage roll but no crit or hit rolls.
 
-While confused, a roll is performed to see if the user hits themself. This roll is not performed if one of the previous conditions prevents the user from acting. If RAND is even, (RAND & 1 == 0), the user hits themself in their confusion instead.
+The number of turns a pokemon remains confused only decreases when this state is checked - When magikarp is prevented from attacking due to sleep, freeze, flinching, disable, taunt, or gravity, the number of remaining confusion turns is NOT decreased, and the pokemon will not snap out of confusion in those circumstances. The checks that occur after (paralysis and attract) do NOT prevent snapping out of confusion or prolong turns spent confused.
 
-TOCONFIRM: Damage roll is still done for confusion damage, but not crit or miss roll.
-
-TOCONFIRM: Do confusion turns tick down when asleep/frozen, flinched, disabled, etc?
+A pokemon may still hit itself in confusion if it would otherwise use Struggle.
 
 ## Paralysis
 (RAND % 4) == 0 => Full paralysis, move fails
@@ -44,9 +75,13 @@ TOCONFIRM: Do confusion turns tick down when asleep/frozen, flinched, disabled, 
 RAND & 1 == 0 => Immobilized by love.
 
 ## NO USEABLE MOVES
-If the user has no useable moves when it comes time to select a move, the usual roll is not performed, and Magikarp uses Struggle. This move always hits, but still rolls crit and damage.
+If the user has no useable moves when it comes time to select a move, the usual roll is not performed, and Magikarp uses Struggle. This move always hits, but still rolls crit and damage, and counts as successful. If magikarp's move is prevented after it has chosen that move, it fails, but does not struggle that turn.
 
 # Effects that might affect the metronome user
+
+## Gravity
+
+If metronome selects a gravity-prevented move, we roll again.
 
 ## Confusion 
 
@@ -77,3 +112,6 @@ IF the move was successful: 2 more rolls
 4 rolls at the end of the turn 
 
 Move that aren't successful: Misses, applying status conditions that already exist on a non-damaging move, being asleep, frozen, disabled on your selected move, or hitting yourself in confusion. Basically anything that keeps the move animation from playing.
+
+
+

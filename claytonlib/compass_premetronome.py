@@ -195,8 +195,13 @@ def analyze_compass_premetronome(inputs: CompassPremetronomeInput) -> list[tuple
 # compass_premetronome
 # ---------------------------------------------------------------------------
 
-def compass_premetronome(inputs: CompassPremetronomeInput) -> None:
-    """Interactive seed identifier using Metronome move observations."""
+def compass_premetronome(inputs: CompassPremetronomeInput) -> list[str]:
+    """Interactive metronome seed identifier.
+
+    Narrows down the candidate seed list by observing the move Metronome
+    selects on the FIRST turn of battle.
+    """
+
     candidates = _generate_metronome_candidates(inputs)
     total = len(candidates)
 
@@ -260,3 +265,5 @@ def compass_premetronome(inputs: CompassPremetronomeInput) -> None:
         delta = delay - inputs.target_delay
         print()
         print(f"Seed identified: 0x{seed:08X}  delay={delay}  Δ={_delta_str(delta)}")
+    
+    return [f"0x{seed:08X}" for seed, delay in candidates]

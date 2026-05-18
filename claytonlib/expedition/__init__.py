@@ -769,11 +769,11 @@ class Expedition:
                 print("  Enter an integer (frames) or a decimal number (seconds).")
 
     # ------------------------------------------------------------------
-    # compass_premetronome
+    # metronome_compass
     # ------------------------------------------------------------------
 
     def compass_premetronome(self, *, second_window: int | None = None) -> None:
-        """Run compass_premetronome using stored config. (History saving: stub.)
+        """Run compass_premetronome using stored config.
 
         second_window overrides self.metronome_second_window for this call only.
         """
@@ -804,8 +804,20 @@ class Expedition:
             window=self.window,
             second_window=self.metronome_second_window if second_window is None else second_window,
         )
-        _compass_premetronome(inputs)
-        # TODO: save results to compass_m_history when histsize > 0
+        seeds = _compass_premetronome(inputs)
+        if seeds:
+            self.target_seeds = seeds
+            self.target_seeds_path = f"compass_premetronome/{self.name}"
+            
+            # Save to history
+            if self.compass_metronome_histsize:
+                entry = {
+                    'timestamp': dt.datetime.now().isoformat(),
+                    'target_delay': target_delay,
+                    'seeds': seeds,
+                }
+                self.compass_m_history.append(entry)
+                self.compass_m_history = self.compass_m_history[-self.compass_metronome_histsize:]
 
     def compass_m_clear(self) -> None:
         """Clear the compass metronome history."""
@@ -817,22 +829,21 @@ class Expedition:
         print("[expedition] compass_m_suggest: not yet implemented.")
 
     # ------------------------------------------------------------------
-    # metronome_compass_full
-    # ------------------------------------------------------------------
 
-    def metronome_compass_full(self, *, second_window: int | None = None) -> None:
-        """Run metronome_compass_full using stored config.
+    def metronome_compass(self, *, second_window: int | None = None) -> None:
+        """Run metronome_compass (full) using stored config.
 
         Prompts for Magikarp level (session parameter, not saved).
         second_window overrides self.metronome_second_window for this call only.
         """
-        print(f"[expedition] === metronome_compass_full ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        print(f"[expedition] === metronome_compass ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_key_seed()
         self._ensure_window()
+        self._ensure_metronome_histsize()
 
         from claytonlib.metronome_compass_full import (
-            metronome_compass_full as _metronome_compass_full,
-            CompassMetronomeFullInput,
+            metronome_compass as _metronome_compass,
+            CompassMetronomeInput,
         )
         from claytonlib.compass_premetronome import MetronomeOpponent
         from claytonlib.times import get_times
@@ -855,7 +866,7 @@ class Expedition:
         print(f"[expedition] target_delay={target_delay}  Δ from key: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
 
         initial_time = dt.datetime.fromisoformat(self.initial_time)
-        inputs = CompassMetronomeFullInput(
+        inputs = CompassMetronomeInput(
             opponent=MetronomeOpponent.MAGIKARP,
             key_seed=self.key_seed,
             target_delay=target_delay,
@@ -865,7 +876,20 @@ class Expedition:
             known_moves=tuple(self.known_moves),
             second_window=self.metronome_second_window if second_window is None else second_window,
         )
-        _metronome_compass_full(inputs)
+        seeds = _metronome_compass(inputs)
+        if seeds:
+            self.target_seeds = seeds
+            self.target_seeds_path = f"metronome_compass/{self.name}"
+            
+            # Save to history
+            if self.compass_metronome_histsize:
+                entry = {
+                    'timestamp': dt.datetime.now().isoformat(),
+                    'target_delay': target_delay,
+                    'seeds': seeds,
+                }
+                self.compass_m_history.append(entry)
+                self.compass_m_history = self.compass_m_history[-self.compass_metronome_histsize:]
 
     # ------------------------------------------------------------------
     # _pick_seed — shared by machete methods

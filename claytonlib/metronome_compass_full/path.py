@@ -1,6 +1,7 @@
 """PathToken hierarchy and Path type for battle observation paths."""
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,19 @@ class Struggle(PathToken):
     def render(self) -> str: return "STR"
 
 
+@dataclass(frozen=True)
+class Prevented(PathToken):
+    """Magikarp's selected move was prevented by Disable/Taunt/Gravity."""
+    def render(self) -> str: return "P"
+
+
+@dataclass(frozen=True)
+class StatusEnd(PathToken):
+    """A status (Disable/Taunt/etc) ended at the end of turn."""
+    label: str
+    def render(self) -> str: return f"({self.label})"
+
+
 # ---------------------------------------------------------------------------
 # Unsupported-effect token
 # ---------------------------------------------------------------------------
@@ -142,3 +156,54 @@ Path = tuple[Turn, ...]
 def render_path(path: Path) -> str:
     """Tokens concatenated within a turn; turns space-separated."""
     return " ".join("".join(t.render() for t in turn) for turn in path)
+
+
+# ---------------------------------------------------------------------------
+# Battle State & Status
+# ---------------------------------------------------------------------------
+
+class NonVolatileStatus(Enum):
+    NONE      = 0
+    SLEEP     = 1
+    FROZEN    = 2
+    BURN      = 3
+    POISON    = 4
+    PARALYZED = 5
+
+
+@dataclass
+class MagikarpStatus:
+    status: NonVolatileStatus = NonVolatileStatus.NONE
+    sleep_turns: int = 0          # 1 = wakes up next turn; 2+ = still sleeping
+    flinched: bool = False        # cleared each turn
+    disable_turns: int = 0        # ticks every turn; disabled_move cleared when 0
+    disabled_move: int | None = None
+    taunt_turns: int = 0          # ticks every turn
+    confusion_turns: int = 0      # ticks only when Magikarp attempts to act
+    infatuated: bool = False
+
+    def copy(self) -> MagikarpStatus:
+        from dataclasses import replace
+        return replace(self)
+
+
+@dataclass
+class MetronomeBattleState:
+    gravity_turns: int = 0            # 0 = inactive, >0 = turns remaining
+    weather: str | None = None        # "sunny" / "rain" / "sand" / "hail" / None
+    weather_until: int = 0            # turn number weather expires
+    user_evasion_stage: int = 0       # -6 to +6
+    target_evasion_stage: int = 0
+    user_accuracy_stage: int = 0
+    target_accuracy_stage: int = 0
+    user_crit_stage: int = 0
+
+    mk_status: MagikarpStatus = field(default_factory=MagikarpStatus)
+    mk_last_move: int | None = None   # move number used last turn
+    mk_last_move_prevented: bool = False
+
+    def copy(self) -> MetronomeBattleState:
+        from dataclasses import replace
+        c = replace(self)
+        c.mk_status = self.mk_status.copy()
+        return c

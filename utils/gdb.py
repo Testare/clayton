@@ -19,6 +19,11 @@ _consecutive_count = 0
 # PCs that should auto-continue (not stop) in BattleSystemRandomFinish.
 _skip_pcs = set()
 
+# skip_turn counter: when > 0, all BattleSystem_Random calls auto-continue
+# until a '??' frame is hit, at which point the counter is decremented.
+# Stops when the counter reaches 0.
+_skip_turn_count = 0
+
 # Maps frame name -> int modulus for mod_report.
 _mod_report_by_name = {}
 
@@ -106,7 +111,7 @@ class BattleSystemRandomFinish(gdb.FinishBreakpoint):
         self.silent = True
 
     def stop(self):
-        global _last_pc, _last_func_name, _consecutive_count
+        global _last_pc, _last_func_name, _consecutive_count, _skip_turn_count
         frame = gdb.selected_frame()
         pc = frame.pc()
         func_name = frame.name() or "??"
@@ -137,6 +142,14 @@ class BattleSystemRandomFinish(gdb.FinishBreakpoint):
             new_r0 = override & 0xFFFFFFFF
             gdb.execute(f"set $r0 = {new_r0}")
             print(f"  [rand_override] r0 overridden to 0x{new_r0:08x} (permanent)")
+
+        if _skip_turn_count > 0:
+            if func_name == "??":
+                _skip_turn_count -= 1
+                if _skip_turn_count == 0:
+                    print("skip_turn: reached '??' frame, stopping.")
+                    return True  # stop
+            return False  # continue
 
         if pc in _skip_pcs:
             return False  # continue
@@ -317,6 +330,42 @@ Sets rand_override for BtlCmd_Metronome using rand = move_number - 1."""
             print(f"metronome: [{pairs}] queued")
 
 
+class SkipTurnCommand(gdb.Command):
+    """Auto-continue BattleSystem_Random until a '??' frame is hit.
+
+Usage:
+  skip_turn        -- set skip count to 1 (stop at next '??' frame)
+  skip_turn N      -- set skip count to N (stop after N '??' frames; 0 to disable)
+
+When active, all BattleSystem_Random breakpoints auto-continue. Each time a
+'??' frame is encountered the count is decremented; execution stops when it
+reaches zero."""
+
+    def __init__(self):
+        super().__init__("skip_turn", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        global _skip_turn_count
+        args = arg.split()
+        if not args:
+            _skip_turn_count = 1
+            print("skip_turn: will stop at next '??' frame.")
+            return
+        try:
+            n = int(args[0], 0)
+        except ValueError:
+            print(f"skip_turn: invalid value '{args[0]}'.")
+            return
+        if n < 0:
+            print("skip_turn: value must be >= 0.")
+            return
+        _skip_turn_count = n
+        if n == 0:
+            print("skip_turn: disabled.")
+        else:
+            print(f"skip_turn: will stop after {n} '??' frame(s).")
+
+
 class RandSkipCommand(gdb.Command):
     """Auto-continue BattleSystem_Random hits at the last-seen address.
 
@@ -470,6 +519,7 @@ _HELP_LINES = [
     "  mod_report NAME clear                 -- remove mod report for NAME",
     "  mod_report clear all                  -- remove all mod reports",
     "  mod_report list                       -- show all mod reports",
+    "  skip_turn [N]                         -- auto-continue until N '??' frames hit (default 1; 0 to disable)",
     "  rand_skip                             -- auto-continue last-hit address",
     "  rand_skip_clear                       -- stop skipping, break on all frames",
     "  mod VALUE                             -- print $r0 % VALUE",
@@ -496,6 +546,7 @@ GfRtcCopyDateTimeBreakpoint()
 BattleSystemRandomBreakpoint()
 RandOverrideCommand()
 MetronomeCommand()
+SkipTurnCommand()
 RandSkipCommand()
 RandSkipClearCommand()
 SeedOverrideCommand()

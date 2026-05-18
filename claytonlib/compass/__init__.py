@@ -203,3 +203,7 @@ from claytonlib.compass_premetronome import (  # noqa: E402, F401
     CompassPremetronomeInput as CompassPremetronomeInput,
     MetronomeOpponent as MetronomeOpponent,
 )
+from claytonlib.metronome_compass_full import (  # noqa: E402, F401
+    metronome_compass as metronome_compass,
+    CompassMetronomeInput as CompassMetronomeInput,
+)
