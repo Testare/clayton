@@ -1,7 +1,7 @@
 """moves.py — Centralized move data loading and lookup for Metronome tools.
 
 Single source of truth for Move objects parsed from basedata/moves.json.
-Used by compass_premetronome and metronome_compass_full.
+Used by compass_premetronome and metronome_compass.
 """
 from __future__ import annotations
 

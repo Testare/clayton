@@ -1,4 +1,4 @@
-"""metronome_compass_full — Multi-turn seed identification via Metronome battle observation.
+"""metronome_compass — Multi-turn seed identification via Metronome battle observation.
 
 Full dual-mode turn simulation (move outcomes and Magikarp turns).
 Filters candidates by comparing full turn paths.

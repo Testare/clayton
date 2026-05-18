@@ -34,11 +34,11 @@ Because of this extra randomness, we will need to do two things:
 # Methods of handling speed ties
 
 ## Speed > 47
-If the Metronome user's effective speed is 48 or more, it will never be outsped by a wild Magikarp in Blackthorn City... At least, not at the start of battle. Since most metronome users are slower naturally than Magikarp, and we don't want to overlevel too much, using a Choice Scarf makes this significantly more achievable.
+If the Metronome user's effective speed is 48 or more, it will never be outsped by a wild Magikarp in Blackthorn City... At least, not at the start of battle. Since most metronome users are slower naturally than Magikarp, and we don't want to overlevel too much, using a Choice Scarf makes this significantly more achievable. We do have to worry about the moves Hammer Arm, Accupressure, and Curse; plus Fling if using Choice Scarf.
 
 ## Lagging Tail
 
-Lagging tail is a beautiful solution to our problem. It ignores speed entirely, and forces the holder to go second.
+Lagging tail is a beautiful solution to our problem.
 
 # Things that are a problem for Lagging Taail
 
@@ -46,15 +46,13 @@ Lagging tail is a beautiful solution to our problem. It ignores speed entirely, 
 
 Unfortunately, fling will have the metronome user discard the lagging tail. Suddenly speed very much might matter, and all the problems that exist for the non lagging tail case are suddenly apparently. We'll need the user to provide the metronome user's speed as input, even if they have lagging tail, and when fling occurs we'll have to check the possible range of speeds the Magikarp might have. If the range is completely below or above the metronome user's speed, we're good and can continue on one solid path, but if not then we'll have to either implement branching paths or close the path with an Unsupported token. Even doing this initial check of possible speed ranges means we'll have to do a lot of tracking for this one edge case, so we'll probably just have to start with Fling being not supported.
 
+For this reason, I think for P0 we will require the metronome user to know the move "Fling", as all metronome users are capable of learning it. I believe we can do this with breeding chains, though we might need other pokemon besides Ditto as the father.
+
 # Things that are only a problem for non-lagging tail cases
 
 ## Moves that increase/decrease speed
 
 Moves that increase/decrease the user or Magikarp's speed can be problematic, especially for the route of trying to just outspeed or underspeed Magikarp. We might need to implement branching paths to handle what happens if, given Magikarp's level and the board state, speed order changes are possible (especially if speed ties are possible). We would only need to branch where the speed order change occurs, so hopefully it shouldn't branch out too many times. The easiest way around this is with Lagging Tail, which makes speed irrelevant.
-
-## Trick/Switcheroo
-
-If holding choice scarf, or a speed lowering item (power belt, iron ball) and we trick the item onto the Magikarp, that might change the speed order, just like the above we might need to branch. With Lagging Tail, this is actually great - We'll just start moving first, and then we're safe from Fling.
 
 ## Swift Swim
 Magikarp's only ability is swift swim. That means in the rain, its speed will double.
@@ -62,6 +60,12 @@ Magikarp's only ability is swift swim. That means in the rain, its speed will do
 The moves Skill Swap and Entrainment mean we'll have to track Magikarp's ability as well, since in rain the metronome user's speed will double in the rain if skill swapped, or nothing will happen if metronome uses entrainments Magikarp.
 
 # Things that are not problems for speed tie handling
+
+## Trick/Switcheroo
+
+~~If holding choice scarf, or a speed lowering item (power belt, iron ball) and we trick the item onto the Magikarp, that might change the speed order, just like the above we might need to branch. With Lagging Tail, this is actually great - We'll just start moving first, and then we're safe from Fling.~~
+
+This is not a concern: Metronome cannot call these moves
 
 ## Priority
 Metronome, Splash, and Tackle are all same priority, and any moves Metronome calls will not change that order.

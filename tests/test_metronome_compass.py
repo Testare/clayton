@@ -1,9 +1,9 @@
-"""Unit tests for metronome_compass_full module."""
+"""Unit tests for metronome_compass module."""
 import unittest
 from unittest.mock import patch
 import datetime as dt
 
-from claytonlib.metronome_compass_full import (
+from claytonlib.metronome_compass import (
     _parse_turn_tokens,
     precompute_path,
     simulate_turn,

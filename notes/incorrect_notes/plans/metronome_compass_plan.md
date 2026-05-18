@@ -30,19 +30,19 @@ asleep/frozen/disabled/taunted/gravitated/paralyzed/infatuated do NOT count as s
 
 ## Architecture
 
-### New package: `claytonlib/metronome_compass_full/`
+### New package: `claytonlib/metronome_compass/`
 
 The implementation is large enough to warrant a package rather than a single file. Submodules:
 
 ```
-claytonlib/metronome_compass_full/
-    __init__.py     — exports metronome_compass_full() function
+claytonlib/metronome_compass/
+    __init__.py     — exports metronome_compass() function
     path.py         — PathToken hierarchy, Path type, rendering
     context.py      — BattleContext, RngContext, InteractiveContext, emit helpers
     effects.py      — effect scripts keyed by effect number
 ```
 
-The function is named `metronome_compass_full`. The existing simple version should be renamed to `metronome_compass_simple`.
+The function is named `metronome_compass`. The existing simple version should be renamed to `metronome_compass_simple`.
 
 ### Path representation
 
@@ -515,21 +515,21 @@ cache: list[tuple[str, list[MetronomeCandidate]]] = [("", initial_candidates)]
 
 1. **`compass_metronome.py`**: Add `known_moves: tuple[int, ...] = ()` and `magikarp_level: int` to `CompassMetronomeInput`. Metronome always implicit. Max 3 additional known moves.
 
-2. **`compass.py`**: Add re-export `metronome_compass_full`. Rename existing to `metronome_compass_simple`.
+2. **`compass.py`**: Add re-export `metronome_compass`. Rename existing to `metronome_compass_simple`.
 
-3. **`expedition.py`**: Add `metronome_compass_full()` method. Add `magikarp_level` and `known_moves` config fields. Save results to `compass_m_history` up to `compass_metronome_histsize`.
+3. **`expedition.py`**: Add `metronome_compass()` method. Add `magikarp_level` and `known_moves` config fields. Save results to `compass_m_history` up to `compass_metronome_histsize`.
 
 ## Files to create/modify
 
 | File | Action |
 |------|--------|
-| `claytonlib/metronome_compass_full/__init__.py` | **Create** — exports `metronome_compass_full()` |
-| `claytonlib/metronome_compass_full/path.py` | **Create** — `PathToken` hierarchy, `Path` type, rendering |
-| `claytonlib/metronome_compass_full/context.py` | **Create** — `BattleContext`, `RngContext`, `InteractiveContext`, emit helpers |
-| `claytonlib/metronome_compass_full/effects.py` | **Create** — effect scripts and `EFFECT_HANDLERS` registry |
+| `claytonlib/metronome_compass/__init__.py` | **Create** — exports `metronome_compass()` |
+| `claytonlib/metronome_compass/path.py` | **Create** — `PathToken` hierarchy, `Path` type, rendering |
+| `claytonlib/metronome_compass/context.py` | **Create** — `BattleContext`, `RngContext`, `InteractiveContext`, emit helpers |
+| `claytonlib/metronome_compass/effects.py` | **Create** — effect scripts and `EFFECT_HANDLERS` registry |
 | `claytonlib/compass_metronome.py` | Modify — add `known_moves`, `magikarp_level` to input |
 | `claytonlib/compass.py` | Modify — add re-export, rename simple |
-| `claytonlib/expedition.py` | Modify — add `metronome_compass_full()` method |
+| `claytonlib/expedition.py` | Modify — add `metronome_compass()` method |
 | `one-offs/populate_moves.py` | **Create** — CLI tool for populating move data |
 | `notes/combined_moves.json` | **Created** — merged move data for reference |
 

@@ -291,7 +291,7 @@ There are a lot of minutia about the randomness I need to triple check before we
 * For the multiple inputs on one line, I suggest we don't just do a string of y/n since the order of them could be easily confused, and use different characters for the categories. I suggest we use "h"/"m" for hit/miss, "c"/"n" for crit/no crit, and "F" for fainted (Conveniently similar to "Flee" for safari). 
 * Also, since this tool will mostly be used for calibrating, we might prompt afterwards if the user would like to go again without requiring the cell to be re-run. This has the bonus of creating natural visible history of hit seeds.
 * When using expedition, results from compass_metronome should be saved to flow, up to a preconfigured histsize. We can use this to suggest calibrations.
-* Despite my naming in documentation, the function should be called "metronome_compass_full". We can rename the original to "metronome_compass_simple" (or something else, suggestions?)
+* Despite my naming in documentation, the function should be called "metronome_compass". We can rename the original to "metronome_compass_simple" (or something else, suggestions?)
 * For moves that require move-specific logic, we should use PROFILE_COMPLEX. This can defer to a match statement that matches based on move number. We should also add an accuracy field to moves.
 * We need to also track moves with increased critical hit rates, probably PROFILE_HIGH_CRIT.
 * We also need to track the accuracy of each move. We can use -1 to indicate a move does not perform an accuracy check.

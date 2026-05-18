@@ -841,7 +841,7 @@ class Expedition:
         self._ensure_window()
         self._ensure_metronome_histsize()
 
-        from claytonlib.metronome_compass_full import (
+        from claytonlib.metronome_compass import (
             metronome_compass as _metronome_compass,
             CompassMetronomeInput,
         )

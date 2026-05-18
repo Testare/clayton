@@ -83,6 +83,10 @@ If the user has no useable moves when it comes time to select a move, the usual 
 
 If metronome selects a gravity-prevented move, we roll again.
 
+## Sleep
+
+Rest is a metronome callable move.
+
 ## Confusion 
 
 The metronome user might become confused as a result of using Outrage, Thrash, or Petal Dance, and it also forces the Metronome user to use that move multiple times. However, it is hard to imagine Magikarp surviving any of these moves, so handling the case where it occurs is not a priority.
@@ -90,7 +94,6 @@ The metronome user might become confused as a result of using Outrage, Thrash, o
 ## Recharging
 
 Similarly, a max-stat level 20 Magikarp might survive Blast Burn or Roar of Time from a lower level Clefable, but it is unlikely so not the priority to support right now. That said, there are a decent number of recharging moves...
-
 
 # Notes about pathing
 

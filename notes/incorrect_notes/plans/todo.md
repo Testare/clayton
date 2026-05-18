@@ -9,7 +9,7 @@
 * Flow: Potential rename to better fit Safari/Tarzan theme. Perhaps "Cruise" (like Jungle Cruise)?
 
 # Details
-## Deferred: Ability support for metronome_compass_full
+## Deferred: Ability support for metronome_compass
 * Cute Charm (Cleffa/Clefairy/Clefable): chance to cause infatuation on contact, adding RNG per Magikarp turn
 * Serene Grace (Happiny/Chansey/Togepi/Togetic/Togekiss): doubles secondary effect chances, changes filtering thresholds
 * For now, require users to avoid these abilities (all listed pokemon have alternates)
