@@ -3,6 +3,4 @@
 ## Harsh Sunlight
 ## Rain Dance
 
-Note: Rain doubles Magikarp's speed, more than likely outspeeding our metronome user. This will significantly screw up our algorithm.
-
-
+Magikarp has Swift Swim, so Rain Dance can mess up our algorithm if we're not holding Lagging Tail.
