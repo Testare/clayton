@@ -138,11 +138,12 @@ class BattleContext(ABC):
         def rng_to_token(ctx: BattleContext) -> PathToken:
             crit_roll = ctx.advance_observable()
             ctx.advance_unobservable()  # damage roll is not observable
-            is_crit = crit_roll % 256 < 17  # TODO: verify threshold + stage formula
+            # TODO: BELOW LOGIC IS WRONG - check critical_hit.md for correct logic
+            is_crit = crit_roll % 256 < 17
             if accuracy == 0:
                 return Crit() if is_crit else Hit()
             hit_roll = ctx.advance_observable()
-            is_hit = hit_roll % 256 < accuracy * 255 // 100  # TODO: verify formula
+            is_hit = hit_roll % 100 < accuracy
             if not is_hit:
                 return Miss()
             return Crit() if is_crit else Hit()

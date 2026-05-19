@@ -50,7 +50,7 @@ def _effect_standard_damage(ctx: 'BattleContext', move: Move) -> bool:
     if isinstance(token, Miss):
         return False
     # Damage roll is not observable
-    ctx.advance_unobservable(1)
+    ctx.advance_unobservable(1) # Incorrect, damage roll happesn in hit crit or miss
     return True
 
 

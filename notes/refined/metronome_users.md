@@ -68,7 +68,6 @@ Pros:
 
 Cons:
 * Low defense - But for Chansey/Blissey, High HP makes up difference
-* _Have to catch a Chansey_
 * Metronome as egg move only
 
 Moves:

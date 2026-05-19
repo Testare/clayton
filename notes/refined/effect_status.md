@@ -36,7 +36,9 @@ If disable is successful, A roll is performed to determine duration.
 
 Duration: 4 + (RAND % 4)
 
-Disable turns tick down, even if the user is asleep, frozen, or flinches. It can even end while Magikarp is frozen or asleep as well. 
+Disable turns tick down, even if the user is asleep, frozen, or flinches. It can even end while Magikarp is frozen or asleep as well.
+
+TOCONFIRM: When disable happens second, does that turn count as one of the disabled turns?
 
 We should have a path token for when disable ends.
 

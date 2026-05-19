@@ -13,48 +13,66 @@ We will include details that impact metronome compass: What rolls occur, in what
 ## Effect 0
 Moves: Pound, Mega Punch, Scratch, Vice Grip, Cut, Wing Attack, Slam, Vine Whip, Mega Kick, Horn Attack, Tackle, Water Gun, Hydro Pump, Peck, Drill Peck, Strength, Rock Throw, Egg Bomb, Megahorn, Hyper Voice, Dragon Claw, Aqua Tail, Seed Bomb, X Scissor, Dragon Pulse, Power Gem, Power Whip
 
-Seems like straight damage.
-#TOBEREFINED
+* Check crit
+* Damage roll
+* Check move hit
 
 ## Effect 1
 Moves: Sing, Sleep Powder, Hypnosis, Lovely Kiss, Spore, Grass Whistle, Dark Void
 
-#TOBEREFINED
+* Check move hit
+* If hit: Roll for sleep duration
 
 ## Effect 2
 Moves: Poison Sting, Smog, Sludge, Sludge Bomb, Poison Jab, Gunk Shot
 
-#TOBEREFINED
+* Check crit
+* Damage roll
+* Check move hit
+* If hit: Roll poison chance: Rand % 100 < effect_chance. Roll even if target is already afflicted with poison or other nonvolatile status condition.
+
+Counts as success if hit, even if poison doesn't proc/poison proc fails
 
 ## Effect 3
 Moves: Absorb, Mega Drain, Leech Life, Giga Drain, Drain Punch
 
-#TOBEREFINED
+* Crit/Damage/Hit
 
 ## Effect 4
 Moves: Fire Punch, Ember, Flamethrower, Fire Blast, Heat Wave, Lava Plume
 
-#TOBEREFINED
+* Crit/Damage/Hit
+* If hit: Roll burn chance: Rand % 100 < effect_chance. Roll even if target is already afflicted with a nonvolatile status condition.
+
+Counts as success if hit, even if secondary effect doesn't proc/succeed
 
 ## Effect 5
 Moves: Ice Punch, Ice Beam, Powder Snow
 
-#TOBEREFINED
+* Crit/Damage/Hit
+* If hit: Roll freeze chance: Rand % 100 < effect_chance. Roll even if target is already afflicted with a nonvolatile status condition.
+
+Counts as success if hit, even if secondary effect doesn't proc/succeed
 
 ## Effect 6
 Moves: Thunder Punch, Body Slam, Thunder Shock, Thunderbolt, Lick, Zap Cannon, Spark, Dragon Breath, Force Palm, Discharge
 
-#TOBEREFINED
+* Crit/Damage/Hit
+* If hit: Roll paralysis chance: Rand % 100 < effect_chance. Roll even if target is already afflicted with a nonvolatile status condition.
+
+Counts as success if hit, even if secondary effect doesn't proc/succeed
 
 ## Effect 7
 Moves: Selfdestruct, Explosion
 
-#TOBEREFINED
+* Crit/Damage/Hit
+* Chansey Faints. For P0, this means the path ends.
 
 ## Effect 8
 Moves: Dream Eater
 
-#TOBEREFINED
+If target is not asleep: Move fails, but a hit check is still performed with no visible effect.
+If target is asleep: Crit/Damage/Hit
 
 ## Effect 9
 Moves: Mirror Move
@@ -64,27 +82,27 @@ Not callable by Metronome.
 ## Effect 10
 Moves: Meditate, Sharpen, Howl
 
-#TOBEREFINED
+User's attack increases by 1 stat stage. No rolls.
 
 ## Effect 11
 Moves: Harden, Withdraw
 
-#TOBEREFINED
+User's defense increases by 1 stat stage. No rolls.
 
 ## Effect 13
 Moves: Growth
 
-#TOBEREFINED
+User's special attack increases by 1 stat stage. No rolls.
 
 ## Effect 16
 Moves: Double Team
 
-#TOBEREFINED
+User's evasiveness increases by 1 stat stage. No rolls.
 
 ## Effect 17
 Moves: Swift, Faint Attack, Shadow Punch, Aerial Ace, Magical Leaf, Shock Wave, Aura Sphere, Magnet Bomb
 
-#TOBEREFINED
+These moves automatically hit. Crit check and damage rolls still occur, but no hit check.
 
 ## Effect 18
 Moves: Growl
@@ -1060,7 +1078,22 @@ Moves: Tailwind
 ## Effect 226
 Moves: Acupressure
 
-#TOBEREFINED
+Counts how many of the following stats are not at max stat stages for USER, and creates a list of them in this order.
+
+Order:
+0. Attack
+1. Defense
+2. Speed
+3. Sp. Attack
+4. Sp. Def
+5. Accuracy
+6. Evasion
+
+index = RAND % CountOfEligibleStats, and we index into the list that has the non-eligible stats filtered. The chosen stat is raised by two for the metronome user. This is the only rand roll for this move.
+
+For example, if the user used Belly Drum in the previous turn and maxed the Attack stat, the count of eligible stats would be 6. If random generated 13, 13 % 6 = 1, so the increased stat would be speed (Attack is ineligible, defense would be index 0).
+
+Presumably, it will fail if all stat stages are maxed, but there is no chance of us reaching that point during a singles battle using only metronome.
 
 ## Effect 227
 Moves: Metal Burst
