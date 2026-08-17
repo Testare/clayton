@@ -170,6 +170,18 @@ class DrowsySlept(PathToken):
     """Magikarp fell asleep from Yawn at end of turn."""
     def render(self) -> str: return "ZZ"
 
+@dataclass(frozen=True)
+class ConversionType(PathToken):
+    """User's type changed via Conversion. type_name is the new type (e.g. 'Electric')."""
+    type_name: str
+    def render(self) -> str: return f"CV{self.type_name}"
+
+
+@dataclass(frozen=True)
+class RampageEnd(PathToken):
+    """Rampage (Thrash/Outrage/Petal Dance) ended; confusion applied afterward."""
+    def render(self) -> str: return "REND"
+
 
 # ---------------------------------------------------------------------------
 # Path type
@@ -247,8 +259,15 @@ class MetronomeBattleState:
     user_substitute: bool = False
     user_stockpile: int = 0           # 0-3
 
-    # User consecutive-move state
+    # User consecutive-move / locked-move state
     user_recharging: bool = False     # Hyper Beam recharge turn
+    user_locked_move_num: int | None = None   # move number being continued
+    user_locked_effect: int | None = None     # effect of that move
+    user_locked_turns: int = 0               # continuation turns remaining
+
+    # Future Sight / Doom Desire counter
+    future_sight_turns: int = 0             # turns until Future Sight fires (0 = inactive)
+    future_sight_move_num: int | None = None # move number for accuracy lookup on fire
 
     # Hazards on opponent's side
     opp_spikes: int = 0               # 0-3
@@ -277,8 +296,12 @@ class MetronomeBattleState:
     # Turn counter (for Fake Out and weather expiry)
     turn_number: int = 0
 
+    # User's current types (changes via Conversion / Camouflage / etc.)
+    user_types: list = field(default_factory=lambda: ['Normal'])
+
     def copy(self) -> MetronomeBattleState:
         from dataclasses import replace
         c = replace(self)
         c.mk_status = self.mk_status.copy()
+        c.user_types = list(self.user_types)
         return c

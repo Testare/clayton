@@ -16,6 +16,7 @@ from claytonlib.moves import Move
 from .path import (
     NonVolatileStatus, Hit, Miss, Crit, EffectProc,
     Unsupported, PathEnd, PathToken, Magnitude, BindDmg, BindEnd, DrowsySlept,
+    ConversionType, RampageEnd,
 )
 
 if TYPE_CHECKING:
@@ -1293,6 +1294,36 @@ def _eff_no_rolls_fail(ctx: 'BattleContext', move: Move) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Conversion (Effect 30)
+# ---------------------------------------------------------------------------
+
+def _eff_conversion(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    user_move_types: list[str] = ctx.battle_state.get('user_move_types', ['Normal'])
+
+    n_moves = len(user_move_types)
+    if all(t in state.user_types for t in user_move_types):
+        return False  # Every move matches the user's current type(s); nothing to change
+
+    def rng_to_token(c: 'BattleContext') -> ConversionType:
+        while True:
+            roll = c.advance_observable()
+            chosen = user_move_types[roll % n_moves]
+            if chosen not in state.user_types:
+                return ConversionType(chosen)
+
+    eligible = [t for t in user_move_types if t not in state.user_types]
+    token = ctx.emit(
+        rng_to_token=rng_to_token,
+        question=f"Conversion type? ({'/'.join(dict.fromkeys(eligible))}):",
+        input_to_token=lambda s: ConversionType(s.strip().capitalize()),
+    )
+    state.user_types = [token.type_name]
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Unsupported (complex consecutive or two-turn moves)
 # ---------------------------------------------------------------------------
 
@@ -1301,6 +1332,225 @@ def _eff_unsupported(ctx: 'BattleContext', move: Move) -> bool:
     ctx.raw_emit(PathEnd())
     ctx.battle_state['unsupported'] = True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Group A: Charge-and-fire (Fly/Dive/Dig/Razor Wind/Shadow Force)
+# Effects 39, 155, 255, 256, 272 — turn 1 sets lock, no rolls
+# ---------------------------------------------------------------------------
+
+def _eff_charge_fire(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 1
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Group B: Charge-and-fire with secondary
+# Sky Attack (75): turn 1 sets lock; turn 2 C/D/H + unobservable flinch
+# ---------------------------------------------------------------------------
+
+def _eff_sky_attack(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 1
+    return True
+
+
+def _eff_bounce(ctx: 'BattleContext', move: Move) -> bool:
+    """Bounce (263): turn 1 sets lock; turn 2 C/D/H + observable paralyze proc."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 1
+    return True
+
+
+def _eff_skull_bash(ctx: 'BattleContext', move: Move) -> bool:
+    """Skull Bash (145): 1 unobservable roll turn 1, then lock; turn 2 C/D/H."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    ctx.advance_unobservable(1)  # purpose unknown (#FUTUREWORK)
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 1
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Group C: Solar Beam (151) — weather-conditional charge
+# In harsh sunlight: fires immediately. Otherwise: charge turn 1, fire turn 2.
+# ---------------------------------------------------------------------------
+
+def _eff_solar_beam(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if state.weather == 'sunny':
+        token = ctx.hit_crit_or_miss(move.accuracy)
+        return not isinstance(token, Miss)
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 1
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Group D: Rampage moves
+# Thrash (27): turn 1 C/D/H + duration roll; continuation C/D/H; confusion at end
+# Uproar (159): turn 1 C/D/H + duration roll; continuation C/D/H; no early exit on miss
+# ---------------------------------------------------------------------------
+
+def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    def rng_to_total(c: 'BattleContext') -> int:
+        return 2 + (c.advance_observable() % 2)
+    total_turns = ctx.emit(
+        rng_to_token=rng_to_total,
+        question="Thrash duration? (2-3 total turns):",
+        input_to_token=lambda s: int(s.strip()),
+    )
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = int(total_turns) - 1
+    return True
+
+
+def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    def rng_to_extra(c: 'BattleContext') -> int:
+        return 2 + (c.advance_observable() % 4)
+    extra_turns = ctx.emit(
+        rng_to_token=rng_to_extra,
+        question="Uproar extra turns after turn 1? (2-5):",
+        input_to_token=lambda s: int(s.strip()),
+    )
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = int(extra_turns)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Group E: Rollout / Ice Ball (117)
+# Turn 1: C/D/H; if hit lock for 4 continuation turns. Miss on any turn ends lock.
+# ---------------------------------------------------------------------------
+
+def _eff_rollout(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 4
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Group F: Future Sight / Doom Desire (148)
+# Turn 1: unobservable damage roll, set 3-turn counter. NOT a locked move.
+# If already active: extra roll consumed, move fails.
+# End-of-turn when counter hits 0: observable hit check fired in simulate_turn.
+# ---------------------------------------------------------------------------
+
+def _eff_future_sight(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    ctx.advance_unobservable(1)  # damage roll
+    if state.future_sight_turns > 0:
+        ctx.advance_unobservable(1)  # extra hit check roll when re-used while active
+        return False
+    state.future_sight_turns = 3
+    state.future_sight_move_num = move.number
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Locked-move continuation dispatcher (called by simulate_turn)
+# ---------------------------------------------------------------------------
+
+def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_move: Move) -> bool:
+    """Execute the continuation turn for a locked move. user_locked_turns already decremented."""
+    effect = state.user_locked_effect  # type: ignore[attr-defined]
+
+    if effect in {39, 155, 255, 256, 272}:  # Group A: charge-fire
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        state.user_locked_move_num = None  # type: ignore[attr-defined]
+        state.user_locked_effect = None    # type: ignore[attr-defined]
+        return not isinstance(token, Miss)
+
+    elif effect == 151:  # Solar Beam charge continuation
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        state.user_locked_move_num = None  # type: ignore[attr-defined]
+        state.user_locked_effect = None    # type: ignore[attr-defined]
+        return not isinstance(token, Miss)
+
+    elif effect == 75:  # Sky Attack: C/D/H + unobservable flinch on hit
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        state.user_locked_move_num = None  # type: ignore[attr-defined]
+        state.user_locked_effect = None    # type: ignore[attr-defined]
+        if not isinstance(token, Miss):
+            ctx.advance_unobservable(1)  # flinch roll (unobservable; we go second)
+            return True
+        return False
+
+    elif effect == 263:  # Bounce: C/D/H + observable paralyze proc on hit
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        state.user_locked_move_num = None  # type: ignore[attr-defined]
+        state.user_locked_effect = None    # type: ignore[attr-defined]
+        if not isinstance(token, Miss):
+            ctx.effect_proc(locked_move.effect_chance)
+            return True
+        return False
+
+    elif effect == 145:  # Skull Bash: C/D/H only (unobservable roll was on turn 1)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        state.user_locked_move_num = None  # type: ignore[attr-defined]
+        state.user_locked_effect = None    # type: ignore[attr-defined]
+        return not isinstance(token, Miss)
+
+    elif effect == 27:  # Thrash/Outrage/Petal Dance: C/D/H; rampage-end confusion in simulate_turn
+        return not isinstance(ctx.hit_crit_or_miss(locked_move.accuracy), Miss)
+
+    elif effect == 159:  # Uproar: C/D/H each turn; lock does not end early on miss
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        if state.user_locked_turns == 0:  # type: ignore[attr-defined]
+            state.user_locked_move_num = None  # type: ignore[attr-defined]
+            state.user_locked_effect = None    # type: ignore[attr-defined]
+        return not isinstance(token, Miss)
+
+    elif effect == 117:  # Rollout/Ice Ball: C/D/H; miss ends lock early
+        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        if isinstance(token, Miss):
+            state.user_locked_turns = 0        # type: ignore[attr-defined]
+            state.user_locked_move_num = None  # type: ignore[attr-defined]
+            state.user_locked_effect = None    # type: ignore[attr-defined]
+            return False
+        if state.user_locked_turns == 0:       # type: ignore[attr-defined]
+            state.user_locked_move_num = None  # type: ignore[attr-defined]
+            state.user_locked_effect = None    # type: ignore[attr-defined]
+        return True
+
+    else:
+        ctx.raw_emit(Unsupported())
+        ctx.raw_emit(PathEnd())
+        ctx.battle_state['unsupported'] = True
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -1573,25 +1823,29 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     158: _eff_fake_out,
     161: _eff_spit_up,
 
-    # --- Unsupported (consecutive/two-turn) ---
-    26:  _eff_unsupported,  # Bide
-    27:  _eff_unsupported,  # Thrash / Petal Dance / Outrage
-    30:  _eff_unsupported,  # Conversion
-    39:  _eff_unsupported,  # Razor Wind
-    57:  _eff_unsupported,  # Transform
-    75:  _eff_unsupported,  # Sky Attack
-    93:  _eff_unsupported,  # Conversion 2
-    117: _eff_unsupported,  # Rollout / Ice Ball
-    145: _eff_unsupported,  # Skull Bash
-    148: _eff_unsupported,  # Future Sight / Doom Desire
-    151: _eff_unsupported,  # Solar Beam
-    155: _eff_unsupported,  # Fly
-    159: _eff_unsupported,  # Uproar
+    # --- Conversion ---
+    30:  _eff_conversion,
+
+    # --- Multi-turn / locked moves ---
+    27:  _eff_thrash,       # Thrash / Petal Dance / Outrage (Group D)
+    39:  _eff_charge_fire,  # Razor Wind (Group A)
+    75:  _eff_sky_attack,   # Sky Attack (Group B)
+    117: _eff_rollout,      # Rollout / Ice Ball (Group E)
+    145: _eff_skull_bash,   # Skull Bash (Group B)
+    148: _eff_future_sight, # Future Sight / Doom Desire (Group F)
+    151: _eff_solar_beam,   # Solar Beam (Group C)
+    155: _eff_charge_fire,  # Fly (Group A)
+    159: _eff_uproar,       # Uproar (Group D)
+    255: _eff_charge_fire,  # Dive (Group A)
+    256: _eff_charge_fire,  # Dig (Group A)
+    263: _eff_bounce,       # Bounce (Group B)
+    272: _eff_charge_fire,  # Shadow Force (Group A)
+
+    # --- Unsupported (still unimplemented) ---
+    26:  _eff_unsupported,  # Bide (complex substitute/branching interactions)
+    57:  _eff_unsupported,  # Transform (path ends after use; SUPPORT_NOT_PLANNED)
+    93:  _eff_unsupported,  # Conversion 2 (#FUTUREWORK)
     189: _eff_unsupported,  # Endeavor (requires HP tracking)
-    255: _eff_unsupported,  # Dive
-    256: _eff_unsupported,  # Dig
-    263: _eff_unsupported,  # Bounce
-    272: _eff_unsupported,  # Shadow Force
 }
 
 

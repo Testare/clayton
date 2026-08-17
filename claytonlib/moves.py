@@ -13,18 +13,33 @@ from pathlib import Path
 # Move data type
 # ---------------------------------------------------------------------------
 
+TYPE_NAMES: dict[int, str] = {
+    0: 'Normal',   1: 'Fighting', 2: 'Flying',   3: 'Poison',
+    4: 'Ground',   5: 'Rock',     6: 'Bug',       7: 'Ghost',
+    8: 'Steel',    9: '???',      10: 'Fire',     11: 'Water',
+    12: 'Grass',   13: 'Electric', 14: 'Psychic', 15: 'Ice',
+    16: 'Dragon',  17: 'Dark',
+}
+
+
 class Move:
     """Move metadata loaded from moves.json."""
-    __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy')
+    __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy', 'type_id')
 
     def __init__(self, number: int, name: str, metronome_usable: bool,
-                 effect: int = 0, effect_chance: int = 0, accuracy: int = 0):
+                 effect: int = 0, effect_chance: int = 0, accuracy: int = 0,
+                 type_id: int = 0):
         self.number = number
         self.name = name
         self.metronome_usable = metronome_usable
         self.effect = effect
         self.effect_chance = effect_chance
         self.accuracy = accuracy  # 0 = always hits (bypasses accuracy check)
+        self.type_id = type_id
+
+    @property
+    def type_name(self) -> str:
+        return TYPE_NAMES.get(self.type_id, '???')
 
     def is_gravity_blocked(self) -> bool:
         """Returns True if this move is blocked by Gravity (Gen IV list)."""
@@ -60,6 +75,7 @@ def _load_moves() -> list[Move]:
                 effect=m["effect"],
                 effect_chance=m["effect_chance"],
                 accuracy=m["accuracy"],
+                type_id=m["type"],
             )
             for m in data
         ]

@@ -18,7 +18,7 @@ from .path import (
     PathToken, MetronomeMove, MagikarpMove, MultiHit,
     Hit, Miss, Crit, EffectProc,
     PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, Prevented, StatusEnd, PathEnd, Unsupported,
-    BindDmg, BindEnd, DrowsySlept, Magnitude,
+    BindDmg, BindEnd, DrowsySlept, Magnitude, ConversionType, RampageEnd,
     NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
 )
 from .context import BattleContext, RngContext, InteractiveContext
@@ -102,7 +102,7 @@ def simulate_turn(
     magikarp_level: int,
 ) -> Turn:
     """Simulate one full battle turn and return its token tuple."""
-    from .effects import simulate_move_execution
+    from .effects import simulate_move_execution, simulate_locked_continuation, _apply_confusion
 
     # 1. Magikarp move selection (if level >= 15 and has useable moves)
     mk_can_move = _magikarp_has_useable_moves(state, magikarp_level)
@@ -113,13 +113,20 @@ def simulate_turn(
     # 2. BeforeTurn checks
     ctx.advance_unobservable(_BEFORE_TURN_ADVANCES)
 
-    # 3. Metronome roll
-    move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
-
-    # 4. Metronome move execution
-    move_success = simulate_move_execution(ctx, move)
-    if ctx.battle_state.get('unsupported'):
-        return ctx.end_turn()
+    # 3-4. Metronome roll + execution, or locked-move continuation
+    if state.user_locked_turns > 0:
+        state.user_locked_turns -= 1
+        _pre_locked_effect = state.user_locked_effect
+        locked_move = moves_by_num[state.user_locked_move_num]
+        move_success = simulate_locked_continuation(ctx, state, locked_move)
+        if ctx.battle_state.get('unsupported'):
+            return ctx.end_turn()
+    else:
+        _pre_locked_effect = None
+        move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
+        move_success = simulate_move_execution(ctx, move)
+        if ctx.battle_state.get('unsupported'):
+            return ctx.end_turn()
 
     # 5. IF successful: post-metronome rolls
     if move_success:
@@ -187,6 +194,28 @@ def simulate_turn(
         state.user_trick_room_turns -= 1
     if state.user_magnet_rise_turns > 0:
         state.user_magnet_rise_turns -= 1
+
+    # Thrash/Outrage/Petal Dance: confusion applied when rampage ends
+    if (_pre_locked_effect == 27
+            and state.user_locked_turns == 0
+            and state.user_locked_move_num is not None):
+        ctx.raw_emit(RampageEnd())
+        _apply_confusion(ctx)
+        state.user_locked_move_num = None
+        state.user_locked_effect = None
+
+    # Future Sight / Doom Desire: tick counter; fire observable hit check when it reaches 0
+    if state.future_sight_turns > 0:
+        state.future_sight_turns -= 1
+        if state.future_sight_turns == 0 and state.future_sight_move_num is not None:
+            fs_move = moves_by_num.get(state.future_sight_move_num)
+            fs_acc = fs_move.accuracy if fs_move else 100
+            ctx.emit(
+                rng_to_token=lambda c: Hit() if c.advance_observable() % 100 < fs_acc else Miss(),
+                question="Future Sight/Doom Desire hit? (h/-):",
+                input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
+            )
+            state.future_sight_move_num = None
 
     return ctx.end_turn()
 
@@ -397,6 +426,14 @@ def precompute_path(
     state = MetronomeBattleState()
     ctx.battle_state['opposite_gender'] = opposite_gender
     ctx.battle_state['state'] = state
+    # Build move-type list for Conversion (Metronome + all other known moves)
+    metronome = moves_by_num[118]
+    user_move_types = [metronome.type_name]
+    for num in known_moves:
+        m = moves_by_num.get(num)
+        if m is not None:
+            user_move_types.append(m.type_name)
+    ctx.battle_state['user_move_types'] = user_move_types
     ctx.advance_unobservable(_BATTLE_START_ADVANCES)
     for _ in range(n_turns):
         simulate_turn(ctx, state, moves_by_num, known, magikarp_level)
@@ -431,6 +468,11 @@ def _parse_turn_tokens(raw: str, moves_by_num: dict[int, Move]) -> tuple[PathTok
         p = p.strip()
         if not p: continue
         
+        # Conversion result token: CVNormal, CVFire, CVElectric, etc.
+        if p.upper().startswith('CV') and len(p) > 2:
+            tokens.append(ConversionType(p[2:].capitalize()))
+            continue
+
         # Metronome move
         if p.upper().startswith('M') and p[1:].isdigit():
             num = int(p[1:])
@@ -446,6 +488,7 @@ def _parse_turn_tokens(raw: str, moves_by_num: dict[int, Move]) -> tuple[PathTok
             case '~': tokens.append(EffectProc())
             case 'sp': tokens.append(MagikarpMove('sp'))
             case 'tk': tokens.append(MagikarpMove('tk'))
+            case 'rend': tokens.append(RampageEnd())
             case _:
                 # Try move name
                 move = _resolve_move_input(p, moves_by_num)
