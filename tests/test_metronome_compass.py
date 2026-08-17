@@ -83,26 +83,24 @@ class TestSimulateTurn(unittest.TestCase):
 
     @patch('builtins.input')
     def test_interactive_context_prompts(self, mock_input):
-        # We need to provide answers for:
-        # 1. Metronome move
-        # 2. move hit/crit/miss
-        # 3. effect proc (if applicable)
-        # 4. Magikarp move (if applicable)
-        
-        # Flamethrower (53) has secondary effect
-        mock_input.side_effect = ["Flamethrower", "h", "~", "sp"]
-        
+        # Magikarp moves first. Answers in order:
+        # 1. Magikarp move selection (sp/tk)
+        # 2. Metronome move
+        # 3. hit/crit/miss
+        # 4. effect proc (Flamethrower has 10% burn)
+        mock_input.side_effect = ["sp", "Flamethrower", "h", "~"]
+
         ctx = InteractiveContext()
         state = MetronomeBattleState()
         ctx.battle_state['state'] = state
         turn = simulate_turn(ctx, state, self.moves, frozenset(), magikarp_level=15)
-        
+
         self.assertEqual(len(turn), 4)
-        self.assertIsInstance(turn[0], MetronomeMove)
-        self.assertEqual(turn[0].move_num, 53)
-        self.assertIsInstance(turn[1], Hit)
-        self.assertIsInstance(turn[2], EffectProc)
-        self.assertIsInstance(turn[3], MagikarpMove)
+        self.assertIsInstance(turn[0], MagikarpMove)
+        self.assertIsInstance(turn[1], MetronomeMove)
+        self.assertEqual(turn[1].move_num, 53)
+        self.assertIsInstance(turn[2], Hit)
+        self.assertIsInstance(turn[3], EffectProc)
 
 if __name__ == '__main__':
     unittest.main()

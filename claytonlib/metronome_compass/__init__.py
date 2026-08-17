@@ -104,16 +104,32 @@ def simulate_turn(
     """Simulate one full battle turn and return its token tuple."""
     from .effects import simulate_move_execution, simulate_locked_continuation, _apply_confusion
 
-    # 1. Magikarp move selection (if level >= 15 and has useable moves)
+    # 1. Magikarp move selection (always one roll, even for level < 15)
     mk_can_move = _magikarp_has_useable_moves(state, magikarp_level)
     mk_move_roll = None
-    if magikarp_level >= 15 and mk_can_move:
+    if mk_can_move:
         mk_move_roll = ctx.consume_observable_roll()
 
     # 2. BeforeTurn checks
     ctx.advance_unobservable(_BEFORE_TURN_ADVANCES)
 
-    # 3-4. Metronome roll + execution, or locked-move continuation
+    # 3. Magikarp's status checks & move execution (Magikarp moves first)
+    mk_success = _simulate_magikarp_turn(ctx, state, magikarp_level, mk_move_roll, mk_can_move)
+
+    # 4. IF successful: post-magikarp rolls
+    if mk_success:
+        ctx.advance_unobservable(_POST_MAGIKARP_SUCCESS_ADVANCES)
+
+    # Track whether Magikarp hit Chansey (needed before player's Bide/Conversion2)
+    if mk_success and (state.mk_last_move == 33 or state.mk_last_move is None):
+        state.user_was_hit = True
+        if state.user_locked_effect == 26:
+            state.user_bide_triggered = True
+
+    # 5. Between-actor advances
+    ctx.advance_unobservable(_MAGIKARP_TURN_START_ADVANCES)
+
+    # 6-7. Metronome roll + execution, or locked-move continuation (player moves second)
     if state.user_locked_turns > 0:
         state.user_locked_turns -= 1
         _pre_locked_effect = state.user_locked_effect
@@ -128,26 +144,9 @@ def simulate_turn(
         if ctx.battle_state.get('unsupported'):
             return ctx.end_turn()
 
-    # 5. IF successful: post-metronome rolls
+    # 8. IF successful: post-metronome rolls
     if move_success:
         ctx.advance_unobservable(_POST_METRONOME_SUCCESS_ADVANCES)
-
-    # 6. Magikarp turn start rolls
-    ctx.advance_unobservable(_MAGIKARP_TURN_START_ADVANCES)
-
-    # 7. Magikarp's status checks & move execution
-    mk_success = _simulate_magikarp_turn(ctx, state, magikarp_level, mk_move_roll, mk_can_move)
-
-    # 8. IF successful: post-magikarp rolls
-    if mk_success:
-        ctx.advance_unobservable(_POST_MAGIKARP_SUCCESS_ADVANCES)
-
-    # Track whether Magikarp hit Chansey with a Normal-type attack (Tackle or Struggle).
-    # Drives Conversion 2's prerequisite and Bide's trigger condition.
-    if mk_success and (state.mk_last_move == 33 or state.mk_last_move is None):
-        state.user_was_hit = True
-        if state.user_locked_effect == 26:
-            state.user_bide_triggered = True
 
     # 9. End of turn maintenance
     ctx.advance_unobservable(_END_OF_TURN_ADVANCES)
@@ -358,24 +357,20 @@ def _simulate_magikarp_turn(
     state.mk_last_move_prevented = False
     
     if move_num == 33: # Tackle
-        # 95% accuracy
+        ctx.advance_unobservable(2)  # crit + damage (not observable for opponent)
         def rng_to_hit(ctx: BattleContext) -> PathToken:
             roll = ctx.advance_observable()
-            is_hit = roll % 256 < 95 * 255 // 100
-            return Hit() if is_hit else Miss()
-            
+            return Hit() if roll % 100 < 95 else Miss()
+
         hit_token = ctx.emit(
             rng_to_token=rng_to_hit,
             question="Tackle hit? (h/-):",
             input_to_token=lambda s: Hit() if s.strip().lower() == 'h' else Miss(),
         )
-        if isinstance(hit_token, Hit):
-            ctx.advance_unobservable(2) # Crit + Damage
-            return True
-        return False
-        
-    # Splash (80) always fails to play animation/effect
-    return False
+        return isinstance(hit_token, Hit)
+
+    # Splash always succeeds (triggers post-success rolls)
+    return True
 
 
 def _delta_str(delta: int) -> str:
