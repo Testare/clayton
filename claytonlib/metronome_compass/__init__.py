@@ -18,6 +18,7 @@ from .path import (
     PathToken, MetronomeMove, MagikarpMove, MultiHit,
     Hit, Miss, Crit, EffectProc,
     PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, Prevented, StatusEnd, PathEnd, Unsupported,
+    BindDmg, BindEnd, DrowsySlept, Magnitude,
     NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
 )
 from .context import BattleContext, RngContext, InteractiveContext
@@ -136,8 +137,27 @@ def simulate_turn(
 
     # 9. End of turn maintenance
     ctx.advance_unobservable(_END_OF_TURN_ADVANCES)
-    
-    # Tick down durations
+
+    state.turn_number += 1
+
+    # Binding damage / release
+    if state.mk_binding_turns > 0:
+        state.mk_binding_turns -= 1
+        if state.mk_binding_turns == 0:
+            ctx.raw_emit(BindEnd())
+        else:
+            ctx.raw_emit(BindDmg())
+
+    # Drowsy → sleep (from Yawn)
+    if state.mk_drowsy_turns > 0:
+        state.mk_drowsy_turns -= 1
+        if state.mk_drowsy_turns == 0 and state.mk_status.status == NonVolatileStatus.NONE:
+            ctx.raw_emit(DrowsySlept())
+            state.mk_status.status = NonVolatileStatus.SLEEP
+            roll = ctx.unobservable_roll()
+            state.mk_status.sleep_turns = 2 + (roll % 4)
+
+    # Tick down fixed-duration statuses
     if state.gravity_turns > 0:
         state.gravity_turns -= 1
         if state.gravity_turns == 0:
@@ -151,6 +171,22 @@ def simulate_turn(
         state.mk_status.taunt_turns -= 1
         if state.mk_status.taunt_turns == 0:
             ctx.raw_emit(StatusEnd("TNT"))
+    if state.user_light_screen_turns > 0:
+        state.user_light_screen_turns -= 1
+    if state.user_reflect_turns > 0:
+        state.user_reflect_turns -= 1
+    if state.user_mist_turns > 0:
+        state.user_mist_turns -= 1
+    if state.user_safeguard_turns > 0:
+        state.user_safeguard_turns -= 1
+    if state.user_tailwind_turns > 0:
+        state.user_tailwind_turns -= 1
+    if state.user_lucky_chant_turns > 0:
+        state.user_lucky_chant_turns -= 1
+    if state.user_trick_room_turns > 0:
+        state.user_trick_room_turns -= 1
+    if state.user_magnet_rise_turns > 0:
+        state.user_magnet_rise_turns -= 1
 
     return ctx.end_turn()
 

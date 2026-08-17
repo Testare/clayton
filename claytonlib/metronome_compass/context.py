@@ -69,6 +69,17 @@ class BattleContext(ABC):
         """Mode-specific resolution for emit(). Implemented by subclasses."""
 
     @abstractmethod
+    def unobservable_roll(self) -> int:
+        """Advance RNG by one roll that affects state but emits no token.
+
+        RngContext: advances internal RNG and returns the shifted value.
+        InteractiveContext: returns 0 (caller uses a conservative default).
+
+        Use for rolls whose outcome is not directly observable to the player
+        on the turn they occur (e.g. Yawn sleep-duration roll at end of turn).
+        """
+
+    @abstractmethod
     def _resolve_proc(self, chance: int) -> bool:
         """Roll/ask whether a secondary effect proc'd. Does NOT emit a token.
 
@@ -229,6 +240,10 @@ class RngContext(BattleContext):
         self.rng = advance_rng(self.rng)
         return self.rng >> 16
 
+    def unobservable_roll(self) -> int:
+        self.rng = advance_rng(self.rng)
+        return self.rng >> 16
+
     def consume_observable_roll(self) -> int | None:
         return self.advance_observable()
 
@@ -248,13 +263,16 @@ class InteractiveContext(BattleContext):
     """BattleContext that builds a path from user observations."""
 
     def advance_unobservable(self, n: int = 1) -> None:
-        pass  # No RNG state to advance
+        pass
 
     def advance_observable(self) -> int:
         raise RuntimeError(
             "advance_observable() must not be called on InteractiveContext. "
             "Effect scripts must use emit() helpers, not advance_observable() directly."
         )
+
+    def unobservable_roll(self) -> int:
+        return 0  # Duration unknown in interactive mode; caller uses conservative default
 
     def consume_observable_roll(self) -> int | None:
         return None

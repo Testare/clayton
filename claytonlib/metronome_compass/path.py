@@ -146,6 +146,32 @@ class PathEnd(PathToken):
 
 
 # ---------------------------------------------------------------------------
+# End-of-turn observable tokens
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BindDmg(PathToken):
+    """Magikarp took binding damage at end of turn."""
+    def render(self) -> str: return "BD"
+
+@dataclass(frozen=True)
+class BindEnd(PathToken):
+    """Magikarp broke free from binding at end of turn."""
+    def render(self) -> str: return "BF"
+
+@dataclass(frozen=True)
+class Magnitude(PathToken):
+    """Magnitude move level (observable in battle)."""
+    level: int
+    def render(self) -> str: return f"Mag{self.level}"
+
+@dataclass(frozen=True)
+class DrowsySlept(PathToken):
+    """Magikarp fell asleep from Yawn at end of turn."""
+    def render(self) -> str: return "ZZ"
+
+
+# ---------------------------------------------------------------------------
 # Path type
 # ---------------------------------------------------------------------------
 
@@ -189,18 +215,67 @@ class MagikarpStatus:
 
 @dataclass
 class MetronomeBattleState:
-    gravity_turns: int = 0            # 0 = inactive, >0 = turns remaining
+    # Field effects (turns remaining; 0 = inactive)
+    gravity_turns: int = 0
+    user_light_screen_turns: int = 0
+    user_reflect_turns: int = 0
+    user_mist_turns: int = 0
+    user_safeguard_turns: int = 0
+    user_tailwind_turns: int = 0
+    user_lucky_chant_turns: int = 0
+    user_trick_room_turns: int = 0
+    user_magnet_rise_turns: int = 0
+
+    # Weather
     weather: str | None = None        # "sunny" / "rain" / "sand" / "hail" / None
     weather_until: int = 0            # turn number weather expires
+
+    # Stat stages
     user_evasion_stage: int = 0       # -6 to +6
     target_evasion_stage: int = 0
     user_accuracy_stage: int = 0
     target_accuracy_stage: int = 0
     user_crit_stage: int = 0
 
+    # User (Chansey) status booleans
+    user_is_full_hp: bool = True      # simplified HP tracking for recovery-move failures
+    user_focus_energy: bool = False
+    user_aqua_ring: bool = False
+    user_ingrained: bool = False
+    user_mud_sport: bool = False
+    user_water_sport: bool = False
+    user_substitute: bool = False
+    user_stockpile: int = 0           # 0-3
+
+    # User consecutive-move state
+    user_recharging: bool = False     # Hyper Beam recharge turn
+
+    # Hazards on opponent's side
+    opp_spikes: int = 0               # 0-3
+    opp_toxic_spikes: int = 0         # 0-2
+    opp_stealth_rock: bool = False
+
+    # Perish Song countdowns (0 = inactive)
+    user_perish_song_turns: int = 0
+    mk_perish_song_turns: int = 0
+
+    # Magikarp volatile status
     mk_status: MagikarpStatus = field(default_factory=MagikarpStatus)
+    mk_binding_turns: int = 0         # 0 = not bound
+    mk_seeded: bool = False           # Leech Seed
+    mk_blocked: bool = False          # Spider Web / Mean Look
+    mk_tormented: bool = False        # Torment
+    mk_drowsy_turns: int = 0          # Yawn: 2→1 then applies sleep
+    mk_nightmare: bool = False
+    mk_embargo: bool = False
+    mk_heal_block: bool = False
+    mk_gastro_acid: bool = False      # ability suppressed
+
     mk_last_move: int | None = None   # move number used last turn
     mk_last_move_prevented: bool = False
+
+    # Turn counter (for Fake Out and weather expiry)
+    turn_number: int = 0
 
     def copy(self) -> MetronomeBattleState:
         from dataclasses import replace

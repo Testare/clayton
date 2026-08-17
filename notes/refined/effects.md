@@ -191,7 +191,7 @@ Moves: Bide
 
 The user gains the status "Biding (Not triggered)", with a duration of 2 turns. The move does not perform any rolls the turn it is used.
 
-If the user takes damage (Magikarp uses Tackle or Struggle), "Biding (Not triggered)" will become "Biding (Triggered)".
+If the user takes damage from an opponent's attack (Magikarp uses Tackle or Struggle), "Biding (Not triggered)" will become "Biding (Triggered)".
 
 As a consecutively executed move, the user is prevented from selecting a move until the effect wears off. The next turn, the user will use bide again, which will decrease the duration of its Biding status, which will count as successful and perform the successful move rolls, but not the metronome roll. The next turn, when the duration is decreased again and is now 0, if the status on the user is "Biding (Not trigggered)", the move fails. If the status is "Biding (Triggered)", the user will deal damage to the target proportional to the damage received, performing no crit, damage, or hit rolls, but counting as successful.
 
@@ -213,7 +213,7 @@ During the end-of-turn effect check, if the user is locked into a consecutively 
 
 If the user is already confused, the rampaging status ends without a message, there is no roll for additional confusion duration. If the user is prevented from attacking (such as by hitting itself in confusion), the locked on status immediately ends and the user is not confused.
 
-This duration is also delayed by freeze, sleep, and flinching will delay the outrage duration, but that won't be necessary to track for our project.
+This duration is delayed by freeze, sleep, and flinching, but that won't be necessary to track for our project.
 
 See end_of_turn.md for details on interaction with other end of turn effects.
 
@@ -250,7 +250,7 @@ Table of results to make it more clear. Note that R2 is not rolled unless R1 % 4
 It then does 1 standard Crit/Hit/Miss. If it misses, then no further rolls are performed.
 If it hits, then it does a Crit/Hit roll for each of the rest of the attacks; no more miss checks are performed. For example, if the result from the hit count determination was 3, and the move hits, it would roll Crit, Hit, Miss, Crit, Hit, Crit, Hit.
 
-* Roll hit_count (2 + RAND % 3)
+* Roll hit_count (2 + RAND % 4)
 * If hit_count > 3, roll hit_count once more
 * Crit check
 * Damage Roll
@@ -306,7 +306,7 @@ Sets up "Light Screen" effect on the user's side of the field for 5 turns, inclu
 ## Effect 36
 Moves: Tri Attack
 
-* Rolls for which effect would be applied on effect chance, based on the following table.
+* Rolls for which effect would be applied on effect chance, based on the following table. (Always)
 * C/D/H
 * On hit, roll for chance to apply status based on move's effect chance.
 
@@ -324,7 +324,7 @@ None of these status conditions apply a set duration at the start, so we don't n
 ## Effect 37
 Moves: Rest
 
-If the user has taken damage, the user's HP fully recovers and they gain the sleep status condition. Unless most conditions that apply sleep, this one is for a set duration: 3 turns, not including the turn rest is used but including the turn they will wake up (So they will not be able to take action for 2 turns following). 
+If the user has taken damage, the user's HP fully recovers and they gain the sleep status condition. Unlike most conditions that apply sleep, this one is for a set duration: 3 turns, not including the turn rest is used but including the turn they will wake up (So they will not be able to take action for 2 turns following). 
 
 If they are at full HP, the move fails, and the user does not fall asleep. If the user has the ability "Insomnia", the move fails.
 
@@ -382,7 +382,7 @@ Increased crit chance, but rolls are the standard:
 Moves: Double Kick, Bonemerang, Double Hit
 
 * Crit/Damage/Hit check
-* On hit: 2 unimportant rolls (Presumably checking for contact triggers), then another Crit/Damage roll
+* On hit: 2 unimportant contact rolls, then another Crit/Damage roll
 
 ## Effect 45
 Moves: Jump Kick, Hi Jump Kick
@@ -416,9 +416,8 @@ User takes recoil damage.
 Moves: Supersonic, Confuse Ray, Sweet Kiss
 
 * Hit check
-* Roll for confusion duration (According to description in effect_status.md)
 
-If the move hits and the opponent is not already confused, they become confused. If the move misses or the opponent was already confused, the moves fails.
+If the move hits and the opponent is not already confused, they become confused and we roll for confusion duration. If the move misses or the opponent was already confused, the moves fails.
 
 ## Effect 50
 Moves: Swords Dance
@@ -473,7 +472,7 @@ Moves: Cotton Spore, Scary Face
 
 * Hit check
 
-If the move hits, opponent's defense is lowered by 2 stages.
+If the move hits, opponent's speed is lowered by 2 stages.
 
 ## Effect 62
 Moves: Fake Tears, Metal Sound
@@ -555,9 +554,10 @@ Moves: Sky Attack
 Charging move. On the first turn, the user cloaks itself in harsh light, and no random roll is made. On the second turn:
 
 * C/D/H
-* Roll for secondary effect proc according to move's effect chance.
+* On hit: Roll for secondary effect proc according to move's effect chance.
 
 If the secondary effect procs the opponent flinches, but since the metronome user will usually be slower, this will not usually be visible (flinching only affects that turn, and if you go second flinching is not noticeable). This roll will occur even if the user is moving second.
+
 
 ## Effect 76
 Moves: Psybeam, Confusion, Dizzy Punch, Dynamic Punch, Signal Beam, Water Pulse, Rock Climb
@@ -575,7 +575,7 @@ Similar to Double Hit, but with poison chance
 * Crit/Damage/Hit check
 * On hit:
   * Roll for secondary effect proc, according to move's effect chance. On proc, the target is poisoned, unless they already have a nonvolatile status condition.
-  * 2 unimportant rolls (Presumably checking for contact triggers)
+  * 2 unimportant contact rolls
   * Another set of Crit/Damage rolls
   * Roll again for secondary effect proc, according to move's effect chance. On proc, the target is poisoned, unless they already have a nonvolatile status condition.
 
@@ -704,7 +704,7 @@ Moves: Encore
 * Hit check
 * If successful: Roll for encore duration.
 
-If the move hits and is successful, the target is locked into their last successful move for a random duration of 3-7 turns. If the user moved second, this does not count the turn encore is used.
+If the move hits and is successful, the target is locked into their last successful move for a random duration of 3-7 turns. If the metronome user moved second, this does not count the turn encore is used.
 Duration: 3 + RAND % 4.
 
 Fails if the target's last move failed or was prevented, but not if their move simply missed.
@@ -728,7 +728,7 @@ Cannot succeed as a metronome move, since metronome cannot be called while aslee
 ## Effect 93
 Moves: Conversion 2
 
-* If the user has been hit by tackle OR struggle: Roll for conver
+* If the user has been hit by tackle OR struggle: Roll for conversion type
 
 This one is kinda complicated. First of all, the user must have been hit by a move that dealt damage since it switched in or last used Conversion 2, otherwise the move fails.
 
@@ -1079,6 +1079,8 @@ First turn: 1 random roll, but no obvious result from roll. User "Tucked in its 
 
 Second turn: No metronome roll, but normal Crit/Damage/Hit rolls.
 
+#FUTUREWORK confirm random roll purpose
+
 ## Effect 146
 Moves: Twister
 
@@ -1097,7 +1099,11 @@ Not relevant here, but would normally do double damage to a pokemon in the semi-
 ## Effect 148
 Moves: Future Sight, Doom Desire
 
-On the turn it is selected, only a "damage" roll is done, and then the opponent gains the Future Attack status with a duration of 3 (not including this turn).
+* Damage roll
+
+Does not do direct damage on the turn it is used, but instead deals damage on a future turn.
+
+On the turn it is selected, only a "damage" roll is done, and then the opponent gains the Future Attack status with a duration of 3 (not including this turn). This roll does not have any observable effect, on the turn it is used or when the attack lands.
 
 During the end-of-turn effect check, this duration is checked and reduced by 1. If it is 0 after this subtraction, the future sight attack occurs. A hit check is performed, making it possible for future sight to miss, though it cannot possibly crit. The messaging is that future sight failed, not that it missed. It doesn't count as the last move used, and it doesn't cause any "successful attack" rolls to occur on hit.
 
@@ -1178,8 +1184,8 @@ Raises defense by 1 stages, up to 6 stages. Does not count as failed even if sta
 ## Effect 158
 Moves: Fake Out
 
-If it is the first turn: Crit/Dmg/Hit + Flinch chance roll (Despite chance being 100)
-If it is the second turn: Roll Hit chance, then fail anyways.
+If it is the first turn: Crit/Dmg/Hit rolls + Flinch chance roll (Despite chance being 100)
+If it is the second turn: Roll Hit chance first, then the move fails.
 
 Flinch chance roll occurs even when moving second.
 
@@ -1236,9 +1242,9 @@ Being prevented from using a move counts as the move not being used last turn. F
 Moves: Flatter
 
 * Hit check
-* Roll for confusion duration
+* On hit and if target is not confused: Roll for confusion duration
 
-If this move hits, the target becomes confused for the duration rolled (see effect_status.md for details), as well as having their special attack raised one stage.
+If this move hits and target is not confused, the target becomes confused for the duration rolled (see effect_status.md for details), as well as having their special attack raised one stage. If they are already confused, their special attack is still raised and the move does not count as failed.
 
 ## Effect 167
 Moves: Will O Wisp
@@ -1438,7 +1444,7 @@ Moves: Secret Power
 * C/D/H rolls
 * Roll for secondary effect proc. 
 
-The secondary effect changes depending on the environment, but for the margikarp fight it will always be the sea water environment, and so it will always lower target attack.
+The secondary effect changes depending on the environment, but for the magikarp fight it will always be the sea water environment, and so it will always lower target attack.
 
 ## Effect 198
 Moves: Double Edge, Brave Bird, Wood Hammer
@@ -1451,7 +1457,7 @@ User is hit with recoil damage.
 Moves: Teeter Dance
 
 * Hit check
-* Roll for confusion duration (Per effect_status)
+* On hit and if target is not confused: Roll for confusion duration (Per effect_status)
 
 Causes target to become confused. Fails if target is already confused.
 
@@ -1534,7 +1540,7 @@ Moves: Calm Mind
 
 * No rolls
 
-Increases user's defense and special defense by 1 stage each.
+Increases user's special attack and special defense by 1 stage each.
 
 ## Effect 212
 Moves: Dragon Dance
@@ -1642,8 +1648,6 @@ Order:
 index = RAND % CountOfEligibleStats, and we index into the list that has the non-eligible stats filtered. The chosen stat is raised by two for the metronome user. This is the only rand roll for this move.
 
 For example, if the user used Belly Drum in the previous turn and maxed the Attack stat, the count of eligible stats would be 6. If random generated 13, 13 % 6 = 1, so the increased stat would be speed (Attack is ineligible, defense would be index 0).
-
-Presumably, it will fail if all stat stages are maxed, but there is no chance of us reaching that point during a singles battle using only metronome.
 
 ## Effect 227
 Moves: Metal Burst
@@ -1900,7 +1904,7 @@ Moves: Blizzard
 Aspects of this move change based on the weather.
 
 * C/D/H rolls
-* On hit: Roll for secondary effect proc. On success
+* On hit: Roll for secondary effect proc. On success, target is frozen.
 
 During hail: 
 * Blizzard automatically hits, ignoring results from hit roll entirely.
