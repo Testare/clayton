@@ -1335,6 +1335,71 @@ def _eff_unsupported(ctx: 'BattleContext', move: Move) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Bide (26)
+# Turn 1: no rolls, sets lock for 2 continuation turns.
+# Turn 2: counts as successful (no rolls).
+# Turn 3: if triggered (Magikarp hit with Tackle/Struggle while biding) → deal damage,
+#          no rolls. If not triggered → fails. Substitute active → Unsupported.
+# ---------------------------------------------------------------------------
+
+def _eff_bide(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if state.user_substitute:
+        ctx.raw_emit(Unsupported())
+        ctx.raw_emit(PathEnd())
+        ctx.battle_state['unsupported'] = True
+        return False
+    state.user_locked_move_num = move.number
+    state.user_locked_effect = move.effect
+    state.user_locked_turns = 2
+    state.user_bide_triggered = False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Conversion 2 (93)
+# Prereq: Magikarp hit with Tackle or Struggle since switch-in / last C2 use.
+# Rolls %112 against the effectiveness table; since Magikarp is Normal-type only,
+# valid results are indices 0 (Rock), 1 (Steel), 109 (Ghost).
+# Emits a ConversionType token for the chosen type.
+# ---------------------------------------------------------------------------
+
+def _eff_conversion2(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+
+    if not state.user_was_hit:
+        return False  # Not hit by Normal-type attack since switch-in or last use
+
+    # Valid target types: resist/immune to Normal, excluding user's current types
+    _NORMAL_RESISTS = {0: 'Rock', 1: 'Steel', 109: 'Ghost'}
+    valid = {k: v for k, v in _NORMAL_RESISTS.items() if v not in state.user_types}
+    if not valid:
+        return False  # All possible types already user's type
+
+    state.user_was_hit = False  # Consumed; reset for next Conversion 2 use
+
+    def rng_to_token(c: 'BattleContext') -> ConversionType:
+        for _ in range(1000):
+            roll = c.advance_observable()
+            idx = roll % 112
+            if idx in valid:
+                return ConversionType(valid[idx])
+        # Fallback: linear scan (essentially unreachable)
+        return ConversionType(valid[min(valid)])
+
+    eligible = list(valid.values())
+    token = ctx.emit(
+        rng_to_token=rng_to_token,
+        question=f"Conversion 2 type? ({'/'.join(eligible)}):",
+        input_to_token=lambda s: ConversionType(s.strip().capitalize()),
+    )
+    state.user_types = [token.type_name]
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Group A: Charge-and-fire (Fly/Dive/Dig/Razor Wind/Shadow Force)
 # Effects 39, 155, 255, 256, 272 — turn 1 sets lock, no rolls
 # ---------------------------------------------------------------------------
@@ -1488,7 +1553,23 @@ def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_mov
     """Execute the continuation turn for a locked move. user_locked_turns already decremented."""
     effect = state.user_locked_effect  # type: ignore[attr-defined]
 
-    if effect in {39, 155, 255, 256, 272}:  # Group A: charge-fire
+    if effect == 26:  # Bide
+        if state.user_locked_turns > 0:  # type: ignore[attr-defined]
+            # Turn 2: Bide continues, counts as successful, no rolls
+            return True
+        # Turn 3 (last): final outcome
+        if state.user_substitute:  # type: ignore[attr-defined]
+            ctx.raw_emit(Unsupported())
+            ctx.raw_emit(PathEnd())
+            ctx.battle_state['unsupported'] = True
+            return False
+        triggered = state.user_bide_triggered  # type: ignore[attr-defined]
+        state.user_bide_triggered = False      # type: ignore[attr-defined]
+        state.user_locked_move_num = None      # type: ignore[attr-defined]
+        state.user_locked_effect = None        # type: ignore[attr-defined]
+        return triggered  # True = damage dealt (no rolls); False = move fails
+
+    elif effect in {39, 155, 255, 256, 272}:  # Group A: charge-fire
         token = ctx.hit_crit_or_miss(locked_move.accuracy)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
@@ -1841,11 +1922,13 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     263: _eff_bounce,       # Bounce (Group B)
     272: _eff_charge_fire,  # Shadow Force (Group A)
 
-    # --- Unsupported (still unimplemented) ---
-    26:  _eff_unsupported,  # Bide (complex substitute/branching interactions)
-    57:  _eff_unsupported,  # Transform (path ends after use; SUPPORT_NOT_PLANNED)
-    93:  _eff_unsupported,  # Conversion 2 (#FUTUREWORK)
-    189: _eff_unsupported,  # Endeavor (requires HP tracking)
+    # --- Bide and Conversion 2 ---
+    26:  _eff_bide,
+    93:  _eff_conversion2,
+
+    # --- Unsupported (SUPPORT_NOT_PLANNED) ---
+    57:  _eff_unsupported,  # Transform — Chansey loses Metronome; no future path possible
+    189: _eff_unsupported,  # Endeavor — always fails in P0 (Magikarp HP << Chansey HP); hit check always Miss, no seed-differentiating info
 }
 
 

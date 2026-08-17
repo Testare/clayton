@@ -142,6 +142,13 @@ def simulate_turn(
     if mk_success:
         ctx.advance_unobservable(_POST_MAGIKARP_SUCCESS_ADVANCES)
 
+    # Track whether Magikarp hit Chansey with a Normal-type attack (Tackle or Struggle).
+    # Drives Conversion 2's prerequisite and Bide's trigger condition.
+    if mk_success and (state.mk_last_move == 33 or state.mk_last_move is None):
+        state.user_was_hit = True
+        if state.user_locked_effect == 26:
+            state.user_bide_triggered = True
+
     # 9. End of turn maintenance
     ctx.advance_unobservable(_END_OF_TURN_ADVANCES)
 

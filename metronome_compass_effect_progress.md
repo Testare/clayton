@@ -34,7 +34,7 @@ Tracks implementation status of all move effects from `notes/refined/effects.md`
 | 23 | Sand Attack, Flash, Kinesis | IMPLEMENTED | `_eff_hit_only` |
 | 24 | Sweet Scent | IMPLEMENTED | `_eff_hit_only` |
 | 25 | Haze | IMPLEMENTED | `_eff_no_rolls_ok` |
-| 26 | Bide | NOT_YET_IMPLEMENTED | Turn 1: no rolls. Turns 2–3: no metronome roll (consecutive). Must suppress metronome roll on those turns or path structure is corrupted. Turn 3 outcome is deterministic (no Chansey RNG). Complex with substitute/branching interactions. |
+| 26 | Bide | IMPLEMENTED | `_eff_bide` — turn 1 sets lock (user_locked_turns=2, no rolls); turn 2 continuation returns True (no rolls); turn 3 final: if `user_bide_triggered` (Magikarp hit with Tackle/Struggle on turns 1-2) returns True (damage, no rolls) else returns False. `user_substitute` active on turn 1 → Unsupported immediately. |
 | 27 | Thrash, Petal Dance, Outrage | IMPLEMENTED | `_eff_thrash` — turn 1 C/D/H + observable duration roll (2+RAND%2 total turns); continuation turns suppress metronome roll via `simulate_locked_continuation`; REND token + confusion applied at end of last continuation turn. |
 | 28 | Whirlwind, Roar | IMPLEMENTED | `_eff_whirlwind` — hit check + unobservable roll + path ends |
 | 29 | Double Slap, Fury Attack, Bullet Seed, … | IMPLEMENTED | `_eff_multi_hit` |
@@ -95,7 +95,7 @@ Tracks implementation status of all move effects from `notes/refined/effects.md`
 | 90 | Encore | IMPLEMENTED | `_eff_encore` |
 | 91 | Pain Split | IMPLEMENTED | `_eff_pain_split` |
 | 92 | Snore | IMPLEMENTED | `_eff_hit_only` (hit check performed; always fails — user can't be asleep for metronome) |
-| 93 | Conversion 2 | NOT_YET_IMPLEMENTED | Roll up to 1000 times to find valid type; chosen type observable. Complex table-lookup logic. #FUTUREWORK |
+| 93 | Conversion 2 | IMPLEMENTED | `_eff_conversion2` — prereq: `user_was_hit` (Magikarp hit with Tackle/Struggle). Rolls %112 against effectiveness table; given Magikarp is Normal-type only, valid results are index 0 (Rock), 1 (Steel), 109 (Ghost). Emits `ConversionType` token. Resets `user_was_hit`. |
 | 94 | Mind Reader, Lock On | IMPLEMENTED | `_eff_no_rolls_ok` |
 | 95 | Sketch | NCM | |
 | 97 | Sleep Talk | NCM | |
@@ -183,7 +183,7 @@ Tracks implementation status of all move effects from `notes/refined/effects.md`
 | 186 | Brick Break | IMPLEMENTED | `_eff_damage` |
 | 187 | Yawn | IMPLEMENTED | `_eff_yawn` — drowsy state applied; sleep + duration via `unobservable_roll()` at end of next turn |
 | 188 | Knock Off | IMPLEMENTED | `_eff_damage` |
-| 189 | Endeavor | NOT_YET_IMPLEMENTED | Hit check is observable. In P0 always fails after hit check (Magikarp HP << Chansey HP). Could implement as hit check + immediate fail similar to Snore. |
+| 189 | Endeavor | SUPPORT_NOT_PLANNED | In P0 Magikarp HP << Chansey HP so Endeavor always fails. Hit check is still rolled but always yields Miss, adding no seed-differentiating information. |
 | 190 | Eruption, Water Spout | IMPLEMENTED | `_eff_damage` |
 | 191 | Skill Swap | IMPLEMENTED | `_eff_no_rolls_ok` |
 | 192 | Imprison | IMPLEMENTED | `_eff_no_rolls_fail` (no shared moves in P0) |
@@ -275,7 +275,7 @@ Tracks implementation status of all move effects from `notes/refined/effects.md`
 
 | Status | Count |
 |--------|-------|
-| IMPLEMENTED | 219 |
-| NOT_YET_IMPLEMENTED | 3 (Bide=26, Conversion2=93, Endeavor=189) |
-| SUPPORT_NOT_PLANNED | 1 (Transform=57) |
+| IMPLEMENTED | 221 |
+| NOT_YET_IMPLEMENTED | 0 |
+| SUPPORT_NOT_PLANNED | 2 (Transform=57, Endeavor=189) |
 | NCM | 24 |

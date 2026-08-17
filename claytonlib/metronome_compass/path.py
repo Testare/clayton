@@ -265,6 +265,12 @@ class MetronomeBattleState:
     user_locked_effect: int | None = None     # effect of that move
     user_locked_turns: int = 0               # continuation turns remaining
 
+    # Bide state
+    user_bide_triggered: bool = False  # True if Magikarp hit with Tackle/Struggle while biding
+
+    # Conversion 2 prerequisite: Magikarp hit with Tackle/Struggle since switch-in or last C2 use
+    user_was_hit: bool = False
+
     # Future Sight / Doom Desire counter
     future_sight_turns: int = 0             # turns until Future Sight fires (0 = inactive)
     future_sight_move_num: int | None = None # move number for accuracy lookup on fire
