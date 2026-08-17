@@ -367,22 +367,34 @@ reaches zero."""
 
 
 class RandSkipCommand(gdb.Command):
-    """Auto-continue BattleSystem_Random hits at the last-seen address.
+    """Auto-continue BattleSystem_Random hits at an address.
 
-Usage: rand_skip
+Usage:
+  rand_skip           -- skip the last-seen address
+  rand_skip ADDRESS   -- skip the specified address
 
-Adds the most recently hit caller address to the skip list so that future
-hits at that address automatically continue without stopping."""
+Adds the address to the skip list so that future hits at that address
+automatically continue without stopping."""
 
     def __init__(self):
         super().__init__("rand_skip", gdb.COMMAND_USER)
 
     def invoke(self, arg, from_tty):
-        if _last_pc is None:
-            print("No BattleSystem_Random hit recorded yet.")
-            return
-        _skip_pcs.add(_last_pc)
-        print(f"rand_skip: 0x{_last_pc:08x} will now auto-continue ({len(_skip_pcs)} skipped total)")
+        args = arg.split()
+        if args:
+            try:
+                pc = int(args[0], 0)
+            except ValueError:
+                print(f"rand_skip: invalid address '{args[0]}'")
+                return
+        else:
+            if _last_pc is None:
+                print("No BattleSystem_Random hit recorded yet.")
+                return
+            pc = _last_pc
+
+        _skip_pcs.add(pc)
+        print(f"rand_skip: 0x{pc:08x} will now auto-continue ({len(_skip_pcs)} skipped total)")
 
 
 class RandSkipClearCommand(gdb.Command):
@@ -520,7 +532,7 @@ _HELP_LINES = [
     "  mod_report clear all                  -- remove all mod reports",
     "  mod_report list                       -- show all mod reports",
     "  skip_turn [N]                         -- auto-continue until N '??' frames hit (default 1; 0 to disable)",
-    "  rand_skip                             -- auto-continue last-hit address",
+    "  rand_skip [ADDRESS]                   -- auto-continue last-hit (or ADDRESS) address",
     "  rand_skip_clear                       -- stop skipping, break on all frames",
     "  mod VALUE                             -- print $r0 % VALUE",
     "  r0 VALUE                              -- set $r0 = VALUE",
@@ -555,4 +567,13 @@ UtilHelpCommand()
 gdb.execute("alias mod = p $r0 %")
 gdb.execute("alias r0 = set $r0 =")
 gdb.execute("alias zero = set $r0 = 0")
+print("GDB defaults")
+gdb.execute("rand_override TryCriticalHit 1")
+gdb.execute("rand_override ApplyDamageRange 0")
+gdb.execute("mod_report BattleSystem_CheckMoveHit 100")
+gdb.execute("mod_report ov12_02250490 100")
+gdb.execute("mod_report ?? 2")
+gdb.execute("rand_skip 0x02251056")  # bellShimerReplaceGraphics
+gdb.execute("rand_skip 0x02258606")  # ov12_022585B
+gdb.execute("rand_skip 0x0224941c")  # BattleControllerPlayer_BeforeTurn
 print("GDB utils loaded. Type 'utilhelp' for a command reference.")

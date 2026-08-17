@@ -1,6 +1,6 @@
 Effect statuses are checked in a specific order.
 
-# Effects that might affect Magikarp
+# Effects that might affect Magikarp's ability to perform moves
 
 For each of these effects, they are checked in this order, and if any of them prevents a move from happening the following effects are not checked.
 
@@ -17,7 +17,7 @@ Fails if Magikarp is already asleep, frozen, burned, poisoned, or badly poisoned
 ## Flinch
 <Prevents Magikarp from taking an action>
 
-Duration is always only THIS turn.
+Duration is always only THIS turn: Clear this status in the turn-end cleanup. Flinch can be rolled and applied to pokemon that have already moved, but this will not be observable to the user.
 
 Struggle is prevented by flinch.
 
@@ -38,7 +38,7 @@ Duration: 4 + (RAND % 4)
 
 Disable turns tick down, even if the user is asleep, frozen, or flinches. It can even end while Magikarp is frozen or asleep as well.
 
-TOCONFIRM: When disable happens second, does that turn count as one of the disabled turns?
+The turn the user uses disable counts towards the duration of disable, even if the user moved second in the turn.
 
 We should have a path token for when disable ends.
 
@@ -73,13 +73,21 @@ A pokemon may still hit itself in confusion if it would otherwise use Struggle.
 ## Paralysis
 (RAND % 4) == 0 => Full paralysis, move fails
 
-## Attract
+## Attract / Infatuation
+
 RAND & 1 == 0 => Immobilized by love.
+
+# Effects that prohibit magikarp from selecting a move
+
+## Encore
+
+While under the effect of encore, just like when it has no useable moves it skips the roll to determine which move to perform, and performs the last used move. If that move is not in the useable move pool, they struggle instead as they have no useable moves (see below).
 
 ## NO USEABLE MOVES
 If the user has no useable moves when it comes time to select a move, the usual roll is not performed, and Magikarp uses Struggle. This move always hits, but still rolls crit and damage, and counts as successful. If magikarp's move is prevented after it has chosen that move, it fails, but does not struggle that turn.
 
-# Effects that might affect the metronome user
+
+# Effects that might affect the metronome user's moves
 
 ## Gravity
 
@@ -87,36 +95,46 @@ If metronome selects a gravity-prevented move, we roll again.
 
 ## Sleep
 
-Rest is a metronome callable move.
+Rest is a metronome callable move. Sleep will affect the metronome user the same way as Magikarp.
 
 ## Confusion 
-
-The metronome user might become confused as a result of using Outrage, Thrash, or Petal Dance, and it also forces the Metronome user to use that move multiple times. However, it is hard to imagine Magikarp surviving any of these moves, so handling the case where it occurs is not a priority.
+Will affect our pokemon the same way it effects Magikarp.
 
 ## Recharging
 
-Similarly, a max-stat level 20 Magikarp might survive Blast Burn or Roar of Time from a lower level Clefable, but it is unlikely so not the priority to support right now. That said, there are a decent number of recharging moves...
+If the metronome user uses a move like hyper beam or blast burn, they will be afflicted with the "recharging" status. This means that the next turn, the metronome user will be forced to do nothing. No metronome roll, no hit rolls, no rolls for a successful move on the next turn. This only matters if Magikarp does not faint from the attack.
+
+## Charging
+
+Moves: Solar beam, Razor Wind, Sky Attack, Skull Bash
+Moves like solar beam, razor wind, skull bash, etc. Charge on one turn, then attack on the second, meaning the second turn there won't be a metronome roll.
+
+# Other effects
+
+## Poison/Burn
+
+These status conditions last and deal damage over time. They don't really do anything helpful for our purposes, but prevent other non-volatile status conditions from occuring (sleep, poison, paralysis)
+
+## Nightmare/Curse
+
+The move nightmare does damage at the end of each turn if the target is asleep. Once the target is awake, this condition ends.
+
+Curse, if used by a ghost type, also does damage at the end of each turn, but this is not P0.
+
+## Binding status effects
+Moves: Bind/Wrap/Fire Spin/Clamp/Sand Tomb/Magma Storm
+
+Prevents switching out and does damage for a certain number of turns. This happens after both pokemon have made their moves. The duration is random, however, and observable by the user up to the point that Magikarp faints, so we should emit tokens at turn end for that.
+
+These effects do not stack - If metronome does Bind one turn, then fire spin the next, the Magikarp remainins under the effect of "bind" for the predetermined duration, and not fire spin (even if bind's effect ends that turn).
+
+Duration is 3 + RAND % 3. On the last turn, instead of taking damage they are freed. For example, if RAND returns 1, then the duration will be 4. The opponent will take damage at the end of the turn they are hit, then at the end of the next 2 turns. The turn after that, they will be freed and take no damage. We should have tokens for binding damage at end of turn and also for magikarp breaking out.
+
+## Full HP
+
+Being at full HP can cause recovery moves to fail, so we should track if
 
 # Notes about pathing
 
 Gravity, Disable and taunt can only prevent Magikarp from acting at all on the turn they apply, subsequent turns will force Magikarp to use a different move or to struggle. Because of this, we can probably use the same path symbol for any of these outcomes, like "P" for prevented, since it will always be in response to the metronome move used that turn.
-
-# Turn rolls
-
-The rolls in a given turn are
-
-1 roll - Determine magikarp's move (IF it has useable moves)
-<Player chooses a move>
-4 rolls - BeforeTurn
-<Metronome roll>
-<Rolls for the move determined by metronome>
-IF the move was successful: 2 more rolls
-2 rolls to start Magikarp's turn
-<Magikarp's move>
-IF the move was successful: 2 more rolls
-4 rolls at the end of the turn 
-
-Move that aren't successful: Misses, applying status conditions that already exist on a non-damaging move, being asleep, frozen, disabled on your selected move, or hitting yourself in confusion. Basically anything that keeps the move animation from playing.
-
-
 

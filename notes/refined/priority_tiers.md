@@ -4,7 +4,7 @@ Priority tiers will help us prioritize the work that will be most helpful to me 
 
 ## P0
 
-Things in P0 are needed to cover the most common use cases. Basically when P0 items are complete, we should support 90% of moves. During this priority, we will constrain ourselves to focusing on handling one specific metronome user species and only one user.
+Things in P0 are needed to cover the most common use cases. Basically when P0 items are complete, we should support 90% of moves. During this priority, we will constrain ourselves to focusing on handling one specific metronome user species and only one user, with a known moveset.
 
 ## P1
 
