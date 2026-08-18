@@ -7,6 +7,64 @@ import os
 # project root.
 _MOVES_JSON_PATH = os.path.join(os.getcwd(), "claytonlib", "basedata", "moves.json")
 
+# Pokemon HeartGold English character code -> Python str mapping.
+# Codes from include/constants/charcode.h.
+_POKE_CHARMAP = {}
+for _i in range(10):
+    _POKE_CHARMAP[289 + _i] = str(_i)      # '0'-'9'
+for _i in range(26):
+    _POKE_CHARMAP[299 + _i] = chr(65 + _i)  # 'A'-'Z'
+    _POKE_CHARMAP[325 + _i] = chr(97 + _i)  # 'a'-'z'
+_POKE_CHARMAP.update({
+    427: '!',  428: '?',  429: ',',  430: '.',  431: '…',
+    433: '/',  434: "'",  435: "'",  436: '"',  437: '"',
+    441: '(',  442: ')',  443: '♂',  444: '♀',  445: '+',
+    446: '-',  447: '*',  448: '#',  449: '=',  450: '&',
+    451: '~',  452: ':',  453: ';',  458: '★',  464: '@',
+    465: '♪',  466: '%',  478: ' ',  480: 'Pk', 481: 'Mn', 482: ' ',
+})
+del _i
+
+
+def _decode_poke_string(ptr):
+    """Read a String* at ptr and decode to Python str using HG/SS English charmap.
+
+    String layout (pm_string.h):
+        u16 maxsize [+0], u16 size [+2], u32 magic [+4], u16 data[] [+8]
+
+    Control code format (string_control_code.c):
+        0xFFFE, <type u16>, <field_count u16>, [fields...]
+    """
+    inferior = gdb.inferiors()[0]
+    chars = []
+    offset = 8  # data[] starts at byte 8
+    while True:
+        raw = bytes(inferior.read_memory(ptr + offset, 2))
+        code = int.from_bytes(raw, 'little')
+        if code == 0xFFFF:   # EOS
+            break
+        if code == 0xE000:   # CHAR_LF — newline
+            chars.append('\n')
+            offset += 2
+            continue
+        if code == 0xFFFE:   # EXT_CTRL_CODE_BEGIN
+            # format: 0xFFFE, type, field_count, [fields]
+            hdr = bytes(inferior.read_memory(ptr + offset + 2, 4))
+            ctrl_type = int.from_bytes(hdr[0:2], 'little')
+            field_cnt = int.from_bytes(hdr[2:4], 'little')
+            if ctrl_type == 0x207:
+                chars.append('\n[SCROLL]\n')
+            elif ctrl_type == 0x208:
+                chars.append('[WAIT]')
+            elif ctrl_type & 0xFF00 in (0x100, 0x300, 0x400, 0x3400):
+                chars.append(f'[VAR:{ctrl_type:#06x}]')
+            # else: color/formatting codes — skip silently
+            offset += (3 + field_cnt) * 2
+            continue
+        chars.append(_POKE_CHARMAP.get(code, f'[{code:#05x}]'))
+        offset += 2
+    return ''.join(chars)
+
 # Maps frame name -> int (permanent) or list[int] (consumed queue).
 # Use `rand_override NAME VALUE [VALUE ...]` to populate.
 destined_rand_by_name = {}
@@ -30,6 +88,9 @@ _mod_report_by_name = {}
 # Persistent seed to inject into battleSystem->rand before the first
 # BattleSystem_Random call each battle.  None = no override.
 _seed_override = None
+
+# Whether to print each battle message to GDB as it is displayed.
+_battle_msg_enabled = False
 
 
 class GfRtcCopyDateTimeFinish(gdb.FinishBreakpoint):
@@ -518,6 +579,89 @@ MOD must be a positive integer (decimal or hex)."""
         print(f"mod_report '{name}': will show r0 % {mod}")
 
 
+class BattlePrintMsgFinish(gdb.FinishBreakpoint):
+    """Fires when BattleSystem_PrintBattleMessage (or ov12_0223C4E8) returns;
+    at that point msgBuffer is populated with the fully-expanded message text."""
+
+    def __init__(self, frame, battleSystem_ptr):
+        super().__init__(frame, internal=True)
+        self.silent = True
+        self.battleSystem_ptr = battleSystem_ptr
+
+    def stop(self):
+        if not _battle_msg_enabled:
+            return False
+        try:
+            # BattleSystem.msgBuffer is at offset 0x18 (7th field, all ptrs).
+            msgbuf_ptr = int(gdb.parse_and_eval(
+                f"*(unsigned int *)({self.battleSystem_ptr:#x} + 0x18)"
+            )) & 0xFFFFFFFF
+            if msgbuf_ptr == 0:
+                return False
+            text = _decode_poke_string(msgbuf_ptr)
+            print(f"[BattleMsg] {text!r}")
+        except Exception as e:
+            print(f"[BattleMsg] error: {e}")
+        return False
+
+
+class BattlePrintMsgBreakpoint(gdb.Breakpoint):
+    """Intercepts BattleSystem_PrintBattleMessage to log messages when battle_msg is on."""
+
+    def __init__(self):
+        super().__init__("BattleSystem_PrintBattleMessage")
+        self.silent = True
+
+    def stop(self):
+        if not _battle_msg_enabled:
+            return False
+        battleSystem_ptr = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
+        BattlePrintMsgFinish(gdb.selected_frame(), battleSystem_ptr)
+        return False
+
+
+class BattlePrintMsg2Breakpoint(gdb.Breakpoint):
+    """Intercepts ov12_0223C4E8 (secondary message printer) similarly."""
+
+    def __init__(self):
+        super().__init__("ov12_0223C4E8")
+        self.silent = True
+
+    def stop(self):
+        if not _battle_msg_enabled:
+            return False
+        battleSystem_ptr = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
+        BattlePrintMsgFinish(gdb.selected_frame(), battleSystem_ptr)
+        return False
+
+
+class BattleMsgCommand(gdb.Command):
+    """Print battle messages to GDB as they are displayed on screen.
+
+Usage:
+  battle_msg on   -- enable live message logging
+  battle_msg off  -- disable
+  battle_msg      -- show current state"""
+
+    def __init__(self):
+        super().__init__("battle_msg", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        global _battle_msg_enabled
+        arg = arg.strip().lower()
+        if not arg:
+            state = "on" if _battle_msg_enabled else "off"
+            print(f"battle_msg: {state}")
+        elif arg == "on":
+            _battle_msg_enabled = True
+            print("battle_msg: on — will print battle messages to GDB")
+        elif arg == "off":
+            _battle_msg_enabled = False
+            print("battle_msg: off")
+        else:
+            print("Usage: battle_msg [on|off]")
+
+
 _HELP_LINES = [
     "  rand_override VALUE [VALUE ...]       -- override r0 for last-hit frame",
     "  rand_override NAME VALUE [VALUE ...]  -- override r0 for named frame",
@@ -537,6 +681,7 @@ _HELP_LINES = [
     "  mod VALUE                             -- print $r0 % VALUE",
     "  r0 VALUE                              -- set $r0 = VALUE",
     "  zero                                  -- set $r0 = 0",
+    "  battle_msg [on|off]                   -- print battle messages to GDB terminal",
     "  utilhelp                              -- show this help",
 ]
 
@@ -556,6 +701,9 @@ class UtilHelpCommand(gdb.Command):
 BattleSetupNewBreakpoint()
 GfRtcCopyDateTimeBreakpoint()
 BattleSystemRandomBreakpoint()
+BattlePrintMsgBreakpoint()
+BattlePrintMsg2Breakpoint()
+BattleMsgCommand()
 RandOverrideCommand()
 MetronomeCommand()
 SkipTurnCommand()

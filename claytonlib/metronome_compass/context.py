@@ -10,6 +10,9 @@ from .path import (
     MagikarpMove, MultiHit,
 )
 
+# Indexed by crit stage (0–4). RAND % modifier == 0 → crit.
+_CRIT_MODIFIERS = [16, 8, 4, 3, 2]
+
 
 class BattleContext(ABC):
     """Tracks RNG events during a battle and accumulates them into a Path.
@@ -138,23 +141,50 @@ class BattleContext(ABC):
     # Emit helpers — common token patterns defined once on the base class
     # ------------------------------------------------------------------
 
-    def hit_crit_or_miss(self, accuracy: int) -> PathToken:
+    def effective_accuracy(self, base: int) -> int:
+        """Apply accuracy/evasion stat stages and gravity to a base accuracy.
+
+        base=0 is the always-hit sentinel and is returned unchanged. Uses the
+        Gen-IV accuracy stage table (net = user accuracy stage − target evasion
+        stage, clamped to ±6) and the 5/3 gravity multiplier. Integer floor math
+        matches the game's fixed-point behaviour.
+        """
+        if base == 0:
+            return 0
+        state = self.battle_state.get('state')
+        if state is None:
+            return base
+        net = max(-6, min(6, state.user_accuracy_stage - state.target_evasion_stage))
+        if net >= 0:
+            acc = base * (3 + net) // 3
+        else:
+            acc = base * 3 // (3 - net)
+        if state.gravity_turns > 0:
+            acc = acc * 5 // 3
+        return acc
+
+    def hit_crit_or_miss(self, accuracy: int, crit_stage: int = 0) -> PathToken:
         """Resolve the crit/damage/hit 3-roll sequence to a single Miss, Hit, or Crit token.
 
         A single h/!/- question covers all three outcomes in interactive mode.
         accuracy=0 means the move always hits (no accuracy roll consumed).
-
-        TODO: verify roll order and exact C integer thresholds with GDB.
+        crit_stage=1 for high-crit moves (effect 43); default 0 for normal moves.
+        The user's Focus Energy crit stage is added on top of crit_stage.
+        The hit roll uses effective_accuracy() so evasion/accuracy stages and
+        gravity are respected.
         """
+        state = self.battle_state.get('state')
+        total_crit_stage = crit_stage + (state.user_crit_stage if state is not None else 0)
+        modifier = _CRIT_MODIFIERS[min(total_crit_stage, 4)]
+
         def rng_to_token(ctx: BattleContext) -> PathToken:
             crit_roll = ctx.advance_observable()
             ctx.advance_unobservable()  # damage roll is not observable
-            # TODO: BELOW LOGIC IS WRONG - check critical_hit.md for correct logic
-            is_crit = crit_roll % 256 < 17
+            is_crit = crit_roll % modifier == 0
             if accuracy == 0:
                 return Crit() if is_crit else Hit()
             hit_roll = ctx.advance_observable()
-            is_hit = hit_roll % 100 < accuracy
+            is_hit = hit_roll % 100 < ctx.effective_accuracy(accuracy)
             if not is_hit:
                 return Miss()
             return Crit() if is_crit else Hit()
@@ -165,14 +195,23 @@ class BattleContext(ABC):
             input_to_token=lambda s: {'h': Hit, '!': Crit, '-': Miss}[s.strip()](),
         )
 
-    def effect_proc(self, chance: int) -> bool:
-        """Roll/ask whether a secondary effect proc'd. Emits EffectProc if so.
+    def effect_proc(self, chance: int, apply: Callable[[], bool] | None = None) -> bool:
+        """Roll/ask whether a secondary effect proc'd. Emits EffectProc if observable.
 
-        Returns True if proc'd. Only call this after confirming the move hit.
+        Returns True if the RNG proc'd (roll < chance). The roll always advances.
+        `apply`, if given, is invoked on a proc to mutate battle state (e.g. apply
+        a status) and returns whether the effect was *observable*. The EffectProc
+        token is emitted only when the effect actually landed — a proc against a
+        Magikarp that already has a non-volatile status (or freeze in sun) rolls
+        the RNG but shows no message, so no token is emitted.
+
+        Only call this after confirming the move hit.
         """
         proc = self._resolve_proc(chance)
         if proc:
-            self.raw_emit(EffectProc())
+            observable = True if apply is None else apply()
+            if observable:
+                self.raw_emit(EffectProc())
         return proc
 
     def multi_hit(self) -> int:

@@ -160,7 +160,7 @@ def _hit_check(ctx: 'BattleContext', move: Move) -> bool:
     """Single observable hit roll for status moves (no crit or damage roll)."""
     def rng_to_token(c: 'BattleContext') -> PathToken:
         roll = c.advance_observable()
-        return Hit() if roll % 100 < move.accuracy else Miss()
+        return Hit() if roll % 100 < c.effective_accuracy(move.accuracy) else Miss()
     token = ctx.emit(
         rng_to_token=rng_to_token,
         question="Hit? (h/-):",
@@ -191,6 +191,48 @@ def _apply_confusion(ctx: 'BattleContext') -> None:
 
 
 # ---------------------------------------------------------------------------
+# Secondary-effect appliers — passed to ctx.effect_proc(chance, apply)
+# ---------------------------------------------------------------------------
+
+def _status_applier(ctx: 'BattleContext', status: NonVolatileStatus,
+                    *, block_weather: str | None = None) -> Callable[[], bool]:
+    """Return an apply() callback that sets a non-volatile status on Magikarp.
+
+    Returns True (observable) only if the status actually landed. A proc against
+    a Magikarp that already has a non-volatile status — or a freeze while
+    block_weather is active — rolls the RNG but is not observable.
+    """
+    state = ctx.battle_state['state']
+
+    def apply() -> bool:
+        if block_weather is not None and state.weather == block_weather:
+            return False
+        if state.mk_status.status != NonVolatileStatus.NONE:
+            return False
+        state.mk_status.status = status
+        return True
+
+    return apply
+
+
+def _target_accuracy_applier(ctx: 'BattleContext', amount: int = 1) -> Callable[[], bool]:
+    """Return an apply() callback that lowers Magikarp's accuracy stage.
+
+    Returns False (not observable) when already at the -6 floor: the proc rolls
+    but no message is shown.
+    """
+    state = ctx.battle_state['state']
+
+    def apply() -> bool:
+        if state.target_accuracy_stage <= -6:
+            return False
+        state.target_accuracy_stage = max(-6, state.target_accuracy_stage - amount)
+        return True
+
+    return apply
+
+
+# ---------------------------------------------------------------------------
 # Group 1: Standard damage — crit (observable), damage (unobservable), hit
 # ---------------------------------------------------------------------------
 
@@ -201,7 +243,7 @@ def _eff_damage(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_high_crit(ctx: 'BattleContext', move: Move) -> bool:
     """Increased crit stage; same RNG roll count as standard."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1)
     return not isinstance(token, Miss)
 
 
@@ -209,21 +251,52 @@ def _eff_high_crit(ctx: 'BattleContext', move: Move) -> bool:
 # Group 2: Damage + one observable secondary effect proc
 # ---------------------------------------------------------------------------
 
-def _eff_damage_secondary(ctx: 'BattleContext', move: Move) -> bool:
+def _eff_damage_secondary(ctx: 'BattleContext', move: Move,
+                          apply: Callable[[], bool] | None = None) -> bool:
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)
+    ctx.effect_proc(move.effect_chance, apply)
     return True
 
 
-def _eff_high_crit_secondary(ctx: 'BattleContext', move: Move) -> bool:
+def _eff_high_crit_secondary(ctx: 'BattleContext', move: Move,
+                             apply: Callable[[], bool] | None = None) -> bool:
     """High-crit damage + observable secondary effect proc."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)
+    ctx.effect_proc(move.effect_chance, apply)
     return True
+
+
+# Typed secondary-effect handlers (bind the applier at call time so it can read ctx).
+def _eff_burn_secondary(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.BURN))
+
+
+def _eff_freeze_secondary(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN))
+
+
+def _eff_paralyze_secondary(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.PARALYZED))
+
+
+def _eff_poison_secondary(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.POISON))
+
+
+def _eff_accuracy_drop_secondary(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_accuracy_applier(ctx))
+
+
+def _eff_burn_highcrit(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_high_crit_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.BURN))
+
+
+def _eff_poison_highcrit(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_high_crit_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.POISON))
 
 
 # ---------------------------------------------------------------------------
@@ -243,13 +316,26 @@ def _eff_damage_flinch(ctx: 'BattleContext', move: Move) -> bool:
 # (Fire/Ice/Thunder Fang)
 # ---------------------------------------------------------------------------
 
-def _eff_damage_status_flinch(ctx: 'BattleContext', move: Move) -> bool:
+def _eff_damage_status_flinch(ctx: 'BattleContext', move: Move,
+                              apply: Callable[[], bool] | None = None) -> bool:
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)  # burn/freeze/paralyze (observable)
-    ctx.advance_unobservable(1)          # flinch roll (not observable, we go second)
+    ctx.effect_proc(move.effect_chance, apply)  # burn/freeze/paralyze (observable)
+    ctx.advance_unobservable(1)                 # flinch roll (not observable, we go second)
     return True
+
+
+def _eff_fire_fang(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_status_flinch(ctx, move, _status_applier(ctx, NonVolatileStatus.BURN))
+
+
+def _eff_ice_fang(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_status_flinch(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN))
+
+
+def _eff_thunder_fang(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_status_flinch(ctx, move, _status_applier(ctx, NonVolatileStatus.PARALYZED))
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +603,7 @@ def _eff_dream_eater(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.mk_status.status != NonVolatileStatus.SLEEP:
-        _hit_check(ctx, move)  # hit check still performed even on failure
+        ctx.advance_unobservable(1)  # hit check roll consumed but has no visible effect
         return False
     token = ctx.hit_crit_or_miss(move.accuracy)
     return not isinstance(token, Miss)
@@ -611,10 +697,13 @@ def _eff_twineedle(ctx: 'BattleContext', move: Move) -> bool:
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)  # first poison roll
-    ctx.advance_unobservable(2)          # 2 contact rolls
-    ctx.advance_unobservable(2)          # crit + damage for second hit
-    ctx.effect_proc(move.effect_chance)  # second poison roll
+    poison = _status_applier(ctx, NonVolatileStatus.POISON)
+    ctx.effect_proc(move.effect_chance, poison)  # first poison roll
+    ctx.advance_unobservable(2)                  # 2 contact rolls
+    ctx.advance_unobservable(2)                  # crit + damage for second hit
+    # Same applier: if the first proc poisoned, the second sees an existing status
+    # and is not observable, matching the game (a target can't be poisoned twice).
+    ctx.effect_proc(move.effect_chance, poison)  # second poison roll
     return True
 
 
@@ -778,7 +867,7 @@ def _eff_thunder(ctx: 'BattleContext', move: Move) -> bool:
         token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)
+    ctx.effect_proc(move.effect_chance, _status_applier(ctx, NonVolatileStatus.PARALYZED))
     return True
 
 
@@ -795,7 +884,8 @@ def _eff_blizzard(ctx: 'BattleContext', move: Move) -> bool:
         token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)
+    ctx.effect_proc(move.effect_chance,
+                    _status_applier(ctx, NonVolatileStatus.FROZEN, block_weather='sunny'))
     return True
 
 
@@ -812,7 +902,7 @@ def _eff_fake_out(ctx: 'BattleContext', move: Move) -> bool:
             return False
         ctx.advance_unobservable(1)  # flinch chance roll (100%, still rolled)
         return True
-    _hit_check(ctx, move)  # hit check performed, then fails
+    ctx.advance_unobservable(1)  # hit check roll consumed but not observable; move then fails
     return False
 
 
@@ -1001,6 +1091,7 @@ def _eff_focus_energy(ctx: 'BattleContext', move: Move) -> bool:
     if state.user_focus_energy:
         return False
     state.user_focus_energy = True
+    state.user_crit_stage = 2  # Focus Energy raises the user's crit stage by 2 (Gen IV)
     return True
 
 
@@ -1222,6 +1313,8 @@ def _eff_defog(ctx: 'BattleContext', move: Move) -> bool:
     state.opp_spikes = 0
     state.opp_toxic_spikes = 0
     state.opp_stealth_rock = False
+    if state.target_evasion_stage > -6:
+        state.target_evasion_stage -= 1  # Defog also lowers the target's evasion
     return True
 
 
@@ -1281,6 +1374,82 @@ def _eff_worry_seed(ctx: 'BattleContext', move: Move) -> bool:
 # Moves with only a hit check and no observable secondary (stat changes, etc.)
 def _eff_hit_only(ctx: 'BattleContext', move: Move) -> bool:
     return _hit_check(ctx, move)
+
+
+def _eff_hit_then_fail(ctx: 'BattleContext', move: Move) -> bool:
+    """Moves that roll a hit check but always fail when called by Metronome.
+
+    (Snore, Last Resort, Sucker Punch, Psycho Shift, Natural Gift.) The accuracy
+    roll is consumed but shows no observable result — the game reports the
+    failure, not a hit/miss — so no Hit/Miss token is emitted.
+    """
+    ctx.advance_unobservable(1)
+    return False
+
+
+def _eff_lower_target_evasion(ctx: 'BattleContext', move: Move) -> bool:
+    """Sweet Scent (24): hit check, then lower Magikarp's evasion by 1 stage.
+
+    Evasion feeds the hit formula, so this is NOT a no-op: it raises the hit
+    rate of our subsequent moves and shifts their hit/crit/miss rolls.
+    """
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False
+    if state.target_evasion_stage > -6:
+        state.target_evasion_stage -= 1
+    return True
+
+
+def _eff_lower_target_accuracy(ctx: 'BattleContext', move: Move) -> bool:
+    """Sand Attack / Smoke Screen / Kinesis / Flash (23): lower Magikarp accuracy."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False
+    if state.target_accuracy_stage > -6:
+        state.target_accuracy_stage -= 1
+    return True
+
+
+def _eff_haze(ctx: 'BattleContext', move: Move) -> bool:
+    """Haze (25): reset all stat stages of both sides. No rolls.
+
+    Focus Energy is a volatile status, not a stat stage, so it is not cleared.
+    """
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_evasion_stage = 0
+    state.target_evasion_stage = 0
+    state.user_accuracy_stage = 0
+    state.target_accuracy_stage = 0
+    return True
+
+
+def _eff_wake_up_slap(ctx: 'BattleContext', move: Move) -> bool:
+    """Wake-Up Slap (217): C/D/H; on hit, cures Magikarp's sleep."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    if state.mk_status.status == NonVolatileStatus.SLEEP:
+        state.mk_status.status = NonVolatileStatus.NONE
+        state.mk_status.sleep_turns = 0
+    return True
+
+
+def _eff_smelling_salt(ctx: 'BattleContext', move: Move) -> bool:
+    """Smelling Salt (171): C/D/H; on hit, cures Magikarp's paralysis."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    if state.mk_status.status == NonVolatileStatus.PARALYZED:
+        state.mk_status.status = NonVolatileStatus.NONE
+    return True
 
 
 # No rolls, always succeeds
@@ -1670,7 +1839,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     147: _eff_damage,        # Earthquake
     149: _eff_damage,        # Gust
     169: _eff_damage,        # Facade
-    171: _eff_damage,        # Smelling Salt
+    171: _eff_smelling_salt, # Smelling Salt (cures paralysis on hit)
     173: _eff_damage,        # Nature Power (Hydro Pump)
     182: _eff_damage,        # Superpower
     185: _eff_damage,        # Revenge / Avalanche
@@ -1681,7 +1850,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     198: _eff_damage,        # Double Edge / Brave Bird / Wood Hammer (recoil)
     203: _eff_damage,        # Weather Ball
     207: _eff_damage,        # Sky Uppercut
-    217: _eff_damage,        # Wake Up Slap
+    217: _eff_wake_up_slap,  # Wake Up Slap (cures sleep on hit)
     218: _eff_damage,        # Hammer Arm
     219: _eff_damage,        # Gyro Ball
     221: _eff_damage,        # Brine
@@ -1697,19 +1866,19 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     269: _eff_damage,        # Head Smash (recoil)
 
     # --- Damage + observable secondary proc ---
-    2:   _eff_damage_secondary,  # Poison Sting, Sludge, etc.
-    4:   _eff_damage_secondary,  # Fire Punch / Flamethrower (burn)
-    5:   _eff_damage_secondary,  # Ice Punch / Ice Beam (freeze)
-    6:   _eff_damage_secondary,  # Thunder Punch / Thunderbolt (paralyze)
+    2:   _eff_poison_secondary,   # Poison Sting, Sludge, etc.
+    4:   _eff_burn_secondary,     # Fire Punch / Flamethrower (burn)
+    5:   _eff_freeze_secondary,   # Ice Punch / Ice Beam (freeze)
+    6:   _eff_paralyze_secondary, # Thunder Punch / Thunderbolt (paralyze)
     36:  _eff_tri_attack,
     68:  _eff_damage_secondary,  # Aurora Beam (opp atk -1)
     69:  _eff_damage_secondary,  # Iron Tail / Crunch (opp def -1)
     70:  _eff_damage_secondary,  # Bubble Beam / Icy Wind (opp spd -1)
     71:  _eff_damage_secondary,  # Mist Ball (opp spatk -1)
     72:  _eff_damage_secondary,  # Acid / Psychic (opp spdef -1)
-    73:  _eff_damage_secondary,  # Mud Slap / Muddy Water (opp acc -1)
+    73:  _eff_accuracy_drop_secondary,  # Mud Slap / Muddy Water (opp acc -1, tracked)
     77:  _eff_twineedle,
-    125: _eff_damage_secondary,  # Flame Wheel / Sacred Fire (burn, same as 4)
+    125: _eff_burn_secondary,     # Flame Wheel / Sacred Fire (burn, same as 4)
     126: _eff_magnitude,
     138: _eff_damage_secondary,  # Steel Wing (user def +1)
     139: _eff_damage_secondary,  # Metal Claw / Meteor Mash (user atk +1)
@@ -1717,13 +1886,13 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     152: _eff_thunder,
     154: _eff_beat_up,
     197: _eff_damage_secondary,  # Secret Power (opp atk -1 in sea-water env)
-    200: _eff_high_crit_secondary,  # Blaze Kick (high crit + burn)
-    202: _eff_damage_secondary,  # Poison Fang (bad poison)
+    200: _eff_burn_highcrit,      # Blaze Kick (high crit + burn)
+    202: _eff_poison_secondary,   # Poison Fang (bad poison)
     204: _eff_damage_secondary,  # Overheat / Psycho Boost (spatk -2, 100%)
-    209: _eff_high_crit_secondary,  # Poison Tail / Cross Poison (high crit + poison)
-    253: _eff_damage_secondary,  # Flare Blitz (burn)
+    209: _eff_poison_highcrit,    # Poison Tail / Cross Poison (high crit + poison)
+    253: _eff_burn_secondary,     # Flare Blitz (burn)
     260: _eff_blizzard,
-    262: _eff_damage_secondary,  # Volt Tackle (paralyze)
+    262: _eff_paralyze_secondary, # Volt Tackle (paralyze)
     271: _eff_damage_secondary,  # Seed Flare (opp spdef -2)
     276: _eff_damage_secondary,  # Charge Beam (user spatk +1)
 
@@ -1733,9 +1902,9 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     150: _eff_damage_flinch,  # Stomp
 
     # --- Damage + status + flinch (Fire/Ice/Thunder Fang) ---
-    273: _eff_damage_status_flinch,  # Fire Fang
-    274: _eff_damage_status_flinch,  # Ice Fang
-    275: _eff_damage_status_flinch,  # Thunder Fang
+    273: _eff_fire_fang,     # Fire Fang (burn + flinch)
+    274: _eff_ice_fang,      # Ice Fang (freeze + flinch)
+    275: _eff_thunder_fang,  # Thunder Fang (paralyze + flinch)
 
     # --- Multi-hit ---
     29:  _eff_multi_hit,
@@ -1789,29 +1958,29 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     18:  _eff_hit_only,  # Growl (opp atk -1)
     19:  _eff_hit_only,  # Tail Whip / Leer (opp def -1)
     20:  _eff_hit_only,  # String Shot (opp spd -1)
-    23:  _eff_hit_only,  # Sand Attack / Flash (opp acc -1)
-    24:  _eff_hit_only,  # Sweet Scent (opp eva -1)
+    23:  _eff_lower_target_accuracy,  # Sand Attack / Flash (opp acc -1, tracked)
+    24:  _eff_lower_target_evasion,   # Sweet Scent (opp eva -1, tracked)
     40:  _eff_hit_only,  # Super Fang (half HP)
     41:  _eff_hit_only,  # Dragon Rage (40 dmg)
     58:  _eff_hit_only,  # Charm / Feather Dance (opp atk -2)
     59:  _eff_hit_only,  # Screech (opp def -2)
     60:  _eff_hit_only,  # Cotton Spore / Scary Face (opp spd -2)
     62:  _eff_hit_only,  # Fake Tears / Metal Sound (opp spdef -2)
-    92:  _eff_hit_only,  # Snore (hit check but always fails — user can't be asleep)
+    92:  _eff_hit_then_fail,  # Snore (hit check but always fails — user can't be asleep)
     100: _eff_hit_only,  # Spite
     106: _eff_spider_web,
     130: _eff_hit_only,  # Sonic Boom (20 dmg)
     168: _eff_memento,
     205: _eff_hit_only,  # Tickle (opp atk -1, opp def -1)
-    222: _eff_hit_only,  # Natural Gift (fails with lagging tail — hit check still done)
+    222: _eff_hit_then_fail,  # Natural Gift (fails with lagging tail — hit check still done)
     227: _eff_hit_only,  # Metal Burst (hit check; fails if no dmg taken — simplified)
     232: _eff_embargo,
-    234: _eff_hit_only,  # Psycho Shift (no status to transfer)
+    234: _eff_hit_then_fail,  # Psycho Shift (no status to transfer)
     236: _eff_heal_block,
     239: _eff_gastro_acid,
-    246: _eff_hit_only,  # Last Resort (fails from Metronome)
+    246: _eff_hit_then_fail,  # Last Resort (fails from Metronome)
     247: _eff_worry_seed,
-    248: _eff_hit_only,  # Sucker Punch (Magikarp not selecting damage move)
+    248: _eff_hit_then_fail,  # Sucker Punch (Magikarp not selecting damage move)
     265: _eff_captivate,
 
     # --- No-roll success ---
@@ -1819,7 +1988,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     11:  _eff_no_rolls_ok,   # Harden / Withdraw (def +1)
     13:  _eff_no_rolls_ok,   # Growth (spatk +1)
     16:  _eff_no_rolls_ok,   # Double Team (eva +1)
-    25:  _eff_no_rolls_ok,   # Haze
+    25:  _eff_haze,          # Haze (resets stat stages, incl. evasion/accuracy)
     50:  _eff_no_rolls_ok,   # Swords Dance (atk +2)
     51:  _eff_no_rolls_ok,   # Barrier / Acid Armor / Iron Defense (def +2)
     52:  _eff_no_rolls_ok,   # Agility / Rock Polish (spd +2)
