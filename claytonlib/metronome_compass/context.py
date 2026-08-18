@@ -148,12 +148,15 @@ class BattleContext(ABC):
         Gen-IV accuracy stage table (net = user accuracy stage − target evasion
         stage, clamped to ±6) and the 5/3 gravity multiplier. Integer floor math
         matches the game's fixed-point behaviour.
+        Lock-On/Mind Reader: returns 0 (always hit) for any non-zero base.
         """
         if base == 0:
             return 0
         state = self.battle_state.get('state')
         if state is None:
             return base
+        if state.user_lock_on_turns > 0:
+            return 0  # guaranteed hit (treated as always-hit sentinel)
         net = max(-6, min(6, state.user_accuracy_stage - state.target_evasion_stage))
         if net >= 0:
             acc = base * (3 + net) // 3

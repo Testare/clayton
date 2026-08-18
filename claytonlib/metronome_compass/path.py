@@ -55,7 +55,9 @@ class Crit(PathToken):
 
 @dataclass(frozen=True)
 class EffectProc(PathToken):
-    def render(self) -> str: return "~"
+    status: str | None = None  # set for Tri Attack: 'BRN', 'FRZ', 'PAR'
+    def render(self) -> str:
+        return f"~<{self.status}>" if self.status else "~"
 
 
 # ---------------------------------------------------------------------------
@@ -242,16 +244,28 @@ class MetronomeBattleState:
     weather: str | None = None        # "sunny" / "rain" / "sand" / "hail" / None
     weather_until: int = 0            # turn number weather expires
 
-    # Stat stages
-    user_evasion_stage: int = 0       # -6 to +6
+    # Stat stages (all -6 to +6)
+    user_atk_stage: int = 0
+    user_def_stage: int = 0
+    user_spd_stage: int = 0
+    user_spatk_stage: int = 0
+    user_spdef_stage: int = 0
+    target_atk_stage: int = 0
+    target_def_stage: int = 0
+    target_spd_stage: int = 0
+    target_spatk_stage: int = 0
+    target_spdef_stage: int = 0
+    user_evasion_stage: int = 0
     target_evasion_stage: int = 0
     user_accuracy_stage: int = 0
     target_accuracy_stage: int = 0
     user_crit_stage: int = 0
 
-    # User (Chansey) status booleans
+    # User (Chansey) status
     user_is_full_hp: bool = True      # simplified HP tracking for recovery-move failures
     user_focus_energy: bool = False
+    user_sleep_turns: int = 0         # Rest: turns remaining where Chansey can't act
+    user_lock_on_turns: int = 0       # Mind Reader/Lock-On: guaranteed-hit turns remaining
     user_aqua_ring: bool = False
     user_ingrained: bool = False
     user_mud_sport: bool = False
@@ -296,8 +310,14 @@ class MetronomeBattleState:
     mk_heal_block: bool = False
     mk_gastro_acid: bool = False      # ability suppressed
 
+    mk_insomnia: bool = False          # Worry Seed gives Magikarp Insomnia; blocks sleep moves
+
     mk_last_move: int | None = None   # move number used last turn
     mk_last_move_prevented: bool = False
+
+    # Level info for OHKO threshold (30 + user_level - target_level)
+    user_level: int = 30              # Chansey level; configure before simulation
+    target_level: int = 10           # Magikarp level; configure before simulation
 
     # Turn counter (for Fake Out and weather expiry)
     turn_number: int = 0

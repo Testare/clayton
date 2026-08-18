@@ -130,7 +130,12 @@ def simulate_turn(
     ctx.advance_unobservable(_MAGIKARP_TURN_START_ADVANCES)
 
     # 6-7. Metronome roll + execution, or locked-move continuation (player moves second)
-    if state.user_locked_turns > 0:
+    if state.user_sleep_turns > 0:
+        # Rest sleep: Chansey can't act this turn
+        state.user_sleep_turns -= 1
+        _pre_locked_effect = None
+        move_success = False  # no move executed
+    elif state.user_locked_turns > 0:
         state.user_locked_turns -= 1
         _pre_locked_effect = state.user_locked_effect
         locked_move = moves_by_num[state.user_locked_move_num]
@@ -200,6 +205,8 @@ def simulate_turn(
         state.user_trick_room_turns -= 1
     if state.user_magnet_rise_turns > 0:
         state.user_magnet_rise_turns -= 1
+    if state.user_lock_on_turns > 0:
+        state.user_lock_on_turns -= 1
 
     # Thrash/Outrage/Petal Dance: confusion applied when rampage ends
     if (_pre_locked_effect == 27
@@ -292,8 +299,11 @@ def _simulate_magikarp_turn(
         ctx.raw_emit(Struggle())
         state.mk_last_move = None # Struggle is not disable-able
         state.mk_last_move_prevented = False
-        # Struggle always hits, but rolls crit + damage
-        ctx.advance_unobservable(2)
+        # Struggle rolls crit + damage; auto-misses during semi-invulnerable charge.
+        _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
+        ctx.advance_unobservable(2)  # crit + damage (unobservable for opponent)
+        if state.user_locked_effect in _SEMI_INVULNERABLE:
+            return False  # Struggle auto-misses; no observable hit token (bypasses accuracy)
         return True
 
     # Has useable moves: resolve the selected one
@@ -358,8 +368,15 @@ def _simulate_magikarp_turn(
     
     if move_num == 33: # Tackle
         ctx.advance_unobservable(2)  # crit + damage (not observable for opponent)
+        # Semi-invulnerable moves (Fly/Dig/Dive/Bounce/Shadow Force): Tackle auto-misses.
+        # The hit roll is still consumed; result is overridden to Miss.
+        _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
+        semi_inv = state.user_locked_effect in _SEMI_INVULNERABLE
+
         def rng_to_hit(ctx: BattleContext) -> PathToken:
             roll = ctx.advance_observable()
+            if semi_inv:
+                return Miss()  # auto-miss during charge turn
             return Hit() if roll % 100 < 95 else Miss()
 
         hit_token = ctx.emit(
@@ -482,6 +499,14 @@ def _parse_turn_tokens(raw: str, moves_by_num: dict[int, Move]) -> tuple[PathTok
                 tokens.append(MetronomeMove(num))
                 continue
         
+        # Tri Attack EffectProc with status: ~<BRN>, ~<FRZ>, ~<PAR>
+        if p.startswith('~<') and p.endswith('>'):
+            status = p[2:-1].upper()
+            if status in ('BRN', 'FRZ', 'PAR'):
+                tokens.append(EffectProc(status=status))
+                continue
+            raise ValueError(f"Unknown EffectProc status: {p!r}")
+
         # Shortcuts / specific tokens
         match p.lower():
             case 'h': tokens.append(Hit())

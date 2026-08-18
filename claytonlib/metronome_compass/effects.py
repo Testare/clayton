@@ -232,6 +232,67 @@ def _target_accuracy_applier(ctx: 'BattleContext', amount: int = 1) -> Callable[
     return apply
 
 
+def _target_stat_applier(ctx: 'BattleContext', attr: str, amount: int = -1) -> Callable[[], bool]:
+    """Return an apply() callback that changes Magikarp's stat stage by amount.
+
+    Returns False (not observable) when the stage is already at its floor/ceil.
+    """
+    state = ctx.battle_state['state']
+
+    def apply() -> bool:
+        current = getattr(state, attr)
+        if amount < 0 and current <= -6:
+            return False
+        if amount > 0 and current >= 6:
+            return False
+        setattr(state, attr, max(-6, min(6, current + amount)))
+        return True
+
+    return apply
+
+
+def _user_stat_applier(ctx: 'BattleContext', attr: str, amount: int = 1) -> Callable[[], bool]:
+    """Return an apply() callback that changes Chansey's stat stage by amount.
+
+    Returns False (not observable) when the stage is already at its floor/ceil.
+    """
+    state = ctx.battle_state['state']
+
+    def apply() -> bool:
+        current = getattr(state, attr)
+        if amount > 0 and current >= 6:
+            return False
+        if amount < 0 and current <= -6:
+            return False
+        setattr(state, attr, max(-6, min(6, current + amount)))
+        return True
+
+    return apply
+
+
+def _all_user_stats_applier(ctx: 'BattleContext') -> Callable[[], bool]:
+    """Return apply() for Ancient Power / Silver Wind / Ominous Wind (all user stats +1).
+
+    Observable only if at least one stat was not already at +6.
+    """
+    state = ctx.battle_state['state']
+    _ALL_ATTRS = [
+        'user_atk_stage', 'user_def_stage', 'user_spd_stage',
+        'user_spatk_stage', 'user_spdef_stage',
+        'user_accuracy_stage', 'user_evasion_stage',
+    ]
+
+    def apply() -> bool:
+        any_changed = False
+        for attr in _ALL_ATTRS:
+            if getattr(state, attr) < 6:
+                setattr(state, attr, getattr(state, attr) + 1)
+                any_changed = True
+        return any_changed
+
+    return apply
+
+
 # ---------------------------------------------------------------------------
 # Group 1: Standard damage — crit (observable), damage (unobservable), hit
 # ---------------------------------------------------------------------------
@@ -299,6 +360,52 @@ def _eff_poison_highcrit(ctx: 'BattleContext', move: Move) -> bool:
     return _eff_high_crit_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.POISON))
 
 
+# Stat-lowering secondaries (target Magikarp)
+def _eff_target_atk_minus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_atk_stage'))
+
+
+def _eff_target_def_minus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_def_stage'))
+
+
+def _eff_target_spd_minus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_spd_stage'))
+
+
+def _eff_target_spatk_minus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_spatk_stage'))
+
+
+def _eff_target_spdef_minus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_spdef_stage'))
+
+
+def _eff_target_spdef_minus2(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _target_stat_applier(ctx, 'target_spdef_stage', -2))
+
+
+# Stat-raising secondaries (user Chansey)
+def _eff_user_def_plus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _user_stat_applier(ctx, 'user_def_stage'))
+
+
+def _eff_user_atk_plus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _user_stat_applier(ctx, 'user_atk_stage'))
+
+
+def _eff_user_all_stats_plus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _all_user_stats_applier(ctx))
+
+
+def _eff_user_spatk_plus1(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _user_stat_applier(ctx, 'user_spatk_stage'))
+
+
+def _eff_user_spatk_minus2(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_damage_secondary(ctx, move, _user_stat_applier(ctx, 'user_spatk_stage', -2))
+
+
 # ---------------------------------------------------------------------------
 # Group 3: Damage + unobservable flinch roll (we always go second)
 # ---------------------------------------------------------------------------
@@ -348,6 +455,8 @@ def _eff_sleep(ctx: 'BattleContext', move: Move) -> bool:
     if not _hit_check(ctx, move):
         return False
     if state.mk_status.status != NonVolatileStatus.NONE:
+        return False
+    if state.mk_insomnia:
         return False
     # Duration: roll observable, user needs to observe sleep duration from game
     def rng_to_duration(c: 'BattleContext') -> int:
@@ -631,10 +740,21 @@ def _eff_psywave(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_ohko(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    user_lvl = state.user_level
+    target_lvl = state.target_level
+
     def rng_to_token(c: 'BattleContext') -> PathToken:
         roll = c.advance_observable()
-        # Threshold = (30 + user_level - target_level) / 100; approximate with roll % 100
-        return Hit() if roll % 100 < 55 else Miss()  # approximate for Chansey vs Magikarp
+        if user_lvl < target_lvl:
+            return Miss()  # always fails (but roll consumed)
+        # Lock-On is already handled in effective_accuracy; OHKO bypasses accuracy
+        # stages (it's not an accuracy check), so we check lock_on directly here.
+        if state.user_lock_on_turns > 0:
+            return Hit()  # guaranteed by Lock-On when user_lvl >= target_lvl
+        threshold = 30 + user_lvl - target_lvl
+        return Hit() if roll % 100 < threshold else Miss()
 
     token = ctx.emit(
         rng_to_token=rng_to_token,
@@ -649,13 +769,62 @@ def _eff_ohko(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_multi_hit(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
-    if isinstance(token, Miss):
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+
+    # Roll hit count FIRST (before hit check), using unobservable rolls.
+    # R1 % 4: 0→count=2, 1→count=3, 2 or 3→roll R2: count=2+(R2%4).
+    # In interactive mode unobservable_roll() returns 0, giving count=2,
+    # but the loop below stops when user signals 'd' so count is not used.
+    r1 = ctx.unobservable_roll()
+    if r1 % 4 >= 2:
+        r2 = ctx.unobservable_roll()
+        hit_count = 2 + (r2 % 4)
+    else:
+        hit_count = 2 if r1 % 4 == 0 else 3
+
+    # First hit: full C/D/H sequence
+    first_token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(first_token, Miss):
         return False
-    count = ctx.multi_hit()
-    # Each additional hit: crit + damage (no hit check)
-    for _ in range(count - 1):
-        ctx.advance_unobservable(2)
+
+    # Subsequent hits: crit + damage only (no miss check).
+    # Each hit is its own observable token (Crit or Hit) because Magikarp may
+    # faint mid-sequence, making the total count unobservable.
+    # In RNG mode: loop exactly hit_count-1 times.
+    # In interactive mode: loop until user enters 'd' (done/fainted).
+    _crit_mods = [16, 8, 4, 3, 2]
+    hits_done = [0]  # mutable so rng closure can increment
+
+    def rng_to_subsequent(c: 'BattleContext') -> 'PathToken | None':
+        if hits_done[0] >= hit_count - 1:
+            return None  # stop after correct number of hits
+        crit_roll = c.advance_observable()
+        c.advance_unobservable(1)  # damage roll
+        total_crit_stage = state.user_crit_stage
+        modifier = _crit_mods[min(total_crit_stage, 4)]
+        hits_done[0] += 1
+        return Crit() if crit_roll % modifier == 0 else Hit()
+
+    def input_to_subsequent(s: str) -> 'PathToken | None':
+        s = s.strip().lower()
+        if s in ('d', 'done', 'e', 'end'):
+            return None
+        if s == '!':
+            return Crit()
+        if s == 'h':
+            return Hit()
+        raise ValueError(f"unknown multi-hit token: {s!r}. Use h, !, or d (done)")
+
+    while True:
+        token = ctx.emit(
+            rng_to_token=rng_to_subsequent,
+            question="Next hit? (h/!/d for done):",
+            input_to_token=input_to_subsequent,
+        )
+        if token is None:
+            break
+
     return True
 
 
@@ -823,11 +992,50 @@ def _eff_magnitude(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_tri_attack(ctx: 'BattleContext', move: Move) -> bool:
-    ctx.advance_unobservable(1)  # roll for which status type (burn/freeze/paralysis)
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+
+    _STATUS = [NonVolatileStatus.BURN, NonVolatileStatus.FROZEN, NonVolatileStatus.PARALYZED]
+    _LABEL = ['BRN', 'FRZ', 'PAR']
+
+    # Type roll is unobservable to the player but determines which status applies on proc.
+    # In RNG mode unobservable_roll() returns the actual value; in interactive returns 0.
+    type_val = ctx.unobservable_roll()
+    status_type = _STATUS[type_val % 3]
+    status_label = _LABEL[type_val % 3]
+
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.effect_proc(move.effect_chance)
+
+    # Proc roll: observable. EffectProc carries the applied status label.
+    applier = _status_applier(ctx, status_type)
+
+    def rng_to_proc(c: 'BattleContext') -> 'PathToken | None':
+        roll = c.advance_observable()
+        if roll % 100 < move.effect_chance:
+            observable = applier()
+            if observable:
+                return EffectProc(status=status_label)
+        return None
+
+    def input_to_proc(s: str) -> 'PathToken | None':
+        s = s.strip().upper().lstrip('~').strip('<>')
+        if s == '-' or s == '':
+            return None
+        if s in ('BRN', 'FRZ', 'PAR'):
+            # Apply the observed status in interactive mode
+            st = _STATUS[_LABEL.index(s)]
+            if state.mk_status.status == NonVolatileStatus.NONE:
+                state.mk_status.status = st
+            return EffectProc(status=s)
+        raise ValueError(f"unknown Tri Attack proc: {s!r}. Use ~<BRN>, ~<FRZ>, ~<PAR>, or -")
+
+    ctx.emit(
+        rng_to_token=rng_to_proc,
+        question="Tri Attack proc? (~<BRN>/~<FRZ>/~<PAR>/-):",
+        input_to_token=input_to_proc,
+    )
     return True
 
 
@@ -928,6 +1136,8 @@ def _eff_yawn(ctx: 'BattleContext', move: Move) -> bool:
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.mk_drowsy_turns > 0 or state.mk_status.status != NonVolatileStatus.NONE:
         return False
+    if state.mk_insomnia:
+        return False
     state.mk_drowsy_turns = 2  # ticks each turn; at 0 sleep is applied
     return True
 
@@ -949,11 +1159,53 @@ def _eff_beat_up(ctx: 'BattleContext', move: Move) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Acupressure (Effect 226) — single roll selects stat
+# Acupressure (Effect 226) — observable stat selection, raise by 2
 # ---------------------------------------------------------------------------
 
+_ACUPRESSURE_ATTRS = [
+    ('user_atk_stage', 'Attack'),
+    ('user_def_stage', 'Defense'),
+    ('user_spd_stage', 'Speed'),
+    ('user_spatk_stage', 'Sp. Atk'),
+    ('user_spdef_stage', 'Sp. Def'),
+    ('user_accuracy_stage', 'Accuracy'),
+    ('user_evasion_stage', 'Evasion'),
+]
+
+
 def _eff_acupressure(ctx: 'BattleContext', move: Move) -> bool:
-    ctx.advance_unobservable(1)  # stat-selection roll (not directly observable)
+    from .path import MetronomeBattleState, PathToken
+    from .path import EffectProc
+    state: MetronomeBattleState = ctx.battle_state['state']
+
+    eligible = [(attr, name) for attr, name in _ACUPRESSURE_ATTRS
+                if getattr(state, attr) < 6]
+    if not eligible:
+        # All stats maxed; roll still consumed but move effectively does nothing
+        ctx.advance_unobservable(1)
+        return True
+
+    def rng_to_token(c: 'BattleContext') -> EffectProc:
+        roll = c.advance_observable()
+        idx = roll % len(eligible)
+        attr, name = eligible[idx]
+        setattr(state, attr, min(6, getattr(state, attr) + 2))
+        return EffectProc(status=name[:3].upper())  # encode chosen stat in token
+
+    def input_to_token(s: str) -> EffectProc:
+        s = s.strip().upper()
+        # Accept full name prefix or abbreviated
+        for attr, name in eligible:
+            if name.upper().startswith(s) or s == name.upper()[:3]:
+                setattr(state, attr, min(6, getattr(state, attr) + 2))
+                return EffectProc(status=name[:3].upper())
+        raise ValueError(f"unknown Acupressure stat: {s!r}. Options: {[n[:3] for _, n in eligible]}")
+
+    ctx.emit(
+        rng_to_token=rng_to_token,
+        question=f"Acupressure raised which stat? ({'/'.join(n[:3] for _, n in eligible)}):",
+        input_to_token=input_to_token,
+    )
     return True
 
 
@@ -982,8 +1234,28 @@ def _eff_spit_up(ctx: 'BattleContext', move: Move) -> bool:
     if state.user_stockpile == 0:
         _hit_check(ctx, move)
         return False
-    ctx.advance_unobservable(1)  # crit roll (no damage roll for this move)
-    if _hit_check(ctx, move):
+    # Spit Up: crit (observable) + hit (observable), NO damage roll.
+    _crit_mods = [16, 8, 4, 3, 2]
+    total_crit = state.user_crit_stage
+    modifier = _crit_mods[min(total_crit, 4)]
+
+    def rng_to_token(c: 'BattleContext') -> PathToken:
+        crit_roll = c.advance_observable()
+        is_crit = crit_roll % modifier == 0
+        if move.accuracy == 0:
+            return Crit() if is_crit else Hit()
+        hit_roll = c.advance_observable()
+        is_hit = hit_roll % 100 < c.effective_accuracy(move.accuracy)
+        if not is_hit:
+            return Miss()
+        return Crit() if is_crit else Hit()
+
+    token = ctx.emit(
+        rng_to_token=rng_to_token,
+        question="Spit Up hit, crit, or miss? (h/!/-):",
+        input_to_token=lambda s: {'h': Hit(), '!': Crit(), '-': Miss()}[s.strip()],
+    )
+    if not isinstance(token, Miss):
         state.user_stockpile = 0
         return True
     return False
@@ -1082,6 +1354,36 @@ def _eff_rest(ctx: 'BattleContext', move: Move) -> bool:
     if state.user_is_full_hp:
         return False
     state.user_is_full_hp = True
+    state.user_sleep_turns = 2  # Chansey can't act for the next 2 turns
+    return True
+
+
+def _eff_hidden_power(ctx: 'BattleContext', move: Move) -> bool:
+    """Hidden Power (135): standard C/D/H, but Unsupported if Magikarp is frozen.
+
+    A Fire-type Hidden Power would thaw Magikarp, which we can't model without
+    knowing the HP type. End path preemptively on a frozen target.
+    """
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if state.mk_status.status == NonVolatileStatus.FROZEN:
+        ctx.raw_emit(Unsupported())
+        ctx.raw_emit(PathEnd())
+        ctx.battle_state['unsupported'] = True
+        return False
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    return not isinstance(token, Miss)
+
+
+def _eff_lock_on(ctx: 'BattleContext', move: Move) -> bool:
+    """Mind Reader / Lock-On (effect 94): sets guaranteed-hit for next turn.
+
+    Does not fail if already active; just resets the counter.
+    user_lock_on_turns is decremented at end of turn in simulate_turn.
+    """
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_lock_on_turns = 1  # active through end of the following turn
     return True
 
 
@@ -1235,6 +1537,16 @@ def _eff_mud_sport(ctx: 'BattleContext', move: Move) -> bool:
     return True
 
 
+def _eff_camouflage(ctx: 'BattleContext', move: Move) -> bool:
+    """Camouflage (213): become Water type in the Safari Zone environment. Fails if already Water."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if 'Water' in state.user_types:
+        return False
+    state.user_types = ['Water']
+    return True
+
+
 def _eff_water_sport(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
@@ -1285,6 +1597,7 @@ def _eff_belly_drum(ctx: 'BattleContext', move: Move) -> bool:
     if not state.user_is_full_hp:
         return False
     state.user_is_full_hp = False
+    state.user_atk_stage = 6  # Belly Drum maxes out Attack
     return True
 
 
@@ -1363,7 +1676,8 @@ def _eff_worry_seed(ctx: 'BattleContext', move: Move) -> bool:
     state: MetronomeBattleState = ctx.battle_state['state']
     if not _hit_check(ctx, move):
         return False
-    # Magikarp gains Insomnia; if drowsy, wake-up is cancelled
+    # Magikarp gains Insomnia; cancels drowsy, cures sleep, blocks future sleep moves
+    state.mk_insomnia = True
     state.mk_drowsy_turns = 0
     if state.mk_status.status == NonVolatileStatus.SLEEP:
         state.mk_status.status = NonVolatileStatus.NONE
@@ -1385,6 +1699,56 @@ def _eff_hit_then_fail(ctx: 'BattleContext', move: Move) -> bool:
     """
     ctx.advance_unobservable(1)
     return False
+
+
+def _eff_stat_hit(ctx: 'BattleContext', move: Move,
+                  attr: str, amount: int) -> bool:
+    """Hit-check then apply stat stage change; always observable (move shows "not affected" only at cap in some games, but here we still emit Hit)."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False
+    current = getattr(state, attr)
+    setattr(state, attr, max(-6, min(6, current + amount)))
+    return True
+
+
+def _eff_growl(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_atk_stage', -1)
+
+
+def _eff_leer(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_def_stage', -1)
+
+
+def _eff_string_shot(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_spd_stage', -1)
+
+
+def _eff_charm(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_atk_stage', -2)
+
+
+def _eff_screech(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_def_stage', -2)
+
+
+def _eff_scary_face(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_spd_stage', -2)
+
+
+def _eff_fake_tears(ctx: 'BattleContext', move: Move) -> bool:
+    return _eff_stat_hit(ctx, move, 'target_spdef_stage', -2)
+
+
+def _eff_tickle(ctx: 'BattleContext', move: Move) -> bool:
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False
+    state.target_atk_stage = max(-6, state.target_atk_stage - 1)
+    state.target_def_stage = max(-6, state.target_def_stage - 1)
+    return True
 
 
 def _eff_lower_target_evasion(ctx: 'BattleContext', move: Move) -> bool:
@@ -1420,10 +1784,15 @@ def _eff_haze(ctx: 'BattleContext', move: Move) -> bool:
     """
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    state.user_evasion_stage = 0
-    state.target_evasion_stage = 0
-    state.user_accuracy_stage = 0
-    state.target_accuracy_stage = 0
+    for attr in (
+        'user_atk_stage', 'user_def_stage', 'user_spd_stage',
+        'user_spatk_stage', 'user_spdef_stage',
+        'user_evasion_stage', 'user_accuracy_stage',
+        'target_atk_stage', 'target_def_stage', 'target_spd_stage',
+        'target_spatk_stage', 'target_spdef_stage',
+        'target_evasion_stage', 'target_accuracy_stage',
+    ):
+        setattr(state, attr, 0)
     return True
 
 
@@ -1449,6 +1818,123 @@ def _eff_smelling_salt(ctx: 'BattleContext', move: Move) -> bool:
         return False
     if state.mk_status.status == NonVolatileStatus.PARALYZED:
         state.mk_status.status = NonVolatileStatus.NONE
+    return True
+
+
+def _eff_stat_boost(ctx: 'BattleContext', attrs_amounts: list[tuple[str, int]]) -> bool:
+    """Apply no-roll stat stage changes. Always returns True."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    for attr, amount in attrs_amounts:
+        current = getattr(state, attr)
+        setattr(state, attr, max(-6, min(6, current + amount)))
+    return True
+
+
+def _eff_meditate(ctx: 'BattleContext', move: Move) -> bool:  # effect 10: atk+1
+    return _eff_stat_boost(ctx, [('user_atk_stage', 1)])
+
+def _eff_harden(ctx: 'BattleContext', move: Move) -> bool:  # effect 11: def+1
+    return _eff_stat_boost(ctx, [('user_def_stage', 1)])
+
+def _eff_growth(ctx: 'BattleContext', move: Move) -> bool:  # effect 13: spatk+1
+    return _eff_stat_boost(ctx, [('user_spatk_stage', 1)])
+
+def _eff_double_team(ctx: 'BattleContext', move: Move) -> bool:  # effect 16: eva+1
+    return _eff_stat_boost(ctx, [('user_evasion_stage', 1)])
+
+def _eff_swords_dance(ctx: 'BattleContext', move: Move) -> bool:  # effect 50: atk+2
+    return _eff_stat_boost(ctx, [('user_atk_stage', 2)])
+
+def _eff_barrier(ctx: 'BattleContext', move: Move) -> bool:  # effect 51: def+2
+    return _eff_stat_boost(ctx, [('user_def_stage', 2)])
+
+def _eff_agility(ctx: 'BattleContext', move: Move) -> bool:  # effect 52: spd+2
+    return _eff_stat_boost(ctx, [('user_spd_stage', 2)])
+
+def _eff_nasty_plot(ctx: 'BattleContext', move: Move) -> bool:  # effect 53: spatk+2
+    return _eff_stat_boost(ctx, [('user_spatk_stage', 2)])
+
+def _eff_amnesia(ctx: 'BattleContext', move: Move) -> bool:  # effect 54: spdef+2
+    return _eff_stat_boost(ctx, [('user_spdef_stage', 2)])
+
+def _eff_minimize(ctx: 'BattleContext', move: Move) -> bool:  # effect 108: eva+1
+    return _eff_stat_boost(ctx, [('user_evasion_stage', 1)])
+
+def _eff_curse_stat(ctx: 'BattleContext', move: Move) -> bool:  # effect 109: atk+1, def+1, spd-1
+    return _eff_stat_boost(ctx, [('user_atk_stage', 1), ('user_def_stage', 1), ('user_spd_stage', -1)])
+
+def _eff_defense_curl(ctx: 'BattleContext', move: Move) -> bool:  # effect 156: def+1
+    return _eff_stat_boost(ctx, [('user_def_stage', 1)])
+
+def _eff_charge(ctx: 'BattleContext', move: Move) -> bool:  # effect 174: spdef+1
+    return _eff_stat_boost(ctx, [('user_spdef_stage', 1)])
+
+def _eff_cosmic_power(ctx: 'BattleContext', move: Move) -> bool:  # effect 206: def+1, spdef+1
+    return _eff_stat_boost(ctx, [('user_def_stage', 1), ('user_spdef_stage', 1)])
+
+def _eff_bulk_up(ctx: 'BattleContext', move: Move) -> bool:  # effect 208: atk+1, def+1
+    return _eff_stat_boost(ctx, [('user_atk_stage', 1), ('user_def_stage', 1)])
+
+def _eff_calm_mind(ctx: 'BattleContext', move: Move) -> bool:  # effect 211: spatk+1, spdef+1
+    return _eff_stat_boost(ctx, [('user_spatk_stage', 1), ('user_spdef_stage', 1)])
+
+def _eff_dragon_dance(ctx: 'BattleContext', move: Move) -> bool:  # effect 212: atk+1, spd+1
+    return _eff_stat_boost(ctx, [('user_atk_stage', 1), ('user_spd_stage', 1)])
+
+def _eff_power_trick(ctx: 'BattleContext', move: Move) -> bool:  # effect 238: swap user atk/def
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_atk_stage, state.user_def_stage = state.user_def_stage, state.user_atk_stage
+    return True
+
+def _eff_psych_up(ctx: 'BattleContext', move: Move) -> bool:  # effect 143: copy target stat stages
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_atk_stage = state.target_atk_stage
+    state.user_def_stage = state.target_def_stage
+    state.user_spd_stage = state.target_spd_stage
+    state.user_spatk_stage = state.target_spatk_stage
+    state.user_spdef_stage = state.target_spdef_stage
+    state.user_accuracy_stage = state.target_accuracy_stage
+    state.user_evasion_stage = state.target_evasion_stage
+    return True
+
+def _eff_power_swap(ctx: 'BattleContext', move: Move) -> bool:  # effect 243: swap atk+spatk
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_atk_stage, state.target_atk_stage = state.target_atk_stage, state.user_atk_stage
+    state.user_spatk_stage, state.target_spatk_stage = state.target_spatk_stage, state.user_spatk_stage
+    return True
+
+def _eff_guard_swap(ctx: 'BattleContext', move: Move) -> bool:  # effect 244: swap def+spdef
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_def_stage, state.target_def_stage = state.target_def_stage, state.user_def_stage
+    state.user_spdef_stage, state.target_spdef_stage = state.target_spdef_stage, state.user_spdef_stage
+    return True
+
+def _eff_heart_swap(ctx: 'BattleContext', move: Move) -> bool:  # effect 250: swap all stat stages
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    # Check if Magikarp would gain any evasion (from Minimize etc.)
+    if state.user_evasion_stage > state.target_evasion_stage:
+        # Magikarp gains user's evasion advantage → end path (Unsupported)
+        _emit_path_end(ctx)
+        return True
+    # Swap all stat stages
+    for u, t in [
+        ('user_atk_stage', 'target_atk_stage'),
+        ('user_def_stage', 'target_def_stage'),
+        ('user_spd_stage', 'target_spd_stage'),
+        ('user_spatk_stage', 'target_spatk_stage'),
+        ('user_spdef_stage', 'target_spdef_stage'),
+        ('user_accuracy_stage', 'target_accuracy_stage'),
+        ('user_evasion_stage', 'target_evasion_stage'),
+    ]:
+        uv, tv = getattr(state, u), getattr(state, t)
+        setattr(state, u, tv)
+        setattr(state, t, uv)
     return True
 
 
@@ -1835,7 +2321,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     123: _eff_damage,        # Frustration
     128: _eff_damage,        # Pursuit
     129: _eff_damage,        # Rapid Spin
-    135: _eff_damage,        # Hidden Power
+    135: _eff_hidden_power,  # Hidden Power (Unsupported if frozen target — Fire HP thaws)
     147: _eff_damage,        # Earthquake
     149: _eff_damage,        # Gust
     169: _eff_damage,        # Facade
@@ -1866,35 +2352,35 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     269: _eff_damage,        # Head Smash (recoil)
 
     # --- Damage + observable secondary proc ---
-    2:   _eff_poison_secondary,   # Poison Sting, Sludge, etc.
-    4:   _eff_burn_secondary,     # Fire Punch / Flamethrower (burn)
-    5:   _eff_freeze_secondary,   # Ice Punch / Ice Beam (freeze)
-    6:   _eff_paralyze_secondary, # Thunder Punch / Thunderbolt (paralyze)
+    2:   _eff_poison_secondary,        # Poison Sting, Sludge, etc.
+    4:   _eff_burn_secondary,          # Fire Punch / Flamethrower (burn)
+    5:   _eff_freeze_secondary,        # Ice Punch / Ice Beam (freeze)
+    6:   _eff_paralyze_secondary,      # Thunder Punch / Thunderbolt (paralyze)
     36:  _eff_tri_attack,
-    68:  _eff_damage_secondary,  # Aurora Beam (opp atk -1)
-    69:  _eff_damage_secondary,  # Iron Tail / Crunch (opp def -1)
-    70:  _eff_damage_secondary,  # Bubble Beam / Icy Wind (opp spd -1)
-    71:  _eff_damage_secondary,  # Mist Ball (opp spatk -1)
-    72:  _eff_damage_secondary,  # Acid / Psychic (opp spdef -1)
-    73:  _eff_accuracy_drop_secondary,  # Mud Slap / Muddy Water (opp acc -1, tracked)
+    68:  _eff_target_atk_minus1,       # Aurora Beam (opp atk -1, cap-checked)
+    69:  _eff_target_def_minus1,       # Iron Tail / Crunch (opp def -1, cap-checked)
+    70:  _eff_target_spd_minus1,       # Bubble Beam / Icy Wind (opp spd -1, cap-checked)
+    71:  _eff_target_spatk_minus1,     # Mist Ball (opp spatk -1, cap-checked)
+    72:  _eff_target_spdef_minus1,     # Acid / Psychic (opp spdef -1, cap-checked)
+    73:  _eff_accuracy_drop_secondary, # Mud Slap / Muddy Water (opp acc -1, tracked)
     77:  _eff_twineedle,
-    125: _eff_burn_secondary,     # Flame Wheel / Sacred Fire (burn, same as 4)
+    125: _eff_burn_secondary,          # Flame Wheel / Sacred Fire (burn, same as 4)
     126: _eff_magnitude,
-    138: _eff_damage_secondary,  # Steel Wing (user def +1)
-    139: _eff_damage_secondary,  # Metal Claw / Meteor Mash (user atk +1)
-    140: _eff_damage_secondary,  # Ancient Power / Silver Wind / Ominous Wind
+    138: _eff_user_def_plus1,          # Steel Wing (user def +1, cap-checked)
+    139: _eff_user_atk_plus1,          # Metal Claw / Meteor Mash (user atk +1, cap-checked)
+    140: _eff_user_all_stats_plus1,    # Ancient Power / Silver Wind / Ominous Wind
     152: _eff_thunder,
     154: _eff_beat_up,
-    197: _eff_damage_secondary,  # Secret Power (opp atk -1 in sea-water env)
-    200: _eff_burn_highcrit,      # Blaze Kick (high crit + burn)
-    202: _eff_poison_secondary,   # Poison Fang (bad poison)
-    204: _eff_damage_secondary,  # Overheat / Psycho Boost (spatk -2, 100%)
-    209: _eff_poison_highcrit,    # Poison Tail / Cross Poison (high crit + poison)
-    253: _eff_burn_secondary,     # Flare Blitz (burn)
+    197: _eff_target_atk_minus1,       # Secret Power (opp atk -1 in sea-water env)
+    200: _eff_burn_highcrit,           # Blaze Kick (high crit + burn)
+    202: _eff_poison_secondary,        # Poison Fang (bad poison)
+    204: _eff_user_spatk_minus2,       # Overheat / Psycho Boost (user spatk -2, 100%)
+    209: _eff_poison_highcrit,         # Poison Tail / Cross Poison (high crit + poison)
+    253: _eff_burn_secondary,          # Flare Blitz (burn)
     260: _eff_blizzard,
-    262: _eff_paralyze_secondary, # Volt Tackle (paralyze)
-    271: _eff_damage_secondary,  # Seed Flare (opp spdef -2)
-    276: _eff_damage_secondary,  # Charge Beam (user spatk +1)
+    262: _eff_paralyze_secondary,      # Volt Tackle (paralyze)
+    271: _eff_target_spdef_minus2,     # Seed Flare (opp spdef -2, cap-checked)
+    276: _eff_user_spatk_plus1,        # Charge Beam (user spatk +1, cap-checked)
 
     # --- Damage + flinch (unobservable when going second) ---
     31:  _eff_damage_flinch,  # Rolling Kick, Headbutt, Bite, etc.
@@ -1955,23 +2441,23 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     38:  _eff_ohko,
 
     # --- Hit-check-only status moves ---
-    18:  _eff_hit_only,  # Growl (opp atk -1)
-    19:  _eff_hit_only,  # Tail Whip / Leer (opp def -1)
-    20:  _eff_hit_only,  # String Shot (opp spd -1)
+    18:  _eff_growl,       # Growl (opp atk -1, tracked)
+    19:  _eff_leer,        # Tail Whip / Leer (opp def -1, tracked)
+    20:  _eff_string_shot, # String Shot (opp spd -1, tracked)
     23:  _eff_lower_target_accuracy,  # Sand Attack / Flash (opp acc -1, tracked)
     24:  _eff_lower_target_evasion,   # Sweet Scent (opp eva -1, tracked)
     40:  _eff_hit_only,  # Super Fang (half HP)
     41:  _eff_hit_only,  # Dragon Rage (40 dmg)
-    58:  _eff_hit_only,  # Charm / Feather Dance (opp atk -2)
-    59:  _eff_hit_only,  # Screech (opp def -2)
-    60:  _eff_hit_only,  # Cotton Spore / Scary Face (opp spd -2)
-    62:  _eff_hit_only,  # Fake Tears / Metal Sound (opp spdef -2)
+    58:  _eff_charm,      # Charm / Feather Dance (opp atk -2, tracked)
+    59:  _eff_screech,    # Screech (opp def -2, tracked)
+    60:  _eff_scary_face, # Cotton Spore / Scary Face (opp spd -2, tracked)
+    62:  _eff_fake_tears, # Fake Tears / Metal Sound (opp spdef -2, tracked)
     92:  _eff_hit_then_fail,  # Snore (hit check but always fails — user can't be asleep)
     100: _eff_hit_only,  # Spite
     106: _eff_spider_web,
     130: _eff_hit_only,  # Sonic Boom (20 dmg)
     168: _eff_memento,
-    205: _eff_hit_only,  # Tickle (opp atk -1, opp def -1)
+    205: _eff_tickle,    # Tickle (opp atk -1, opp def -1, tracked)
     222: _eff_hit_then_fail,  # Natural Gift (fails with lagging tail — hit check still done)
     227: _eff_hit_only,  # Metal Burst (hit check; fails if no dmg taken — simplified)
     232: _eff_embargo,
@@ -1983,40 +2469,40 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     248: _eff_hit_then_fail,  # Sucker Punch (Magikarp not selecting damage move)
     265: _eff_captivate,
 
-    # --- No-roll success ---
-    10:  _eff_no_rolls_ok,   # Meditate / Sharpen / Howl (atk +1)
-    11:  _eff_no_rolls_ok,   # Harden / Withdraw (def +1)
-    13:  _eff_no_rolls_ok,   # Growth (spatk +1)
-    16:  _eff_no_rolls_ok,   # Double Team (eva +1)
-    25:  _eff_haze,          # Haze (resets stat stages, incl. evasion/accuracy)
-    50:  _eff_no_rolls_ok,   # Swords Dance (atk +2)
-    51:  _eff_no_rolls_ok,   # Barrier / Acid Armor / Iron Defense (def +2)
-    52:  _eff_no_rolls_ok,   # Agility / Rock Polish (spd +2)
-    53:  _eff_no_rolls_ok,   # Tail Glow / Nasty Plot (spatk +2)
-    54:  _eff_no_rolls_ok,   # Amnesia (spdef +2)
+    # --- No-roll success (stat tracking) ---
+    10:  _eff_meditate,      # Meditate / Sharpen / Howl (user atk +1)
+    11:  _eff_harden,        # Harden / Withdraw (user def +1)
+    13:  _eff_growth,        # Growth (user spatk +1)
+    16:  _eff_double_team,   # Double Team (user eva +1)
+    25:  _eff_haze,          # Haze (resets all stat stages)
+    50:  _eff_swords_dance,  # Swords Dance (user atk +2)
+    51:  _eff_barrier,       # Barrier / Acid Armor / Iron Defense (user def +2)
+    52:  _eff_agility,       # Agility / Rock Polish (user spd +2)
+    53:  _eff_nasty_plot,    # Tail Glow / Nasty Plot (user spatk +2)
+    54:  _eff_amnesia,       # Amnesia (user spdef +2)
     91:  _eff_pain_split,
-    94:  _eff_no_rolls_ok,   # Mind Reader / Lock On
+    94:  _eff_lock_on,       # Mind Reader / Lock On
     102: _eff_no_rolls_ok,   # Heal Bell / Aromatherapy
-    108: _eff_no_rolls_ok,   # Minimize (eva +1)
-    109: _eff_no_rolls_ok,   # Curse (non-ghost: atk/def +1, spd -1)
+    108: _eff_minimize,      # Minimize (user eva +1)
+    109: _eff_curse_stat,    # Curse non-ghost (user atk+1, def+1, spd-1)
     113: _eff_no_rolls_ok,   # Foresight / Odor Sleuth
-    143: _eff_no_rolls_ok,   # Psych Up
-    156: _eff_no_rolls_ok,   # Defense Curl (def +1)
-    174: _eff_no_rolls_ok,   # Charge (spdef +1)
+    143: _eff_psych_up,      # Psych Up (copy target stat stages)
+    156: _eff_defense_curl,  # Defense Curl (user def +1)
+    174: _eff_charge,        # Charge (user spdef +1)
     178: _eff_no_rolls_ok,   # Role Play
     179: _eff_no_rolls_ok,   # Wish
     191: _eff_no_rolls_ok,   # Skill Swap
     194: _eff_no_rolls_ok,   # Grudge
-    206: _eff_no_rolls_ok,   # Cosmic Power / Defend Order (def +1, spdef +1)
-    208: _eff_no_rolls_ok,   # Bulk Up (atk +1, def +1)
-    211: _eff_no_rolls_ok,   # Calm Mind (spatk +1, spdef +1)
-    212: _eff_no_rolls_ok,   # Dragon Dance (atk +1, spd +1)
+    206: _eff_cosmic_power,  # Cosmic Power / Defend Order (user def+1, spdef+1)
+    208: _eff_bulk_up,       # Bulk Up (user atk+1, def+1)
+    211: _eff_calm_mind,     # Calm Mind (user spatk+1, spdef+1)
+    212: _eff_dragon_dance,  # Dragon Dance (user atk+1, spd+1)
     216: _eff_no_rolls_ok,   # Miracle Eye
-    238: _eff_no_rolls_ok,   # Power Trick
+    238: _eff_power_trick,   # Power Trick (swap user atk/def)
     240: _eff_lucky_chant,
-    243: _eff_no_rolls_ok,   # Power Swap
-    244: _eff_no_rolls_ok,   # Guard Swap
-    250: _eff_no_rolls_ok,   # Heart Swap
+    243: _eff_power_swap,    # Power Swap (swap user+target atk/spatk)
+    244: _eff_guard_swap,    # Guard Swap (swap user+target def/spdef)
+    250: _eff_heart_swap,    # Heart Swap (swap all stat stages; end path if Magikarp gains evasion)
 
     # --- No-roll, may fail ---
     32:  _eff_recovery,      # Recover / Softboiled etc.
@@ -2046,7 +2532,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     193: _eff_no_rolls_fail, # Refresh (no status from Magikarp)
     201: _eff_mud_sport,
     210: _eff_water_sport,
-    213: _eff_no_rolls_ok,   # Camouflage (always Water type in this env; simplified)
+    213: _eff_camouflage,
     214: _eff_recovery,      # Roost
     225: _eff_tailwind,
     249: _eff_toxic_spikes,
@@ -2056,7 +2542,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     259: _eff_trick_room,
     266: _eff_stealth_rock,
 
-    # --- Field effect moves ---
+    # --- Acupressure: observable stat selection ---
     226: _eff_acupressure,
 
     # --- Path-ending ---
