@@ -310,14 +310,16 @@ class MetronomeBattleState:
     mk_heal_block: bool = False
     mk_gastro_acid: bool = False      # ability suppressed
 
-    mk_insomnia: bool = False          # Worry Seed gives Magikarp Insomnia; blocks sleep moves
+    mk_ability: str | None = None      # Magikarp's current ability (None = default Swift Swim)
+    user_ability: str | None = None    # Chansey's current ability (None = default)
 
     mk_last_move: int | None = None   # move number used last turn
     mk_last_move_prevented: bool = False
 
-    # Level info for OHKO threshold (30 + user_level - target_level)
-    user_level: int = 30              # Chansey level; configure before simulation
-    target_level: int = 10           # Magikarp level; configure before simulation
+    # Level info for OHKO (effect 38): fails outright when user_level < target_level
+    # (roll still consumed); otherwise threshold = 30 + user_level - target_level.
+    user_level: int = 7               # metronome user's level (default; no input source yet)
+    target_level: int = 10            # Magikarp level; set from magikarp_level in precompute_path
 
     # Turn counter (for Fake Out and weather expiry)
     turn_number: int = 0

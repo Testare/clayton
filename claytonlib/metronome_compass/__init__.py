@@ -169,7 +169,10 @@ def simulate_turn(
     # Drowsy → sleep (from Yawn)
     if state.mk_drowsy_turns > 0:
         state.mk_drowsy_turns -= 1
-        if state.mk_drowsy_turns == 0 and state.mk_status.status == NonVolatileStatus.NONE:
+        from .effects import _mk_has_insomnia
+        if (state.mk_drowsy_turns == 0
+                and state.mk_status.status == NonVolatileStatus.NONE
+                and not _mk_has_insomnia(state)):
             ctx.raw_emit(DrowsySlept())
             state.mk_status.status = NonVolatileStatus.SLEEP
             roll = ctx.unobservable_roll()
@@ -443,6 +446,10 @@ def precompute_path(
     known = frozenset(known_moves)
     ctx = RngContext(seed)
     state = MetronomeBattleState()
+    # Wire the known Magikarp level into OHKO handling (fails when user < target;
+    # else threshold = 30 + user - target). The Metronome user's level has no input
+    # source yet and keeps its default of 7 (MetronomeBattleState.user_level).
+    state.target_level = magikarp_level
     ctx.battle_state['opposite_gender'] = opposite_gender
     ctx.battle_state['state'] = state
     # Build move-type list for Conversion (Metronome + all other known moves)

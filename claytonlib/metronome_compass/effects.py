@@ -160,6 +160,9 @@ def _hit_check(ctx: 'BattleContext', move: Move) -> bool:
     """Single observable hit roll for status moves (no crit or damage roll)."""
     def rng_to_token(c: 'BattleContext') -> PathToken:
         roll = c.advance_observable()
+        # Lock-On still rolls the hit check; only the result is forced to Hit.
+        if c.lock_on_active():
+            return Hit()
         return Hit() if roll % 100 < c.effective_accuracy(move.accuracy) else Miss()
     token = ctx.emit(
         rng_to_token=rng_to_token,
@@ -337,7 +340,7 @@ def _eff_burn_secondary(ctx: 'BattleContext', move: Move) -> bool:
 
 
 def _eff_freeze_secondary(ctx: 'BattleContext', move: Move) -> bool:
-    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN))
+    return _eff_damage_secondary(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN, block_weather='sunny'))
 
 
 def _eff_paralyze_secondary(ctx: 'BattleContext', move: Move) -> bool:
@@ -438,7 +441,7 @@ def _eff_fire_fang(ctx: 'BattleContext', move: Move) -> bool:
 
 
 def _eff_ice_fang(ctx: 'BattleContext', move: Move) -> bool:
-    return _eff_damage_status_flinch(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN))
+    return _eff_damage_status_flinch(ctx, move, _status_applier(ctx, NonVolatileStatus.FROZEN, block_weather='sunny'))
 
 
 def _eff_thunder_fang(ctx: 'BattleContext', move: Move) -> bool:
@@ -449,6 +452,11 @@ def _eff_thunder_fang(ctx: 'BattleContext', move: Move) -> bool:
 # Sleep (Effect 1)
 # ---------------------------------------------------------------------------
 
+def _mk_has_insomnia(state: object) -> bool:
+    """True if Magikarp's active ability is Insomnia (not suppressed by Gastro Acid)."""
+    return getattr(state, 'mk_ability', None) == 'Insomnia' and not getattr(state, 'mk_gastro_acid', False)
+
+
 def _eff_sleep(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
@@ -456,7 +464,7 @@ def _eff_sleep(ctx: 'BattleContext', move: Move) -> bool:
         return False
     if state.mk_status.status != NonVolatileStatus.NONE:
         return False
-    if state.mk_insomnia:
+    if _mk_has_insomnia(state):
         return False
     # Duration: roll observable, user needs to observe sleep duration from game
     def rng_to_duration(c: 'BattleContext') -> int:
@@ -749,8 +757,8 @@ def _eff_ohko(ctx: 'BattleContext', move: Move) -> bool:
         roll = c.advance_observable()
         if user_lvl < target_lvl:
             return Miss()  # always fails (but roll consumed)
-        # Lock-On is already handled in effective_accuracy; OHKO bypasses accuracy
-        # stages (it's not an accuracy check), so we check lock_on directly here.
+        # OHKO bypasses accuracy stages (it's not an accuracy check), so we check
+        # lock_on directly here. The roll above is consumed either way.
         if state.user_lock_on_turns > 0:
             return Hit()  # guaranteed by Lock-On when user_lvl >= target_lvl
         threshold = 30 + user_lvl - target_lvl
@@ -1136,7 +1144,7 @@ def _eff_yawn(ctx: 'BattleContext', move: Move) -> bool:
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.mk_drowsy_turns > 0 or state.mk_status.status != NonVolatileStatus.NONE:
         return False
-    if state.mk_insomnia:
+    if _mk_has_insomnia(state):
         return False
     state.mk_drowsy_turns = 2  # ticks each turn; at 0 sleep is applied
     return True
@@ -1245,7 +1253,8 @@ def _eff_spit_up(ctx: 'BattleContext', move: Move) -> bool:
         if move.accuracy == 0:
             return Crit() if is_crit else Hit()
         hit_roll = c.advance_observable()
-        is_hit = hit_roll % 100 < c.effective_accuracy(move.accuracy)
+        # Lock-On still rolls the hit check; only the result is forced to Hit.
+        is_hit = c.lock_on_active() or hit_roll % 100 < c.effective_accuracy(move.accuracy)
         if not is_hit:
             return Miss()
         return Crit() if is_crit else Hit()
@@ -1383,7 +1392,9 @@ def _eff_lock_on(ctx: 'BattleContext', move: Move) -> bool:
     """
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    state.user_lock_on_turns = 1  # active through end of the following turn
+    # Set to 2 so that after this turn's end-of-turn decrement the counter is
+    # still 1 during the FOLLOWING turn, when the guaranteed-hit move is used.
+    state.user_lock_on_turns = 2
     return True
 
 
@@ -1676,8 +1687,8 @@ def _eff_worry_seed(ctx: 'BattleContext', move: Move) -> bool:
     state: MetronomeBattleState = ctx.battle_state['state']
     if not _hit_check(ctx, move):
         return False
-    # Magikarp gains Insomnia; cancels drowsy, cures sleep, blocks future sleep moves
-    state.mk_insomnia = True
+    # Magikarp gains Insomnia ability; cancels drowsy, cures sleep, blocks future sleep
+    state.mk_ability = 'Insomnia'
     state.mk_drowsy_turns = 0
     if state.mk_status.status == NonVolatileStatus.SLEEP:
         state.mk_status.status = NonVolatileStatus.NONE
@@ -1818,6 +1829,22 @@ def _eff_smelling_salt(ctx: 'BattleContext', move: Move) -> bool:
         return False
     if state.mk_status.status == NonVolatileStatus.PARALYZED:
         state.mk_status.status = NonVolatileStatus.NONE
+    return True
+
+
+def _eff_role_play(ctx: 'BattleContext', move: Move) -> bool:
+    """Role Play (178): user copies Magikarp's current ability."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.user_ability = state.mk_ability
+    return True
+
+
+def _eff_skill_swap(ctx: 'BattleContext', move: Move) -> bool:
+    """Skill Swap (191): swap user's and Magikarp's abilities."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    state.mk_ability, state.user_ability = state.user_ability, state.mk_ability
     return True
 
 
@@ -2250,7 +2277,8 @@ def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_mov
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         if not isinstance(token, Miss):
-            ctx.effect_proc(locked_move.effect_chance)
+            ctx.effect_proc(locked_move.effect_chance,
+                            _status_applier(ctx, NonVolatileStatus.PARALYZED))
             return True
         return False
 
@@ -2489,9 +2517,9 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     143: _eff_psych_up,      # Psych Up (copy target stat stages)
     156: _eff_defense_curl,  # Defense Curl (user def +1)
     174: _eff_charge,        # Charge (user spdef +1)
-    178: _eff_no_rolls_ok,   # Role Play
+    178: _eff_role_play,     # Role Play (user copies Magikarp's ability)
     179: _eff_no_rolls_ok,   # Wish
-    191: _eff_no_rolls_ok,   # Skill Swap
+    191: _eff_skill_swap,    # Skill Swap (swap user and Magikarp abilities)
     194: _eff_no_rolls_ok,   # Grudge
     206: _eff_cosmic_power,  # Cosmic Power / Defend Order (user def+1, spdef+1)
     208: _eff_bulk_up,       # Bulk Up (user atk+1, def+1)

@@ -141,6 +141,15 @@ class BattleContext(ABC):
     # Emit helpers — common token patterns defined once on the base class
     # ------------------------------------------------------------------
 
+    def lock_on_active(self) -> bool:
+        """True if Mind Reader / Lock-On guarantees the user's move hits this turn.
+
+        The hit roll is still consumed on hardware — only its result is forced to
+        Hit — so callers must advance the accuracy roll *before* consulting this.
+        """
+        state = self.battle_state.get('state')
+        return state is not None and state.user_lock_on_turns > 0
+
     def effective_accuracy(self, base: int) -> int:
         """Apply accuracy/evasion stat stages and gravity to a base accuracy.
 
@@ -148,15 +157,16 @@ class BattleContext(ABC):
         Gen-IV accuracy stage table (net = user accuracy stage − target evasion
         stage, clamped to ±6) and the 5/3 gravity multiplier. Integer floor math
         matches the game's fixed-point behaviour.
-        Lock-On/Mind Reader: returns 0 (always hit) for any non-zero base.
+
+        Lock-On/Mind Reader is NOT handled here: it doesn't change the accuracy
+        value, it forces the *result* while still consuming the roll. See
+        lock_on_active() and the hit resolvers.
         """
         if base == 0:
             return 0
         state = self.battle_state.get('state')
         if state is None:
             return base
-        if state.user_lock_on_turns > 0:
-            return 0  # guaranteed hit (treated as always-hit sentinel)
         net = max(-6, min(6, state.user_accuracy_stage - state.target_evasion_stage))
         if net >= 0:
             acc = base * (3 + net) // 3
@@ -187,7 +197,8 @@ class BattleContext(ABC):
             if accuracy == 0:
                 return Crit() if is_crit else Hit()
             hit_roll = ctx.advance_observable()
-            is_hit = hit_roll % 100 < ctx.effective_accuracy(accuracy)
+            # Lock-On still rolls the hit check; only the result is forced to Hit.
+            is_hit = ctx.lock_on_active() or hit_roll % 100 < ctx.effective_accuracy(accuracy)
             if not is_hit:
                 return Miss()
             return Crit() if is_crit else Hit()
