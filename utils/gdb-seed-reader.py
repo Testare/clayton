@@ -650,8 +650,16 @@ Interrupt the running seedslurper with Ctrl+C to reach this prompt, run
                 print("[seedslurper] no active run to wrap up.")
                 return
             _run.wrap_up = True
-            print("[seedslurper] wrap_up: will stop after the current seed. "
-                  "Type 'continue' to resume.")
+            # Auto-space is usually turned off (to reclaim the computer) during
+            # the Ctrl+C interrupt, so resume it here or the current seed can't
+            # play out to its end when the user continues.
+            try:
+                presser_autospace(_run.config.presser_url, True)
+                print("[seedslurper] wrap_up: auto-space resumed; will stop after "
+                      "the current seed. Type 'continue' to resume.")
+            except PresserError as e:
+                print(f"[seedslurper] wrap_up set, but couldn't resume auto-space "
+                      f"({e}). Re-enable it manually, then 'continue'.")
 
     BattleSetupNewBreakpoint()
     RandomBreakpoint()
