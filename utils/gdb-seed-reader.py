@@ -107,6 +107,7 @@ def _decode_poke_string(ptr):
 # ---------------------------------------------------------------------------
 VALID_MOVESETS = ("test", "P0")
 OUTPUT_DIR = "metronome_seeds"    # results live here, not the project root
+DEFAULT_PRESSER_PORT = 62628      # matches utils/f3_presser.py PORT
 
 
 def parse_seed_line(line):
@@ -209,8 +210,13 @@ def gather_config():
     moveset = _prompt("Metronome user moveset", default="test",
                       choices=VALID_MOVESETS)
     user_level = _prompt("Metronome user level", default=7, cast=int)
-    presser_url = _prompt("f3_presser URL (e.g. http://192.168.1.50:62628)",
-                          required=True)
+    presser_host = _prompt("f3_presser host/IP (e.g. 192.168.1.50)",
+                           required=True)
+    presser_host = (presser_host.replace("http://", "")
+                    .replace("https://", "").rstrip("/"))
+    presser_port = _prompt("f3_presser port", default=DEFAULT_PRESSER_PORT,
+                           cast=int)
+    presser_url = f"http://{presser_host}:{presser_port}"
     reload_fkey = _prompt_fkey()
     seed_file = _prompt("Seed file path", required=True)
     return Config(magikarp_level, magikarp_gender, user_name, moveset,
@@ -361,9 +367,31 @@ def _write_result(fh, seed, results):
     return line
 
 
-def _echo(obj):
-    """Print one roll/message object live so progress is visible as it happens."""
-    print(json.dumps(obj, separators=(",", ":")))
+# Live console feedback. Rolls print as "<roll>" and pack onto one line;
+# messages print on their own line prefixed with "> ", with escape sequences
+# kept literal (a newline shows as the two characters \n).
+_mid_roll_line = False
+
+
+def _echo_roll():
+    global _mid_roll_line
+    sys.stdout.write("<roll>")
+    sys.stdout.flush()
+    _mid_roll_line = True
+
+
+def _close_roll_line():
+    global _mid_roll_line
+    if _mid_roll_line:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        _mid_roll_line = False
+
+
+def _echo_message(msg):
+    _close_roll_line()
+    literal = msg.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    print(f"> {literal}")
 
 
 def _wait_ready(seconds=5):
@@ -435,6 +463,7 @@ def _finish_run(run, reason):
         run.fh.close()
     except Exception:
         pass
+    _close_roll_line()
     print(f"[seedslurper] finished ({reason}). "
           f"{run.completed}/{len(run.seeds)} seeds recorded.")
 
@@ -443,6 +472,7 @@ def _handle_battle_end(run):
     """Called from a breakpoint once collector.battle_over is set. Records the
     current seed, then advances or finishes. Returns True if gdb should STOP
     (run finished), False to continue straight into the next battle."""
+    _close_roll_line()
     seed = run.seeds[run.idx]
     _write_result(run.fh, seed, run.collector.results)
     run.completed += 1
@@ -534,7 +564,8 @@ if _IN_GDB:
             _last_pc = pc
             r0 = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
             c = run.collector
-            _echo(c.add_roll(f"0x{pc:08x}", func_name, r0))
+            c.add_roll(f"0x{pc:08x}", func_name, r0)
+            _echo_roll()
             if not c.battle_over and len(c.results) > MAX_ROLLS_PER_SEED:
                 c._end("stuck")
             return _maybe_end(run)
@@ -568,7 +599,9 @@ if _IN_GDB:
                     f"*(unsigned int *)({self.battleSystem_ptr:#x} + 0x18)"
                 )) & 0xFFFFFFFF
                 if msgbuf_ptr:
-                    _echo(run.collector.add_message(_decode_poke_string(msgbuf_ptr)))
+                    text = _decode_poke_string(msgbuf_ptr)
+                    run.collector.add_message(text)
+                    _echo_message(text)
             except Exception as e:
                 print(f"[seedslurper] msg decode error: {e}")
                 return False
