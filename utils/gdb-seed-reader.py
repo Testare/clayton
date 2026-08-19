@@ -133,10 +133,9 @@ def load_seeds(path):
 
 
 def build_output_filename(name, moveset, level, magikarp_level, gender):
-    """metronome_seeds_<name>_<moveset>_<level>_vs_<mklvl>_<g>.jsonl"""
+    """<name>_<moveset>_<level>_vs_<mklvl><g>.jsonl (lives in OUTPUT_DIR)."""
     g = gender.strip().lower()[:1]  # 'm' or 'f'
-    return (f"metronome_seeds_{name}_{moveset}_{level}"
-            f"_vs_{magikarp_level}_{g}.jsonl")
+    return f"{name}_{moveset}_{level}_vs_{magikarp_level}{g}.jsonl"
 
 
 class Config:
@@ -268,6 +267,12 @@ SWITCH_OUT_SUBSTRS = ("went back\nto", "Baton Pass!")
 # and no evasion supported, so the 'used' message reliably marks the end.
 FORCE_OUT_SUBSTRS = ("Whirlwind!", "Roar!")
 
+# The input prompt is drawn twice per turn, sometimes with one stray roll (a
+# '??' frame) between the two draws. Real turns have many rolls between prompts,
+# so only count a prompt once at least this many rolls have occurred since the
+# last counted one.
+PROMPT_DEBOUNCE_ROLLS = 2
+
 
 class Collector:
     """Accumulates rolls + messages for the current seed and detects end."""
@@ -276,24 +281,28 @@ class Collector:
         self.config = config
         self.results = []          # ordered, interleaved roll/message dicts
         self.prompt_count = 0
-        self.activity_since_prompt = False  # a roll seen since last counted prompt
+        self.rolls_since_prompt = 0   # rolls seen since the last counted prompt
         self.battle_over = False
         self.end_reason = None
 
     def reset(self):
         self.results = []
         self.prompt_count = 0
-        self.activity_since_prompt = False
+        self.rolls_since_prompt = 0
         self.battle_over = False
         self.end_reason = None
 
     def add_roll(self, addr, func, val):
-        self.results.append({"addr": addr, "func": func, "val": val})
-        self.activity_since_prompt = True
+        obj = {"addr": addr, "func": func, "val": val}
+        self.results.append(obj)
+        self.rolls_since_prompt += 1
+        return obj
 
     def add_message(self, msg):
-        self.results.append({"msg": msg})
+        obj = {"msg": msg}
+        self.results.append(obj)
         self._check_end_message(msg)
+        return obj
 
     def _end(self, reason):
         self.battle_over = True
@@ -302,12 +311,13 @@ class Collector:
     def _check_end_message(self, msg):
         user = self.config.user_name
         # (1) input prompt: N prompts => (N-1) completed turns. The prompt is
-        # drawn twice per turn, so only count it once by requiring a roll to
-        # have occurred since the last counted prompt.
+        # drawn twice per turn (with 0-1 rolls between), so debounce on roll
+        # count so each turn counts exactly once.
         if INPUT_PROMPT_SUBSTR in msg and "?" in msg:
-            if self.prompt_count == 0 or self.activity_since_prompt:
+            if (self.prompt_count == 0
+                    or self.rolls_since_prompt >= PROMPT_DEBOUNCE_ROLLS):
                 self.prompt_count += 1
-                self.activity_since_prompt = False
+                self.rolls_since_prompt = 0
                 if self.prompt_count >= self.config.prompt_limit:
                     self._end("prompt_limit")
             return
@@ -351,10 +361,15 @@ def _write_result(fh, seed, results):
     return line
 
 
+def _echo(obj):
+    """Print one roll/message object live so progress is visible as it happens."""
+    print(json.dumps(obj, separators=(",", ":")))
+
+
 def _wait_ready(seconds=5):
     """Give the operator time to focus the emulator before the first reload."""
     try:
-        input("Focus the emulator window, then press Enter to begin...")
+        input(f"Press Enter, then focus the emulator window within {seconds}s...")
     except EOFError:
         pass
     for r in range(seconds, 0, -1):
@@ -429,12 +444,11 @@ def _handle_battle_end(run):
     current seed, then advances or finishes. Returns True if gdb should STOP
     (run finished), False to continue straight into the next battle."""
     seed = run.seeds[run.idx]
-    line = _write_result(run.fh, seed, run.collector.results)
+    _write_result(run.fh, seed, run.collector.results)
     run.completed += 1
     print(f"[seedslurper] {seed:#010x}: {run.collector.end_reason} "
           f"({len(run.collector.results)} entries) "
           f"[{run.completed}/{len(run.seeds)}]")
-    print(line)  # echo the JSON so progress history is visible
 
     if run.wrap_up:
         _finish_run(run, "wrap_up")
@@ -520,7 +534,7 @@ if _IN_GDB:
             _last_pc = pc
             r0 = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
             c = run.collector
-            c.add_roll(f"0x{pc:08x}", func_name, r0)
+            _echo(c.add_roll(f"0x{pc:08x}", func_name, r0))
             if not c.battle_over and len(c.results) > MAX_ROLLS_PER_SEED:
                 c._end("stuck")
             return _maybe_end(run)
@@ -554,7 +568,7 @@ if _IN_GDB:
                     f"*(unsigned int *)({self.battleSystem_ptr:#x} + 0x18)"
                 )) & 0xFFFFFFFF
                 if msgbuf_ptr:
-                    run.collector.add_message(_decode_poke_string(msgbuf_ptr))
+                    _echo(run.collector.add_message(_decode_poke_string(msgbuf_ptr)))
             except Exception as e:
                 print(f"[seedslurper] msg decode error: {e}")
                 return False
