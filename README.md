@@ -39,6 +39,7 @@ This is details for the current plan. Things we have already implemented might b
 ## Compass Metronome
 * Reliably determine paths from seeds
   * Verify that our seed generation logic correctly generates paths for a specific move.
+     * Currently there are bugs - For instance, moves that inflict burn as a secondary effect do not track this secondary effect, and moves that increase evasion do not track this either.
   * Update gdb script so that we can output roll and battle message data for a seed and write to a file.
   * Find a way to verify seed path generation logic using this data.
 * Be able to search for a seed in a time frame given some initial parameters and the path
