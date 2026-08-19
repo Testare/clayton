@@ -202,20 +202,30 @@ def _prompt_fkey():
         print("  Enter a number 1-8 (or f1..f8).")
 
 
-def gather_config():
-    """Interactively gather run config (invoked from the seedslurper command)."""
+def _clean_host(host):
+    return host.replace("http://", "").replace("https://", "").rstrip("/")
+
+
+def gather_config(host=None):
+    """Interactively gather run config (invoked from the seedslurper command).
+
+    If `host` is given (seedslurper's optional argument), skip the host/port
+    prompts and use that host with the default port."""
     magikarp_level = _prompt("Magikarp level", required=True, cast=int)
     magikarp_gender = _prompt_gender()
     user_name = _prompt("Metronome user name", default="Metroman2")
     moveset = _prompt("Metronome user moveset", default="test",
                       choices=VALID_MOVESETS)
     user_level = _prompt("Metronome user level", default=7, cast=int)
-    presser_host = _prompt("f3_presser host/IP (e.g. 192.168.1.50)",
-                           required=True)
-    presser_host = (presser_host.replace("http://", "")
-                    .replace("https://", "").rstrip("/"))
-    presser_port = _prompt("f3_presser port", default=DEFAULT_PRESSER_PORT,
-                           cast=int)
+    if host:
+        presser_host = _clean_host(host)
+        presser_port = DEFAULT_PRESSER_PORT
+        print(f"f3_presser: http://{presser_host}:{presser_port} (from argument)")
+    else:
+        presser_host = _clean_host(_prompt("f3_presser host/IP (e.g. 192.168.1.50)",
+                                           required=True))
+        presser_port = _prompt("f3_presser port", default=DEFAULT_PRESSER_PORT,
+                               cast=int)
     presser_url = f"http://{presser_host}:{presser_port}"
     reload_fkey = _prompt_fkey()
     seed_file = _prompt("Seed file path", required=True)
@@ -498,11 +508,11 @@ def _maybe_end(run):
     return _handle_battle_end(run)
 
 
-def run_seedslurper():
+def run_seedslurper(host=None):
     """Bootstrap invoked by the `seedslurper` command: gather config, start the
     first seed, then hand off to gdb's `continue` + breakpoint state machine."""
     global _run
-    config = gather_config()
+    config = gather_config(host)
     seeds = load_seeds(config.seed_file)
     out_path = config.output_filename()
     print(f"[seedslurper] {len(seeds)} seed(s); output -> {out_path}")
@@ -622,6 +632,10 @@ if _IN_GDB:
     class SeedSlurperCommand(gdb.Command):
         """Prompt for config, then replay each seed and record rolls + messages.
 
+Usage: seedslurper [HOST]
+  HOST  optional f3_presser host/IP; skips the host+port prompts and uses the
+        default port. e.g. `seedslurper 192.168.0.12`.
+
 Run this AFTER attaching to the emulator (target remote ...). Ctrl+C returns to
 this prompt with run state intact: run `wrap_up` to stop after the current seed,
 or just `continue` to resume."""
@@ -630,8 +644,9 @@ or just `continue` to resume."""
             super().__init__("seedslurper", gdb.COMMAND_USER)
 
         def invoke(self, arg, from_tty):
+            host = arg.strip() or None
             try:
-                run_seedslurper()
+                run_seedslurper(host)
             except KeyboardInterrupt:
                 print("\n[seedslurper] interrupted. Run 'wrap_up' to stop after "
                       "the current seed, or 'continue' to resume.")
