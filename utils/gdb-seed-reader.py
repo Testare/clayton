@@ -106,6 +106,7 @@ def _decode_poke_string(ptr):
 # Pure helpers (testable outside GDB): config, filenames, seed parsing.
 # ---------------------------------------------------------------------------
 VALID_MOVESETS = ("test", "P0")
+OUTPUT_DIR = "metronome_seeds"    # results live here, not the project root
 
 
 def parse_seed_line(line):
@@ -155,9 +156,9 @@ class Config:
         self.prompt_limit = prompt_limit          # 7 prompts => 6 completed turns
 
     def output_filename(self):
-        return build_output_filename(self.user_name, self.moveset,
-                                     self.user_level, self.magikarp_level,
-                                     self.magikarp_gender)
+        return os.path.join(OUTPUT_DIR, build_output_filename(
+            self.user_name, self.moveset, self.user_level,
+            self.magikarp_level, self.magikarp_gender))
 
 
 def _prompt(label, default=None, required=False, choices=None, cast=str):
@@ -275,17 +276,20 @@ class Collector:
         self.config = config
         self.results = []          # ordered, interleaved roll/message dicts
         self.prompt_count = 0
+        self.activity_since_prompt = False  # a roll seen since last counted prompt
         self.battle_over = False
         self.end_reason = None
 
     def reset(self):
         self.results = []
         self.prompt_count = 0
+        self.activity_since_prompt = False
         self.battle_over = False
         self.end_reason = None
 
     def add_roll(self, addr, func, val):
         self.results.append({"addr": addr, "func": func, "val": val})
+        self.activity_since_prompt = True
 
     def add_message(self, msg):
         self.results.append({"msg": msg})
@@ -297,11 +301,15 @@ class Collector:
 
     def _check_end_message(self, msg):
         user = self.config.user_name
-        # (1) input prompt: N prompts => (N-1) completed turns
+        # (1) input prompt: N prompts => (N-1) completed turns. The prompt is
+        # drawn twice per turn, so only count it once by requiring a roll to
+        # have occurred since the last counted prompt.
         if INPUT_PROMPT_SUBSTR in msg and "?" in msg:
-            self.prompt_count += 1
-            if self.prompt_count >= self.config.prompt_limit:
-                self._end("prompt_limit")
+            if self.prompt_count == 0 or self.activity_since_prompt:
+                self.prompt_count += 1
+                self.activity_since_prompt = False
+                if self.prompt_count >= self.config.prompt_limit:
+                    self._end("prompt_limit")
             return
         # (2)/(3) faints — user vs Magikarp distinguished by the user's name
         if FAINT_SUBSTR in msg:
@@ -335,9 +343,23 @@ _last_pc = None
 
 
 def _write_result(fh, seed, results):
-    fh.write(json.dumps({"seed": f"{seed:#010x}", "results": results},
-                        separators=(",", ":")) + "\n")
+    """Append one compact JSON line and return it (so callers can echo it)."""
+    line = json.dumps({"seed": f"{seed:#010x}", "results": results},
+                      separators=(",", ":"))
+    fh.write(line + "\n")
     fh.flush()
+    return line
+
+
+def _wait_ready(seconds=5):
+    """Give the operator time to focus the emulator before the first reload."""
+    try:
+        input("Focus the emulator window, then press Enter to begin...")
+    except EOFError:
+        pass
+    for r in range(seconds, 0, -1):
+        print(f"  starting in {r}...")
+        time.sleep(1)
 
 
 class RunState:
@@ -407,11 +429,12 @@ def _handle_battle_end(run):
     current seed, then advances or finishes. Returns True if gdb should STOP
     (run finished), False to continue straight into the next battle."""
     seed = run.seeds[run.idx]
-    _write_result(run.fh, seed, run.collector.results)
+    line = _write_result(run.fh, seed, run.collector.results)
     run.completed += 1
     print(f"[seedslurper] {seed:#010x}: {run.collector.end_reason} "
           f"({len(run.collector.results)} entries) "
           f"[{run.completed}/{len(run.seeds)}]")
+    print(line)  # echo the JSON so progress history is visible
 
     if run.wrap_up:
         _finish_run(run, "wrap_up")
@@ -449,7 +472,9 @@ def run_seedslurper():
         print("[seedslurper] no seeds to run.")
         return
 
+    _wait_ready()
     presser_autospace(config.presser_url, True)
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     _run = RunState(config, seeds, open(out_path, "a"))
 
     # Start the first runnable seed (skipping any that fail to reload).
