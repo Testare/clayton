@@ -93,6 +93,77 @@ _seed_override = None
 _battle_msg_enabled = False
 
 
+# ---------------------------------------------------------------------------
+# Seed injection via register hijack
+#
+# Memory writes to battleSystem->rand are corrupted by this emulator's GDB stub
+# (writing 0x082A8651 left memory holding 0x0A7D8651), and no write strategy is
+# reliable. So we don't write memory. BattleSystem_Random is:
+#     +6:  ldr  r3, [r0, r2]   ; r3 = battleSystem->rand   (load)
+#     +8:  adds r4, r3, #0     ; <- break here, set r3 = seed
+#     +16: str  r1, [r0, r2]   ; battleSystem->rand = advance_rng(seed) (coherent)
+# A breakpoint at +8 overwrites r3 (a reliable register write) with the override
+# seed; the game's own store then writes advance_rng(seed). Proven on hardware.
+# ---------------------------------------------------------------------------
+
+_MULT = 1103515245
+_INC = 24691
+_HIJACK_POST_LOAD_OFF = 8
+_hijack_bp = None
+
+
+def _advance_rng(state):
+    return (state * _MULT + _INC) & 0xFFFFFFFF
+
+
+def _battle_random_base():
+    """Entry address of BattleSystem_Random (Thumb bit cleared)."""
+    return int(gdb.parse_and_eval("(unsigned)&BattleSystem_Random")) & ~1 & 0xFFFFFFFF
+
+
+class _SeedHijackBreakpoint(gdb.Breakpoint):
+    """At BattleSystem_Random+8 (just after the seed load) overwrite r3 with the
+    override seed, so the game's own store writes advance_rng(seed) coherently.
+    Armed at BattleSetup_New; disables itself after the first random call."""
+
+    def __init__(self, addr):
+        super().__init__(f"*{addr}", internal=True)
+        self.silent = True
+        self.enabled = False
+
+    def stop(self):
+        if _seed_override is None or not gdb.convenience_variable("new_seed"):
+            self.enabled = False
+            return False
+        gdb.set_convenience_variable("new_seed", False)
+        self.enabled = False
+        seed = _seed_override & 0xFFFFFFFF
+        r0 = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
+        r2 = int(gdb.parse_and_eval("$r2")) & 0xFFFFFFFF
+        loaded = int(gdb.parse_and_eval("$r3")) & 0xFFFFFFFF
+        mem = int.from_bytes(
+            bytes(gdb.inferiors()[0].read_memory((r0 + r2) & 0xFFFFFFFF, 4)),
+            "little")
+        if loaded != mem:
+            print(f"  WARNING: seed-hijack sanity check failed "
+                  f"(r3={loaded:#010x} != rand={mem:#010x}); seed NOT injected. "
+                  f"BattleSystem_Random layout may differ from expected.")
+            return False
+        gdb.execute(f"set $r3 = {seed}")
+        roll = _advance_rng(seed) >> 16
+        print(f"  [seed_hijack] injected {seed:#010x}; first roll will be "
+              f"{roll} (0x{roll:04x}).")
+        return False
+
+
+def _ensure_hijack_bp():
+    global _hijack_bp
+    if _hijack_bp is None:
+        _hijack_bp = _SeedHijackBreakpoint(
+            _battle_random_base() + _HIJACK_POST_LOAD_OFF)
+    return _hijack_bp
+
+
 class GfRtcCopyDateTimeFinish(gdb.FinishBreakpoint):
     """Fires when GF_RTC_CopyDateTime returns; at that point we're back in
     BattleSetup_New's frame so 'date' and 'time' resolve to the correct
@@ -147,6 +218,9 @@ class BattleSetupNewBreakpoint(gdb.Breakpoint):
         global _in_battle_setup
         _in_battle_setup = True
         gdb.set_convenience_variable("new_seed", True)
+        # Arm the register-hijack for this battle's first random call.
+        if _seed_override is not None:
+            _ensure_hijack_bp().enabled = True
         BattleSetupNewFinish(gdb.selected_frame())
         return False  # continue
 
@@ -232,11 +306,14 @@ class BattleSystemRandomBreakpoint(gdb.Breakpoint):
             battle_system = gdb.parse_and_eval("battleSystem")
             rand_val = int(battle_system["rand"]) & 0xFFFFFFFF
             if _seed_override is not None:
-                gdb.execute(f"set battleSystem->rand = {_seed_override}")
-                print(f"SEED: {rand_val:#010x} -> [seed_override] {_seed_override:#010x}")
+                # The +8 hijack breakpoint (armed at BattleSetup_New) injects the
+                # seed a few instructions into this call, clears new_seed, and
+                # prints the confirmation. We only announce the pending override.
+                print(f"SEED: {rand_val:#010x} -> [seed_override] "
+                      f"{_seed_override:#010x} (hijack armed)")
             else:
                 print(f"SEED: {rand_val:#010x}")
-            gdb.set_convenience_variable("new_seed", False)
+                gdb.set_convenience_variable("new_seed", False)
 
         BattleSystemRandomFinish(gdb.selected_frame())
         return False # continue; finish breakpoint handles the rest

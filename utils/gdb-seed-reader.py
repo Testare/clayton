@@ -368,6 +368,35 @@ _seed_override = None
 _last_pc = None
 
 
+# ---------------------------------------------------------------------------
+# Seed injection via register hijack
+#
+# Direct memory writes to battleSystem->rand are corrupted by this emulator's
+# GDB stub (writing 0x082A8651 left memory holding 0x0A7D8651), and no write
+# strategy is reliable. So we DON'T write memory. BattleSystem_Random is:
+#     +6:  ldr  r3, [r0, r2]   ; r3 = battleSystem->rand   (load)
+#     +8:  adds r4, r3, #0     ; <- break here, set r3 = seed
+#     +16: str  r1, [r0, r2]   ; battleSystem->rand = advance_rng(seed) (coherent)
+# A breakpoint at +8 overwrites r3 (a reliable register write) with the override
+# seed, and the game's own store writes advance_rng(seed) — exactly the old
+# override semantics, but via a path the stub can't corrupt. Proven on hardware.
+# ---------------------------------------------------------------------------
+
+_MULT = 1103515245
+_INC = 24691
+_HIJACK_POST_LOAD_OFF = 8   # PC just after `ldr r3, [r0, r2]`
+_hijack_bp = None           # the +8 breakpoint (created lazily, enabled per battle)
+
+
+def _advance_rng(state):
+    return (state * _MULT + _INC) & 0xFFFFFFFF
+
+
+def _battle_random_base():
+    """Entry address of BattleSystem_Random (Thumb bit cleared)."""
+    return int(gdb.parse_and_eval("(unsigned)&BattleSystem_Random")) & ~1 & 0xFFFFFFFF
+
+
 def _write_result(fh, seed, results):
     """Append one compact JSON line and return it (so callers can echo it)."""
     line = json.dumps({"seed": f"{seed:#010x}", "results": results},
@@ -547,6 +576,54 @@ def run_seedslurper(host=None):
 
 if _IN_GDB:
 
+    class _SeedHijackBreakpoint(gdb.Breakpoint):
+        """At BattleSystem_Random+8 (just after the seed load) overwrite r3 with
+        the override seed, so the game's own store writes advance_rng(seed)
+        coherently — no corruptible memory write. Enabled only for the first
+        random call of a battle with a pending override; disables itself after."""
+
+        def __init__(self, addr):
+            super().__init__(f"*{addr}", internal=True)
+            self.silent = True
+            self.enabled = False
+
+        def stop(self):
+            if _run is None or _run.done or _seed_override is None:
+                self.enabled = False
+                return False
+            if not gdb.convenience_variable("new_seed"):
+                return False
+            gdb.set_convenience_variable("new_seed", False)
+            self.enabled = False
+            seed = _seed_override & 0xFFFFFFFF
+            r0 = int(gdb.parse_and_eval("$r0")) & 0xFFFFFFFF
+            r2 = int(gdb.parse_and_eval("$r2")) & 0xFFFFFFFF
+            loaded = int(gdb.parse_and_eval("$r3")) & 0xFFFFFFFF
+            mem = int.from_bytes(
+                bytes(gdb.inferiors()[0].read_memory((r0 + r2) & 0xFFFFFFFF, 4)),
+                "little")
+            # Sanity: r3 should equal the value just loaded from rand. If not,
+            # we are not right after the seed load (wrong ROM/layout). That is
+            # systemic — abort the whole run rather than clobber a register and
+            # silently mislabel every battle.
+            if loaded != mem:
+                _close_roll_line()
+                print(f"[seedslurper] ABORT: seed-hijack sanity check failed at "
+                      f"BattleSystem_Random+{_HIJACK_POST_LOAD_OFF} "
+                      f"(r3={loaded:#010x} != rand={mem:#010x}). Instruction "
+                      f"layout differs from expected; no seeds recorded past here.")
+                _finish_run(_run, "hijack_layout_error")
+                return True
+            gdb.execute(f"set $r3 = {seed}")
+            return False
+
+    def _ensure_hijack_bp():
+        global _hijack_bp
+        if _hijack_bp is None:
+            _hijack_bp = _SeedHijackBreakpoint(
+                _battle_random_base() + _HIJACK_POST_LOAD_OFF)
+        return _hijack_bp
+
     class BattleSetupNewBreakpoint(gdb.Breakpoint):
         def __init__(self):
             super().__init__("BattleSetup_New")
@@ -554,6 +631,9 @@ if _IN_GDB:
 
         def stop(self):
             gdb.set_convenience_variable("new_seed", True)
+            # Arm the register-hijack for this battle's first random call.
+            if _seed_override is not None:
+                _ensure_hijack_bp().enabled = True
             return False
 
     class RandomFinish(gdb.FinishBreakpoint):
@@ -588,9 +668,9 @@ if _IN_GDB:
         def stop(self):
             if _run is None or _run.done:
                 return False
-            if gdb.convenience_variable("new_seed") and _seed_override is not None:
-                gdb.execute(f"set battleSystem->rand = {_seed_override}")
-                gdb.set_convenience_variable("new_seed", False)
+            # Seed injection is handled by the +8 hijack breakpoint, which fires
+            # a few instructions into this same call. Here we only set up roll
+            # collection for the call's return value.
             RandomFinish(gdb.selected_frame())
             return False
 
