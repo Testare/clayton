@@ -395,16 +395,14 @@ def _simulate_magikarp_turn(
         move_num = 33 if move_num == 150 else 150
 
     # Check if this SPECIFIC move is prevented.
-    # When Splash is blocked by Gravity, Disable, or Taunt, wild Pokémon AI
-    # auto-switches to Tackle (no "prevented" animation, no lost turn).
-    # Only Taunt against Tackle (status move block) causes a true Prevented.
+    # Taunt/Gravity/Disable only "prevent" Magikarp on the turn they apply; on
+    # subsequent turns they force it to a different usable move (effect_status.md).
+    # Chansey is always slower, so Taunt lands after Magikarp has already moved —
+    # every taunted Magikarp turn is a "subsequent" one, so Splash simply
+    # auto-switches to Tackle (no Prevented, no lost turn), like Gravity/Disable.
     if move_num == 150:
-        if status.taunt_turns > 0:
-            # Taunt blocks Splash outright (Splash is a status move)
-            ctx.raw_emit(Prevented())
-            state.mk_last_move_prevented = True
-            return False
-        if state.gravity_turns > 0 or status.disabled_move == 150:
+        if (state.gravity_turns > 0 or status.disabled_move == 150
+                or status.taunt_turns > 0):
             # Wild AI auto-switches to Tackle when Splash is unavailable
             move_num = 33
     elif move_num == 33:
