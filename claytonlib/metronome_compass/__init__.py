@@ -465,7 +465,6 @@ def _simulate_magikarp_turn(
     state.mk_last_move_prevented = False
     
     if move_num == 33: # Tackle
-        ctx.advance_unobservable(2)  # crit + damage (not observable for opponent)
         # Semi-invulnerable moves (Fly/Dig/Dive/Bounce/Shadow Force): Tackle auto-misses.
         # The hit roll is still consumed; result is overridden to Miss.
         _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
@@ -479,19 +478,29 @@ def _simulate_magikarp_turn(
             effective_acc = 95 * 3 // (3 - net_stage)
         if state.gravity_turns > 0:
             effective_acc = effective_acc * 5 // 3  # Gravity boosts accuracy
+        # Lucky Chant on Chansey's side blocks Magikarp's crits.
+        lucky_chant = state.user_lucky_chant_turns > 0
 
         def rng_to_hit(ctx: BattleContext) -> PathToken:
-            roll = ctx.advance_observable()
+            # Crit and damage rolls always advance (they don't change the advance
+            # count either way), but the crit result is observable ("A critical
+            # hit!") so we must report it for correct path rendering.
+            crit_roll = ctx.advance_observable()
+            ctx.advance_unobservable(1)  # damage roll
+            is_crit = (crit_roll % 16 == 0) and not lucky_chant  # Magikarp crit stage 0
+            hit_roll = ctx.advance_observable()
             if semi_inv:
                 return Miss()  # auto-miss during charge turn
-            return Hit() if roll % 100 < effective_acc else Miss()
+            if hit_roll % 100 < effective_acc:
+                return Crit() if is_crit else Hit()
+            return Miss()
 
         hit_token = ctx.emit(
             rng_to_token=rng_to_hit,
-            question="Tackle hit? (h/-):",
-            input_to_token=lambda s: Hit() if s.strip().lower() == 'h' else Miss(),
+            question="Tackle hit, crit, or miss? (h/!/-):",
+            input_to_token=lambda s: {'h': Hit, '!': Crit, '-': Miss}[s.strip()](),
         )
-        if isinstance(hit_token, Hit):
+        if not isinstance(hit_token, Miss):
             # Tackle damages Chansey → provably not full; clears any prior heal.
             state.user_took_damage = True
             state.user_recovered = False
