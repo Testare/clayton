@@ -2,7 +2,7 @@
 
 HP-recovery moves (Recover, Softboiled, Slack Off, Roost, Heal Order,
 Morning Sun, Moonlight, Synthesis, Milk Drink) succeed only when
-Chansey is not at full HP. Magikarp's Tackle hit sets user_is_full_hp=False,
+Chansey is not at full HP. Magikarp's Tackle hit sets user_took_damage=True,
 allowing recovery to succeed and consume 2 POST_METRONOME_SUCCESS advances.
 
 Ground truth: seedslurper actuals from Metroman2_test_7_vs_15f.jsonl.

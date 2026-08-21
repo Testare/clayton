@@ -1376,24 +1376,51 @@ def _eff_baton_pass(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_splash(ctx: 'BattleContext', move: Move) -> bool:
-    return False  # animation doesn't play; not "successful"
+    # Splash "fails" visually ("But nothing happened!") but still runs the
+    # post-move success routine (+2 advances), so it must report success.
+    return True
+
+
+# --- Chansey HP knowledge (see MetronomeBattleState HP comment) ---------------
+def _hp_full(state) -> bool:
+    """We can prove Chansey is at max HP (never took damage since last full heal)."""
+    return not state.user_took_damage
+
+
+def _hp_unknown(state) -> bool:
+    """Chansey took damage and later used a non-guaranteeing heal — HP unprovable."""
+    return state.user_took_damage and state.user_recovered
+
+
+def _throw_unsupported(ctx: 'BattleContext') -> bool:
+    """End the path here: the move's outcome depends on HP we cannot prove."""
+    ctx.raw_emit(Unsupported())
+    ctx.raw_emit(PathEnd())
+    ctx.battle_state['unsupported'] = True
+    return False
 
 
 def _eff_recovery(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    if state.user_is_full_hp:
-        return False
-    state.user_is_full_hp = True
+    if _hp_full(state):
+        return False                       # at full HP → recovery fails (known)
+    if _hp_unknown(state):
+        return _throw_unsupported(ctx)      # can't prove full-or-not → end path
+    state.user_recovered = True             # NOT_FULL → succeeds, heals unknown amount
     return True
 
 
 def _eff_rest(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    if state.user_is_full_hp:
-        return False
-    state.user_is_full_hp = True
+    if _hp_full(state):
+        return False                       # at full HP → Rest fails (known)
+    if _hp_unknown(state):
+        return _throw_unsupported(ctx)
+    # NOT_FULL → succeeds. Rest fully restores HP, so HP is provably full again.
+    state.user_took_damage = False
+    state.user_recovered = False
     state.user_sleep_turns = 2  # Chansey can't act for the next 2 turns
     return True
 
@@ -1626,19 +1653,27 @@ def _eff_ingrain(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_substitute(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    if not state.user_is_full_hp or state.user_substitute:
-        return False
+    # Effect 79 (notes/refined/effects.md): only proceed when we can PROVE full HP
+    # and there is no substitute yet. A second substitute, or any non-full/unknown
+    # HP state, is unsupported (we can't tell whether it succeeded).
+    if state.user_substitute or not _hp_full(state):
+        return _throw_unsupported(ctx)
     state.user_substitute = True
-    state.user_is_full_hp = False
+    state.user_took_damage = True   # spends 1/4 max HP → provably not full
+    state.user_recovered = False
     return True
 
 
 def _eff_belly_drum(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    if not state.user_is_full_hp:
-        return False
-    state.user_is_full_hp = False
+    # Effect 142 (notes/refined/effects.md): Belly Drum fails only if losing half
+    # of max HP would faint the user. We can only prove that won't happen when HP
+    # is provably full; otherwise the outcome depends on HP we can't track.
+    if not _hp_full(state):
+        return _throw_unsupported(ctx)
+    state.user_took_damage = True   # spends half max HP → provably not full
+    state.user_recovered = False
     state.user_atk_stage = 6  # Belly Drum maxes out Attack
     return True
 
@@ -1658,7 +1693,8 @@ def _eff_swallow(ctx: 'BattleContext', move: Move) -> bool:
     if state.user_stockpile == 0:
         return False
     state.user_stockpile = 0
-    state.user_is_full_hp = True
+    if state.user_took_damage:
+        state.user_recovered = True   # heals an unknown (stockpile-proportional) amount
     return True
 
 
@@ -1676,7 +1712,10 @@ def _eff_defog(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_pain_split(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    state.user_is_full_hp = False  # user HP equalizes, no longer full
+    # Pain Split averages HP with Magikarp, whose HP is far lower, so Chansey
+    # drops well below max → provably not full.
+    state.user_took_damage = True
+    state.user_recovered = False
     return True
 
 

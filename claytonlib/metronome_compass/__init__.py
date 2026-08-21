@@ -373,7 +373,9 @@ def _simulate_magikarp_turn(
         ctx.advance_unobservable(2)  # crit + damage (unobservable for opponent)
         if state.user_locked_effect in _SEMI_INVULNERABLE:
             return False  # Struggle auto-misses; no observable hit token (bypasses accuracy)
-        state.user_is_full_hp = False  # Struggle deals recoil damage to Magikarp and damages Chansey
+        # Struggle recoil damages Chansey → provably not full; clears any prior heal.
+        state.user_took_damage = True
+        state.user_recovered = False
         return True
 
     # Has useable moves: resolve the selected one.
@@ -475,7 +477,9 @@ def _simulate_magikarp_turn(
             input_to_token=lambda s: Hit() if s.strip().lower() == 'h' else Miss(),
         )
         if isinstance(hit_token, Hit):
-            state.user_is_full_hp = False  # Tackle damage reduces Chansey's HP
+            # Tackle damages Chansey → provably not full; clears any prior heal.
+            state.user_took_damage = True
+            state.user_recovered = False
             return True
         return False
 

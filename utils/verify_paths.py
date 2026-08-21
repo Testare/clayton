@@ -176,7 +176,14 @@ def main():
                 tag = "FAINT" if v == 0 else f"FAINT (kept verification={v})"
                 print(f"{seed_key}: {tag}   missing={missing}")
             else:
-                print(f"{seed_key}: FAIL     missing={missing}")
+                # Report the last move that DID match before the first missing
+                # one — that move (its resolution) is the usual culprit for the
+                # RNG-advance desync that makes everything after it diverge.
+                missing_set = set(missing)
+                fm_idx = next(i for i, m in enumerate(moves) if m in missing_set)
+                first_missing = moves[fm_idx]
+                last_ok = moves[fm_idx - 1] if fm_idx > 0 else "(none — diverges at first move)"
+                print(f"{seed_key}: FAIL     last_ok={last_ok!r}  first_missing={first_missing!r}  missing={missing}")
                 unverified.append(seed_key)
                 if interactive:
                     if not show_failure(seed_key, entry, messages, missing):

@@ -261,8 +261,17 @@ class MetronomeBattleState:
     target_accuracy_stage: int = 0
     user_crit_stage: int = 0
 
-    # User (Chansey) status
-    user_is_full_hp: bool = True      # simplified HP tracking for recovery-move failures
+    # User (Chansey) HP knowledge — we cannot track exact HP, only what we can
+    # prove. `user_took_damage` becomes True the moment Chansey is hit; taking
+    # damage also clears `user_recovered` (we KNOW she is below max right then).
+    # `user_recovered` is set by non-guaranteeing heals (Recover/Swallow) which
+    # may or may not have topped her off. The three provable states are:
+    #   FULL      : not took_damage                  (never hurt → at max)
+    #   NOT_FULL  : took_damage and not recovered     (hurt, no heal since)
+    #   UNKNOWN   : took_damage and recovered         (hurt then healed by ??)
+    # Moves whose success depends on HP must throw Unsupported in UNKNOWN.
+    user_took_damage: bool = False
+    user_recovered: bool = False
     user_focus_energy: bool = False
     user_sleep_turns: int = 0         # Rest: turns remaining where Chansey can't act
     user_confusion_turns: int = 0     # Rampage end: turns remaining where Chansey may hurt itself
