@@ -156,11 +156,31 @@ def main():
         missing  = [m for m in moves if not _move_pattern(m).search(all_text)]
 
         if missing:
-            print(f"{seed_key}: FAIL     missing={missing}")
-            unverified.append(seed_key)
-            if interactive:
-                if not show_failure(seed_key, entry, messages, missing):
-                    break
+            v = entry["verification"]
+            is_clean_early_faint = False
+            faint_idx = next((i for i, m in enumerate(messages) if "fainted" in m), None)
+            if faint_idx is not None:
+                pre_faint = messages[:faint_idx]
+                pre_faint_text = "\n".join(pre_faint)
+                found_flags = [bool(_move_pattern(move).search(pre_faint_text)) for move in moves]
+                first_miss = next((i for i, f in enumerate(found_flags) if not f), len(moves))
+                has_gap = any(found_flags[first_miss:])
+                metronome_uses = sum(1 for m in pre_faint if "Metronome!" in m)
+                # Clean early faint: confirmed moves form a gapless prefix AND
+                # the Metronome use count matches exactly (no extra turns we can't account for).
+                is_clean_early_faint = not has_gap and metronome_uses == first_miss
+
+            if is_clean_early_faint:
+                if v == 0:
+                    entry["verification"] = 2
+                tag = "FAINT" if v == 0 else f"FAINT (kept verification={v})"
+                print(f"{seed_key}: {tag}   missing={missing}")
+            else:
+                print(f"{seed_key}: FAIL     missing={missing}")
+                unverified.append(seed_key)
+                if interactive:
+                    if not show_failure(seed_key, entry, messages, missing):
+                        break
         else:
             v = entry["verification"]
             if v == 0:
