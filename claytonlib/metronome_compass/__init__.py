@@ -556,12 +556,18 @@ def precompute_path(
     seed: int,
     magikarp_level: int,
     opposite_gender: bool,
-    known_moves: tuple[int, ...] = (),
+    moveset: tuple[int, ...] = (),
     n_turns: int = 10,
 ) -> BattlePath:
-    """Pre-compute the battle path for a single seed."""
+    """Pre-compute the battle path for a single seed.
+
+    `moveset` is the Metronome user's non-Metronome movepool (move numbers).
+    It affects two things: Metronome re-rolls whenever it would call a move in
+    the movepool, and Conversion 2's success (it fails while every movepool move,
+    including Metronome, is Normal-type). Defaults to Metronome-only.
+    """
     moves_by_num = _moves_by_number()
-    known = frozenset(known_moves)
+    known = frozenset(moveset)
     ctx = RngContext(seed)
     state = MetronomeBattleState()
     # Wire the known Magikarp level into OHKO handling (fails when user < target;
@@ -570,10 +576,10 @@ def precompute_path(
     state.target_level = magikarp_level
     ctx.battle_state['opposite_gender'] = opposite_gender
     ctx.battle_state['state'] = state
-    # Build move-type list for Conversion (Metronome + all other known moves)
+    # Build move-type list for Conversion 2 (Metronome + the rest of the movepool)
     metronome = moves_by_num[118]
     user_move_types = [metronome.type_name]
-    for num in known_moves:
+    for num in moveset:
         m = moves_by_num.get(num)
         if m is not None:
             user_move_types.append(m.type_name)

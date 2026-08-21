@@ -1274,13 +1274,17 @@ def _eff_yawn(ctx: 'BattleContext', move: Move) -> bool:
 # Beat Up (Effect 154) — simplified: assume 6-member party
 # ---------------------------------------------------------------------------
 
+_BEAT_UP_PARTY_SIZE = 6  # P0 assumption: the player's party is always full
+
+
 def _eff_beat_up(ctx: 'BattleContext', move: Move) -> bool:
+    # First attacker (the user): crit/damage/hit + two "attack successful" rolls.
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.advance_unobservable(2)  # successful-move rolls for main pokemon
-    # 5 additional party members: crit + damage each (no hit check) + success rolls
-    for _ in range(5):
+    ctx.advance_unobservable(2)  # successful-move rolls for the first attacker
+    # Each remaining party member: crit + damage (no hit check) + success rolls.
+    for _ in range(_BEAT_UP_PARTY_SIZE - 1):
         ctx.advance_unobservable(2)  # crit + damage
         ctx.advance_unobservable(2)  # successful-move rolls
     return True
@@ -2222,6 +2226,14 @@ def _eff_bide(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_conversion2(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
+
+    # Conversion 2 fails outright if every move in the user's movepool is
+    # Normal-type — there is nothing to convert toward. With the default
+    # Metronome-only moveset this always holds, so it always fails. Pass a real
+    # moveset to precompute_path to exercise the success path.
+    move_types = ctx.battle_state.get('user_move_types', ['Normal'])
+    if all(t == 'Normal' for t in move_types):
+        return False
 
     if not state.user_was_hit:
         return False  # Not hit by Normal-type attack since switch-in or last use
