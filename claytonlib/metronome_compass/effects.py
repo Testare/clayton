@@ -1148,10 +1148,21 @@ def _eff_present(ctx: 'BattleContext', move: Move) -> bool:
         input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
     )
     if not isinstance(mode_token, Miss):
+        # Damage mode: standard crit/damage/hit.
         hit_token = ctx.hit_crit_or_miss(move.accuracy)
         return not isinstance(hit_token, Miss)
-    else:
-        return _hit_check(ctx, move)
+    # Heal mode: hit check, then heal Magikarp. Like our recovery moves, this
+    # fails when the target is provably at full HP; when its HP is unprovable
+    # (only reachable via a prior Present heal) we must end the path.
+    state = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False
+    if not state.mk_took_damage:
+        return False                       # target at full HP → heal fails
+    if state.mk_recovered:
+        return _throw_unsupported(ctx)      # HP unprovable (2nd consecutive Present)
+    state.mk_recovered = True               # heals unknown amount
+    return True
 
 
 # ---------------------------------------------------------------------------

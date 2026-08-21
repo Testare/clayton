@@ -296,6 +296,11 @@ class MetronomeBattleState:
     user_was_hit: bool = False
     # Metal Burst prerequisite: Chansey took damage THIS turn (reset each turn)
     user_hit_this_turn: bool = False
+    # Magikarp HP knowledge (mirror of the Chansey flags), for Present's heal
+    # branch which fails at full HP. Only Present heals Magikarp, so UNKNOWN is
+    # only reachable via two consecutive Presents.
+    mk_took_damage: bool = False
+    mk_recovered: bool = False
 
     # Future Sight / Doom Desire counter
     future_sight_turns: int = 0             # turns until Future Sight fires (0 = inactive)

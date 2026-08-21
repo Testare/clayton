@@ -203,11 +203,17 @@ class BattleContext(ABC):
                 return Miss()
             return Crit() if is_crit else Hit()
 
-        return self.emit(
+        token = self.emit(
             rng_to_token=rng_to_token,
             question="Hit, crit, or miss? (h/!/-):",
             input_to_token=lambda s: {'h': Hit, '!': Crit, '-': Miss}[s.strip()](),
         )
+        # A landed damaging move (only damaging moves use hit_crit_or_miss) means
+        # Magikarp took damage → provably not at full HP (clears any prior heal).
+        if state is not None and not isinstance(token, Miss):
+            state.mk_took_damage = True
+            state.mk_recovered = False
+        return token
 
     def effect_proc(self, chance: int, apply: Callable[[], bool] | None = None) -> bool:
         """Roll/ask whether a secondary effect proc'd. Emits EffectProc if observable.
