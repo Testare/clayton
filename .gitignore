@@ -30,4 +30,3 @@ data/
 .dolt/
 *.db
 .beads-credential-key
-metronome_seeds/

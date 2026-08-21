@@ -282,6 +282,8 @@ SWITCH_OUT_SUBSTRS = ("went back\nto", "Baton Pass!")
 # Metronome user rolled Whirlwind/Roar -> wild Magikarp forced out. 100% accuracy
 # and no evasion supported, so the 'used' message reliably marks the end.
 FORCE_OUT_SUBSTRS = ("Whirlwind!", "Roar!")
+# Metronome user rolled Teleport -> flees the battle.
+TELEPORT_SUBSTR = "fled from\nbattle!"
 
 # The input prompt is drawn twice per turn, sometimes with one stray roll (a
 # '??' frame) between the two draws. Real turns have many rolls between prompts,
@@ -345,7 +347,11 @@ class Collector:
         if any(s in msg for s in SWITCH_OUT_SUBSTRS):
             self._end("user_switched_out")
             return
-        # (5) Magikarp forced out (Whirlwind / Roar)
+        # (5) user fled via Teleport
+        if TELEPORT_SUBSTR in msg:
+            self._end("user_teleported")
+            return
+        # (6) Magikarp forced out (Whirlwind / Roar)
         if any(s in msg for s in FORCE_OUT_SUBSTRS):
             self._end("magikarp_forced_out")
 
