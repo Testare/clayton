@@ -328,6 +328,14 @@ def _eff_high_crit(ctx: 'BattleContext', move: Move) -> bool:
     return not isinstance(token, Miss)
 
 
+def _eff_nature_power(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 173: vs Magikarp, Nature Power always becomes Hydro Pump and runs
+    its crit/damage/hit rolls (notes/refined/effects.md). Nature Power's own
+    accuracy is 0 (which would skip the hit roll), so use Hydro Pump's 80."""
+    token = ctx.hit_crit_or_miss(80)  # Hydro Pump accuracy
+    return not isinstance(token, Miss)
+
+
 # ---------------------------------------------------------------------------
 # Group 2: Damage + one observable secondary effect proc
 # ---------------------------------------------------------------------------
@@ -1142,7 +1150,9 @@ def _eff_blizzard(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_fake_out(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    if state.turn_number == 1:
+    # turn_number is 0-indexed and incremented at end of turn, so Chansey's very
+    # first turn in battle (the only turn Fake Out works) is turn 0.
+    if state.turn_number == 0:
         token = ctx.hit_crit_or_miss(move.accuracy)
         if isinstance(token, Miss):
             return False
@@ -1769,6 +1779,18 @@ def _eff_worry_seed(ctx: 'BattleContext', move: Move) -> bool:
 # Moves with only a hit check and no observable secondary (stat changes, etc.)
 def _eff_hit_only(ctx: 'BattleContext', move: Move) -> bool:
     return _hit_check(ctx, move)
+
+
+def _eff_metal_burst(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 227 (notes/refined/effects.md): hit check always runs, but the move
+    fails if the user took no damage this turn (Chansey moves second, so this is
+    whether Magikarp hit her this turn)."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    hit = _hit_check(ctx, move)
+    if not state.user_hit_this_turn:
+        return False
+    return hit
 
 
 def _eff_hit_then_fail(ctx: 'BattleContext', move: Move) -> bool:
@@ -2439,7 +2461,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     149: _eff_damage,        # Gust
     169: _eff_damage,        # Facade
     171: _eff_smelling_salt, # Smelling Salt (cures paralysis on hit)
-    173: _eff_damage,        # Nature Power (Hydro Pump)
+    173: _eff_nature_power,   # Nature Power -> Hydro Pump (crit/damage/hit at acc 80)
     182: _eff_damage,        # Superpower
     185: _eff_damage,        # Revenge / Avalanche
     186: _eff_damage,        # Brick Break
@@ -2572,7 +2594,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     168: _eff_memento,
     205: _eff_tickle,    # Tickle (opp atk -1, opp def -1, tracked)
     222: _eff_hit_then_fail,  # Natural Gift (fails with lagging tail — hit check still done)
-    227: _eff_hit_only,  # Metal Burst (hit check; fails if no dmg taken — simplified)
+    227: _eff_metal_burst,  # Metal Burst (hit check; fails if no dmg taken — simplified)
     232: _eff_embargo,
     234: _eff_hit_then_fail,  # Psycho Shift (no status to transfer)
     236: _eff_heal_block,

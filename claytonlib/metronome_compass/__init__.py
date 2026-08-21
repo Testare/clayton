@@ -104,6 +104,8 @@ def simulate_turn(
     """Simulate one full battle turn and return its token tuple."""
     from .effects import simulate_move_execution, simulate_locked_continuation, _apply_confusion, _apply_user_confusion
 
+    state.user_hit_this_turn = False  # reset per-turn damage flag (Metal Burst)
+
     # 1. Magikarp move selection.
     # Under Encore, Magikarp repeats its last move without a random selection roll.
     mk_can_move = _magikarp_has_useable_moves(state, magikarp_level)
@@ -124,6 +126,7 @@ def simulate_turn(
     # Track whether Magikarp hit Chansey (needed before player's Bide/Conversion2)
     if mk_success and (state.mk_last_move == 33 or state.mk_last_move is None):
         state.user_was_hit = True
+        state.user_hit_this_turn = True
         if state.user_locked_effect == 26:
             state.user_bide_triggered = True
 

@@ -294,6 +294,8 @@ class MetronomeBattleState:
 
     # Conversion 2 prerequisite: Magikarp hit with Tackle/Struggle since switch-in or last C2 use
     user_was_hit: bool = False
+    # Metal Burst prerequisite: Chansey took damage THIS turn (reset each turn)
+    user_hit_this_turn: bool = False
 
     # Future Sight / Doom Desire counter
     future_sight_turns: int = 0             # turns until Future Sight fires (0 = inactive)
