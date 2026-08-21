@@ -468,6 +468,8 @@ def _simulate_magikarp_turn(
             effective_acc = 95 * (3 + net_stage) // 3
         else:
             effective_acc = 95 * 3 // (3 - net_stage)
+        if state.gravity_turns > 0:
+            effective_acc = effective_acc * 5 // 3  # Gravity boosts accuracy
 
         def rng_to_hit(ctx: BattleContext) -> PathToken:
             roll = ctx.advance_observable()
