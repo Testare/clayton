@@ -102,12 +102,13 @@ def simulate_turn(
     magikarp_level: int,
 ) -> Turn:
     """Simulate one full battle turn and return its token tuple."""
-    from .effects import simulate_move_execution, simulate_locked_continuation, _apply_confusion
+    from .effects import simulate_move_execution, simulate_locked_continuation, _apply_confusion, _apply_user_confusion
 
-    # 1. Magikarp move selection (always one roll, even for level < 15)
+    # 1. Magikarp move selection.
+    # Under Encore, Magikarp repeats its last move without a random selection roll.
     mk_can_move = _magikarp_has_useable_moves(state, magikarp_level)
     mk_move_roll = None
-    if mk_can_move:
+    if mk_can_move and state.mk_encore_turns == 0:
         mk_move_roll = ctx.consume_observable_roll()
 
     # 2. BeforeTurn checks
@@ -135,13 +136,69 @@ def simulate_turn(
         state.user_sleep_turns -= 1
         _pre_locked_effect = None
         move_success = False  # no move executed
+    elif state.user_recharging:
+        # Hyper Beam / recharge: Chansey must recharge, no move executed
+        state.user_recharging = False
+        _pre_locked_effect = None
+        move_success = False
     elif state.user_locked_turns > 0:
         state.user_locked_turns -= 1
         _pre_locked_effect = state.user_locked_effect
         locked_move = moves_by_num[state.user_locked_move_num]
-        move_success = simulate_locked_continuation(ctx, state, locked_move)
-        if ctx.battle_state.get('unsupported'):
-            return ctx.end_turn()
+        # Confusion check also happens during locked turns — but only while still confused.
+        # When the last confused turn expires (confusion_turns 1→0), confusion snaps out
+        # immediately (no check roll; the move still executes normally).
+        if state.user_confusion_turns > 1:
+            state.user_confusion_turns -= 1
+            def _cfz_locked(c: BattleContext) -> PathToken:
+                roll = c.advance_observable()
+                return CFZ() if (roll & 1) == 0 else None  # type: ignore[return-value]
+            hurt_self = ctx.emit(
+                rng_to_token=_cfz_locked,
+                question="Chansey hurt itself in confusion? (y/n):",
+                input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
+            )
+            if isinstance(hurt_self, CFZ):
+                ctx.advance_unobservable(1)
+                move_success = False
+            else:
+                move_success = simulate_locked_continuation(ctx, state, locked_move)
+                if ctx.battle_state.get('unsupported'):
+                    return ctx.end_turn()
+        elif state.user_confusion_turns == 1:
+            # Last confused turn: snaps out automatically, no check roll.
+            state.user_confusion_turns = 0
+            ctx.raw_emit(SCFZ())
+            move_success = simulate_locked_continuation(ctx, state, locked_move)
+            if ctx.battle_state.get('unsupported'):
+                return ctx.end_turn()
+        else:
+            move_success = simulate_locked_continuation(ctx, state, locked_move)
+            if ctx.battle_state.get('unsupported'):
+                return ctx.end_turn()
+    elif state.user_confusion_turns > 0:
+        # Chansey is confused (from rampage end): may hurt itself instead of acting.
+        # 1 observable advance for the confusion check; if confusing, 1 more for self-damage.
+        state.user_confusion_turns -= 1
+        _pre_locked_effect = None
+        def _cfz_check(c: BattleContext) -> PathToken:
+            roll = c.advance_observable()
+            return CFZ() if (roll & 1) == 0 else None  # type: ignore[return-value]
+        hurt_self = ctx.emit(
+            rng_to_token=_cfz_check,
+            question="Chansey hurt itself in confusion? (y/n):",
+            input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
+        )
+        if isinstance(hurt_self, CFZ):
+            ctx.advance_unobservable(1)  # self-hit damage roll
+            move_success = False
+        else:
+            if state.user_confusion_turns == 0:
+                ctx.raw_emit(SCFZ())
+            move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
+            move_success = simulate_move_execution(ctx, move)
+            if ctx.battle_state.get('unsupported'):
+                return ctx.end_turn()
     else:
         _pre_locked_effect = None
         move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
@@ -154,7 +211,21 @@ def simulate_turn(
         ctx.advance_unobservable(_POST_METRONOME_SUCCESS_ADVANCES)
 
     # 9. End of turn maintenance
-    ctx.advance_unobservable(_END_OF_TURN_ADVANCES)
+    # First half of end-of-turn advances, then rampage confusion, then second half.
+    # The confusion roll lands between END[1] and END[2] in the actual game.
+    _HALF_END = _END_OF_TURN_ADVANCES // 2
+    ctx.advance_unobservable(_HALF_END)
+
+    # Thrash/Outrage/Petal Dance: confusion applied when rampage ends (between END halves)
+    if (_pre_locked_effect == 27
+            and state.user_locked_turns == 0
+            and state.user_locked_move_num is not None):
+        ctx.raw_emit(RampageEnd())
+        _apply_user_confusion(ctx)
+        state.user_locked_move_num = None
+        state.user_locked_effect = None
+
+    ctx.advance_unobservable(_END_OF_TURN_ADVANCES - _HALF_END)
 
     state.turn_number += 1
 
@@ -210,15 +281,10 @@ def simulate_turn(
         state.user_magnet_rise_turns -= 1
     if state.user_lock_on_turns > 0:
         state.user_lock_on_turns -= 1
-
-    # Thrash/Outrage/Petal Dance: confusion applied when rampage ends
-    if (_pre_locked_effect == 27
-            and state.user_locked_turns == 0
-            and state.user_locked_move_num is not None):
-        ctx.raw_emit(RampageEnd())
-        _apply_confusion(ctx)
-        state.user_locked_move_num = None
-        state.user_locked_effect = None
+    if state.mk_encore_turns > 0:
+        state.mk_encore_turns -= 1
+        if state.mk_encore_turns == 0:
+            ctx.raw_emit(StatusEnd("ENC"))
 
     # Future Sight / Doom Desire: tick counter; fire observable hit check when it reaches 0
     if state.future_sight_turns > 0:
@@ -307,25 +373,40 @@ def _simulate_magikarp_turn(
         ctx.advance_unobservable(2)  # crit + damage (unobservable for opponent)
         if state.user_locked_effect in _SEMI_INVULNERABLE:
             return False  # Struggle auto-misses; no observable hit token (bypasses accuracy)
+        state.user_is_full_hp = False  # Struggle deals recoil damage to Magikarp and damages Chansey
         return True
 
-    # Has useable moves: resolve the selected one
-    selected_move = ctx.magikarp_move_select(level, mk_move_roll)
-    move_num = 150 if selected_move.move == 'sp' else 33
-    
-    # Check if this SPECIFIC move is prevented
-    is_prevented = False
+    # Has useable moves: resolve the selected one.
+    # Under Encore, Magikarp repeats its last move (no random selection roll used).
+    if state.mk_encore_turns > 0 and state.mk_last_move is not None:
+        move_num = state.mk_last_move
+        ctx.raw_emit(MagikarpMove("sp" if move_num == 150 else "tk"))
+    else:
+        selected_move = ctx.magikarp_move_select(level, mk_move_roll)
+        move_num = 150 if selected_move.move == 'sp' else 33
+
+    # Torment: Magikarp cannot use the same move as last turn; auto-switches.
+    if state.mk_tormented and move_num == state.mk_last_move:
+        move_num = 33 if move_num == 150 else 150
+
+    # Check if this SPECIFIC move is prevented.
+    # When Splash is blocked by Gravity, Disable, or Taunt, wild Pokémon AI
+    # auto-switches to Tackle (no "prevented" animation, no lost turn).
+    # Only Taunt against Tackle (status move block) causes a true Prevented.
     if move_num == 150:
-        if state.gravity_turns > 0 or status.taunt_turns > 0 or status.disabled_move == 150:
-            is_prevented = True
+        if status.taunt_turns > 0:
+            # Taunt blocks Splash outright (Splash is a status move)
+            ctx.raw_emit(Prevented())
+            state.mk_last_move_prevented = True
+            return False
+        if state.gravity_turns > 0 or status.disabled_move == 150:
+            # Wild AI auto-switches to Tackle when Splash is unavailable
+            move_num = 33
     elif move_num == 33:
         if status.disabled_move == 33:
-            is_prevented = True
-            
-    if is_prevented:
-        ctx.raw_emit(Prevented())
-        state.mk_last_move_prevented = True
-        return False
+            ctx.raw_emit(Prevented())
+            state.mk_last_move_prevented = True
+            return False
 
     # Confusion
     if status.confusion_turns > 0:
@@ -375,19 +456,28 @@ def _simulate_magikarp_turn(
         # The hit roll is still consumed; result is overridden to Miss.
         _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
         semi_inv = state.user_locked_effect in _SEMI_INVULNERABLE
+        # Tackle accuracy is 95; account for Chansey's evasion stage (e.g. from Double Team).
+        net_stage = max(-6, min(6, -state.user_evasion_stage))
+        if net_stage >= 0:
+            effective_acc = 95 * (3 + net_stage) // 3
+        else:
+            effective_acc = 95 * 3 // (3 - net_stage)
 
         def rng_to_hit(ctx: BattleContext) -> PathToken:
             roll = ctx.advance_observable()
             if semi_inv:
                 return Miss()  # auto-miss during charge turn
-            return Hit() if roll % 100 < 95 else Miss()
+            return Hit() if roll % 100 < effective_acc else Miss()
 
         hit_token = ctx.emit(
             rng_to_token=rng_to_hit,
             question="Tackle hit? (h/-):",
             input_to_token=lambda s: Hit() if s.strip().lower() == 'h' else Miss(),
         )
-        return isinstance(hit_token, Hit)
+        if isinstance(hit_token, Hit):
+            state.user_is_full_hp = False  # Tackle damage reduces Chansey's HP
+            return True
+        return False
 
     # Splash always succeeds (triggers post-success rolls)
     return True

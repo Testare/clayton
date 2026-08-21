@@ -265,6 +265,7 @@ class MetronomeBattleState:
     user_is_full_hp: bool = True      # simplified HP tracking for recovery-move failures
     user_focus_energy: bool = False
     user_sleep_turns: int = 0         # Rest: turns remaining where Chansey can't act
+    user_confusion_turns: int = 0     # Rampage end: turns remaining where Chansey may hurt itself
     user_lock_on_turns: int = 0       # Mind Reader/Lock-On: guaranteed-hit turns remaining
     user_aqua_ring: bool = False
     user_ingrained: bool = False
@@ -304,6 +305,7 @@ class MetronomeBattleState:
     mk_seeded: bool = False           # Leech Seed
     mk_blocked: bool = False          # Spider Web / Mean Look
     mk_tormented: bool = False        # Torment
+    mk_encore_turns: int = 0         # Encore: turns remaining where Magikarp must repeat last move
     mk_drowsy_turns: int = 0          # Yawn: 2→1 then applies sleep
     mk_nightmare: bool = False
     mk_embargo: bool = False

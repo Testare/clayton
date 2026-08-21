@@ -178,7 +178,7 @@ def _emit_path_end(ctx: 'BattleContext') -> None:
 
 
 def _apply_confusion(ctx: 'BattleContext') -> None:
-    """Roll/record confusion duration and store in Magikarp status."""
+    """Roll/record Magikarp confusion duration (from confuse-hitting moves)."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
 
@@ -191,6 +191,23 @@ def _apply_confusion(ctx: 'BattleContext') -> None:
         input_to_token=lambda s: int(s.strip()),
     )
     state.mk_status.confusion_turns = int(duration)
+
+
+def _apply_user_confusion(ctx: 'BattleContext') -> None:
+    """Roll/record Chansey confusion duration (from rampage end).
+    Gen IV formula: 1 + (roll % 4), giving 1-4 turns."""
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+
+    def rng_to_duration(c: 'BattleContext') -> int:
+        return 1 + (c.advance_observable() % 4)
+
+    duration = ctx.emit(
+        rng_to_token=rng_to_duration,
+        question="Confusion duration? (1-4):",
+        input_to_token=lambda s: int(s.strip()),
+    )
+    state.user_confusion_turns = int(duration)
 
 
 # ---------------------------------------------------------------------------
@@ -691,11 +708,15 @@ def _eff_encore(ctx: 'BattleContext', move: Move) -> bool:
     def rng_to_duration(c: 'BattleContext') -> int:
         return 3 + (c.advance_observable() % 4)
 
-    ctx.emit(
+    duration = ctx.emit(
         rng_to_token=rng_to_duration,
         question="Encore duration? (3-6):",
         input_to_token=lambda s: int(s.strip()),
     )
+    # +2: one for the end-of-turn decrement on the turn Encore is applied, plus one
+    # more because the game uses the duration for subsequent turns (not counting the
+    # current turn). E.g. duration=3 → Magikarp is Encored on turns t+1, t+2, t+3, t+4.
+    state.mk_encore_turns = int(duration) + 2
     return True
 
 
@@ -796,6 +817,12 @@ def _eff_multi_hit(ctx: 'BattleContext', move: Move) -> bool:
     if isinstance(first_token, Miss):
         return False
 
+    # 2 unobservable between-hit advances after first hit (before subsequent hits).
+    # These are consumed after every non-last hit; after the last hit they become
+    # POST_METRONOME_SUCCESS (consumed by simulate_turn, not here).
+    if hit_count > 1:
+        ctx.advance_unobservable(2)
+
     # Subsequent hits: crit + damage only (no miss check).
     # Each hit is its own observable token (Crit or Hit) because Magikarp may
     # faint mid-sequence, making the total count unobservable.
@@ -832,6 +859,9 @@ def _eff_multi_hit(ctx: 'BattleContext', move: Move) -> bool:
         )
         if token is None:
             break
+        # 2 between-hit advances after each non-last subsequent hit.
+        if hits_done[0] < hit_count - 1:
+            ctx.advance_unobservable(2)
 
     return True
 
@@ -1276,7 +1306,8 @@ def _eff_spit_up(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_captivate(ctx: 'BattleContext', move: Move) -> bool:
     if not ctx.battle_state.get('opposite_gender', False):
-        return False  # fails without a hit check
+        ctx.advance_unobservable(1)  # hit check is still rolled even on gender failure
+        return False
     return _hit_check(ctx, move)
 
 
@@ -2153,6 +2184,19 @@ def _eff_solar_beam(ctx: 'BattleContext', move: Move) -> bool:
 # Uproar (159): turn 1 C/D/H + duration roll; continuation C/D/H; no early exit on miss
 # ---------------------------------------------------------------------------
 
+def _clear_confusion_on_rampage_lock(ctx: 'BattleContext', state) -> None:
+    """A rampage move (Thrash/Outrage/Petal Dance/Uproar) selected while the user
+    is already confused snaps the user out of confusion as the lock is established.
+    Empirically (ground-truth seed 0x9266B0CF: Thrash confuses Chansey, then
+    Metronome rolls Uproar while still confused) this consumes 2 unobservable
+    advances beyond the duration roll and ends the confusion for the remaining
+    locked turns. Guarded on user_confusion_turns so single-rampage cases are
+    unaffected."""
+    if state.user_confusion_turns > 0:
+        ctx.advance_unobservable(2)
+        state.user_confusion_turns = 0
+
+
 def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
@@ -2169,6 +2213,7 @@ def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
     state.user_locked_turns = int(total_turns) - 1
+    _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
 
@@ -2188,6 +2233,7 @@ def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
     state.user_locked_turns = int(extra_turns)
+    _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
 
