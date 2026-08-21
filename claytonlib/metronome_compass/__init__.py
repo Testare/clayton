@@ -461,8 +461,9 @@ def _simulate_magikarp_turn(
         # The hit roll is still consumed; result is overridden to Miss.
         _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
         semi_inv = state.user_locked_effect in _SEMI_INVULNERABLE
-        # Tackle accuracy is 95; account for Chansey's evasion stage (e.g. from Double Team).
-        net_stage = max(-6, min(6, -state.user_evasion_stage))
+        # Tackle accuracy is 95, modified by Magikarp's own accuracy stage (lowered
+        # by Mud-Slap/Octazooka/etc.) minus Chansey's evasion stage (Double Team).
+        net_stage = max(-6, min(6, state.target_accuracy_stage - state.user_evasion_stage))
         if net_stage >= 0:
             effective_acc = 95 * (3 + net_stage) // 3
         else:
