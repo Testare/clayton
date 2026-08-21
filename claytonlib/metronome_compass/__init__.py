@@ -230,6 +230,15 @@ def simulate_turn(
 
     ctx.advance_unobservable(_END_OF_TURN_ADVANCES - _HALF_END)
 
+    # End-of-turn residual damage to Magikarp (poison/burn status, or sandstorm/
+    # hail weather — Magikarp is Water so it's hit by both) leaves it below full
+    # HP. This doesn't consume tracked RNG here, but it matters for Present's
+    # heal branch, which fails only when the target is provably at full HP.
+    if (state.mk_status.status in (NonVolatileStatus.POISON, NonVolatileStatus.BURN)
+            or state.weather in ('sand', 'hail')):
+        state.mk_took_damage = True
+        state.mk_recovered = False
+
     state.turn_number += 1
 
     # Binding damage / release

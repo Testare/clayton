@@ -344,6 +344,21 @@ def _mark_user_recoil(ctx: 'BattleContext') -> None:
     state.user_recovered = False
 
 
+def _mark_mk_damaged(state) -> None:
+    """Magikarp took damage → provably not at full HP (for Present's heal branch)."""
+    state.mk_took_damage = True
+    state.mk_recovered = False
+
+
+def _eff_fixed_damage(ctx: 'BattleContext', move: Move) -> bool:
+    """Fixed-damage moves (Sonic Boom, Dragon Rage, Super Fang): hit check only,
+    no crit/damage rolls, but they still damage Magikarp on hit."""
+    if not _hit_check(ctx, move):
+        return False
+    _mark_mk_damaged(ctx.battle_state['state'])
+    return True
+
+
 def _eff_recoil(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 48/198/269 (Take Down, Double-Edge, Wood Hammer, Head Smash, ...):
     standard damage; on a hit the user takes recoil damage."""
@@ -808,7 +823,10 @@ def _eff_dream_eater(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_seismic_toss(ctx: 'BattleContext', move: Move) -> bool:
-    return _hit_check(ctx, move)
+    if not _hit_check(ctx, move):
+        return False
+    _mark_mk_damaged(ctx.battle_state['state'])  # Seismic Toss / Night Shade deal fixed damage
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +835,10 @@ def _eff_seismic_toss(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_psywave(ctx: 'BattleContext', move: Move) -> bool:
     ctx.advance_unobservable(1)  # special damage roll
-    return _hit_check(ctx, move)
+    if not _hit_check(ctx, move):
+        return False
+    _mark_mk_damaged(ctx.battle_state['state'])
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -2640,8 +2661,8 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     20:  _eff_string_shot, # String Shot (opp spd -1, tracked)
     23:  _eff_lower_target_accuracy,  # Sand Attack / Flash (opp acc -1, tracked)
     24:  _eff_lower_target_evasion,   # Sweet Scent (opp eva -1, tracked)
-    40:  _eff_hit_only,  # Super Fang (half HP)
-    41:  _eff_hit_only,  # Dragon Rage (40 dmg)
+    40:  _eff_fixed_damage, # Super Fang (half HP)
+    41:  _eff_fixed_damage, # Dragon Rage (40 dmg)
     58:  _eff_charm,      # Charm / Feather Dance (opp atk -2, tracked)
     59:  _eff_screech,    # Screech (opp def -2, tracked)
     60:  _eff_scary_face, # Cotton Spore / Scary Face (opp spd -2, tracked)
@@ -2649,7 +2670,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     92:  _eff_hit_then_fail,  # Snore (hit check but always fails — user can't be asleep)
     100: _eff_hit_only,  # Spite
     106: _eff_spider_web,
-    130: _eff_hit_only,  # Sonic Boom (20 dmg)
+    130: _eff_fixed_damage, # Sonic Boom (20 dmg)
     168: _eff_memento,
     205: _eff_tickle,    # Tickle (opp atk -1, opp def -1, tracked)
     222: _eff_hit_then_fail,  # Natural Gift (fails with lagging tail — hit check still done)
