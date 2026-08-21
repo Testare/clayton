@@ -336,6 +336,54 @@ def _eff_nature_power(ctx: 'BattleContext', move: Move) -> bool:
     return not isinstance(token, Miss)
 
 
+def _mark_user_recoil(ctx: 'BattleContext') -> None:
+    """Recoil/crash damage to Chansey → provably not full HP (clears any prior
+    heal). Matters for the HP-knowledge model used by recovery/Belly Drum/etc."""
+    state = ctx.battle_state['state']
+    state.user_took_damage = True
+    state.user_recovered = False
+
+
+def _eff_recoil(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 48/198/269 (Take Down, Double-Edge, Wood Hammer, Head Smash, ...):
+    standard damage; on a hit the user takes recoil damage."""
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    _mark_user_recoil(ctx)
+    return True
+
+
+def _eff_recoil_crash(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 45 (Jump Kick / Hi Jump Kick): no recoil on hit, but on a MISS the
+    user takes crash damage."""
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        _mark_user_recoil(ctx)
+        return False
+    return True
+
+
+def _eff_flare_blitz(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 253 (Flare Blitz): damage + recoil on hit + burn secondary proc."""
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    _mark_user_recoil(ctx)
+    ctx.effect_proc(move.effect_chance, _status_applier(ctx, NonVolatileStatus.BURN))
+    return True
+
+
+def _eff_volt_tackle(ctx: 'BattleContext', move: Move) -> bool:
+    """Effect 262 (Volt Tackle): damage + recoil on hit + paralyze secondary proc."""
+    token = ctx.hit_crit_or_miss(move.accuracy)
+    if isinstance(token, Miss):
+        return False
+    _mark_user_recoil(ctx)
+    ctx.effect_proc(move.effect_chance, _status_applier(ctx, NonVolatileStatus.PARALYZED))
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Group 2: Damage + one observable secondary effect proc
 # ---------------------------------------------------------------------------
@@ -2440,8 +2488,8 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     34:  _eff_damage,        # Pay Day
     43:  _eff_high_crit,     # Karate Chop, Slash, etc.
     44:  _eff_double_hit,    # Double Kick, Bonemerang
-    45:  _eff_damage,        # Jump Kick (user takes recoil on miss, no extra rolls)
-    48:  _eff_damage,        # Take Down / Submission (recoil)
+    45:  _eff_recoil_crash,  # Jump Kick / Hi Jump Kick (crash damage on miss)
+    48:  _eff_recoil,        # Take Down / Submission (recoil on hit)
     78:  _eff_damage,        # Vital Throw (always hits)
     80:  _eff_hyper_beam,    # Hyper Beam / Blast Burn etc.
     81:  _eff_damage,        # Rage
@@ -2468,7 +2516,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     188: _eff_damage,        # Knock Off
     190: _eff_damage,        # Eruption / Water Spout
     196: _eff_damage,        # Low Kick / Grass Knot
-    198: _eff_damage,        # Double Edge / Brave Bird / Wood Hammer (recoil)
+    198: _eff_recoil,        # Double Edge / Brave Bird / Wood Hammer (recoil on hit)
     203: _eff_damage,        # Weather Ball
     207: _eff_damage,        # Sky Uppercut
     217: _eff_wake_up_slap,  # Wake Up Slap (cures sleep on hit)
@@ -2484,7 +2532,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     245: _eff_damage,        # Punishment
     257: _eff_damage,        # Surf
     268: _eff_damage,        # Judgment
-    269: _eff_damage,        # Head Smash (recoil)
+    269: _eff_recoil,        # Head Smash (recoil on hit)
 
     # --- Damage + observable secondary proc ---
     2:   _eff_poison_secondary,        # Poison Sting, Sludge, etc.
@@ -2511,9 +2559,9 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
     202: _eff_poison_secondary,        # Poison Fang (bad poison)
     204: _eff_user_spatk_minus2,       # Overheat / Psycho Boost (user spatk -2, 100%)
     209: _eff_poison_highcrit,         # Poison Tail / Cross Poison (high crit + poison)
-    253: _eff_burn_secondary,          # Flare Blitz (burn)
+    253: _eff_flare_blitz,              # Flare Blitz (recoil on hit + burn)
     260: _eff_blizzard,
-    262: _eff_paralyze_secondary,      # Volt Tackle (paralyze)
+    262: _eff_volt_tackle,              # Volt Tackle (recoil on hit + paralyze)
     271: _eff_target_spdef_minus2,     # Seed Flare (opp spdef -2, cap-checked)
     276: _eff_user_spatk_plus1,        # Charge Beam (user spatk +1, cap-checked)
 
