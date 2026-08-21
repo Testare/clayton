@@ -410,21 +410,23 @@ def _simulate_magikarp_turn(
             state.mk_last_move_prevented = True
             return False
 
-    # Confusion
+    # Confusion. The counter is decremented first; on the turn it reaches 0 the
+    # Pokémon snaps out and acts normally with NO self-hit roll (effect_status.md).
+    # Only while it remains confused is the self-hit check rolled.
     if status.confusion_turns > 0:
-        hit_self = ctx.emit(
-            rng_to_token=lambda c: CFZ() if (c.advance_observable() & 1) == 0 else None,
-            question="Magikarp hit itself in confusion? (y/n): ",
-            input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
-        )
         status.confusion_turns -= 1
         if status.confusion_turns == 0:
             ctx.raw_emit(SCFZ())
-            
-        if isinstance(hit_self, CFZ):
-            ctx.advance_unobservable(1) # damage roll
-            state.mk_last_move_prevented = True
-            return False
+        else:
+            hit_self = ctx.emit(
+                rng_to_token=lambda c: CFZ() if (c.advance_observable() & 1) == 0 else None,
+                question="Magikarp hit itself in confusion? (y/n): ",
+                input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
+            )
+            if isinstance(hit_self, CFZ):
+                ctx.advance_unobservable(1) # damage roll
+                state.mk_last_move_prevented = True
+                return False
 
     # Paralysis
     if status.status == NonVolatileStatus.PARALYZED:
