@@ -416,9 +416,12 @@ def _simulate_magikarp_turn(
             move_num = 33
     elif move_num == 33:
         if status.disabled_move == 33:
-            ctx.raw_emit(Prevented())
-            state.mk_last_move_prevented = True
-            return False
+            # Tackle disabled → auto-switch to Splash (same reasoning as above:
+            # Disable lands after Magikarp has moved, so it only forces a
+            # different usable move on later turns, never a "Prevented" lost turn).
+            # If Splash were also unavailable, Magikarp would have had no usable
+            # moves and Struggled before reaching here.
+            move_num = 150
 
     # Confusion. The counter is decremented first; on the turn it reaches 0 the
     # Pokémon snaps out and acts normally with NO self-hit roll (effect_status.md).
