@@ -296,10 +296,11 @@ def _all_user_stats_applier(ctx: 'BattleContext') -> Callable[[], bool]:
     Observable only if at least one stat was not already at +6.
     """
     state = ctx.battle_state['state']
+    # Omniboost (subscript_0119) raises exactly the five main battle stats —
+    # NOT accuracy or evasion. Confirmed against the HGSS decomp.
     _ALL_ATTRS = [
         'user_atk_stage', 'user_def_stage', 'user_spd_stage',
         'user_spatk_stage', 'user_spdef_stage',
-        'user_accuracy_stage', 'user_evasion_stage',
     ]
 
     def apply() -> bool:
