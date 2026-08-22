@@ -1278,12 +1278,13 @@ _BEAT_UP_PARTY_SIZE = 6  # P0 assumption: the player's party is always full
 
 
 def _eff_beat_up(ctx: 'BattleContext', move: Move) -> bool:
-    # First attacker (the user): crit/damage/hit + two "attack successful" rolls.
+    # First attacker (the user): crit/damage/hit. Its two "attack successful"
+    # rolls are the standard post-move-success advances that simulate_turn adds
+    # once the move returns True, so we must NOT count them again here.
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    ctx.advance_unobservable(2)  # successful-move rolls for the first attacker
-    # Each remaining party member: crit + damage (no hit check) + success rolls.
+    # Each remaining party member: crit + damage (no hit check) + two success rolls.
     for _ in range(_BEAT_UP_PARTY_SIZE - 1):
         ctx.advance_unobservable(2)  # crit + damage
         ctx.advance_unobservable(2)  # successful-move rolls
