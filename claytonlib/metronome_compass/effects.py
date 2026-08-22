@@ -2227,14 +2227,6 @@ def _eff_conversion2(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
 
-    # Conversion 2 fails outright if every move in the user's movepool is
-    # Normal-type — there is nothing to convert toward. With the default
-    # Metronome-only moveset this always holds, so it always fails. Pass a real
-    # moveset to precompute_path to exercise the success path.
-    move_types = ctx.battle_state.get('user_move_types', ['Normal'])
-    if all(t == 'Normal' for t in move_types):
-        return False
-
     if not state.user_was_hit:
         return False  # Not hit by Normal-type attack since switch-in or last use
 
