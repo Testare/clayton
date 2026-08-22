@@ -92,6 +92,9 @@ _POST_METRONOME_SUCCESS_ADVANCES = 2
 _MAGIKARP_TURN_START_ADVANCES    = 2
 _POST_MAGIKARP_SUCCESS_ADVANCES  = 2
 _END_OF_TURN_ADVANCES            = 4
+# A type-immune Tackle still rolls crit + damage + accuracy (3 advances), then
+# "doesn't affect" the target, so it is not successful (no post-hit advances).
+_IMMUNE_TACKLE_ADVANCES          = 3
 
 
 def simulate_turn(
@@ -478,6 +481,11 @@ def _simulate_magikarp_turn(
     state.mk_last_move_prevented = False
     
     if move_num == 33: # Tackle
+        # Normal-type Tackle has no effect on a Ghost-type Chansey (e.g. after
+        # Conversion 2). The move "doesn't affect" — not successful, no damage.
+        if 'Ghost' in state.user_types:
+            ctx.advance_unobservable(_IMMUNE_TACKLE_ADVANCES)
+            return False
         # Semi-invulnerable moves (Fly/Dig/Dive/Bounce/Shadow Force): Tackle auto-misses.
         # The hit roll is still consumed; result is overridden to Miss.
         _SEMI_INVULNERABLE = {155, 256, 255, 263, 272}
