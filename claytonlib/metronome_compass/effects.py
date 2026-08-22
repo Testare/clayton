@@ -2227,8 +2227,8 @@ def _eff_conversion2(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
 
-    if not state.user_was_hit:
-        return False  # Not hit by Normal-type attack since switch-in or last use
+    if not state.user_conv2_hit:
+        return False  # No damaging move currently recorded as having landed on us
 
     # Valid target types: resist/immune to Normal, excluding user's current types
     _NORMAL_RESISTS = {0: 'Rock', 1: 'Steel', 109: 'Ghost'}
@@ -2236,7 +2236,7 @@ def _eff_conversion2(ctx: 'BattleContext', move: Move) -> bool:
     if not valid:
         return False  # All possible types already user's type
 
-    state.user_was_hit = False  # Consumed; reset for next Conversion 2 use
+    state.user_conv2_hit = False  # Game clears conversion2Move for the attacker on use
 
     def rng_to_token(c: 'BattleContext') -> ConversionType:
         for _ in range(1000):

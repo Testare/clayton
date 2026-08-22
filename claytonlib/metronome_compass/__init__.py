@@ -123,12 +123,22 @@ def simulate_turn(
     if mk_success:
         ctx.advance_unobservable(_POST_MAGIKARP_SUCCESS_ADVANCES)
 
-    # Track whether Magikarp hit Chansey (needed before player's Bide/Conversion2)
-    if mk_success and (state.mk_last_move == 33 or state.mk_last_move is None):
-        state.user_was_hit = True
-        state.user_hit_this_turn = True
+    # Did Magikarp land a damaging hit on Chansey this turn? (Tackle hit, or
+    # Struggle which always hits.)
+    landed_hit = mk_success and (state.mk_last_move == 33 or state.mk_last_move is None)
+    if landed_hit:
+        state.user_hit_this_turn = True   # Metal Burst (damage taken THIS turn)
         if state.user_locked_effect == 26:
             state.user_bide_triggered = True
+
+    # Conversion 2's recorded "last damaging move that landed on me": set on a
+    # damaging hit, left unchanged by a self-targeting Splash, and cleared on any
+    # miss or prevention — matching the game rewriting conversion2Move against
+    # the defender on every move that resolves against them.
+    if landed_hit:
+        state.user_conv2_hit = True
+    elif not (mk_success and state.mk_last_move == 150):
+        state.user_conv2_hit = False
 
     # 5. Between-actor advances
     ctx.advance_unobservable(_MAGIKARP_TURN_START_ADVANCES)

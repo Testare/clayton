@@ -292,8 +292,11 @@ class MetronomeBattleState:
     # Bide state
     user_bide_triggered: bool = False  # True if Magikarp hit with Tackle/Struggle while biding
 
-    # Conversion 2 prerequisite: Magikarp hit with Tackle/Struggle since switch-in or last C2 use
-    user_was_hit: bool = False
+    # Conversion 2's "last damaging move that landed on me" record (game's
+    # conversion2Move != 0). Set when Magikarp lands a Tackle; cleared when a move
+    # resolving against Chansey misses/fails (Tackle miss, Magikarp prevented) or
+    # on C2 use. A self-targeting Magikarp Splash leaves it unchanged.
+    user_conv2_hit: bool = False
     # Metal Burst prerequisite: Chansey took damage THIS turn (reset each turn)
     user_hit_this_turn: bool = False
     # Magikarp HP knowledge (mirror of the Chansey flags), for Present's heal
