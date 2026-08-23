@@ -161,56 +161,63 @@ def simulate_turn(
         state.user_locked_turns -= 1
         _pre_locked_effect = state.user_locked_effect
         locked_move = moves_by_num[state.user_locked_move_num]
-        # Confusion check also happens during locked turns — but only while still confused.
-        # When the last confused turn expires (confusion_turns 1→0), confusion snaps out
-        # immediately (no check roll; the move still executes normally).
-        if state.user_confusion_turns > 1:
-            state.user_confusion_turns -= 1
-            def _cfz_locked(c: BattleContext) -> PathToken:
-                roll = c.advance_observable()
-                return CFZ() if (roll & 1) == 0 else None  # type: ignore[return-value]
-            hurt_self = ctx.emit(
-                rng_to_token=_cfz_locked,
-                question="Chansey hurt itself in confusion? (y/n):",
-                input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
-            )
-            if isinstance(hurt_self, CFZ):
-                ctx.advance_unobservable(1)
+        # Confusion check also happens during locked turns. Chansey's confusion
+        # (from a rampage end, duration 1-4) resolves as snap-out / hit-self /
+        # attacked-through via confusion_outcome; only the first two emit tokens.
+        # snap_first=False: Chansey rolls the self-hit check even on the final turn.
+        if state.user_confusion_turns > 0:
+            outcome = ctx.confusion_outcome("Chansey", state.user_confusion_turns, 1, 4,
+                                            snap_first=False)
+            if outcome == 'hit_self':
+                state.user_confusion_turns -= 1
+                ctx.advance_unobservable(1)  # self-hit damage roll
+                ctx.raw_emit(CFZ())
                 move_success = False
             else:
+                if outcome == 'snap':
+                    state.user_confusion_turns = 0
+                    ctx.raw_emit(SCFZ())
+                else:  # attacked through the confusion
+                    state.user_confusion_turns -= 1
                 move_success = simulate_locked_continuation(ctx, state, locked_move)
                 if ctx.battle_state.get('unsupported'):
                     return ctx.end_turn()
-        elif state.user_confusion_turns == 1:
-            # Last confused turn: snaps out automatically, no check roll.
-            state.user_confusion_turns = 0
-            ctx.raw_emit(SCFZ())
-            move_success = simulate_locked_continuation(ctx, state, locked_move)
-            if ctx.battle_state.get('unsupported'):
-                return ctx.end_turn()
         else:
             move_success = simulate_locked_continuation(ctx, state, locked_move)
             if ctx.battle_state.get('unsupported'):
                 return ctx.end_turn()
+        # Hidden-length locks (Rampage 27 / Uproar 159): RNG ends on the rolled
+        # length; interactive tracks the max and observes the end here. Only prompt
+        # inside the possible-end window; the maximum is handled by the counter
+        # reaching 0 naturally. confirm_lock_end() is a no-op in RNG mode.
+        if _pre_locked_effect in (27, 159) and state.user_locked_turns > 0:
+            _max_locked = 2 if _pre_locked_effect == 27 else 5
+            _min_cont = 1 if _pre_locked_effect == 27 else 2
+            _cont_turn = _max_locked - state.user_locked_turns
+            _label = "Rampage" if _pre_locked_effect == 27 else "Uproar"
+            if _cont_turn >= _min_cont and ctx.confirm_lock_end(_label):
+                state.user_locked_turns = 0
+                if _pre_locked_effect == 159:  # Uproar clears its own lock; Rampage
+                    state.user_locked_move_num = None  # clears in the end-of-turn block
+                    state.user_locked_effect = None
     elif state.user_confusion_turns > 0:
-        # Chansey is confused (from rampage end): may hurt itself instead of acting.
-        # 1 observable advance for the confusion check; if confusing, 1 more for self-damage.
-        state.user_confusion_turns -= 1
+        # Chansey is confused (from rampage end). snap_first=False: the self-hit
+        # check is rolled every turn including the last, so the final turn is
+        # hit-self (CFZ) or snap-out (SCFZ); earlier turns are hit-self or act.
         _pre_locked_effect = None
-        def _cfz_check(c: BattleContext) -> PathToken:
-            roll = c.advance_observable()
-            return CFZ() if (roll & 1) == 0 else None  # type: ignore[return-value]
-        hurt_self = ctx.emit(
-            rng_to_token=_cfz_check,
-            question="Chansey hurt itself in confusion? (y/n):",
-            input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
-        )
-        if isinstance(hurt_self, CFZ):
+        outcome = ctx.confusion_outcome("Chansey", state.user_confusion_turns, 1, 4,
+                                        snap_first=False)
+        if outcome == 'hit_self':
+            state.user_confusion_turns -= 1
             ctx.advance_unobservable(1)  # self-hit damage roll
+            ctx.raw_emit(CFZ())
             move_success = False
         else:
-            if state.user_confusion_turns == 0:
+            if outcome == 'snap':
+                state.user_confusion_turns = 0
                 ctx.raw_emit(SCFZ())
+            else:  # attacked through the confusion
+                state.user_confusion_turns -= 1
             move = simulate_metronome_roll(ctx, moves_by_num, known_moves)
             move_success = simulate_move_execution(ctx, move)
             if ctx.battle_state.get('unsupported'):
@@ -458,7 +465,10 @@ def _simulate_magikarp_turn(
     # attack through (no token). Interactive prompts these three outcomes directly;
     # RNG mode decides from the rolled duration and the check roll.
     if status.confusion_turns > 0:
-        outcome = ctx.confusion_outcome("Magikarp", status.confusion_turns, 2, 5)
+        # snap_first=True: Magikarp's move-inflicted confusion snaps on its final
+        # turn with no self-hit roll (differs from Chansey's rampage confusion).
+        outcome = ctx.confusion_outcome("Magikarp", status.confusion_turns, 2, 5,
+                                        snap_first=True)
         if outcome == 'snap':
             status.confusion_turns = 0
             ctx.raw_emit(SCFZ())

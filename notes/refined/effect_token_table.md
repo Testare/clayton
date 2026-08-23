@@ -223,8 +223,8 @@ Observable messages but **no RNG** → no token required. All `☐` for interact
 | 75,145,263 | `_eff_sky_attack`,`_eff_skull_bash`,`_eff_bounce` | Two-turn charge attacks. | Immediate (on release) | `Hit`/`Miss`/`Crit` | ☐ |
 | 151 | `_eff_solar_beam` | Solar Beam — one-turn in sun, else charges. | Immediate (on release) | `Hit`/`Miss`/`Crit` | ☐ |
 | 117 | `_eff_rollout` | Rollout / Ice Ball — locked; a miss ends the lock early. | Immediate | `Hit`/`Miss`/`Crit` | ☐ |
-| 27 | `_eff_thrash` | Thrash / Outrage / Petal Dance — rampage; hidden total-turns; confusion at end. No end token (Metronome resuming + confusion show it ended). | Immediate + Later | `Hit`/`Miss`/`Crit`; then `SCFZ`/`CFZ` | ☐ ⚠ |
-| 159 | `_eff_uproar` | Uproar — multi-turn; prevents sleep. | Immediate + Later | `Hit`/`Miss`/`Crit` | ☐ |
+| 27 | `_eff_thrash` | Thrash / Outrage / Petal Dance — rampage; hidden total-turns; confusion at end. No end token (Metronome resuming + confusion show it ended); interactive confirms via `confirm_lock_end`. | Immediate + Later | `Hit`/`Miss`/`Crit`; then `SCFZ`/`CFZ` | ☐ (impl) |
+| 159 | `_eff_uproar` | Uproar — hidden multi-turn lock (2–5 extra); prevents sleep. Interactive observes the end via `confirm_lock_end`. | Immediate + Later | `Hit`/`Miss`/`Crit` | ☐ (impl) |
 | 148 | `_eff_future_sight` | Future Sight / Doom Desire — sets a delayed hit that fires (and rolls to hit) a later turn. | Later (fires) | `Hit`/`Miss` at fire; else `Unsupported`+`PathEnd` | ☐ |
 
 ## 17. Bide & Conversion
@@ -269,12 +269,31 @@ The `StatusEnd` token is emitted at the confirmed wear-off, never at apply.
   **removed** — resuming Metronome next turn shows it ended, and the ensuing
   confusion (`SCFZ`/`CFZ`) is the real observable.
 
-**Remaining interactive work (clayton-8vn):** the locked-move machinery still rolls
-its lock length at apply (thrash total turns 2–3; charge/recharge turns) and detects
-the end from the counter. Interactive needs to *observe* the resumption of Metronome
-(or the charge release) rather than know the length up front — the same defer-and-
-confirm pattern applied to `simulate_locked_continuation`. Chansey's own rampage-end
-confusion should also route through `confusion_outcome`.
+**Implemented (clayton-rs1):** hidden-length locks and the Chansey confusion split.
+- **Rampage total turns** (Thrash/Outrage/Petal Dance, 2–3) and **Uproar** (2–5 extra)
+  use `ctx.roll_hidden_duration` at apply (no prompt). At the end of each continuation
+  turn, inside the possible-end window, `ctx.confirm_lock_end(label)` lets interactive
+  observe the stop (Metronome resuming / confusion). RNG never forces early — its
+  counter is authoritative; the maximum is handled by the counter reaching 0.
+- **Chansey's rampage-end confusion** now routes through `confusion_outcome` at both
+  sites (locked and unlocked), and `_apply_confusion` / `_apply_user_confusion` defer
+  their duration.
+
+**Confusion mechanic — two verified variants (`snap_first`):** empirically (against
+seedslurper ground truth) the two confusion sources behave differently on the turn
+confusion wears off:
+- **Magikarp** (move-inflicted, `snap_first=True`): the final turn snaps out with
+  **no** self-hit roll. (Making it roll-first breaks 10 seeds.)
+- **Chansey** (rampage fatigue, `snap_first=False`): the self-hit check is rolled on
+  **every** turn including the last, so the final turn is hit-self *or* snap. (Making
+  it snap-first breaks 5 seeds.)
+This contradicts the intuitive "if confusion ends, no roll is performed" model, which
+holds only for Magikarp. Both are now encoded in `confusion_outcome(..., snap_first=)`.
+
+**Still deferred (charge/recharge):** Fly/Dig/Solar Beam/etc. and Hyper Beam recharge
+have **fixed** lock lengths (1 continuation / 1 recharge), so interactive already knows
+the release turn — no hidden-length prompt needed. Rollout's fixed length (4) can end
+early only on an observable miss. No further work required there.
 
 ## Coverage summary
 

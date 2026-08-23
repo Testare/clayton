@@ -102,5 +102,82 @@ class TestSimulateTurn(unittest.TestCase):
         self.assertIsInstance(turn[2], Hit)
         self.assertIsInstance(turn[3], EffectProc)
 
+
+class TestInteractiveHiddenDuration(unittest.TestCase):
+    """Interactive-mode handling of hidden-length locks and confusion."""
+
+    def setUp(self):
+        self.moves = _moves_by_number()
+
+    def _locked_state(self, effect, move_num, turns):
+        state = MetronomeBattleState()
+        state.user_locked_effect = effect
+        state.user_locked_move_num = move_num
+        state.user_locked_turns = turns
+        return state
+
+    @patch('builtins.input')
+    def test_interactive_rampage_ends_early_on_confirmation(self, mock_input):
+        # Chansey locked into Outrage (effect 27). Interactive tracks the max lock
+        # (2). Magikarp Splashes; Outrage continuation hits; the player confirms the
+        # rampage ended this turn → lock clears and fatigue-confusion is applied.
+        # Inputs: Magikarp move (sp), continuation hit (h), "did Rampage end?" (y).
+        mock_input.side_effect = ["sp", "h", "y"]
+        state = self._locked_state(effect=27, move_num=200, turns=2)
+        ctx = InteractiveContext()
+        ctx.battle_state['state'] = state
+        simulate_turn(ctx, state, self.moves, frozenset(), magikarp_level=15)
+
+        self.assertEqual(state.user_locked_turns, 0)
+        self.assertIsNone(state.user_locked_move_num)
+        # roll_hidden_duration returns the max (1-4 → 4) with no prompt.
+        self.assertEqual(state.user_confusion_turns, 4)
+
+    @patch('builtins.input')
+    def test_interactive_rampage_continues_on_negative(self, mock_input):
+        # Same setup, but the player says the rampage did NOT end → still locked,
+        # no confusion yet. Inputs: Magikarp move (sp), continuation hit (h), (n).
+        mock_input.side_effect = ["sp", "h", "n"]
+        state = self._locked_state(effect=27, move_num=200, turns=2)
+        ctx = InteractiveContext()
+        ctx.battle_state['state'] = state
+        simulate_turn(ctx, state, self.moves, frozenset(), magikarp_level=15)
+
+        self.assertEqual(state.user_locked_turns, 1)          # decremented, still locked
+        self.assertEqual(state.user_locked_move_num, 200)
+        self.assertEqual(state.user_confusion_turns, 0)       # no fatigue yet
+
+    @patch('builtins.input')
+    def test_interactive_chansey_confusion_hit_self(self, mock_input):
+        # Chansey confused (rampage fatigue). Magikarp Splashes; the player reports
+        # Chansey hit itself → CFZ token, move fails, one confusion turn consumed.
+        mock_input.side_effect = ["sp", "h"]  # magikarp sp, confusion "h"=hit itself
+        state = MetronomeBattleState()
+        state.user_confusion_turns = 2
+        ctx = InteractiveContext()
+        ctx.battle_state['state'] = state
+        turn = simulate_turn(ctx, state, self.moves, frozenset(), magikarp_level=15)
+
+        from claytonlib.metronome_compass.path import CFZ
+        self.assertTrue(any(isinstance(t, CFZ) for t in turn))
+        self.assertEqual(state.user_confusion_turns, 1)
+
+    @patch('builtins.input')
+    def test_interactive_chansey_confusion_attacks_through(self, mock_input):
+        # Chansey confused but attacks through (no token); Metronome then resolves.
+        # Inputs: magikarp sp, confusion "a"=attacked, metronome move, hit.
+        mock_input.side_effect = ["sp", "a", "Tackle", "h"]
+        state = MetronomeBattleState()
+        state.user_confusion_turns = 2
+        ctx = InteractiveContext()
+        ctx.battle_state['state'] = state
+        turn = simulate_turn(ctx, state, self.moves, frozenset(), magikarp_level=15)
+
+        from claytonlib.metronome_compass.path import CFZ, SCFZ
+        self.assertFalse(any(isinstance(t, (CFZ, SCFZ)) for t in turn))
+        self.assertTrue(any(isinstance(t, MetronomeMove) for t in turn))
+        self.assertEqual(state.user_confusion_turns, 1)
+
+
 if __name__ == '__main__':
     unittest.main()

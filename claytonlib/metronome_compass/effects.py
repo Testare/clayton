@@ -178,36 +178,21 @@ def _emit_path_end(ctx: 'BattleContext') -> None:
 
 
 def _apply_confusion(ctx: 'BattleContext') -> None:
-    """Roll/record Magikarp confusion duration (from confuse-hitting moves)."""
+    """Roll/record Magikarp confusion duration (from confuse-hitting moves).
+
+    Duration 2 + RAND%4, hidden at apply — no prompt. The per-turn outcome
+    (snap/hit-self/act via confusion_outcome) is what the player observes."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 2 + (c.advance_observable() % 4)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Confusion duration? (2-5):",
-        input_to_token=lambda s: int(s.strip()),
-    )
-    state.mk_status.confusion_turns = int(duration)
+    state.mk_status.confusion_turns = ctx.roll_hidden_duration(2, 5)
 
 
 def _apply_user_confusion(ctx: 'BattleContext') -> None:
     """Roll/record Chansey confusion duration (from rampage end).
-    Gen IV formula: 1 + (roll % 4), giving 1-4 turns."""
+    Gen IV formula: 1 + (roll % 4), giving 1-4 turns; hidden at apply."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 1 + (c.advance_observable() % 4)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Confusion duration? (1-4):",
-        input_to_token=lambda s: int(s.strip()),
-    )
-    state.user_confusion_turns = int(duration)
+    state.user_confusion_turns = ctx.roll_hidden_duration(1, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -2322,16 +2307,12 @@ def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    def rng_to_total(c: 'BattleContext') -> int:
-        return 2 + (c.advance_observable() % 2)
-    total_turns = ctx.emit(
-        rng_to_token=rng_to_total,
-        question="Thrash duration? (2-3 total turns):",
-        input_to_token=lambda s: int(s.strip()),
-    )
+    # Total 2-3 turns, hidden at apply — no prompt. Interactive tracks the max and
+    # observes the end (confusion / Metronome resuming); see simulate_turn.
+    total_turns = ctx.roll_hidden_duration(2, 3)
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
-    state.user_locked_turns = int(total_turns) - 1
+    state.user_locked_turns = total_turns - 1
     _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
@@ -2342,16 +2323,12 @@ def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
     token = ctx.hit_crit_or_miss(move.accuracy)
     if isinstance(token, Miss):
         return False
-    def rng_to_extra(c: 'BattleContext') -> int:
-        return 2 + (c.advance_observable() % 4)
-    extra_turns = ctx.emit(
-        rng_to_token=rng_to_extra,
-        question="Uproar extra turns after turn 1? (2-5):",
-        input_to_token=lambda s: int(s.strip()),
-    )
+    # 2-5 extra turns, hidden at apply — no prompt. Interactive tracks the max and
+    # observes the end (Metronome resuming); see simulate_turn.
+    extra_turns = ctx.roll_hidden_duration(2, 5)
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
-    state.user_locked_turns = int(extra_turns)
+    state.user_locked_turns = extra_turns
     _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
