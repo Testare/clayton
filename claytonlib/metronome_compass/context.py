@@ -334,6 +334,20 @@ class RngContext(BattleContext):
         """
         return remaining <= 1
 
+    def confusion_outcome(self, label: str, remaining: int,
+                          min_dur: int, max_dur: int) -> str:
+        """Resolve a confused Pokémon's turn: 'snap', 'hit_self', or 'act'.
+
+        On the final confused turn it snaps out with NO self-hit roll
+        (effect_status.md). Otherwise a self-hit check consumes one observable
+        roll: even → hurt itself, odd → attack through the confusion. The caller
+        emits SCFZ on snap and CFZ on hit_self; 'act' emits nothing.
+        """
+        if remaining <= 1:
+            return 'snap'
+        roll = self.advance_observable()
+        return 'hit_self' if (roll & 1) == 0 else 'act'
+
 
 # ---------------------------------------------------------------------------
 # InteractiveContext
@@ -402,3 +416,28 @@ class InteractiveContext(BattleContext):
             if raw == 'n':
                 return False
             print("    Invalid input. Enter y (wore off) or n (still active).")
+
+    def confusion_outcome(self, label: str, remaining: int,
+                          min_dur: int, max_dur: int) -> str:
+        """Prompt the player for a confused Pokémon's turn outcome.
+
+        Duration is hidden, so before the minimum it cannot snap; at the maximum
+        it must; in between the player picks from three observable outcomes. Only
+        'snap' (SCFZ) and 'hit_self' (CFZ) produce tokens — 'act' looks like a
+        normal attack and emits nothing.
+        """
+        turn = max_dur - remaining + 1
+        if turn >= max_dur:
+            return 'snap'
+        can_snap = turn >= min_dur
+        opts = ("s=snapped out, h=hit itself, a=attacked through it"
+                if can_snap else "h=hit itself, a=attacked through it")
+        while True:
+            raw = input(f"  {label} confusion — {opts}: ").strip().lower()
+            if raw == 'h':
+                return 'hit_self'
+            if raw == 'a':
+                return 'act'
+            if raw == 's' and can_snap:
+                return 'snap'
+            print("    Invalid input.")

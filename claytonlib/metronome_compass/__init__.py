@@ -18,7 +18,7 @@ from .path import (
     PathToken, MetronomeMove, MagikarpMove, MultiHit,
     Hit, Miss, Crit, EffectProc,
     PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, Prevented, StatusEnd, PathEnd, Unsupported,
-    BindDmg, BindEnd, DrowsySlept, Magnitude, ConversionType, RampageEnd,
+    BindDmg, BindEnd, DrowsySlept, Magnitude, ConversionType,
     NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
 )
 from .context import BattleContext, RngContext, InteractiveContext
@@ -232,11 +232,12 @@ def simulate_turn(
     _HALF_END = _END_OF_TURN_ADVANCES // 2
     ctx.advance_unobservable(_HALF_END)
 
-    # Thrash/Outrage/Petal Dance: confusion applied when rampage ends (between END halves)
+    # Thrash/Outrage/Petal Dance: confusion applied when rampage ends (between END
+    # halves). No token for the rampage ending itself — resuming Metronome next turn
+    # already shows it ended; the ensuing confusion is what's observed (SCFZ/CFZ).
     if (_pre_locked_effect == 27
             and state.user_locked_turns == 0
             and state.user_locked_move_num is not None):
-        ctx.raw_emit(RampageEnd())
         _apply_user_confusion(ctx)
         state.user_locked_move_num = None
         state.user_locked_effect = None
@@ -254,12 +255,15 @@ def simulate_turn(
 
     state.turn_number += 1
 
-    # Binding damage / release
+    # Binding damage / release. Hidden duration (3-5): BindDmg each turn, BindEnd
+    # on the turn it breaks free. RNG mode frees on the rolled turn; interactive
+    # confirms the break-free at end of turn (BindEnd) vs damage (BindDmg).
     if state.mk_binding_turns > 0:
-        state.mk_binding_turns -= 1
-        if state.mk_binding_turns == 0:
+        if ctx.hidden_status_ends("Binding", state.mk_binding_turns, 3, 5):
+            state.mk_binding_turns = 0
             ctx.raw_emit(BindEnd())
         else:
+            state.mk_binding_turns -= 1
             ctx.raw_emit(BindDmg())
 
     # Drowsy → sleep (from Yawn)
@@ -362,9 +366,11 @@ def _simulate_magikarp_turn(
     status = state.mk_status
 
 
-    # Sleep
+    # Sleep. Duration is hidden (2-5); the wake is self-evident from any action,
+    # so no wear-off token — just SLP while asleep. RNG mode wakes on the rolled
+    # turn; interactive tracks the max and confirms the wake in the 2..5 window.
     if status.status == NonVolatileStatus.SLEEP:
-        if status.sleep_turns == 1:
+        if ctx.hidden_status_ends("Sleep", status.sleep_turns, 2, 5):
             status.sleep_turns = 0
             status.status = NonVolatileStatus.NONE
             # Wakes up; continues to move
@@ -447,23 +453,23 @@ def _simulate_magikarp_turn(
             # moves and Struggled before reaching here.
             move_num = 150
 
-    # Confusion. The counter is decremented first; on the turn it reaches 0 the
-    # Pokémon snaps out and acts normally with NO self-hit roll (effect_status.md).
-    # Only while it remains confused is the self-hit check rolled.
+    # Confusion (hidden duration 2-5). On the final turn it snaps out (SCFZ) with
+    # NO self-hit roll; otherwise a self-hit check either hurts it (CFZ) or lets it
+    # attack through (no token). Interactive prompts these three outcomes directly;
+    # RNG mode decides from the rolled duration and the check roll.
     if status.confusion_turns > 0:
-        status.confusion_turns -= 1
-        if status.confusion_turns == 0:
+        outcome = ctx.confusion_outcome("Magikarp", status.confusion_turns, 2, 5)
+        if outcome == 'snap':
+            status.confusion_turns = 0
             ctx.raw_emit(SCFZ())
-        else:
-            hit_self = ctx.emit(
-                rng_to_token=lambda c: CFZ() if (c.advance_observable() & 1) == 0 else None,
-                question="Magikarp hit itself in confusion? (y/n): ",
-                input_to_token=lambda s: CFZ() if s.strip().lower() == 'y' else None,
-            )
-            if isinstance(hit_self, CFZ):
-                ctx.advance_unobservable(1) # damage roll
-                state.mk_last_move_prevented = True
-                return False
+        elif outcome == 'hit_self':
+            status.confusion_turns -= 1
+            ctx.advance_unobservable(1)  # self-hit damage roll
+            ctx.raw_emit(CFZ())
+            state.mk_last_move_prevented = True
+            return False
+        else:  # attacked through the confusion
+            status.confusion_turns -= 1
 
     # Paralysis
     if status.status == NonVolatileStatus.PARALYZED:
@@ -678,7 +684,6 @@ def _parse_turn_tokens(raw: str, moves_by_num: dict[int, Move]) -> tuple[PathTok
             case '~': tokens.append(EffectProc())
             case 'sp': tokens.append(MagikarpMove('sp'))
             case 'tk': tokens.append(MagikarpMove('tk'))
-            case 'rend': tokens.append(RampageEnd())
             case _:
                 # Try move name
                 move = _resolve_move_input(p, moves_by_num)

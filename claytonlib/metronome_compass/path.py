@@ -179,12 +179,6 @@ class ConversionType(PathToken):
     def render(self) -> str: return f"CV{self.type_name}"
 
 
-@dataclass(frozen=True)
-class RampageEnd(PathToken):
-    """Rampage (Thrash/Outrage/Petal Dance) ended; confusion applied afterward."""
-    def render(self) -> str: return "REND"
-
-
 # ---------------------------------------------------------------------------
 # Path type
 # ---------------------------------------------------------------------------

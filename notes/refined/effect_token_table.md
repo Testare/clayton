@@ -113,13 +113,13 @@ order, duration formulas, which effects want wear-off tokens) and
 
 | Effects | Handler | Description | Observable | Has token | Int. verified |
 |---|---|---|---|---|---|
-| 42,261 | `_eff_bind` | Bind / Wrap / Whirlpool / Fire Spin … — hit check; duration roll hidden at apply. | Immediate (hit) + Later (BindDmg/BindEnd) | `Hit`/`Miss`; end-of-turn `BindDmg`/`BindEnd` | ☐ ⚠ |
+| 42,261 | `_eff_bind` | Bind / Wrap / Whirlpool / Fire Spin … — hit check; hidden duration. | Immediate (hit) + Later (BindDmg/BindEnd) | `Hit`/`Miss`; end-of-turn `BindDmg`/`BindEnd` | ☐ (impl) |
 
 ## 7. Status-on-hit (non-volatile)
 
 | Effects | Handler | Description | Observable | Has token | Int. verified |
 |---|---|---|---|---|---|
-| 1 | `_eff_sleep` | Sleep-inducing (Spore/Hypnosis) — hit check; sleep-duration roll hidden at apply, revealed by wake-up timing. | Immediate (hit) + Later (wake) | `Hit`/`Miss`; later `SLP` | ☐ ⚠ |
+| 1 | `_eff_sleep` | Sleep-inducing (Spore/Hypnosis) — hit check; hidden duration. Wake is self-evident from any action, so no wear-off token — just `SLP` while asleep. | Immediate (hit) + Later (wake) | `Hit`/`Miss`; per-turn `SLP` | ☐ (impl) |
 | 33,66 | `_eff_poison_hit` | Toxic / Poison Powder — hit check; poison shown later via end-of-turn damage. | Immediate (hit) + Later | `Hit`/`Miss` | ☐ |
 | 167 | `_eff_will_o_wisp` | Will-O-Wisp — hit check; burn shown later. | Immediate (hit) + Later | `Hit`/`Miss` | ☐ |
 | 67 | `_eff_paralyze` | Thunder Wave / Stun Spore / Glare — hit check; paralysis shown later (full-para / speed). | Immediate (hit) + Later | `Hit`/`Miss` | ☐ |
@@ -128,9 +128,9 @@ order, duration formulas, which effects want wear-off tokens) and
 
 | Effects | Handler | Description | Observable | Has token | Int. verified |
 |---|---|---|---|---|---|
-| 49 | `_eff_confuse_hit` | Confuse Ray / Supersonic / Sweet Kiss — hit check; confusion-duration roll hidden. | Immediate (hit) + Later (CFZ/SCFZ) | `Hit`/`Miss`; later `CFZ`/`SCFZ` | ☐ ⚠ |
-| 76 | `_eff_damage_confuse` | Psybeam / Water Pulse — damage + confuse proc + duration roll. | Immediate + proc + Later | `Hit`/`Miss`/`Crit`, `EffectProc`; later `CFZ`/`SCFZ` | ☐ ⚠ |
-| 118,166,199 | `_eff_swagger`/`_eff_flatter`/`_eff_teeter_dance` | Raise target stat(s) + confuse (if not already). | Immediate (hit) + Later | `Hit`/`Miss` (Swagger/Flatter); later `CFZ`/`SCFZ` | ☐ ⚠ |
+| 49 | `_eff_confuse_hit` | Confuse Ray / Supersonic / Sweet Kiss — hit check; hidden duration. Each Magikarp turn resolves snap-out (`SCFZ`) / hit-self (`CFZ`) / attacked (no token) via `confusion_outcome`. | Immediate (hit) + Later | `Hit`/`Miss`; `CFZ`/`SCFZ` | ☐ (impl) |
+| 76 | `_eff_damage_confuse` | Psybeam / Water Pulse — damage + confuse proc; hidden duration resolved per turn (`SCFZ`/`CFZ`/none). | Immediate + proc + Later | `Hit`/`Miss`/`Crit`, `EffectProc`; `CFZ`/`SCFZ` | ☐ (impl) |
+| 118,166,199 | `_eff_swagger`/`_eff_flatter`/`_eff_teeter_dance` | Raise target stat(s) + confuse (if not already); confusion resolved per turn (`SCFZ`/`CFZ`/none). | Immediate (hit) + Later | `Hit`/`Miss`; `CFZ`/`SCFZ` | ☐ (impl) |
 
 ## 9. Disable / Taunt / Gravity / Encore & lockout statuses
 
@@ -223,8 +223,8 @@ Observable messages but **no RNG** → no token required. All `☐` for interact
 | 75,145,263 | `_eff_sky_attack`,`_eff_skull_bash`,`_eff_bounce` | Two-turn charge attacks. | Immediate (on release) | `Hit`/`Miss`/`Crit` | ☐ |
 | 151 | `_eff_solar_beam` | Solar Beam — one-turn in sun, else charges. | Immediate (on release) | `Hit`/`Miss`/`Crit` | ☐ |
 | 117 | `_eff_rollout` | Rollout / Ice Ball — locked; a miss ends the lock early. | Immediate | `Hit`/`Miss`/`Crit` | ☐ |
-| 27 | `_eff_thrash` | Thrash / Outrage / Petal Dance — rampage; total-turns roll hidden; confusion at end. | Immediate + Later | `Hit`/`Miss`/`Crit`; later `RampageEnd` + confusion | ☐ ⚠ |
-| 159 | `_eff_uproar` | Uproar — multi-turn; prevents sleep. | Immediate + Later | `Hit`/`Miss`/`Crit` | ☐ ⚠ |
+| 27 | `_eff_thrash` | Thrash / Outrage / Petal Dance — rampage; hidden total-turns; confusion at end. No end token (Metronome resuming + confusion show it ended). | Immediate + Later | `Hit`/`Miss`/`Crit`; then `SCFZ`/`CFZ` | ☐ ⚠ |
+| 159 | `_eff_uproar` | Uproar — multi-turn; prevents sleep. | Immediate + Later | `Hit`/`Miss`/`Crit` | ☐ |
 | 148 | `_eff_future_sight` | Future Sight / Doom Desire — sets a delayed hit that fires (and rolls to hit) a later turn. | Later (fires) | `Hit`/`Miss` at fire; else `Unsupported`+`PathEnd` | ☐ |
 
 ## 17. Bide & Conversion
@@ -250,21 +250,31 @@ for a value they **cannot observe at that moment**. The RNG-mode duration/total
 rolls emit a plain `int` (no path token); the fix is to emit no token at apply
 and confirm the wear-off later, so both contexts produce identical paths.
 
-**Implemented (clayton-xk7):** Disable, Taunt, Encore now use
+**Implemented (clayton-xk7):** Disable, Taunt, Encore use
 `ctx.roll_hidden_duration(min, max)` at apply (RNG rolls the real value; interactive
 tracks the max, no prompt) and `ctx.hidden_status_ends(label, remaining, min, max)`
 at end of turn (RNG ends on the rolled turn; interactive forces no-end before the
 minimum, forces end at the maximum, and prompts "did it wear off?" in between).
 The `StatusEnd` token is emitted at the confirmed wear-off, never at apply.
 
-**Still deferring at apply (future clayton-8vn work):**
-- Sleep duration (2–5) — end observed when Magikarp acts instead of sleeping.
-- Bind duration (3–5) — per-turn `BindDmg`, then `BindEnd`.
-- Confusion duration (2–5 Magikarp; 1–4 Chansey rampage) — observed via `CFZ`/`SCFZ`.
-- Thrash/Outrage total turns (2–3) — observed via `RampageEnd`.
+**Implemented (clayton-1sn):** the same deferral, adapted to each observable moment —
+- **Sleep** (2–5): no wear-off token; `hidden_status_ends` decides the wake turn
+  (interactive confirms it, since any Magikarp action makes waking self-evident).
+- **Binding** (3–5): `hidden_status_ends` picks `BindDmg` (still bound) vs `BindEnd`
+  (broke free) at end of turn.
+- **Confusion** (Magikarp, 2–5): `ctx.confusion_outcome(...)` resolves the turn as
+  snap-out (`SCFZ`), hit-self (`CFZ`), or attacked-through (no token). Interactive
+  prompts these three directly; snapping is only offered inside the min–max window.
+- **Rampage** (Thrash/Outrage/Petal Dance): the `RampageEnd`/`REND` token was
+  **removed** — resuming Metronome next turn shows it ended, and the ensuing
+  confusion (`SCFZ`/`CFZ`) is the real observable.
 
-These have per-turn or action-time observability (not a clean end-of-turn wear-off),
-so they need the same deferral pattern adapted to *their* observable moment.
+**Remaining interactive work (clayton-8vn):** the locked-move machinery still rolls
+its lock length at apply (thrash total turns 2–3; charge/recharge turns) and detects
+the end from the counter. Interactive needs to *observe* the resumption of Metronome
+(or the charge release) rather than know the length up front — the same defer-and-
+confirm pattern applied to `simulate_locked_continuation`. Chansey's own rampage-end
+confusion should also route through `confusion_outcome`.
 
 ## Coverage summary
 

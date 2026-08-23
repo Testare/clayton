@@ -16,7 +16,7 @@ from claytonlib.moves import Move
 from .path import (
     NonVolatileStatus, Hit, Miss, Crit, EffectProc,
     Unsupported, PathEnd, PathToken, Magnitude, BindDmg, BindEnd, DrowsySlept,
-    ConversionType, RampageEnd,
+    ConversionType,
 )
 
 if TYPE_CHECKING:
@@ -555,16 +555,11 @@ def _eff_sleep(ctx: 'BattleContext', move: Move) -> bool:
         return False
     if _mk_has_insomnia(state):
         return False
-    # Duration: roll observable, user needs to observe sleep duration from game
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 2 + (c.advance_observable() % 4)
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Sleep duration? (2-5):",
-        input_to_token=lambda s: int(s.strip()),
-    )
+    # Duration 2 + RAND%4, hidden at apply time — no token. The wear-off needs no
+    # prompt either: any Magikarp action makes it self-evident it woke. Interactive
+    # tracks the max and the sleep check confirms the wake-turn (see simulate_turn).
     state.mk_status.status = NonVolatileStatus.SLEEP
-    state.mk_status.sleep_turns = int(duration)
+    state.mk_status.sleep_turns = ctx.roll_hidden_duration(2, 5)
     return True
 
 
@@ -988,15 +983,9 @@ def _eff_bind(ctx: 'BattleContext', move: Move) -> bool:
     if state.mk_binding_turns > 0:
         return True  # Already bound; no new duration roll
 
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 3 + (c.advance_observable() % 3)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Binding duration? (3-5):",
-        input_to_token=lambda s: int(s.strip()),
-    )
-    state.mk_binding_turns = int(duration)
+    # Duration 3 + RAND%3, hidden at apply time — no token. Observed per-turn as
+    # BindDmg, then BindEnd on the turn it breaks free (confirmed at end of turn).
+    state.mk_binding_turns = ctx.roll_hidden_duration(3, 5)
     return True
 
 
