@@ -2290,19 +2290,6 @@ def _eff_solar_beam(ctx: 'BattleContext', move: Move) -> bool:
 # Uproar (159): turn 1 C/D/H + duration roll; continuation C/D/H; no early exit on miss
 # ---------------------------------------------------------------------------
 
-def _clear_confusion_on_rampage_lock(ctx: 'BattleContext', state) -> None:
-    """A rampage move (Thrash/Outrage/Petal Dance/Uproar) selected while the user
-    is already confused snaps the user out of confusion as the lock is established.
-    Empirically (ground-truth seed 0x9266B0CF: Thrash confuses Chansey, then
-    Metronome rolls Uproar while still confused) this consumes 2 unobservable
-    advances beyond the duration roll and ends the confusion for the remaining
-    locked turns. Guarded on user_confusion_turns so single-rampage cases are
-    unaffected."""
-    if state.user_confusion_turns > 0:
-        ctx.advance_unobservable(2)
-        state.user_confusion_turns = 0
-
-
 def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
@@ -2311,11 +2298,13 @@ def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
         return False
     # Total 2-3 turns, hidden at apply — no prompt. Interactive tracks the max and
     # observes the end (confusion / Metronome resuming); see simulate_turn.
+    # If the user was already confused, the confusion persists through the lock and
+    # is resolved each locked turn by simulate_turn's site (a) (ground-truth seed
+    # 0x9266B0CF: Thrash-fatigue confusion continues into a Metronome'd Uproar).
     total_turns = ctx.roll_hidden_duration(2, 3)
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
     state.user_locked_turns = total_turns - 1
-    _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
 
@@ -2326,12 +2315,12 @@ def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
     if isinstance(token, Miss):
         return False
     # 2-5 extra turns, hidden at apply — no prompt. Interactive tracks the max and
-    # observes the end (Metronome resuming); see simulate_turn.
+    # observes the end (Metronome resuming); see simulate_turn. Any pre-existing
+    # confusion persists through the lock (resolved by simulate_turn site (a)).
     extra_turns = ctx.roll_hidden_duration(2, 5)
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
     state.user_locked_turns = extra_turns
-    _clear_confusion_on_rampage_lock(ctx, state)
     return True
 
 

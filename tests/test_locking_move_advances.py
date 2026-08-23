@@ -113,5 +113,29 @@ class TestLockingMoveMoveSequences(unittest.TestCase):
         self.assertEqual(actual, expected)
 
 
+class TestConfusionThroughLock(unittest.TestCase):
+    """Confusion that persists into a subsequent locked rampage (tricky seed).
+
+    0x9266B0CF: Thrash confuses Chansey (fatigue), then Metronome rolls Uproar
+    while still confused. The confusion continues through the Uproar lock and
+    snaps out mid-lock. See notes/refined/tricky_seeds.md. Ground truth shows the
+    snap ("snapped out of confusion!") on the turn Chansey is still locked into
+    Uproar, so an SCFZ token must appear on that continuation turn.
+    """
+
+    def test_snap_out_during_uproar_lock(self):
+        from claytonlib.metronome_compass import render_path
+        path = precompute_path(0x9266B0CF, magikarp_level=15,
+                               opposite_gender=False, n_turns=9)
+        rendered = render_path(path)
+        # Thrash T1, confusion applied, hit-self (CFZ) once, Uproar locks, then the
+        # snap (SCFZ) lands on an Uproar continuation turn (no Metronome that turn).
+        self.assertIn('CFZ', rendered)
+        self.assertIn('SCFZ', rendered)
+        # The snap turn is a locked Uproar turn: SCFZ directly followed by the
+        # continuation hit with no Metronome (M###) token on that turn.
+        self.assertIn('SCFZh', rendered)
+
+
 if __name__ == '__main__':
     unittest.main()
