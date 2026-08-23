@@ -279,16 +279,17 @@ The `StatusEnd` token is emitted at the confirmed wear-off, never at apply.
   sites (locked and unlocked), and `_apply_confusion` / `_apply_user_confusion` defer
   their duration.
 
-**Confusion mechanic — two verified variants (`snap_first`):** empirically (against
-seedslurper ground truth) the two confusion sources behave differently on the turn
-confusion wears off:
-- **Magikarp** (move-inflicted, `snap_first=True`): the final turn snaps out with
-  **no** self-hit roll. (Making it roll-first breaks 10 seeds.)
-- **Chansey** (rampage fatigue, `snap_first=False`): the self-hit check is rolled on
-  **every** turn including the last, so the final turn is hit-self *or* snap. (Making
-  it snap-first breaks 5 seeds.)
-This contradicts the intuitive "if confusion ends, no roll is performed" model, which
-holds only for Magikarp. Both are now encoded in `confusion_outcome(..., snap_first=)`.
+**Confusion mechanic — single snap-first rule (corrected):** both Magikarp
+(move-inflicted) and Chansey (rampage fatigue) confusion are **snap-first**: a
+duration-N confusion rolls the self-hit check on N−1 turns, then on turn N snaps
+out with **no** roll ("snapped out of confusion!"). Verified against ground truth
+(0xE3623EF0: turn 6 is still "is confused!" → attacked through; the snap is turn 7).
+An earlier attempt treated Chansey as "roll-first" — that was a mis-diagnosis of a
+**counter off-by-one**: Chansey's fatigue confusion was rolled as `1 + RAND%4` but is
+actually `2 + RAND%4` (2-5 turns, like move confusion). `roll-first(1+R)` is
+RNG-identical to `snap-first(2+R)` (same advances) but emits the `SCFZ` a turn early;
+fixing the counter makes snap-first correct *and* keeps all 442 paths byte-identical.
+`confusion_outcome` is now a single snap-first rule (no per-source parameter).
 
 **Still deferred (charge/recharge):** Fly/Dig/Solar Beam/etc. and Hyper Beam recharge
 have **fixed** lock lengths (1 continuation / 1 recharge), so interactive already knows

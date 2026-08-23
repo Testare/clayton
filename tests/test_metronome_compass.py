@@ -130,8 +130,8 @@ class TestInteractiveHiddenDuration(unittest.TestCase):
 
         self.assertEqual(state.user_locked_turns, 0)
         self.assertIsNone(state.user_locked_move_num)
-        # roll_hidden_duration returns the max (1-4 → 4) with no prompt.
-        self.assertEqual(state.user_confusion_turns, 4)
+        # roll_hidden_duration returns the max (2-5 → 5) with no prompt.
+        self.assertEqual(state.user_confusion_turns, 5)
 
     @patch('builtins.input')
     def test_interactive_rampage_continues_on_negative(self, mock_input):

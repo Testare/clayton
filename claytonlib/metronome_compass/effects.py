@@ -189,10 +189,12 @@ def _apply_confusion(ctx: 'BattleContext') -> None:
 
 def _apply_user_confusion(ctx: 'BattleContext') -> None:
     """Roll/record Chansey confusion duration (from rampage end).
-    Gen IV formula: 1 + (roll % 4), giving 1-4 turns; hidden at apply."""
+
+    Duration 2 + RAND%4 (2-5 turns), same as move-inflicted confusion; the final
+    turn snaps out with no self-hit roll. Hidden at apply."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    state.user_confusion_turns = ctx.roll_hidden_duration(1, 4)
+    state.user_confusion_turns = ctx.roll_hidden_duration(2, 5)
 
 
 # ---------------------------------------------------------------------------

@@ -335,26 +335,20 @@ class RngContext(BattleContext):
         return remaining <= 1
 
     def confusion_outcome(self, label: str, remaining: int,
-                          min_dur: int, max_dur: int, snap_first: bool = True) -> str:
+                          min_dur: int, max_dur: int) -> str:
         """Resolve a confused Pokémon's turn: 'snap', 'hit_self', or 'act'.
 
-        Two empirically-distinct mechanics (verified against seedslurper ground
-        truth), selected by `snap_first`:
-        - snap_first=True (Magikarp / move-inflicted confusion): the final turn
-          snaps out with NO self-hit roll. Earlier turns roll the self-hit check
-          (even → hurt itself, odd → attack through).
-        - snap_first=False (Chansey / rampage-fatigue confusion): the self-hit
-          check is rolled EVERY turn including the last (even → hurt itself); on
-          the last turn an odd roll snaps out instead of attacking.
-
-        The caller emits SCFZ on 'snap' and CFZ on 'hit_self'; 'act' emits nothing.
+        Confusion lasts `remaining` turns counting this one. On its final turn
+        (remaining == 1) the Pokémon snaps out immediately with NO self-hit roll
+        (ground truth: "snapped out of confusion!" with no preceding check).
+        Otherwise a self-hit check consumes one observable roll: even → hurt
+        itself, odd → attack through. The caller emits SCFZ on 'snap' and CFZ on
+        'hit_self'; 'act' emits nothing.
         """
-        if snap_first and remaining <= 1:
+        if remaining <= 1:
             return 'snap'
         roll = self.advance_observable()
-        if (roll & 1) == 0:
-            return 'hit_self'
-        return 'snap' if remaining <= 1 else 'act'
+        return 'hit_self' if (roll & 1) == 0 else 'act'
 
     def confirm_lock_end(self, label: str) -> bool:
         """Whether a hidden-length lock (rampage/uproar) ended THIS turn.
@@ -434,30 +428,24 @@ class InteractiveContext(BattleContext):
             print("    Invalid input. Enter y (wore off) or n (still active).")
 
     def confusion_outcome(self, label: str, remaining: int,
-                          min_dur: int, max_dur: int, snap_first: bool = True) -> str:
+                          min_dur: int, max_dur: int) -> str:
         """Prompt the player for a confused Pokémon's turn outcome.
 
         Duration is hidden. Before the minimum a snap is impossible; on the final
-        possible turn (>= max) it must end. With snap_first=True (Magikarp) the
-        final turn snaps with no self-hit chance; with snap_first=False (Chansey)
-        the self-hit check still applies on the final turn, so it is hit-self OR
-        snap. Only 'snap' (SCFZ) and 'hit_self' (CFZ) produce tokens.
+        possible turn (>= max) it must snap out (no self-hit roll). In between the
+        player picks from three observed outcomes. Only 'snap' (SCFZ) and
+        'hit_self' (CFZ) produce tokens; 'act' looks like a normal attack.
         """
         turn = max_dur - remaining + 1
-        at_max = turn >= max_dur
-        can_snap = turn >= min_dur
-        if snap_first and at_max:
+        if turn >= max_dur:
             return 'snap'
-        if at_max:                       # snap_first=False final turn: hit-self or snap
-            opts, allow = "s=snapped out, h=hit itself", {'s', 'h'}
-        elif can_snap:
-            opts, allow = "s=snapped out, h=hit itself, a=attacked through it", {'s', 'h', 'a'}
-        else:
-            opts, allow = "h=hit itself, a=attacked through it", {'h', 'a'}
+        can_snap = turn >= min_dur
+        opts = ("s=snapped out, h=hit itself, a=attacked through it"
+                if can_snap else "h=hit itself, a=attacked through it")
         keymap = {'h': 'hit_self', 'a': 'act', 's': 'snap'}
         while True:
             raw = input(f"  {label} confusion — {opts}: ").strip().lower()
-            if raw in allow:
+            if raw in keymap and (raw != 's' or can_snap):
                 return keymap[raw]
             print("    Invalid input.")
 
