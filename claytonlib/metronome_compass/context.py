@@ -313,6 +313,27 @@ class RngContext(BattleContext):
         roll = self.advance_observable()
         return roll % 100 < chance
 
+    def roll_hidden_duration(self, min_dur: int, max_dur: int) -> int:
+        """Roll a hidden status duration (Disable/Taunt/Encore).
+
+        Consumes one observable RNG roll (its value is never tokenised — the
+        duration is unobservable at apply time) and returns the actual duration
+        in [min_dur, max_dur]. The wear-off is what the player observes; see
+        hidden_status_ends().
+        """
+        span = max_dur - min_dur + 1
+        return min_dur + (self.advance_observable() % span)
+
+    def hidden_status_ends(self, label: str, remaining: int,
+                           min_dur: int, max_dur: int) -> bool:
+        """Whether a hidden-duration status wears off at the end of this turn.
+
+        `remaining` counts down from the rolled duration, so it ends on the turn
+        its remaining count reaches its final tick. min_dur/max_dur are unused in
+        RNG mode (the actual duration is known).
+        """
+        return remaining <= 1
+
 
 # ---------------------------------------------------------------------------
 # InteractiveContext
@@ -352,3 +373,32 @@ class InteractiveContext(BattleContext):
             if raw == '-':
                 return False
             print(f"    Invalid input: {raw!r}. Enter ~ (proc'd) or - (no proc).")
+
+    def roll_hidden_duration(self, min_dur: int, max_dur: int) -> int:
+        """Hidden duration is unobservable at apply time: track the maximum and
+        confirm the actual wear-off later via hidden_status_ends(). No prompt and
+        no token here — the player cannot know the duration when it is applied.
+        """
+        return max_dur
+
+    def hidden_status_ends(self, label: str, remaining: int,
+                           min_dur: int, max_dur: int) -> bool:
+        """Ask whether the status wore off at the end of this turn.
+
+        `remaining` counts down from max_dur (set by roll_hidden_duration), so the
+        1-based turn number since application is `max_dur - remaining + 1`. Before
+        the minimum possible duration it cannot have ended; at the maximum it must
+        have; in between we prompt the player, who observes the wear-off message.
+        """
+        turn = max_dur - remaining + 1
+        if turn < min_dur:
+            return False
+        if turn >= max_dur:
+            return True
+        while True:
+            raw = input(f"  Did {label} wear off at end of turn? (y/n): ").strip().lower()
+            if raw == 'y':
+                return True
+            if raw == 'n':
+                return False
+            print("    Invalid input. Enter y (wore off) or n (still active).")

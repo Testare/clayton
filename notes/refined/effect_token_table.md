@@ -136,10 +136,10 @@ order, duration formulas, which effects want wear-off tokens) and
 
 | Effects | Handler | Description | Observable | Has token | Int. verified |
 |---|---|---|---|---|---|
-| 86 | `_eff_disable` | Disable — hit check; duration hidden; blocks a Magikarp move (Prevented) and wears off observably. | Immediate (hit) + Later | `Hit`/`Miss`; `Prevented`; `StatusEnd("DIS")` | ☐ ⚠ |
-| 175 | `_eff_taunt` | Taunt — hit check; blocks status moves; wears off observably. | Immediate (hit) + Later | `Hit`/`Miss`; `Prevented`; `StatusEnd("TAUNT")` | ☐ ⚠ |
+| 86 | `_eff_disable` | Disable — hit check; duration hidden; blocks a Magikarp move (Prevented) and wears off observably. | Immediate (hit) + Later | `Hit`/`Miss`; `Prevented`; `StatusEnd("DIS")` | ☐ (impl) |
+| 175 | `_eff_taunt` | Taunt — hit check; blocks status moves; wears off observably. | Immediate (hit) + Later | `Hit`/`Miss`; `Prevented`; `StatusEnd("TAUNT")` | ☐ (impl) |
 | 215 | `_eff_gravity` | Gravity — field; boosts accuracy (deterministic), grounds/blocks some moves. Duration always 5 turns, so per `effect_status.md` no wear-off token is *needed* (code still emits `StatusEnd("GRV")` harmlessly). | Deterministic | `Prevented` (wear-off token optional) | ☐ |
-| 90 | `_eff_encore` | Encore — hit check; duration hidden; forces Magikarp to repeat its move. | Immediate (hit) + Later | `Hit`/`Miss` | ☐ ⚠ |
+| 90 | `_eff_encore` | Encore — hit check; duration hidden; forces Magikarp to repeat its move. | Immediate (hit) + Later | `Hit`/`Miss`; `StatusEnd("ENC")` | ☐ (impl) |
 | 84 | `_eff_leech_seed` | Leech Seed — hit check; drains at end of turn. | Immediate (hit) + Later | `Hit`/`Miss` | ☐ |
 | 107 | `_eff_nightmare` | Nightmare — hit check; end-of-turn damage while asleep. | Immediate (hit) + Later | `Hit`/`Miss` | ☐ |
 | 165 | `_eff_torment` | Torment — hit check; bars repeated moves. | Immediate (hit) | `Hit`/`Miss` | ☐ |
@@ -245,19 +245,26 @@ Observable messages but **no RNG** → no token required. All `☐` for interact
 
 ## Interactive gaps (feeds clayton-8vn)
 
-Rows flagged ⚠ share one problem: `InteractiveContext` currently asks the player
+Rows flagged ⚠ share one problem: `InteractiveContext` used to ask the player
 for a value they **cannot observe at that moment**. The RNG-mode duration/total
-rolls emit a plain `int` (no path token), but the interactive prompt still asks:
+rolls emit a plain `int` (no path token); the fix is to emit no token at apply
+and confirm the wear-off later, so both contexts produce identical paths.
 
-- Disable duration (4–7), Taunt duration, Encore duration (3–6)
-- Sleep duration (2–5), Bind duration (3–5)
-- Confusion duration (2–5 for Magikarp; 1–4 for Chansey rampage)
-- Thrash/Outrage total turns (2–3)
+**Implemented (clayton-xk7):** Disable, Taunt, Encore now use
+`ctx.roll_hidden_duration(min, max)` at apply (RNG rolls the real value; interactive
+tracks the max, no prompt) and `ctx.hidden_status_ends(label, remaining, min, max)`
+at end of turn (RNG ends on the rolled turn; interactive forces no-end before the
+minimum, forces end at the maximum, and prompts "did it wear off?" in between).
+The `StatusEnd` token is emitted at the confirmed wear-off, never at apply.
 
-The player can only observe the *consequence* later (`StatusEnd`, `BindEnd`,
-`DrowsySlept`, `CFZ`/`SCFZ`, `RampageEnd`). Interactive path generation should
-either (a) defer these prompts and infer the duration from the later observable
-moment, or (b) branch over all possible durations. Tracked under **clayton-8vn**.
+**Still deferring at apply (future clayton-8vn work):**
+- Sleep duration (2–5) — end observed when Magikarp acts instead of sleeping.
+- Bind duration (3–5) — per-turn `BindDmg`, then `BindEnd`.
+- Confusion duration (2–5 Magikarp; 1–4 Chansey rampage) — observed via `CFZ`/`SCFZ`.
+- Thrash/Outrage total turns (2–3) — observed via `RampageEnd`.
+
+These have per-turn or action-time observability (not a clean end-of-turn wear-off),
+so they need the same deferral pattern adapted to *their* observable moment.
 
 ## Coverage summary
 

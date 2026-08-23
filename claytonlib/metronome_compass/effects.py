@@ -667,16 +667,10 @@ def _eff_disable(ctx: 'BattleContext', move: Move) -> bool:
             or state.mk_last_move_prevented):
         return False
 
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 4 + (c.advance_observable() % 4)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Disable duration? (4-7):",
-        input_to_token=lambda s: int(s.strip()),
-    )
+    # Duration 4 + RAND%4 (effect_status.md). Hidden at apply time — no token; the
+    # observable event is the wear-off (StatusEnd("DIS")), confirmed at end of turn.
     state.mk_status.disabled_move = state.mk_last_move
-    state.mk_status.disable_turns = int(duration)
+    state.mk_status.disable_turns = ctx.roll_hidden_duration(4, 7)
     return True
 
 
@@ -692,15 +686,9 @@ def _eff_taunt(ctx: 'BattleContext', move: Move) -> bool:
     if state.mk_status.taunt_turns > 0:
         return False
 
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 3 + (c.advance_observable() % 3)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Taunt duration? (3-5):",
-        input_to_token=lambda s: int(s.strip()),
-    )
-    state.mk_status.taunt_turns = int(duration)
+    # Duration 3 + RAND%3 (effect_status.md). Hidden at apply time — no token; the
+    # observable event is the wear-off (StatusEnd("TNT")), confirmed at end of turn.
+    state.mk_status.taunt_turns = ctx.roll_hidden_duration(3, 5)
     return True
 
 
@@ -777,18 +765,13 @@ def _eff_encore(ctx: 'BattleContext', move: Move) -> bool:
     if state.mk_last_move is None or state.mk_last_move_prevented:
         return False
 
-    def rng_to_duration(c: 'BattleContext') -> int:
-        return 3 + (c.advance_observable() % 4)
-
-    duration = ctx.emit(
-        rng_to_token=rng_to_duration,
-        question="Encore duration? (3-6):",
-        input_to_token=lambda s: int(s.strip()),
-    )
+    # Duration 3 + RAND%4 (rolled 3-6). Hidden at apply time — no token; the
+    # observable event is the wear-off (StatusEnd("ENC")), confirmed at end of turn.
     # +2: one for the end-of-turn decrement on the turn Encore is applied, plus one
     # more because the game uses the duration for subsequent turns (not counting the
-    # current turn). E.g. duration=3 → Magikarp is Encored on turns t+1, t+2, t+3, t+4.
-    state.mk_encore_turns = int(duration) + 2
+    # current turn). E.g. duration=3 → Magikarp is Encored on turns t+1..t+4.
+    # Stored range is therefore 5-8 (see hidden_status_ends bounds in simulate_turn).
+    state.mk_encore_turns = ctx.roll_hidden_duration(3, 6) + 2
     return True
 
 

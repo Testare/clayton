@@ -279,15 +279,24 @@ def simulate_turn(
         state.gravity_turns -= 1
         if state.gravity_turns == 0:
             ctx.raw_emit(StatusEnd("GRV"))
+    # Hidden-duration statuses: the wear-off is the only observable event, so we
+    # emit no token at apply and confirm the end at end of turn. In RNG mode the
+    # rolled duration decides; in interactive mode the player confirms the wear-off
+    # (tracked as max duration, prompted from the minimum onward). Bounds match the
+    # roll ranges in effects.py (Disable 4-7, Taunt 3-5, Encore stored 5-8).
     if state.mk_status.disable_turns > 0:
-        state.mk_status.disable_turns -= 1
-        if state.mk_status.disable_turns == 0:
+        if ctx.hidden_status_ends("Disable", state.mk_status.disable_turns, 4, 7):
+            state.mk_status.disable_turns = 0
             state.mk_status.disabled_move = None
             ctx.raw_emit(StatusEnd("DIS"))
+        else:
+            state.mk_status.disable_turns -= 1
     if state.mk_status.taunt_turns > 0:
-        state.mk_status.taunt_turns -= 1
-        if state.mk_status.taunt_turns == 0:
+        if ctx.hidden_status_ends("Taunt", state.mk_status.taunt_turns, 3, 5):
+            state.mk_status.taunt_turns = 0
             ctx.raw_emit(StatusEnd("TNT"))
+        else:
+            state.mk_status.taunt_turns -= 1
     if state.user_light_screen_turns > 0:
         state.user_light_screen_turns -= 1
     if state.user_reflect_turns > 0:
@@ -307,9 +316,11 @@ def simulate_turn(
     if state.user_lock_on_turns > 0:
         state.user_lock_on_turns -= 1
     if state.mk_encore_turns > 0:
-        state.mk_encore_turns -= 1
-        if state.mk_encore_turns == 0:
+        if ctx.hidden_status_ends("Encore", state.mk_encore_turns, 5, 8):
+            state.mk_encore_turns = 0
             ctx.raw_emit(StatusEnd("ENC"))
+        else:
+            state.mk_encore_turns -= 1
 
     # Future Sight / Doom Desire: tick counter; fire observable hit check when it reaches 0
     if state.future_sight_turns > 0:
