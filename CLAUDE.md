@@ -33,9 +33,9 @@ The main library is `claytonlib/`, which auto-exports all public names via `__in
 
 ### Key conventions
 
-- **Terminology**: "Delays" are the fundamental unit — the delay counter increments once per hardware VBlank at ~59.8261 Hz. "Frames" are game frames, which occur approximately every 2 delays (~29.913/sec). The codebase is being migrated from the incorrect assumption of 60 delays/second to the correct 59.8261.
+- **Terminology**: "Delays" are the fundamental unit — the delay counter increments once per hardware VBlank at ~59.8261 Hz. A game frame advances in lockstep with a delay, so a delay *is* a game frame (1:1); the two terms are interchangeable. Because the real rate is ~59.8261 Hz (not a flat 60), an RTC second contains 59 or 60 delays. The codebase is being migrated from the incorrect assumption of a flat 60 delays/second to the correct ~59.8261.
 - **Delay is always absolute** (not relative to setup_delay).
-- **Two seeds per delay** for frame j>0: one where the second hasn't ticked, one where it has.
+- **Two seeds per delay**: one where the RTC second has not ticked yet (seed_a), one where it has (seed_b).
 - **RNG**: `advance_rng(state) = (state * 1103515245 + 24691) & 0xFFFFFFFF` (standard LCRNG).
 - **`SafariContext` is shallow-copy safe** — copy it freely to branch simulations.
 - **Flee filtering**: `filter_fled=True` means the pokemon did NOT flee (counterintuitive but consistent throughout).

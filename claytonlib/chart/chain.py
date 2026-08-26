@@ -1,14 +1,15 @@
 """
 chain.py — Chain and chain link utilities.
 
-A chain link is a (from_seed, to_seed, n_frames) tuple. Expanding a link
-produces the candidate seeds across all frames of that second, two per frame:
+A chain link is a (from_seed, to_seed, n_delays) tuple. Expanding a link
+produces the candidate seeds across all delays of that second, two per delay:
 one assuming the current second (seed_a), one assuming the next second (seed_b).
+(A delay is one game frame; the terms are interchangeable.)
 
-n_frames is 29 or 30 depending on where this second falls in the VBlank/RTC
+n_delays is 59 or 60 depending on where this second falls in the VBlank/RTC
 phase cycle. The packed bitmask stored in chain files encodes the evaluation
-result: bit 2j = seed_a result, bit 2j+1 = seed_b result for frame j.
-Bit 62 is set when the link has 29 frames.
+result: bit 2j = seed_a result, bit 2j+1 = seed_b result for delay j.
+Bit 120 is set when the link has 59 delays.
 """
 
 import datetime as dt
@@ -162,9 +163,9 @@ def evaluate_chain_link(link: ChainLink, pokemon: SafariPokemon, strategy: Strat
 def expand_chain_link(link: ChainLink) -> list[int]:
     """Expand a ChainLink into a flat list of seeds: [seed_a_0, seed_b_0, seed_a_1, seed_b_1, ...]
 
-    For frame j (0-based):
-      seed_a(j) = from_seed + 2*j  = calculate_seed(T,   D + 2j)
-      seed_b(j) = to_seed - 2*(n-j) = calculate_seed(T+1, D + 2j)
+    For delay j (0-based):
+      seed_a(j) = from_seed + j   = calculate_seed(T,   D + j)
+      seed_b(j) = to_seed - (n-j) = calculate_seed(T+1, D + j)
     """
     f, t, n = link
     t_base = t - n
