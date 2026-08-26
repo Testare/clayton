@@ -30,3 +30,9 @@ data/
 .dolt/
 *.db
 .beads-credential-key
+
+# Game-derived binaries — never commit ROM/emulator artifacts
+*.elf
+*.nds
+*.sav
+*.dsv

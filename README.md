@@ -1,55 +1,104 @@
-# The Goal
+# Clayton
 
-The purpose of this project is to create a set of tools to help ensure successful captures in the Johto Safari Zone using RNG manipulation. This tool's ultimate goal is for the creator to use it to capture a Shiny Metang.
+**A Pokémon HeartGold/SoulSilver Safari Zone RNG-manipulation toolkit.**
 
-# Some terms
+Clayton helps a player pick optimal datetimes to load a save, identify which RNG
+seed they actually hit, and solve capture paths — all to maximize the chance of
+catching rare Safari Zone Pokémon (primarily Metang, with the ultimate goal of a
+shiny one).
 
-## Seed, Battle Seed, Initial Seed, etc.
+> ⚠️ **Unofficial fan project.** This is a hobby tool for RNG research and is not
+> affiliated with or endorsed by Nintendo, Game Freak, or The Pokémon Company. It
+> contains **no ROMs, game assets, or copyrighted code** — only original analysis
+> code and factual game data (base stats, move lists, etc.). You must supply your
+> own legally-obtained game to use it. See [LICENSE](LICENSE).
 
-Randomness is seeded in the game from the clock and the frames taken in game. For this project there will be two important seeds: The initial seed and the battle seed. The initial seed is the seed that we hit for the RNG manipulation. This, along with advances, determines what pokemon we encoutner. The battle seed, usually what we are talking about with "target seed", is the seed that is created for the battle and used to determine random events that happen in that battle.
+## How it works
 
-We should try to avoid talking about seeds without a qualifier, or using the term "encounter seed" since it could refer to either.
+Randomness in HGSS is seeded from the clock and the number of game frames elapsed.
+Two seeds matter here:
 
-# The Tools
+- **Initial seed** — the seed hit via RNG manipulation (chosen datetime). Together
+  with RNG advances it determines which Pokémon you encounter.
+- **Battle seed** ("target seed") — created for the battle, driving random events
+  within it (ball shakes, bait/mud crits, flee rolls).
 
-## Compass - Metronome
+The toolkit is organized around four cooperating tools:
 
-This phase is about creating a tool to help us calibrate our timers so that we can arrive at a specific time. While we can calibrate a little in the safari zone, there isn't as much randomness to take advantage of. Metronome can generate quite a bit of randomness. By getting a metronome user with specific moves and fighting magikarps in an area that only has them and their pre-determined movepool, we can determine battle seeds hit with much more accuracy.
+| Tool | Module | Purpose |
+|------|--------|---------|
+| **Chart** | `claytonlib/chart/` | Evaluate seeds across candidate datetimes to find the time that gives the best odds of landing on a winning battle seed. |
+| **Compass — Metronome** | `claytonlib/metronome_compass/` | Calibrate timers by identifying battle seeds from observed Metronome moves (fighting Magikarp against a fixed-moveset Chansey). |
+| **Compass — Safari** | `claytonlib/compass/` | Identify which seed you hit from observed in-battle outcomes (ball shakes, critical bait/mud, flees). |
+| **Machete** | `claytonlib/machete.py` | BFS/DFS solver that simulates turns ahead to find action sequences leading to a successful capture, and builds optimal decision trees. |
 
-While we have ideas on how to expand the functionality, the current plan is to have a single metronome user, a Lvl 7 Chansey with max bulk and min offense, holding the lagging tail, with Metronome, Solar Beam, Healing Wish, and Fling.
+`claytonlib/expedition/` is the high-level workflow manager that ties Chart,
+Compass, and Machete together with persistent config.
 
-## Chart
+## Requirements
 
-Once we have a tool to calibrate we can get an idea of the randomness and range of the frame rate, especially over longer periods of time. We should then try and get all likely battle seeds from a given initial seed/time for a period of time following it, and determine the odds of success for a given strategy. We have tools in compass safari to determine if a seed could be successful. Then we want to statistically determine what time gives us the best odds of landing on a successful battle seed.
+- Python **3.10+** (standard library only — no third-party runtime dependencies)
+- Jupyter (optional, for the interactive notebooks)
 
-## Compass - Safari
+There is also a [Nix flake](flake.nix) providing a dev shell with Python, Jupyter,
+`ruff`, and the ARM toolchain used for RNG reverse-engineering.
 
-Once we have identified a target, we want to identify what seed we have hit by analyzing the results of random chance. The most prominent will be how many times a pokeball shakes, but critical bait or mud can also be used.
+## Getting started
 
-## MacheteG
+```bash
+git clone https://github.com/Testare/clayton.git
+cd clayton
 
-Once we have identified a seed we want to know if there is a sequence of actions that will lead to a successful result. Machete will simulate a certain number of turns into the future to try and identify success cases.
+# Run the test suite (stdlib unittest, ~0.3s)
+python -m unittest discover -s tests -v
 
-# Plan details
+# Or drop into the Nix dev shell
+nix develop
+```
 
-This is details for the current plan. Things we have already implemented might be removed from this list.
+The library auto-exports its public API, so interactive use is simply:
 
-## Metang Pre-run information
-* Determine how long it takes from game start to verify seed and reach the place to encounter metang and pull up the sweet scent button. This will be our minimum delay in the chart.
-## Compass Metronome
-* Reliably determine paths from seeds
-  * Verify that our seed generation logic correctly generates paths for a specific move.
-     * Currently there are bugs - For instance, moves that inflict burn as a secondary effect do not track this secondary effect, and moves that increase evasion do not track this either.
-  * Update gdb script so that we can output roll and battle message data for a seed and write to a file.
-  * Find a way to verify seed path generation logic using this data.
-* Be able to search for a seed in a time frame given some initial parameters and the path
-* Calibrate soul silver around the 5 minute mark and 10 minute mark and collect data. Also attempt to hit specific delays.
-## Chart
-* Use data from the SS calibration to determine upper and lower bounds for frame rates, and the statical likelihood of hitting a given battle seed from an initial seed (Such as the "average" frame rate).
-* Adjust our chart implementation to store seed results generated from this new method (our current method assumes a flat frame rate, but we want to cover a range).
-* Create a better statistical strategy of finding the best target battle seed delay based on the data from compass metronome and our previous statistical analysis.
-## Compass - Safari
-* Verify the compass is accurate using gdb+MelonDS
-## Actual Metang Runs
-* Make some attempts to hit the initial seed and get into position. For the first handful of attempts at least, we want to make a full attempt even if we miss the initial seed, and try to identify what battle seed we hit so we have an idea if there is a significant difference in frame rate or an offset of some sort from our metronome compass calibrations.
-* Once we feel confident that our timing is correct, we should start making attempts where we reset if we do not hit the initial seed.
+```python
+import claytonlib
+
+# Map a datetime + delay to an initial seed
+seed = claytonlib.calculate_seed(some_datetime, delay)
+
+# ...then use chart / compass / machete to plan and identify runs
+```
+
+The Jupyter notebooks in the project root (e.g. `Clayton Metang Expedition.ipynb`)
+are the primary interactive interface and show end-to-end workflows.
+
+## Project layout
+
+```
+claytonlib/            Core library (imported by the notebooks)
+  safari.py            Foundation: SafariPokemon, SafariContext, advance_rng()
+  safari_compact.py    Bit-packed SafariContext for high-performance BFS
+  times.py             Seed <-> datetime mapping
+  chart/               Optimal-datetime evaluation
+  compass/             Seed identification from safari-turn outcomes
+  metronome_compass/   Seed identification from Metronome moves
+  machete.py           Capture-path solver
+  expedition/          High-level workflow orchestration
+  basedata/            Static factual game data (stats, moves, month-day map)
+tests/                 unittest suite (~290 tests)
+notes/                 RNG research notes and reverse-engineering logs
+one-offs/              Standalone data-generation scripts
+utils/                 gdb helpers for RNG reversing
+*.ipynb                Interactive workflow notebooks
+```
+## Running tests
+
+```bash
+python -m unittest discover -s tests -v                      # everything
+python -m unittest tests.test_machete -v                     # one module
+python -m unittest tests.test_machete.TestMacheteOne.test_path_ends_with_C_when_found
+```
+
+## License
+
+Original code is released under the [MIT License](LICENSE). Pokémon and all related
+names are trademarks of Nintendo, Game Freak, and The Pokémon Company. This project
+claims no rights to them.
