@@ -65,6 +65,10 @@ class Expedition:
         self.criteria_name:       str | None = None
         self.eval_strategy_name:  str | None = None
 
+        # Chart tuning (I/O batching, resume validation — see chart.ChartOptions)
+        from claytonlib.chart import ChartOptions
+        self.chart_options: ChartOptions = ChartOptions()
+
         # Compass inputs
         self.window:              int | None = None
         self.target_delay:        int | None = None
@@ -89,8 +93,10 @@ class Expedition:
     # ------------------------------------------------------------------
 
     def _to_dict(self) -> dict:
+        from dataclasses import asdict
         return {
             'name':                     self.name,
+            'chart_options':            asdict(self.chart_options),
             'pokemon_name':             self.pokemon_name,
             'key_seed':                 self.key_seed,
             'setup_delay_seconds':      self.setup_delay_seconds,
@@ -113,7 +119,12 @@ class Expedition:
 
     @classmethod
     def _from_dict(cls, data: dict) -> 'Expedition':
+        from claytonlib.chart import ChartOptions
         f = cls(name=data['name'])
+        _co = data.get('chart_options')
+        if _co:
+            valid = {k: v for k, v in _co.items() if k in ChartOptions.__dataclass_fields__}
+            f.chart_options = ChartOptions(**valid)
         f.pokemon_name             = data.get('pokemon_name')
         f.key_seed                 = data.get('key_seed')
         f.setup_delay_seconds      = data.get('setup_delay_seconds')
@@ -464,6 +475,7 @@ class Expedition:
             strategy=_resolve_strategy(self.strategy_name),
             criteria=_resolve_criteria(self.criteria_name),
             pokemon=safari_pokemon_by_name(self.pokemon_name),
+            options=self.chart_options,
         )
 
     def _eval_filename_override(self, eval_strat, chart_dir) -> str | None:
