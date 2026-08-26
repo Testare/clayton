@@ -55,20 +55,31 @@ class CompassMetronomeInput:
 # ---------------------------------------------------------------------------
 
 def _generate_candidates(inputs: CompassMetronomeInput) -> list[tuple[int, int]]:
-    """Return sorted (seed, delay) pairs for the search window."""
+    """Return sorted (seed, delay) pairs for the search window.
+
+    Mirrors the Metronome Compass Testing notebook's generator: a single center
+    second — derived once from the *target* delay offset — is enumerated against
+    every delay in the ±window range, giving a uniform seconds×delays grid rather
+    than tying each delay to its own exact RTC second. This is a superset of the
+    strictly-reachable seeds and is robust to imprecision in the 59.8261 Hz frame
+    rate (frame-rate-fix plan, "wider compass windows").
+
+    ``second_window`` widens the seconds window; the extra +1 second on the high
+    side keeps the "second has ticked" partner, so ``second_window=0`` still emits
+    the canonical two seeds per delay.
+    """
     from claytonlib.compass import _delay_offset_to_second_frame
     base_delay, _ = get_times(inputs.key_seed)
+    center_second, _ = _delay_offset_to_second_frame(max(0, inputs.target_delay - base_delay))
     seen: set[int] = set()
     results: list[tuple[int, int]] = []
 
     for d in range(inputs.target_delay - inputs.window,
                    inputs.target_delay + inputs.window + 1):
-        offset = d - base_delay
-        if offset < 0:
+        if d < 0:
             continue
-        second_idx, _ = _delay_offset_to_second_frame(offset)
-        for s in range(second_idx - inputs.second_window,
-                       second_idx + inputs.second_window + 2):
+        for s in range(center_second - inputs.second_window,
+                       center_second + inputs.second_window + 2):
             if s < 0:
                 continue
             seed = calculate_seed(inputs.initial_time + dt.timedelta(seconds=s), d)
