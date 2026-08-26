@@ -13,6 +13,15 @@ shiny one).
 > code and factual game data (base stats, move lists, etc.). You must supply your
 > own legally-obtained game to use it. See [LICENSE](LICENSE).
 
+> Disclaimer 2: This project is kinda rough-shod right now. Once we have the
+> tools in a working state we'll try to clean up and make the tools a little more
+> accessible and well tested, but for now be patient as we break stuff and try
+> to make working tools!
+
+> 🚧 **Current status:** for a candid rundown of where the project actually stands
+> and what still needs reworking, read
+> [`docs/APPROXIMATE_STATE_OF_THE_PROJECT.md`](docs/APPROXIMATE_STATE_OF_THE_PROJECT.md).
+
 ## How it works
 
 Randomness in HGSS is seeded from the clock and the number of game frames elapsed.
@@ -34,6 +43,10 @@ The toolkit is organized around four cooperating tools:
 
 `claytonlib/expedition/` is the high-level workflow manager that ties Chart,
 Compass, and Machete together with persistent config.
+
+## Documentation
+
+Detailed docs live in [`docs/`](docs/), including [Current project status](docs/APPROXIMATE_STATE_OF_THE_PROJECT.md) — where things actually stand and what's being reworked.
 
 ## Requirements
 
@@ -67,7 +80,7 @@ seed = claytonlib.calculate_seed(some_datetime, delay)
 # ...then use chart / compass / machete to plan and identify runs
 ```
 
-The Jupyter notebooks in the project root (e.g. `Clayton Metang Expedition.ipynb`)
+The Jupyter notebooks in the project root (e.g. `Expedition Workflow.ipynb`)
 are the primary interactive interface and show end-to-end workflows.
 
 ## Project layout
