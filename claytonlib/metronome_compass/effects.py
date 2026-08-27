@@ -1531,6 +1531,24 @@ def _eff_rest(ctx: 'BattleContext', move: Move) -> bool:
     return True
 
 
+def _eff_endeavor(ctx: 'BattleContext', move: Move) -> bool:
+    """Endeavor (189): cuts the target's HP down to equal the user's current HP;
+    it fails outright when the user's HP is already >= the target's HP.
+
+    In this matchup the metronome user's max HP exceeds a Magikarp's max possible
+    HP (P0: 47 vs a level-20 Magikarp's 44). So while the user is provably at full
+    HP, user HP > target HP always holds and Endeavor is a guaranteed fail — no
+    damage, no differentiating roll, and the path continues normally. Once the user
+    has taken damage its HP is unprovable and both the success and the resulting HP
+    are unmodelable, so end the path as Unsupported.
+    """
+    from .path import MetronomeBattleState
+    state: MetronomeBattleState = ctx.battle_state['state']
+    if not state.user_took_damage:
+        return False                    # user at full HP (> Magikarp max) → fails
+    return _throw_unsupported(ctx)       # user HP unprovable → can't model outcome
+
+
 def _eff_hidden_power(ctx: 'BattleContext', move: Move) -> bool:
     """Hidden Power (135): standard C/D/H, but Unsupported if Magikarp is frozen.
 
@@ -2795,7 +2813,7 @@ EFFECT_HANDLERS: dict[int, EffectHandler] = {
 
     # --- Unsupported (SUPPORT_NOT_PLANNED) ---
     57:  _eff_unsupported,  # Transform — Chansey loses Metronome; no future path possible
-    189: _eff_unsupported,  # Endeavor — always fails in P0 (Magikarp HP << Chansey HP); hit check always Miss, no seed-differentiating info
+    189: _eff_endeavor,  # Endeavor — guaranteed fail while user at full HP (> Magikarp max); Unsupported once user is damaged
 }
 
 

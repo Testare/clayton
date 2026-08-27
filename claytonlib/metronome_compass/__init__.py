@@ -772,6 +772,17 @@ def metronome_compass(inputs: CompassMetronomeInput) -> list[str]:
                 print(f"Seed identified: 0x{seed:08X}  delay={delay}  Δ={_delta_str(delta)}")
                 return [f"0x{seed:08X}"]
 
+            # If no remaining candidate has a move at this turn, every matching
+            # path has already ended (an unsupported move or the battle being
+            # over). There is nothing left to observe, so stop prompting rather
+            # than asking for a move that filters everything to zero.
+            if all(len(seed_to_path.get(s, ())) < turn_n for s, d in candidates):
+                print()
+                print(f"No further moves to observe — {len(candidates)} seeds remain "
+                      f"and cannot be differentiated (their paths end here: an "
+                      f"unsupported move or the battle is over).")
+                break
+
             print()
             print(f"Turn {turn_n} — enter observations (e.g. 'Flamethrower h sp')")
             raw = input("  (or u=undo, q=quit): ").strip()
