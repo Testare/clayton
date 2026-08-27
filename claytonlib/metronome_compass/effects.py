@@ -1532,25 +1532,24 @@ def _eff_rest(ctx: 'BattleContext', move: Move) -> bool:
 
 
 def _eff_endeavor(ctx: 'BattleContext', move: Move) -> bool:
-    """Endeavor (189): cuts the target's HP down to equal the user's current HP;
-    it fails outright when the user's HP is already >= the target's HP.
+    """Endeavor (effect 189): a fixed-result move that cuts the target's HP down
+    to equal the user's; it fails outright when the user's HP is already >= the
+    target's.
 
-    In this matchup the metronome user's max HP exceeds a Magikarp's max possible
-    HP (P0: 47 vs a level-20 Magikarp's 44). So while the user is provably at full
-    HP, user HP > target HP always holds and Endeavor is a guaranteed fail — no
-    damage, no differentiating roll, and the path continues normally. Once the user
-    has taken damage its HP is unprovable and both the success and the resulting HP
-    are unmodelable, so end the path as Unsupported.
+    Like the other fixed-damage moves it first runs an observable accuracy check
+    (_hit_check emits Hit/Miss and, interactively, asks whether it hit). In this
+    matchup the metronome user's max HP exceeds a Magikarp's max possible HP
+    (P0: 47 vs a level-20 Magikarp's 44), so while the user is provably at full HP
+    the HP comparison always fails and the move does nothing — the path continues.
+    Once the user has taken damage its HP is unprovable and both the success and
+    the resulting HP are unmodelable, so end the path as Unsupported.
     """
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
+    if not _hit_check(ctx, move):
+        return False                    # missed → fails
     if not state.user_took_damage:
-        # The accuracy check still rolls before the HP comparison fails. At 100
-        # accuracy against a non-evasive Magikarp it always passes, so nothing is
-        # observable ("But it failed!"), but the roll must still be consumed to
-        # keep later turns aligned (cf. Fake Out's failed-turn advance).
-        ctx.advance_unobservable(1)
-        return False                    # user at full HP (> Magikarp max) → fails
+        return False                    # user at full HP (> Magikarp max) → fails on HP
     return _throw_unsupported(ctx)       # user HP unprovable → can't model outcome
 
 
