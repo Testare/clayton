@@ -1545,6 +1545,11 @@ def _eff_endeavor(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
     if not state.user_took_damage:
+        # The accuracy check still rolls before the HP comparison fails. At 100
+        # accuracy against a non-evasive Magikarp it always passes, so nothing is
+        # observable ("But it failed!"), but the roll must still be consumed to
+        # keep later turns aligned (cf. Fake Out's failed-turn advance).
+        ctx.advance_unobservable(1)
         return False                    # user at full HP (> Magikarp max) → fails
     return _throw_unsupported(ctx)       # user HP unprovable → can't model outcome
 
