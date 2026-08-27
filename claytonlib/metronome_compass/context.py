@@ -390,13 +390,14 @@ class InteractiveContext(BattleContext):
                 print(f"    Invalid input: {raw!r}. Try again.")
 
     def _resolve_proc(self, chance: int) -> bool:
+        # Accept natural y/n; tolerate the legacy ~/- shorthand.
         while True:
-            raw = input("  Effect proc'd? (~/-): ").strip()
-            if raw == '~':
+            raw = input("  Did the effect proc? (y/n): ").strip().lower()
+            if raw in ('y', 'yes', '~'):
                 return True
-            if raw == '-':
+            if raw in ('n', 'no', '-'):
                 return False
-            print(f"    Invalid input: {raw!r}. Enter ~ (proc'd) or - (no proc).")
+            print(f"    Invalid input: {raw!r}. Enter y (proc'd) or n (no proc).")
 
     def roll_hidden_duration(self, min_dur: int, max_dur: int) -> int:
         """Hidden duration is unobservable at apply time: track the maximum and

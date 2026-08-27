@@ -22,7 +22,7 @@ from .path import (
     NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
 )
 from .context import BattleContext, RngContext, InteractiveContext
-from .effects import move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL
+from .effects import move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL, _parse_hit
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +348,8 @@ def simulate_turn(
             fs_acc = fs_move.accuracy if fs_move else 100
             ctx.emit(
                 rng_to_token=lambda c: Hit() if c.advance_observable() % 100 < fs_acc else Miss(),
-                question="Future Sight/Doom Desire hit? (h/-):",
-                input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
+                question="Did Future Sight/Doom Desire hit? (y/n):",
+                input_to_token=_parse_hit,
             )
             state.future_sight_move_num = None
 

@@ -24,6 +24,37 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Interactive answer parsers
+# ---------------------------------------------------------------------------
+
+def _parse_hit(s: str) -> PathToken:
+    """Parse a hit-only answer into a Hit or Miss token.
+
+    Accepts natural y/n as well as the legacy h/- shorthand so either style
+    works at a hit prompt. Raises ValueError on anything else so emit() re-asks.
+    """
+    s = s.strip().lower()
+    if s in ('y', 'yes', 'h'):
+        return Hit()
+    if s in ('n', 'no', '-'):
+        return Miss()
+    raise ValueError(f"expected y/n (or h/-), got {s!r}")
+
+
+def _parse_yn(s: str) -> bool:
+    """Parse a yes/no answer, tolerating the legacy ~/- proc shorthand.
+
+    Raises ValueError on anything else so emit()/_resolve_proc re-ask.
+    """
+    s = s.strip().lower()
+    if s in ('y', 'yes', '~'):
+        return True
+    if s in ('n', 'no', '-'):
+        return False
+    raise ValueError(f"expected y/n, got {s!r}")
+
+
+# ---------------------------------------------------------------------------
 # Human-readable effect descriptions
 # ---------------------------------------------------------------------------
 
@@ -166,8 +197,8 @@ def _hit_check(ctx: 'BattleContext', move: Move) -> bool:
         return Hit() if roll % 100 < c.effective_accuracy(move.accuracy) else Miss()
     token = ctx.emit(
         rng_to_token=rng_to_token,
-        question="Hit? (h/-):",
-        input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
+        question="Did it hit? (y/n):",
+        input_to_token=_parse_hit,
     )
     return not isinstance(token, Miss)
 
@@ -582,8 +613,8 @@ def _eff_damage_confuse(ctx: 'BattleContext', move: Move) -> bool:
 
     proc_token = ctx.emit(
         rng_to_token=rng_to_proc,
-        question="Confusion proc? (~/-): ",
-        input_to_token=lambda s: EffectProc() if s.strip() == '~' else None,
+        question="Did confusion proc? (y/n):",
+        input_to_token=lambda s: EffectProc() if _parse_yn(s) else None,
     )
     if isinstance(proc_token, EffectProc) and state.mk_status.confusion_turns == 0:
         _apply_confusion(ctx)
@@ -830,8 +861,8 @@ def _eff_ohko(ctx: 'BattleContext', move: Move) -> bool:
 
     token = ctx.emit(
         rng_to_token=rng_to_token,
-        question="OHKO hit? (h/-):",
-        input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
+        question="Did the OHKO move hit? (y/n):",
+        input_to_token=_parse_hit,
     )
     return not isinstance(token, Miss)
 
@@ -1094,21 +1125,33 @@ def _eff_tri_attack(ctx: 'BattleContext', move: Move) -> bool:
                 return EffectProc(status=status_label)
         return None
 
+    # Two-step interactive flow: first ask whether it proc'd, then (only on a
+    # proc) which status was inflicted. This parser runs in interactive mode
+    # only — RNG mode uses rng_to_proc above with the pre-rolled hidden type.
+    _STATUS_BY_ANSWER = {
+        '1': 'FRZ', 'frz': 'FRZ', 'freeze': 'FRZ',
+        '2': 'BRN', 'brn': 'BRN', 'burn': 'BRN',
+        '3': 'PAR', 'par': 'PAR', 'para': 'PAR', 'paralyze': 'PAR',
+    }
+
     def input_to_proc(s: str) -> 'PathToken | None':
-        s = s.strip().upper().lstrip('~').strip('<>')
-        if s == '-' or s == '':
+        if not _parse_yn(s):
             return None
-        if s in ('BRN', 'FRZ', 'PAR'):
-            # Apply the observed status in interactive mode
-            st = _STATUS[_LABEL.index(s)]
-            if state.mk_status.status == NonVolatileStatus.NONE:
-                state.mk_status.status = st
-            return EffectProc(status=s)
-        raise ValueError(f"unknown Tri Attack proc: {s!r}. Use ~<BRN>, ~<FRZ>, ~<PAR>, or -")
+        while True:
+            ans = input("    Which status? (1=Freeze, 2=Burn, 3=Para): ").strip().lower()
+            label = _STATUS_BY_ANSWER.get(ans)
+            if label is not None:
+                break
+            print(f"    Invalid status: {ans!r}. Enter 1/2/3 or freeze/burn/para.")
+        # Apply the observed status in interactive mode
+        st = _STATUS[_LABEL.index(label)]
+        if state.mk_status.status == NonVolatileStatus.NONE:
+            state.mk_status.status = st
+        return EffectProc(status=label)
 
     ctx.emit(
         rng_to_token=rng_to_proc,
-        question="Tri Attack proc? (~<BRN>/~<FRZ>/~<PAR>/-):",
+        question="Did Tri Attack proc? (y/n):",
         input_to_token=input_to_proc,
     )
     return True
@@ -1123,10 +1166,18 @@ def _eff_present(ctx: 'BattleContext', move: Move) -> bool:
         roll = c.advance_observable()
         return Hit() if (roll & 0xFF) < 204 else Miss()
 
+    def input_to_mode(s: str) -> PathToken:
+        s = s.strip().lower()
+        if s in ('d', 'damage'):
+            return Hit()   # damage mode
+        if s in ('h', 'heal'):
+            return Miss()  # heal mode
+        raise ValueError(f"expected d/h (damage/heal), got {s!r}")
+
     mode_token = ctx.emit(
         rng_to_token=rng_to_token,
-        question="Present: damage or heal? (h=damage, -=heal):",
-        input_to_token=lambda s: Hit() if s.strip() == 'h' else Miss(),
+        question="Did Present deal damage or heal? (d/h):",
+        input_to_token=input_to_mode,
     )
     if not isinstance(mode_token, Miss):
         # Damage mode: standard crit/damage/hit.
