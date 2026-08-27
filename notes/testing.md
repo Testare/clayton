@@ -1,4 +1,3 @@
-
   One note for when you next verify interactively: the "is confused!" status line that shows every confused turn is deliberately not tokenized on attack-through turns — only the discriminating outcomes (CFZ
   hit-self, SCFZ snap) emit tokens, and the plain metronome move covers the attack-through case. If you'd rather the path visibly mark every confused turn, that's a small addition — let me know.
 
@@ -218,7 +217,7 @@ Remaining Metronome moves (turn 3+):
 ## Run 4
 M: 12 M
 REL: 39 39 14
-A DELAY: 691*
+A DELAY: 681*
 A SEED: c0e02c2* (On the money)
 
 * Charm
