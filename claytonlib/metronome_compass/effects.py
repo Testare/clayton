@@ -1001,9 +1001,12 @@ def _eff_bind(ctx: 'BattleContext', move: Move) -> bool:
     if state.mk_binding_turns > 0:
         return True  # Already bound; no new duration roll
 
-    # Duration 3 + RAND%3, hidden at apply time — no token. Observed per-turn as
-    # BindDmg, then BindEnd on the turn it breaks free (confirmed at end of turn).
-    state.mk_binding_turns = ctx.roll_hidden_duration(3, 5)
+    # Binding does 3-5 turns of residual damage, then a separate "freed" turn, so
+    # the counter (damage turns + the free turn) is 4-6. Hidden at apply time — no
+    # token. Observed per-turn as BindDmg, then BindEnd on the turn it breaks free
+    # (confirmed at end of turn). Range shifted +1 vs the raw 3-5 damage span; it
+    # consumes the same single RNG roll (same %3 span, offset only).
+    state.mk_binding_turns = ctx.roll_hidden_duration(4, 6)
     return True
 
 

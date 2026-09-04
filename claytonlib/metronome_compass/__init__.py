@@ -269,11 +269,12 @@ def simulate_turn(
 
     state.turn_number += 1
 
-    # Binding damage / release. Hidden duration (3-5): BindDmg each turn, BindEnd
-    # on the turn it breaks free. RNG mode frees on the rolled turn; interactive
-    # confirms the break-free at end of turn (BindEnd) vs damage (BindDmg).
+    # Binding damage / release. 3-5 damage turns then a separate free turn, so the
+    # counter runs 4-6: BindDmg each turn, BindEnd on the turn it breaks free. RNG
+    # mode frees on the rolled turn; interactive confirms the break-free at end of
+    # turn (BindEnd) vs damage (BindDmg).
     if state.mk_binding_turns > 0:
-        if ctx.hidden_status_ends("Binding", state.mk_binding_turns, 3, 5):
+        if ctx.hidden_status_ends("Binding", state.mk_binding_turns, 4, 6):
             state.mk_binding_turns = 0
             ctx.raw_emit(BindEnd())
         else:
@@ -434,38 +435,13 @@ def _simulate_magikarp_turn(
         state.user_recovered = False
         return True
 
-    # Has useable moves: resolve the selected one.
-    # Under Encore, Magikarp repeats its last move (no random selection roll used).
-    if state.mk_encore_turns > 0 and state.mk_last_move is not None:
-        move_num = state.mk_last_move
-        ctx.raw_emit(MagikarpMove("sp" if move_num == 150 else "tk"))
-    else:
-        selected_move = ctx.magikarp_move_select(level, mk_move_roll)
-        move_num = 150 if selected_move.move == 'sp' else 33
-
-    # Torment: Magikarp cannot use the same move as last turn; auto-switches.
-    if state.mk_tormented and move_num == state.mk_last_move:
-        move_num = 33 if move_num == 150 else 150
-
-    # Check if this SPECIFIC move is prevented.
-    # Taunt/Gravity/Disable only "prevent" Magikarp on the turn they apply; on
-    # subsequent turns they force it to a different usable move (effect_status.md).
-    # Chansey is always slower, so Taunt lands after Magikarp has already moved —
-    # every taunted Magikarp turn is a "subsequent" one, so Splash simply
-    # auto-switches to Tackle (no Prevented, no lost turn), like Gravity/Disable.
-    if move_num == 150:
-        if (state.gravity_turns > 0 or status.disabled_move == 150
-                or status.taunt_turns > 0):
-            # Wild AI auto-switches to Tackle when Splash is unavailable
-            move_num = 33
-    elif move_num == 33:
-        if status.disabled_move == 33:
-            # Tackle disabled → auto-switch to Splash (same reasoning as above:
-            # Disable lands after Magikarp has moved, so it only forces a
-            # different usable move on later turns, never a "Prevented" lost turn).
-            # If Splash were also unavailable, Magikarp would have had no usable
-            # moves and Struggled before reaching here.
-            move_num = 150
+    # Has useable moves. Resolve the "can't act" checks (confusion / paralysis /
+    # infatuation) BEFORE picking and emitting the move: a Magikarp that hurts
+    # itself in confusion (CFZ), is fully paralyzed (PAR), or is immobilised by
+    # love (LV) never reveals which move it had chosen, so its MagikarpMove token
+    # must not be emitted on those turns. The move-selection RNG roll was already
+    # consumed at the top of the turn, so deferring the token here leaves RNG
+    # ordering unchanged.
 
     # Confusion (hidden duration 2-5). On the final turn it snaps out (SCFZ) with
     # NO self-hit roll; otherwise a self-hit check either hurts it (CFZ) or lets it
@@ -506,6 +482,40 @@ def _simulate_magikarp_turn(
         if isinstance(attract, LV):
             state.mk_last_move_prevented = True
             return False
+
+    # Magikarp acts: resolve which move it uses and emit its observable token now
+    # (the checks above have confirmed it isn't hurting itself / immobilised).
+    # Under Encore, Magikarp repeats its last move (no random selection roll used).
+    if state.mk_encore_turns > 0 and state.mk_last_move is not None:
+        move_num = state.mk_last_move
+        ctx.raw_emit(MagikarpMove("sp" if move_num == 150 else "tk"))
+    else:
+        selected_move = ctx.magikarp_move_select(level, mk_move_roll)
+        move_num = 150 if selected_move.move == 'sp' else 33
+
+    # Torment: Magikarp cannot use the same move as last turn; auto-switches.
+    if state.mk_tormented and move_num == state.mk_last_move:
+        move_num = 33 if move_num == 150 else 150
+
+    # Check if this SPECIFIC move is prevented.
+    # Taunt/Gravity/Disable only "prevent" Magikarp on the turn they apply; on
+    # subsequent turns they force it to a different usable move (effect_status.md).
+    # Chansey is always slower, so Taunt lands after Magikarp has already moved —
+    # every taunted Magikarp turn is a "subsequent" one, so Splash simply
+    # auto-switches to Tackle (no Prevented, no lost turn), like Gravity/Disable.
+    if move_num == 150:
+        if (state.gravity_turns > 0 or status.disabled_move == 150
+                or status.taunt_turns > 0):
+            # Wild AI auto-switches to Tackle when Splash is unavailable
+            move_num = 33
+    elif move_num == 33:
+        if status.disabled_move == 33:
+            # Tackle disabled → auto-switch to Splash (same reasoning as above:
+            # Disable lands after Magikarp has moved, so it only forces a
+            # different usable move on later turns, never a "Prevented" lost turn).
+            # If Splash were also unavailable, Magikarp would have had no usable
+            # moves and Struggled before reaching here.
+            move_num = 150
 
     # Move executes
     state.mk_last_move = move_num

@@ -261,10 +261,3 @@ Remaining Metronome moves (turn 3+):
   Turn 9: Flail (M175)
   Turn 10: Sing (M047)
 
-# 60 seconds
-## Run 1
-
-M:
-REL:
-A DELAY:
-A SEED:
