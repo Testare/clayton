@@ -1,3 +1,9 @@
+  ## Metang shakes
+0 0  1 t 1 1 0 0
+
+It takes about 3 minutes minimum to find seed and get to the correct spot
+
+  ## Other notes
   One note for when you next verify interactively: the "is confused!" status line that shows every confused turn is deliberately not tokenized on attack-through turns — only the discriminating outcomes (CFZ
   hit-self, SCFZ snap) emit tokens, and the plain metronome move covers the attack-through case. If you'd rather the path visibly mark every confused turn, that's a small addition — let me know.
 

@@ -13,6 +13,24 @@ from .path import (
 # Indexed by crit stage (0–4). RAND % modifier == 0 → crit.
 _CRIT_MODIFIERS = [16, 8, 4, 3, 2]
 
+# Accepted spellings for Magikarp's chosen move at the interactive prompt.
+_MAGIKARP_MOVE_ALIASES = {
+    "s": "sp", "sp": "sp", "splash": "sp",
+    "t": "tk", "tk": "tk", "tackle": "tk",
+}
+
+
+def _parse_magikarp_move(raw: str) -> MagikarpMove:
+    """Parse a Magikarp move answer, raising ValueError on anything unrecognised.
+
+    Accepts s/sp/splash and t/tk/tackle (case-insensitive); the raise makes
+    InteractiveContext._resolve_emit re-prompt instead of silently accepting a
+    stray answer (e.g. a mistyped Metronome move)."""
+    try:
+        return MagikarpMove(_MAGIKARP_MOVE_ALIASES[raw.strip().lower()])
+    except KeyError:
+        raise ValueError(f"expected sp/splash or tk/tackle, got {raw!r}")
+
 
 class BattleContext(ABC):
     """Tracks RNG events during a battle and accumulates them into a Path.
@@ -274,7 +292,7 @@ class BattleContext(ABC):
         token = self.emit(
             rng_to_token=rng_to_token,
             question="Magikarp used? (sp/tk):",
-            input_to_token=lambda s: MagikarpMove(s.strip()),
+            input_to_token=_parse_magikarp_move,
         )
         assert isinstance(token, MagikarpMove)
         return token
