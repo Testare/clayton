@@ -1,8 +1,23 @@
+
+## Couldn't identify 570 seconds
+570000
+0x0C0E02C6  
+32 33 17
+
+6 F Magikarp
+
+Triple Kick - h, crit, miss
+Force Palm
+Tackle
+Slack Off
+Poison Sting POISON
+Uproar
+
 ## 60 seconds
 Estimated delay:  3226
 
 ### Run 1
-M: 11 M
+M: 11 M:
 REL: 37 34 14
 
 * Hid underwater

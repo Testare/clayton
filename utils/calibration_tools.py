@@ -323,8 +323,14 @@ def identify_seed(candidates, present, observed_rel=None, display_limit=20):
     result = matched[0] if len(matched) == 1 else narrow_by_elm(matched, limit=display_limit)
     if result is None:
         return None
-    print("\n=== Seed identified ===")
-    print_roamer_candidates([result], limit=1)
+    # The winning row was just printed by the step above; confirm it on one line rather
+    # than re-printing the whole table.
+    c = result
+    rel = "/".join(str(c[f"{k}_route"]) if c[f"{k}_route"] is not None else "."
+                   for k in _ROAMER_ORDER)
+    print(f"\n=== Seed identified: 0x{c['seed']:08X}  "
+          f"{c['time'].strftime('%Y-%m-%d %H:%M:%S')}  delay={c['delay']}  "
+          f"R/E/L={rel}  Elm={c['elm']} ===")
     return result
 
 
@@ -663,6 +669,7 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH):
 # +/-1 s is the hard worst case.
 _TIMING_SIGMA = 1.0 / math.sqrt(6.0)   # ~0.408 s, std of a difference of two U(0,1) truncations
 _NOMINAL_RATE = 59.8261                # DS VBlank Hz, for reference / priors
+_OUTLIER_K = 3.5                       # a run is an outlier past k robust-sigmas (MAD-based)
 
 
 def load_compass_runs(path=COMPASS_RUNS_PATH):
@@ -705,6 +712,27 @@ def _norm_cdf(z):
     return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
 
 
+def _robust_flags(values, k, floor=0.0):
+    """Bool list: True where a value is a robust (MAD-based) outlier.
+
+    Flags |v - median| > k * scale, where scale = max(1.4826*MAD, floor).  The `floor`
+    keeps tightly-clustered data (tiny MAD) from producing a hair-trigger threshold that
+    flags runs sitting within the real measurement noise -- pass the physical noise level.
+    Returns all-False if there are fewer than 4 finite values or the scale is zero.  NaNs
+    are never flagged, so a metric missing for some runs (e.g. rate on an untimed run) is
+    simply skipped.
+    """
+    finite = [v for v in values if v == v]
+    if len(finite) < 4:
+        return [False] * len(values)
+    med = statistics.median(finite)
+    mad = statistics.median([abs(v - med) for v in finite])
+    scale = max(1.4826 * mad, floor)
+    if scale <= 0:
+        return [False] * len(values)
+    return [(v == v) and abs(v - med) > k * scale for v in values]
+
+
 def _theil_sen(xs, ys):
     """Robust (slope, intercept): median pairwise slope, median residual intercept.
 
@@ -720,109 +748,83 @@ def _theil_sen(xs, ys):
     return slope, intercept
 
 
-def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
-    """Fit F_b = beta*M + alpha from the collected runs and return a calibration model.
+def _gauss_solve(A, b):
+    """Solve A x = b for a small dense system (partial pivoting).  None if singular."""
+    n = len(A)
+    M = [list(A[i]) + [b[i]] for i in range(n)]
+    for c in range(n):
+        p = max(range(c, n), key=lambda i: abs(M[i][c]))
+        if abs(M[p][c]) < 1e-15:
+            return None
+        M[c], M[p] = M[p], M[c]
+        for i in range(n):
+            if i != c:
+                f = M[i][c] / M[c][c]
+                for j in range(c, n + 1):
+                    M[i][j] -= f * M[c][j]
+    return [M[i][n] / M[i][i] for i in range(n)]
 
-    The returned dict carries the fitted params plus two closures:
-      * predict(delay, calibration, k=2.0) -> {expected, lo, hi, jitter, rate_band}
-          min/expected/max seed_b frame for a commanded (delay, calibration).  `lo`/`hi`
-          fold together the reducible calibration/rate uncertainty (grows linearly with M,
-          driven by the +/-1 s rate interval) and the irreducible physical jitter
-          (grows ~sqrt(M)); k is how many jitter sigmas to include.
-      * solve(target_fb, delay=None, calibration=None) -> {M, delay, calibration}
-          the commanded countdown (and the missing one of delay/calibration) to land on
-          target_fb.
 
-    Degrades gracefully: 1 usable run still yields a rate + intercept (no jitter/regression
-    until there are residuals to measure).
+def _poly_fit(us, ys, degree):
+    """Least-squares polynomial coefficients [c0..c_degree] over basis u**j (u is expected
+    pre-centered/scaled to O(1) so the normal equations stay well-conditioned)."""
+    n = degree + 1
+    S = [[0.0] * n for _ in range(n)]
+    rhs = [0.0] * n
+    for u, y in zip(us, ys):
+        pw = [u ** j for j in range(n)]
+        for j in range(n):
+            rhs[j] += pw[j] * y
+            for k in range(n):
+                S[j][k] += pw[j] * pw[k]
+    return _gauss_solve(S, rhs)
+
+
+def _jitter_from_resid(resid):
+    """(jitter_c, jitter_rms) from [(M, residual), ...].
+
+    jitter_rms is the plain RMS; jitter_c is the coefficient of a diffusive sigma(M) =
+    c*sqrt(M) (random-walk frame jitter).  (None, None) if fewer than 2 residuals.
     """
-    runs = [m for m in (_run_metrics(r) for r in load_compass_runs(path)) if m]
-    timed = [m for m in runs if "rate" in m]
-    if not runs:
-        raise ValueError(f"no usable runs in {path} (need both a_seed and b_seed identified)")
+    if len(resid) < 2:
+        return None, None
+    rms = math.sqrt(statistics.mean(e * e for _, e in resid))
+    pos = [(e * e) / M for M, e in resid if M > 0]
+    c = math.sqrt(statistics.mean(pos)) if pos else None
+    return c, rms
 
-    Ms = [m["M"] for m in runs]
-    Fbs = [m["Fb"] for m in runs]
-    M_bar = statistics.mean(Ms)
-    Fb_bar = statistics.mean(Fbs)
 
-    # --- slope (beta) --------------------------------------------------------
-    # Primary: pooled within-run rate = total frames / total seconds (its +/-1 s error
-    # averages down across runs).  Its band uses the realistic ~0.41 s per-run sigma.
-    within = None
-    if timed:
-        tot_dF = sum(m["dF"] for m in timed)
-        tot_dt = sum(m["dt"] for m in timed)
-        rate = tot_dF / tot_dt
-        rate_sigma = rate * (_TIMING_SIGMA * math.sqrt(len(timed))) / tot_dt
-        within = {"rate": rate, "rate_sigma": rate_sigma,
-                  "rate_lo": rate - rate_sigma, "rate_hi": rate + rate_sigma,
-                  "n": len(timed)}
+def _make_predictors(fit, n_fit, Sxx, M_bar, jitter_c, jitter_rms):
+    """Build (predict, solve, hit_probability) closures over a fitted mean function.
 
-    # Cross-check / alternative: regress F_b on M (needs M to vary).
-    regression = None
-    ts = _theil_sen(Ms, Fbs)
-    if ts is not None:
-        regression = {"beta": ts[0], "alpha": ts[1], "rate": ts[0] * 1000.0}
-
-    if within is not None:
-        beta = within["rate"] / 1000.0
-        beta_lo = within["rate_lo"] / 1000.0
-        beta_hi = within["rate_hi"] / 1000.0
-        slope_source = "within-run rate"
-    elif regression is not None:
-        beta = regression["beta"]
-        beta_lo = beta_hi = beta            # no separate band without timed runs
-        slope_source = "F_b-vs-M regression"
-    else:
-        beta = _NOMINAL_RATE / 1000.0       # last resort: nominal DS rate
-        beta_lo = beta_hi = beta
-        slope_source = f"nominal {_NOMINAL_RATE} Hz (no rate data)"
-
-    # --- intercept (alpha) ---------------------------------------------------
-    # Pivot the line about the data centroid so beta-uncertainty rotates about the runs
-    # you actually measured (not about M=0): F_b = Fb_bar + beta*(M - M_bar).
-    alpha = Fb_bar - beta * M_bar
-
-    # --- jitter (irreducible spread of F_b about the line, vs M) --------------
-    # Residuals here don't involve the timestamps, so the +/-1 s never enters them; they
-    # are physical jitter + human reaction + model misfit -- the real spread you'll face.
-    resid = [(m["M"], m["Fb"] - (Fb_bar + beta * (m["M"] - M_bar))) for m in runs]
-    jitter_c = None          # diffusive: sigma(M) = c*sqrt(M)   (random-walk jitter)
-    jitter_rms = None
-    if len(runs) >= 2:
-        jitter_rms = math.sqrt(statistics.mean(e * e for _, e in resid))
-        pos = [(e * e) / M for M, e in resid if M > 0]
-        if pos:
-            jitter_c = math.sqrt(statistics.mean(pos))
+    `fit` provides f_of_M(M) and solve_M(target).  Irreducible jitter grows as
+    jitter_c*sqrt(M); the reducible mean uncertainty uses the textbook OLS SE-of-fit
+    jitter_rms*sqrt(1/n + (M-M_bar)^2 / Sxx), so it is ~0 near the measured runs and
+    widens as you extrapolate.
+    """
+    f_of_M, solve_M = fit["f_of_M"], fit["solve_M"]
 
     def jitter_sigma(M):
         if jitter_c is not None and M > 0:
             return jitter_c * math.sqrt(M)
         return jitter_rms or 0.0
 
-    model = {
-        "n_runs": len(runs), "n_timed": len(timed),
-        "beta": beta, "beta_lo": beta_lo, "beta_hi": beta_hi,
-        "rate": beta * 1000.0, "slope_source": slope_source,
-        "alpha": alpha, "M_bar": M_bar, "Fb_bar": Fb_bar,
-        "within": within, "regression": regression,
-        "jitter_c": jitter_c, "jitter_rms": jitter_rms,
-        "runs": runs,
-    }
+    def sigma_mean(M):
+        if not jitter_rms or not Sxx or n_fit < 1:
+            return 0.0
+        return jitter_rms * math.sqrt(1.0 / n_fit + (M - M_bar) ** 2 / Sxx)
 
     def predict(delay, calibration, k=2.0):
         M = delay + calibration
-        expected = Fb_bar + beta * (M - M_bar)
-        # Reducible: rate/calibration uncertainty, pivoting about the centroid.
-        rate_band = abs(M - M_bar) * (beta_hi - beta_lo) / 2.0
+        expected = f_of_M(M)
+        band = sigma_mean(M)
         j = jitter_sigma(M)
-        half = rate_band + k * j
+        half = band + k * j
         return {"expected": expected, "lo": expected - half, "hi": expected + half,
-                "jitter": j, "rate_band": rate_band, "M": M}
+                "jitter": j, "rate_band": band, "M": M}
 
     def solve(target_fb, delay=None, calibration=None):
-        M = M_bar + (target_fb - Fb_bar) / beta
+        M = solve_M(target_fb)
         out = {"M": M}
         if delay is not None:
             out["calibration"] = M - delay
@@ -834,27 +836,10 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
 
     def hit_probability(delay, calibration, target_fb, tolerance=0.5,
                         perfect_calibration=False):
-        """Probability that commanding (delay, calibration) lands within `tolerance`
-        frames of target_fb (M = delay + calibration).
-
-        F_b is treated as Normal(expected, sigma):
-          * expected = the predicted frame at M.
-          * sigma combines the irreducible physical jitter with -- unless
-            perfect_calibration=True -- the reducible uncertainty in the predicted mean
-            (rate + intercept error).  perfect_calibration=True gives the best case you'd
-            approach with unlimited calibration data.
-        tolerance is the half-window in frames: a hit is |F_b - target_fb| <= tolerance
-        (default 0.5 = exactly the integer frame target_fb).  Returns p plus the pieces.
-        """
         M = delay + calibration
-        expected = Fb_bar + beta * (M - M_bar)
+        expected = f_of_M(M)
         sj = jitter_sigma(M)
-        # Uncertainty in the predicted MEAN (reducible): slope error grows as you
-        # extrapolate from the centroid; centroid height error shrinks as 1/sqrt(n).
-        sigma_beta = (beta_hi - beta_lo) / 2.0
-        sc_slope = abs(M - M_bar) * sigma_beta
-        sc_center = (jitter_rms / math.sqrt(len(runs))) if jitter_rms else 0.0
-        sc = math.hypot(sc_slope, sc_center)
+        sc = sigma_mean(M)
         sigma = sj if perfect_calibration else math.hypot(sj, sc)
         if sigma <= 0:
             p = 1.0 if abs(target_fb - expected) <= tolerance else 0.0
@@ -865,39 +850,213 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
                 "sigma_jitter": sj, "sigma_calib": sc, "sigma_total": sigma,
                 "tolerance": tolerance, "M": M}
 
-    model["predict"] = predict
-    model["solve"] = solve
-    model["hit_probability"] = hit_probability
+    return predict, solve, hit_probability
+
+
+def _line_fit(slope, intercept, Ms, Fbs):
+    """Fit dict for a fixed straight line F_b = intercept + slope*M."""
+    f = lambda M: intercept + slope * M
+    solve_M = (lambda t: (t - intercept) / slope) if slope else (lambda t: 0.0)
+    return {"f_of_M": f, "dfdM": (lambda M: slope), "solve_M": solve_M,
+            "resid": [(M, F - f(M)) for M, F in zip(Ms, Fbs)]}
+
+
+def _poly_model(Ms, Fbs, degree, M_bar, M_scale):
+    """Fit dict for a degree-`degree` polynomial of the centered/scaled u=(M-M_bar)/M_scale.
+    None if the fit is singular (e.g. too few distinct M)."""
+    us = [(M - M_bar) / M_scale for M in Ms]
+    coeffs = _poly_fit(us, Fbs, degree)
+    if coeffs is None:
+        return None
+
+    def f_of_M(M):
+        u = (M - M_bar) / M_scale
+        return sum(c * u ** j for j, c in enumerate(coeffs))
+
+    def dfdM(M):
+        u = (M - M_bar) / M_scale
+        return sum(j * c * u ** (j - 1) for j, c in enumerate(coeffs) if j >= 1) / M_scale
+
+    def solve_M(target):
+        M = M_bar  # Newton from the centroid; f is monotonic over the data range
+        for _ in range(80):
+            slope = dfdM(M)
+            if slope == 0:
+                break
+            step = (f_of_M(M) - target) / slope
+            M -= step
+            if abs(step) < 1e-4:
+                break
+        return M
+
+    return {"coeffs": coeffs, "f_of_M": f_of_M, "dfdM": dfdM, "solve_M": solve_M,
+            "resid": [(M, F - f_of_M(M)) for M, F in zip(Ms, Fbs)]}
+
+
+def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
+    """Fit F_b as a function of the commanded countdown M and return a calibration model.
+
+    Builds several candidate models (in `model["models"]`), each carrying predict / solve /
+    hit_probability closures:
+      * "within_rate" (PREVIOUS) -- a line whose slope is the within-run *average* frame
+        rate.  Kept only for comparison; it uses the wrong slope for F_b-vs-M (the average
+        rate is dragged down by the slow post-boot frames), so its residuals grow with |M|.
+      * "linear_m" (NEW, recommended) -- fits F_b directly against M (robust Theil-Sen).
+        Slope = the instantaneous rate at battle time (~near the 60 Hz ceiling by 3-7 min).
+      * "quad_m" (NEW, experimental) -- adds an M^2 term to test whether the rising
+        instantaneous rate curves F_b(M) measurably yet.
+
+    `model["recommended"]` names the default, and model["predict"/"solve"/"hit_probability"]
+    point at it.  Each closure:
+      * predict(delay, calibration, k=2.0) -> {expected, lo, hi, jitter, rate_band}
+          expected seed_b frame with lo/hi = expected +/- (reducible mean-uncertainty band
+          + k*jitter); jitter is the irreducible spread (grows ~sqrt(M)).
+      * solve(target_fb, delay=None, calibration=None) -> {M, delay, calibration}
+          the commanded countdown to land on target_fb.
+      * hit_probability(delay, calibration, target_fb, tolerance=0.5) -> {p, ...}
+          probability of landing within tolerance frames of target_fb.
+
+    Runs that are robust outliers off the F_b-vs-M trend are shown in the report but
+    EXCLUDED from the fit, so one mis-identified seed can't poison the model.
+    """
+    all_runs = [m for m in (_run_metrics(r) for r in load_compass_runs(path)) if m]
+    if not all_runs:
+        raise ValueError(f"no usable runs in {path} (need both a_seed and b_seed identified)")
+
+    # --- outlier screening (robust, M-aware) ---------------------------------
+    # Flag a run whose F_b is a robust outlier off the F_b-vs-M trend.  We fit that trend
+    # with Theil-Sen (which tolerates the very outliers we're hunting), then flag any run
+    # whose residual exceeds k robust-sigmas.  Because the trend line absorbs the
+    # legitimate rise of frame rate with M, a run that is anomalous *for its M* is still
+    # caught -- unlike flagging the raw within-run rate, which that rising trend now masks
+    # (a genuinely low-rate run no longer looks extreme once long runs reach ~59 Hz).
+    # A mis-identified seed or a mis-entered delay both push F_b off the line, so this one
+    # test covers what the old rate/offset pair did.  The scale is floored at ~1 s of
+    # countdown (slope*1000 frames) so a tight clean cluster isn't a hair-trigger.
+    ts_all = _theil_sen([m["M"] for m in all_runs], [m["Fb"] for m in all_runs])
+    if ts_all is not None:
+        slope0, intercept0 = ts_all
+        resid_all = [m["Fb"] - (intercept0 + slope0 * m["M"]) for m in all_runs]
+        resid_flags = _robust_flags(resid_all, _OUTLIER_K, slope0 * 1000.0)
+    else:
+        resid_flags = [False] * len(all_runs)
+    for m, rf in zip(all_runs, resid_flags):
+        m["outlier"] = bool(rf)
+        m["outlier_reason"] = "off-trend" if rf else ""
+
+    # Fit on the clean subset (falling back to everything if all were somehow flagged).
+    runs = [m for m in all_runs if not m["outlier"]] or list(all_runs)
+    timed = [m for m in runs if "rate" in m]
+
+    Ms = [m["M"] for m in runs]
+    Fbs = [m["Fb"] for m in runs]
+    M_bar = statistics.mean(Ms)
+    Fb_bar = statistics.mean(Fbs)
+
+    # Within-run rate: pooled total frames / total seconds (its +/-1 s error averages down).
+    within = None
+    if timed:
+        tot_dF = sum(m["dF"] for m in timed)
+        tot_dt = sum(m["dt"] for m in timed)
+        rate = tot_dF / tot_dt
+        rate_sigma = rate * (_TIMING_SIGMA * math.sqrt(len(timed))) / tot_dt
+        within = {"rate": rate, "rate_sigma": rate_sigma, "n": len(timed)}
+
+    # Direct F_b-vs-M slope (robust), the correct slope for predicting F_b from M.
+    ts = _theil_sen(Ms, Fbs)
+    regression = {"beta": ts[0], "alpha": ts[1], "rate": ts[0] * 1000.0} if ts else None
+
+    # Geometry shared by every model's uncertainty band.
+    M_scale = statistics.pstdev(Ms) if len(Ms) > 1 else 1.0
+    Sxx = sum((M - M_bar) ** 2 for M in Ms)
+
+    # ---- build the candidate models (each: mean fn + jitter + closures) ------
+    # Two families:
+    #   * within_rate (PREVIOUS): line whose slope is the within-run *average* rate.  This
+    #     conflates the average rate with the F_b-vs-M slope, so its residuals blow up as M
+    #     leaves the centroid -- kept only for comparison.
+    #   * F_b-vs-M fits (NEW): fit F_b directly against M.  linear_m is the recommended one;
+    #     quad_m adds a curvature term to test whether the (real) rising instantaneous rate
+    #     bends F_b(M) measurably -- so far it doesn't, since 3-7 min is already near the
+    #     ~60 Hz ceiling.
+    models = {}
+
+    def add_model(key, label, kind, fit):
+        if fit is None:
+            return
+        jc, jr = _jitter_from_resid(fit["resid"])
+        pred, solv, hp = _make_predictors(fit, len(runs), Sxx, M_bar, jc, jr)
+        models[key] = {"label": label, "kind": kind, "fit": fit,
+                       "f_of_M": fit["f_of_M"], "dfdM": fit.get("dfdM"),
+                       "solve_M": fit["solve_M"], "coeffs": fit.get("coeffs"),
+                       "jitter_c": jc, "jitter_rms": jr,
+                       "predict": pred, "solve": solv, "hit_probability": hp}
+
+    if within is not None:
+        add_model("within_rate", "within-run-rate slope (previous)", "line",
+                  _line_fit(within["rate"] / 1000.0,
+                            Fb_bar - (within["rate"] / 1000.0) * M_bar, Ms, Fbs))
+    if regression is not None:
+        add_model("linear_m", "F_b-vs-M line (NEW)", "line",
+                  _line_fit(regression["beta"], regression["alpha"], Ms, Fbs))
+    if len(runs) >= 3 and M_scale > 0:
+        add_model("quad_m", "F_b-vs-M quadratic (NEW, experimental)", "quad",
+                  _poly_model(Ms, Fbs, 2, M_bar, M_scale))
+
+    # Recommended = the direct F_b-vs-M line when available, else whatever we have.
+    recommended = ("linear_m" if "linear_m" in models
+                   else "within_rate" if "within_rate" in models
+                   else next(iter(models), None))
+
+    model = {
+        "n_runs": len(all_runs), "n_timed": sum(1 for m in all_runs if "rate" in m),
+        "n_fit": len(runs), "n_outliers": sum(1 for m in all_runs if m["outlier"]),
+        "M_bar": M_bar, "Fb_bar": Fb_bar, "M_scale": M_scale, "Sxx": Sxx,
+        "within": within, "regression": regression,
+        "models": models, "recommended": recommended, "runs": all_runs,
+    }
+    if recommended is not None:
+        rec = models[recommended]
+        model["predict"] = rec["predict"]
+        model["solve"] = rec["solve"]
+        model["hit_probability"] = rec["hit_probability"]
     if verbose:
         print_calibration_report(model)
     return model
 
 
 def print_calibration_report(model):
-    print(f"=== Timer calibration  ({model['n_runs']} run(s), "
-          f"{model['n_timed']} timed) ===\n")
-    print(f"  F_b = beta*M + alpha,   M = delay + calibration (ms)")
-    print(f"  slope  beta  = {model['beta']:.6f} frames/ms "
-          f"(= {model['rate']:.4f} Hz)   [{model['slope_source']}]")
+    hdr = f"=== Timer calibration  ({model['n_runs']} run(s), {model['n_timed']} timed"
+    if model.get("n_outliers"):
+        hdr += f", {model['n_outliers']} excluded as outlier"
+    print(hdr + ") ===\n")
+    print(f"  F_b as a function of M = delay + calibration (ms)\n")
+
     if model["within"]:
         w = model["within"]
-        print(f"         within-run rate {w['rate']:.4f} +/- {w['rate_sigma']:.4f} Hz "
-              f"(1σ, from {w['n']} run(s))")
-    if model["regression"]:
-        r = model["regression"]
-        print(f"         F_b-vs-M slope  {r['rate']:.4f} Hz  (Theil-Sen cross-check)")
-    alpha_ms = model["alpha"] / model["beta"] if model["beta"] else float("nan")
-    print(f"  intercept alpha = {model['alpha']:+.1f} frames "
-          f"({alpha_ms:+.0f} ms)   (the ~5 s battle delay + load y-intercept, combined)")
-    if model["jitter_c"] is not None:
-        print(f"  jitter  ~ {model['jitter_c']:.3f}*sqrt(M) frames "
-              f"(RMS residual {model['jitter_rms']:.1f})")
-    elif model["jitter_rms"] is not None:
-        print(f"  jitter  RMS residual {model['jitter_rms']:.1f} frames")
-    else:
-        print(f"  jitter  -- need >= 2 runs to estimate")
+        print(f"  within-run avg rate {w['rate']:.4f} +/- {w['rate_sigma']:.4f} Hz "
+              f"(dF/dt; rises with M as the slow post-boot frames dilute out)\n")
+
+    # Model comparison block: label, slope/rate, jitter RMS, marked recommended.
+    Mlo = min(m["M"] for m in model["runs"] if not m.get("outlier"))
+    Mhi = max(m["M"] for m in model["runs"] if not m.get("outlier"))
+    for key, sub in model["models"].items():
+        star = " *" if key == model.get("recommended") else "  "
+        rms = sub["jitter_rms"]
+        rms_s = f"{rms:.1f}" if rms is not None else "n/a"
+        rate_lo = sub["dfdM"](Mlo) * 1000.0 if sub["dfdM"] else float("nan")
+        rate_hi = sub["dfdM"](Mhi) * 1000.0 if sub["dfdM"] else float("nan")
+        if sub["kind"] == "quad":
+            rate_desc = f"inst rate {rate_lo:.3f}->{rate_hi:.3f} Hz over M range"
+        else:
+            rate_desc = f"slope {rate_lo:.4f} Hz"
+        print(f" {star}{sub['label']:<38} {rate_desc:<34} RMS residual {rms_s:>6} frames")
+    if model.get("recommended"):
+        print(f"\n  ( * = recommended; predict/solve/hit_probability use it )")
+
     print(f"\n  {'tag':<16} {'M':>8} {'Fa':>7} {'Fb':>7} {'dF':>7} {'dt':>5} {'rate':>8}")
     for m in model["runs"]:
         rate = f"{m['rate']:.3f}" if "rate" in m else "   --"
+        flag = f"   <- outlier ({m['outlier_reason']}), excluded" if m.get("outlier") else ""
         print(f"  {(m['tag'] or ''):<16} {m['M']:>8} {m['Fa']:>7} {m['Fb']:>7} "
-              f"{m['dF']:>7} {m['dt']:>5.0f} {rate:>8}")
+              f"{m['dF']:>7} {m['dt']:>5.0f} {rate:>8}{flag}")
