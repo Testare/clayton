@@ -44,6 +44,12 @@ def _parse(t):
         return dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
 
 
+def _phase(t):
+    """The RNG-relevant phase (month, day, hour, minute, second) of a time; year is ignored."""
+    d = _parse(t) if isinstance(t, str) else t
+    return (d.month, d.day, d.hour, d.minute, d.second)
+
+
 def expedition(name: str) -> 'Expedition':
     """Return the named Expedition, loading from file if necessary, creating if absent."""
     if name in _expeditions:
@@ -586,31 +592,45 @@ class Expedition:
         from claytonlib.chart import _output_dir
         return str(_output_dir(self._get_chart_input()) / "chart_report.json")
 
-    def _write_report(self, mode: str, rows: list, initial_time, params: dict) -> None:
-        """Idempotently persist chart_report's findings (overwrites the same file)."""
+    @staticmethod
+    def _ser_rows(rows) -> list:
+        return [{
+            "rank": i,
+            "initial_time": (r["initial_time"].isoformat()
+                             if isinstance(r.get("initial_time"), dt.datetime) else None),
+            "M": round(r["M"]),
+            "target_delay": int(r["F"]),
+            "second": int(r["second"]),
+            "p": r["p"],
+            "sigma": r["sigma"],
+            "mdmsh": list(r["mdmsh"]),
+        } for i, r in enumerate(rows, 1)]
+
+    def _write_report(self, mode: str, initial_time, params: dict, top: list,
+                      per_initial_time: list | None = None) -> None:
+        """Idempotently persist chart_report's findings (overwrites the same file).
+
+        `top` = the ranked target list; `per_initial_time` = the best target for each
+        candidate starting time (saved even though only the top of `top` is printed).
+        """
         payload = {
             "saved_at": dt.datetime.now().isoformat(timespec="seconds"),
             "mode": mode,
             "initial_time": (initial_time.isoformat() if isinstance(initial_time, dt.datetime)
                              else initial_time),
             "params": params,
-            "rows": [{
-                "rank": i,
-                "initial_time": (r["initial_time"].isoformat()
-                                 if isinstance(r.get("initial_time"), dt.datetime) else None),
-                "M": round(r["M"]),
-                "target_delay": int(r["F"]),
-                "second": int(r["second"]),
-                "p": r["p"],
-                "sigma": r["sigma"],
-                "mdmsh": list(r["mdmsh"]),
-            } for i, r in enumerate(rows, 1)],
+            "top": self._ser_rows(top),
+            "per_initial_time": (self._ser_rows(per_initial_time)
+                                 if per_initial_time is not None else None),
         }
         path = self._report_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as fh:
             json.dump(payload, fh, indent=2)
-        self._log(f"findings saved -> {path}")
+        n_extra = len(payload["per_initial_time"]) if payload["per_initial_time"] else 0
+        self._log(f"findings saved -> {path}  "
+                  f"(top {len(payload['top'])}" +
+                  (f" + {n_extra} per-starting-time" if n_extra else "") + ")")
 
     def precompute_chart(self, workers: int | None = None):
         """Precompute the canonical capture map (resumable) — supersedes chart_safari.
@@ -668,20 +688,19 @@ class Expedition:
         return stats
 
     def chart_report(self, top: int = 10, step: int = 4, k: float = 3.5,
-                     include_calibration: bool = False, initial_time=None,
-                     per_boot_time: bool = False):
+                     include_calibration: bool = False, initial_time=None):
         """Rank the best targets from the precomputed map + the calibration model.
 
-        Default (mode A): ranks the best (boot time, commanded countdown M) PAIRS across all
-        RNG-equivalent candidate boot times — the boot datetime is itself an output of
-        charting.  `per_boot_time=True` instead lists the best target for EACH candidate
-        starting time (one row per boot time, ranked by that best P).  Pass `initial_time`
-        (mode B) to rank the best M for one fixed boot time.  Needs precompute_chart() (the
-        map) and a calibration model (from saved compass runs; see calibration_model()).
+        Default (mode A): prints the top `top` **(boot time, commanded countdown M)** pairs
+        across all candidate boot times, and saves BOTH that ranking AND the best target for
+        EACH candidate starting time (one row per boot time) to chart_report.json.  Pass
+        `initial_time` (mode B) to rank the best M for one fixed boot time.  Needs
+        precompute_chart() (the map) and a calibration model (see calibration_model()).
         """
         self._log("=== chart_report ===")
-        from claytonlib.chart import (CanonStore, print_target_report, print_pairs_report,
-                                      print_by_boot_time_report)
+        from claytonlib.chart import (CanonStore, rank_over_times, best_per_scenario,
+                                      rank_boot_from_scored, print_pairs_rows,
+                                      print_target_report)
         from claytonlib.times import get_times
 
         store = CanonStore(self._canon_store_path())
@@ -697,22 +716,19 @@ class Expedition:
         base_delay, times = get_times(self.key_seed)
         cmap = store.load_map()
         params = {"step": step, "k": k, "include_calibration": include_calibration, "top": top}
+        setup, maxt = self.setup_delay_seconds, self.max_target_seconds
 
         if initial_time is None:
-            if per_boot_time:
-                # Mode A': the best target for each candidate starting time.
-                best = print_by_boot_time_report(
-                    cmap, model, times, base_delay, self.setup_delay_seconds,
-                    self.max_target_seconds, step=step, k=k,
-                    include_calibration=include_calibration, top=top)
-                self._write_report("per_boot_time", best, None, params)
-                return best
-            # Mode A: best (boot time, M) pair across all candidate boot times.
-            best = print_pairs_report(cmap, model, times, base_delay, self.setup_delay_seconds,
-                                      self.max_target_seconds, step=step, k=k,
-                                      include_calibration=include_calibration, top=top)
-            self._write_report("pairs", best, None, params)
-            return best
+            # One over-times sweep feeds both the overall pairs and the per-starting-time bests.
+            scored = rank_over_times(cmap, model, times, base_delay, setup, maxt,
+                                     step=step, k=k, include_calibration=include_calibration)
+            overall = best_per_scenario(scored)
+            per_time = rank_boot_from_scored(scored, times, setup, maxt)
+            print_pairs_rows(overall[:top], k, include_calibration,
+                             title=f"Best (boot time, M) pairs  [top {top} of {len(overall)}]")
+            self._log(f"best target for each of {len(per_time)} starting times also saved")
+            self._write_report("pairs", None, params, top=overall[:top], per_initial_time=per_time)
+            return overall[:top]
 
         # Mode B: rank M for a specific boot time (must be RNG-consistent with key_seed).
         it = _parse(initial_time)
@@ -722,11 +738,10 @@ class Expedition:
                       f"with key_seed 0x{self.key_seed:08X} (hour {key_hour}) -- it can't produce "
                       f"that boot seed; pick a candidate from get_times(key_seed).")
             return None
-        best = print_target_report(cmap, model, it, base_delay, self.setup_delay_seconds,
-                                   self.max_target_seconds, step=step, k=k,
-                                   include_calibration=include_calibration, top=top)
-        self._write_report("fixed", best, it, params)
-        return best
+        all_rows = print_target_report(cmap, model, it, base_delay, setup, maxt, step=step, k=k,
+                                       include_calibration=include_calibration, top=top)
+        self._write_report("fixed", it, params, top=all_rows[:top], per_initial_time=None)
+        return all_rows[:top]
 
     def select_target(self):
         """Pick a target from chart_report's saved findings — the new choose_target.
@@ -744,43 +759,35 @@ class Expedition:
             return None
         with open(path) as fh:
             payload = json.load(fh)
-        rows = payload.get("rows") or []
-        if not rows:
+        top_rows = payload.get("top") or payload.get("rows") or []  # 'rows' = older format
+        per_time = payload.get("per_initial_time")
+        if not top_rows:
             self._log("Saved findings are empty. Re-run chart_report().")
             return None
-
         default_boot = payload.get("initial_time")
-        band = "jitter+calib" if payload.get("params", {}).get("include_calibration") else "jitter"
-        print(f"Targets from chart_report ({payload['mode']} mode, {band}, "
-              f"saved {payload['saved_at']}):")
-        print(f"  {'#':>2}  {'boot time':>19}  {'M (ms)':>9}  {'F_b':>8}  "
-              f"{'second':>6}  {'P(capture)':>10}")
-        for r in rows:
-            boot = r["initial_time"] or default_boot or "(get_times candidate)"
-            boot_s = boot.replace("T", " ")[:19] if isinstance(boot, str) else str(boot)
-            print(f"  {r['rank']:>2}  {boot_s:>19}  {r['M']:>9}  {r['target_delay']:>8}  "
-                  f"{r['second']:>6}  {r['p'] * 100:>9.1f}%")
 
         while True:
+            opts = "[t] top ranking" + ("   [s] specific starting time" if per_time else "")
             try:
-                raw = input("\nSelect a target number (blank to cancel): ").strip()
+                raw = input(f"\nSelect by  {opts}  (blank to cancel): ").strip().lower()
             except EOFError:
                 raw = ""
             if raw == "":
                 self._log("No target selected.")
                 return None
-            try:
-                idx = int(raw)
-            except ValueError:
-                print("  enter a number.")
-                continue
-            chosen = next((r for r in rows if r["rank"] == idx), None)
-            if chosen is None:
-                print(f"  no target #{idx}.")
-                continue
-            break
+            if raw in ("t", "top"):
+                chosen = self._select_from_rows(top_rows, default_boot)
+                break
+            if raw in ("s", "specific", "time") and per_time:
+                chosen = self._select_by_time(per_time)
+                break
+            print("  enter t or s.")
 
-        boot = chosen["initial_time"] or default_boot
+        if chosen is None:
+            self._log("No target selected.")
+            return None
+
+        boot = chosen.get("initial_time") or default_boot
         if boot is None:
             self._log("Selected row has no boot time; cannot set target.")
             return None
@@ -792,6 +799,74 @@ class Expedition:
         self._log(f"target set: boot {self.initial_time}, timer M={self.target_timer_delay} ms, "
                   f"expected F_b={self.target_delay} (P~{chosen['p'] * 100:.1f}%). Saved.")
         return chosen
+
+    @staticmethod
+    def _fmt_boot(row, default_boot) -> str:
+        boot = row.get("initial_time") or default_boot or "(get_times candidate)"
+        return boot.replace("T", " ")[:19] if isinstance(boot, str) else str(boot)
+
+    def _select_from_rows(self, rows, default_boot):
+        """List the ranked targets and prompt for a pick.  Returns a row, or None to cancel."""
+        print(f"  {'#':>3}  {'boot time':>19}  {'M (ms)':>9}  {'F_b':>8}  "
+              f"{'second':>6}  {'P(capture)':>10}")
+        for r in rows:
+            print(f"  {r['rank']:>3}  {self._fmt_boot(r, default_boot):>19}  {r['M']:>9}  "
+                  f"{r['target_delay']:>8}  {r['second']:>6}  {r['p'] * 100:>9.1f}%")
+        while True:
+            try:
+                raw = input("Select a target number (blank to cancel): ").strip()
+            except EOFError:
+                raw = ""
+            if raw == "":
+                return None
+            try:
+                idx = int(raw)
+            except ValueError:
+                print("  enter a number.")
+                continue
+            chosen = next((r for r in rows if r["rank"] == idx), None)
+            if chosen is None:
+                print(f"  no target #{idx}.")
+                continue
+            return chosen
+
+    def _select_by_time(self, per_time):
+        """Prompt for a specific starting time; return its best-target row (or None)."""
+        print("Enter a starting time (year ignored). e.g. '2000-05-30 14:59:59' or "
+              "'05-30 14:59:59'.")
+        try:
+            raw = input("Starting time (blank to cancel): ").strip()
+        except EOFError:
+            raw = ""
+        if raw == "":
+            return None
+        t = self._parse_time_loose(raw)
+        if t is None:
+            self._log("Couldn't parse that time.")
+            return None
+        key = (t.month, t.day, t.hour, t.minute, t.second)
+        match = next((r for r in per_time
+                      if r.get("initial_time") and _phase(r["initial_time"]) == key), None)
+        if match is None:
+            self._log("That isn't a candidate starting time for this key_seed (or has no "
+                      "target). Pick one that get_times(key_seed) produces.")
+            return None
+        print(f"  -> best target for {self._fmt_boot(match, None)}: "
+              f"M={match['M']} ms, F_b={match['target_delay']}, P~{match['p'] * 100:.1f}%")
+        return match
+
+    @staticmethod
+    def _parse_time_loose(s):
+        """Parse a full datetime, or an 'MM-DD HH:MM:SS' (year filled in); None on failure."""
+        s = s.strip()
+        try:
+            return _parse(s)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return dt.datetime.strptime("2000-" + s, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
 
     # ------------------------------------------------------------------
     # choose_target helpers
@@ -1416,3 +1491,113 @@ class CheckHelper:
                 f"{row['straight']:>6.3f}  {score_str}"
                 f"{marker}"
             )
+
+    def chart_check_target_landing(self, k: float = 3.5, step: int = 1,
+                                   include_calibration: bool = False, verify: bool = False):
+        """Show every frame in the selected target's landing window, its seed, hit, and weight.
+
+        The new-process analogue of chart_check_target_window: for the target chosen by
+        select_target (initial_time + timer M), it reconstructs the sigma(M) landing kernel and
+        lists each frame in [F-k*sigma, F+k*sigma] with its seed, whether it captures (from the
+        canonical map), and the frame's Gaussian weight.  P(capture) is the weighted fraction of
+        capturing frames, printed with the running total so you can see it build up (no rounding
+        shortcuts).  `verify=True` re-runs evaluate_seed on every frame to confirm the stored
+        map agrees with a live simulation.  `step` prints every step-th row (P is still exact).
+        """
+        import bisect
+        import math
+        exp = self._exp
+
+        missing = [lbl for attr, lbl in [
+            ('key_seed', 'key_seed'), ('initial_time', 'initial_time'),
+            ('target_timer_delay', 'target_timer_delay (run select_target)'),
+            ('pokemon_name', 'pokemon_name'), ('strategy_name', 'strategy_name'),
+            ('criteria_name', 'criteria_name'),
+        ] if getattr(exp, attr, None) is None]
+        if missing:
+            raise RuntimeError(f"check: expedition fields not set: {', '.join(missing)}")
+
+        from claytonlib.chart import CanonStore, seed_for_mdmsh, evaluate_seed
+        from claytonlib.chart.canon import mdmsh_of
+        from claytonlib.chart.scorer import _centers, capture_probability
+        from claytonlib.times import get_times
+        from claytonlib.safari import safari_pokemon_by_name
+
+        model = exp.calibration_model()
+        if model is None:
+            raise RuntimeError("no calibration model (data/calibration_model.json)")
+        store = CanonStore(exp._canon_store_path())
+        if store.read_meta() is None:
+            raise RuntimeError("no canonical map; run precompute_chart() first")
+        cmap = store.load_map()
+
+        M = exp.target_timer_delay + (exp.target_timer_calibration or 0)
+        it = _parse(exp.initial_time)
+        base_delay, _ = get_times(exp.key_seed)
+        F = model.mean(M)
+        sigma = (model.total_sigma(M, include_calibration=True) if include_calibration
+                 else model.jitter_sigma(M))
+        centers = _centers(base_delay, exp.max_target_seconds)
+        s = bisect.bisect_right(centers, F) - 1
+        mdmsh = mdmsh_of(it + dt.timedelta(seconds=s))
+        lo, hi = math.floor(F - k * sigma), math.ceil(F + k * sigma)
+
+        band = "jitter+calib" if include_calibration else "jitter"
+        print(f"\nchart_check_target_landing  ({band} kernel, k={k})")
+        print(f"boot={exp.initial_time}  timer M={M} ms  ->  mean F_b={F:.1f} (target_delay="
+              f"{exp.target_delay})  sigma={sigma:.1f}")
+        print(f"target second={s}  mdmsh(m,h)={mdmsh}  window frames [{lo}, {hi}] ({hi-lo+1})")
+        if verify:
+            pokemon = safari_pokemon_by_name(exp.pokemon_name)
+            strategy = _resolve_strategy(exp.strategy_name)
+            criteria = _resolve_criteria(exp.criteria_name)
+            print(f"verify=True: re-evaluating all {hi-lo+1} seeds live (this is slower)")
+
+        head = f"{'frame':>7}  {'Δ':>5}  {'seed':>10}  {'hit':>3}  {'weight':>8}  {'w%':>8}  {'cumP%':>9}"
+        if verify:
+            head += f"  {'live':>4}"
+        print(head)
+        print("-" * len(head))
+
+        two_s2 = 2.0 * sigma * sigma
+        center_frame = round(F)
+        # Pass 1: evaluate every frame (weight, map hit, optional live re-eval).
+        data = []
+        for frame in range(lo, hi + 1):
+            w = math.exp(-((frame - F) ** 2) / two_s2)
+            cap = cmap.captured(mdmsh, frame)
+            live = (evaluate_seed(seed_for_mdmsh(mdmsh, frame), pokemon, strategy, criteria)
+                    if verify else None)
+            data.append((frame, w, cap, live))
+        den = sum(w for _, w, _, _ in data) or 1.0
+        num = sum(w for _, w, cap, _ in data if cap)
+        ncap = sum(1 for _, _, cap, _ in data if cap)
+        mismatches = sum(1 for _, _, cap, live in data if verify and live != cap)
+
+        # Pass 2: print with exact w% (of total) and a true cumulative P building to the final.
+        run_num = 0.0
+        for frame, w, cap, live in data:
+            if cap:
+                run_num += w
+            if (frame - lo) % step == 0 or frame == center_frame:
+                seedv = seed_for_mdmsh(mdmsh, frame)
+                mark = "  ←" if frame == center_frame else ""
+                line = (f"{frame:>7}  {frame - center_frame:>+5}  0x{seedv:08X}  "
+                        f"{'✓' if cap else '✗':>3}  {w:>8.4f}  {w / den * 100:>7.3f}%  "
+                        f"{run_num / den * 100:>8.3f}%")
+                if verify:
+                    flag = ('✓' if live else '✗') if live == cap else f"!{'✓' if live else '✗'}"
+                    line += f"  {flag:>4}"
+                print(line + mark)
+
+        p = num / den
+        print("-" * len(head))
+        print(f"frames checked: {hi - lo + 1}   captured: {ncap} ({100 * ncap / (hi - lo + 1):.0f}%)")
+        print(f"P(capture) = weighted captures / total weight = {num:.3f} / {den:.3f} = {p * 100:.3f}%")
+        cp = capture_probability(cmap, model, mdmsh, M, k=k, include_calibration=include_calibration)
+        print(f"scorer.capture_probability = {cp['p'] * 100:.3f}%   (agree: {abs(cp['p'] - p) < 1e-9})")
+        if verify:
+            print(f"map vs live re-evaluation: {mismatches} mismatch(es) out of {hi - lo + 1} "
+                  f"({'MAP MATCHES LIVE SIMULATION' if mismatches == 0 else 'DISCREPANCY!'})")
+        return {"p": p, "n_frames": hi - lo + 1, "n_captured": ncap,
+                "mismatches": mismatches if verify else None}

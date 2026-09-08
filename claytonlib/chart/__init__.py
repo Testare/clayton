@@ -51,10 +51,12 @@ from claytonlib.chart.scorer import (
     rank_targets,
     rank_over_times,
     rank_by_boot_time,
+    rank_boot_from_scored,
     best_per_scenario,
     distinct_targets,
     print_target_report,
     print_pairs_report,
+    print_pairs_rows,
     print_by_boot_time_report,
 )
 

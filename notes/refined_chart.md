@@ -436,15 +436,18 @@ hour-mismatch fallback is gone.)
 
 **Findings persistence + target selection.** `chart_report()` idempotently writes its ranked
 rows to `chart_report.json` in the chart dir (overwrite, no append).  A **separate** step,
-`Expedition.select_target()` (the new choose_target), reads that file, lists the ranked
-targets, prompts for a pick, and records it: `initial_time` = boot datetime, `target_timer_delay`
-= commanded M (calibration 0), `target_delay` = expected F_b — then saves.  The Expedition
-Workflow notebook's "Choose Target" cell now calls `select_target()`.
+`Expedition.select_target()` (the new choose_target), reads that file and asks how to pick:
+**[t]** from the top ranking (by rank number) or **[s]** a specific starting time (typed,
+year ignored, looked up among the per-starting-time bests).  It records the choice:
+`initial_time` = boot datetime, `target_timer_delay` = commanded M (calibration 0),
+`target_delay` = expected F_b — then saves.  The Expedition Workflow notebook's "Choose
+Target" cell calls `select_target()`.
 
-`chart_report(per_boot_time=True)` adds a third view: the best target for EACH candidate
-starting time (one row per boot time, ranked by its best P; `scorer.rank_by_boot_time` /
-`print_by_boot_time_report`).  Cheap (~6 s) — the best per `(second, mdmsh)` is computed once,
-then each boot time is the max over its seconds; findings save as mode `per_boot_time`.
+A single `chart_report()` call (mode A) saves **two** sections to `chart_report.json`: `top`
+= the top-N overall (boot time, M) pairs (also printed), and `per_initial_time` = the best
+target for EVERY candidate starting time (one row each, ranked by its best P — ~2.5 k rows).
+One `rank_over_times` sweep feeds both: `best_per_scenario` → overall, `rank_boot_from_scored`
+→ per-starting-time.  Cheap (~5 s).  `select_target` reads the `top` section.
 
 **Year handling (DECIDED):** charting stays **year-2000** on purpose —
 `times.calculate_seed` drops the year term, and the calibration/identification
