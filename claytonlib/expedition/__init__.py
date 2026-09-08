@@ -33,6 +33,11 @@ _expeditions: dict[str, 'Expedition'] = {}
 _EXPEDITIONS_DIR = Path('data/expeditions')
 
 
+def _parse(t):
+    """A datetime from a datetime or an 'YYYY-MM-DD HH:MM:SS' string."""
+    return t if isinstance(t, dt.datetime) else dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
+
+
 def expedition(name: str) -> 'Expedition':
     """Return the named Expedition, loading from file if necessary, creating if absent."""
     if name in _expeditions:
@@ -478,6 +483,17 @@ class Expedition:
             options=self.chart_options,
         )
 
+    def calibration_model(self):
+        """The latest fitted timer-calibration model, or None if none has been exported yet.
+
+        Reads the shared artifact that utils/calibration_tools refreshes after each saved run
+        (the loop-back), so charting reflects the tightened model without a manual re-fit.
+        Use it to build a CalibratedLandingWindow: it maps a commanded countdown M to the
+        landing distribution over the battle-seed frame F_b.
+        """
+        from claytonlib.calibration import CalibrationModel
+        return CalibrationModel.load_default()
+
     def _eval_filename_override(self, eval_strat, chart_dir) -> str | None:
         """Return the eval JSON basename override when max_target_seconds truncates chains."""
         if self.max_target_seconds is None or self.setup_delay_seconds is None:
@@ -534,6 +550,103 @@ class Expedition:
         print(f"[expedition] Evaluating with strategy={self.eval_strategy_name}")
         _evaluate_chart(inputs, eval_strat, eval_max_seconds=self.max_target_seconds)
         print("[expedition] evaluate_chart complete.")
+
+    # ------------------------------------------------------------------
+    # canonical chart pipeline (mdmsh capture map + sigma(M) scorer)
+    # ------------------------------------------------------------------
+
+    def _canon_store_path(self) -> str:
+        """Where this expedition's canonical capture map lives."""
+        from claytonlib.chart import _output_dir
+        return str(_output_dir(self._get_chart_input()) / "canon.jsonl")
+
+    def precompute_chart(self, workers: int | None = None):
+        """Precompute the canonical capture map (resumable) — supersedes chart_safari.
+
+        Evaluates capture once per distinct (mdmsh, frame) seed across all RNG-equivalent
+        candidate datetimes (~one grid, not one-per-datetime), into a resumable CanonStore.
+        Re-run to resume or extend the range; only un-computed frames are evaluated.
+
+        `workers` sets the process-pool size (default: all CPUs); pass 1 for a single core.
+        Progress lines are timestamped with a rolling ETA.
+        """
+        import os
+        import time
+        start_dt = dt.datetime.now()
+        print(f"[expedition] === precompute_chart ===  {start_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+        self._ensure_pokemon()
+        self._ensure_key_seed()
+        self._ensure_setup_delay_seconds()
+        self._ensure_max_target_seconds()
+        self._ensure_strategy()
+        self._ensure_criteria()
+
+        from claytonlib.chart import precompute_canon, CanonStore
+        from claytonlib.times import get_times
+        from claytonlib.safari import safari_pokemon_by_name
+
+        if workers is None:
+            workers = os.cpu_count() or 1
+        base_delay, times = get_times(self.key_seed)
+        pokemon = safari_pokemon_by_name(self.pokemon_name)
+        strategy = _resolve_strategy(self.strategy_name)
+        criteria = _resolve_criteria(self.criteria_name)
+        store = CanonStore(self._canon_store_path())
+
+        t0 = time.perf_counter()
+
+        def _progress(done, total, stats):
+            if done == 1 or done % 5 == 0 or done == total:
+                elapsed = time.perf_counter() - t0
+                eta = elapsed / done * (total - done) if done else 0.0
+                print(f"[expedition]   {dt.datetime.now().strftime('%H:%M:%S')}  "
+                      f"mdmsh {done}/{total}  elapsed {elapsed / 60:.1f}m  "
+                      f"eta ~{eta / 60:.1f}m")
+
+        print(f"[expedition] Charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
+              f"delay={self.setup_delay_seconds}-{self.max_target_seconds}s "
+              f"strategy={self.strategy_name} criteria={self.criteria_name}  "
+              f"workers={workers}")
+        stats = precompute_canon(base_delay, times, self.setup_delay_seconds,
+                                 self.max_target_seconds, pokemon, strategy, criteria, store,
+                                 progress=_progress, workers=workers)
+        elapsed = time.perf_counter() - t0
+        print(f"[expedition] === precompute_chart complete ===  "
+              f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  (elapsed {elapsed / 60:.1f}m)")
+        print(f"[expedition] -> {store.path}  ({stats['n_distinct_seeds']:,} seeds, "
+              f"{stats.get('evaluated_this_run', 0):,} evaluated this run, "
+              f"{stats['n_mdmsh']} mdmsh, reuse {stats['reuse_factor']:.0f}x)")
+        return stats
+
+    def chart_report(self, top: int = 10, step: int = 4, k: float = 3.5,
+                     include_calibration: bool = False, initial_time=None):
+        """Rank commanded countdowns from the precomputed map + the calibration model.
+
+        Needs precompute_chart() (the capture map) and a calibration model (from saved compass
+        runs; see Expedition.calibration_model()).  `initial_time` defaults to the expedition's
+        configured boot time, else the first RNG-equivalent candidate.
+        """
+        print(f"[expedition] === chart_report ===  {dt.datetime.now().strftime('%H:%M:%S')}")
+        from claytonlib.chart import CanonStore, print_target_report
+        from claytonlib.times import get_times
+
+        store = CanonStore(self._canon_store_path())
+        if store.read_meta() is None:
+            print("[expedition] No canonical map found. Run precompute_chart() first.")
+            return None
+        model = self.calibration_model()
+        if model is None:
+            print("[expedition] No calibration model found. Save some compass runs first "
+                  "(utils/calibration_tools.save_compass_run).")
+            return None
+
+        base_delay, times = get_times(self.key_seed)
+        it = initial_time if initial_time is not None else self.initial_time
+        it = _parse(it) if it is not None else _parse(times[0])
+        cmap = store.load_map()
+        return print_target_report(cmap, model, it, base_delay, self.setup_delay_seconds,
+                                   self.max_target_seconds, step=step, k=k,
+                                   include_calibration=include_calibration, top=top)
 
     # ------------------------------------------------------------------
     # choose_target helpers

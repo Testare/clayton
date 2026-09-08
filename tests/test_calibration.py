@@ -1,0 +1,132 @@
+"""Tests for claytonlib.calibration.CalibrationModel and its utils/ fit adapter."""
+import math
+import os
+import sys
+import tempfile
+import unittest
+
+from claytonlib.calibration import CalibrationModel, Landing
+
+# utils/ is not a package; add it to the path so calibration_tools imports.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "utils"))
+
+
+class TestLineModel(unittest.TestCase):
+    def setUp(self):
+        # F_b = 256 + 0.0598*M, jitter c*sqrt(M), fit centered at M_bar=300000.
+        self.cm = CalibrationModel(
+            kind="line", beta=0.0598, alpha=256.0,
+            jitter_c=0.05, jitter_rms=20.0, n_fit=10, sxx=2.0e11, m_bar=300000.0,
+        )
+
+    def test_mean_and_slope(self):
+        self.assertAlmostEqual(self.cm.mean(300000), 256.0 + 0.0598 * 300000)
+        self.assertAlmostEqual(self.cm.slope(123456), 0.0598)
+
+    def test_solve_inverts_mean(self):
+        M = self.cm.solve(18000)
+        self.assertAlmostEqual(self.cm.mean(M), 18000, places=6)
+
+    def test_jitter_grows_as_sqrt(self):
+        s1 = self.cm.jitter_sigma(100000)
+        s4 = self.cm.jitter_sigma(400000)
+        self.assertAlmostEqual(s4 / s1, 2.0, places=6)  # sqrt(4x) = 2x
+
+    def test_mean_band_minimal_at_centroid_and_grows_away(self):
+        at_bar = self.cm.mean_band(300000.0)
+        away = self.cm.mean_band(600000.0)
+        self.assertLess(at_bar, away)
+        # at the centroid the band is jitter_rms/sqrt(n)
+        self.assertAlmostEqual(at_bar, 20.0 / math.sqrt(10), places=6)
+
+    def test_total_sigma_excludes_band_when_perfect(self):
+        M = 500000
+        self.assertAlmostEqual(self.cm.total_sigma(M, include_calibration=False),
+                               self.cm.jitter_sigma(M))
+        self.assertGreater(self.cm.total_sigma(M, include_calibration=True),
+                           self.cm.jitter_sigma(M))
+
+    def test_landing_namedtuple(self):
+        L = self.cm.landing(400000)
+        self.assertIsInstance(L, Landing)
+        self.assertAlmostEqual(L.mean, self.cm.mean(400000))
+        self.assertAlmostEqual(L.sigma_total,
+                               math.hypot(L.sigma_jitter, L.sigma_band))
+
+    def test_hit_probability_in_unit_interval_and_peaks_at_mean(self):
+        M = 300000
+        mean = self.cm.mean(M)
+        on = self.cm.hit_probability(M, round(mean), tolerance=5)
+        off = self.cm.hit_probability(M, round(mean) + 300, tolerance=5)
+        self.assertTrue(0.0 <= on["p"] <= 1.0)
+        self.assertGreater(on["p"], off["p"])
+
+    def test_predict_range_brackets_expected(self):
+        p = self.cm.predict(450000, k=2.0)
+        self.assertLess(p["lo"], p["expected"])
+        self.assertGreater(p["hi"], p["expected"])
+        self.assertAlmostEqual(p["expected"], self.cm.mean(450000))
+
+
+class TestQuadModel(unittest.TestCase):
+    def test_quad_mean_and_solve(self):
+        # y = 1 + 2u + 0.5u^2, u = (M-300000)/100000
+        cm = CalibrationModel(kind="quad", coeffs=(1.0, 2.0, 0.5),
+                              m_center=300000.0, m_scale=100000.0)
+        # at M=400000, u=1 -> 1+2+0.5 = 3.5
+        self.assertAlmostEqual(cm.mean(400000), 3.5)
+        M = cm.solve(3.5)
+        self.assertAlmostEqual(cm.mean(M), 3.5, places=4)
+
+
+class TestSerialization(unittest.TestCase):
+    def test_round_trip_preserves_predictions(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=250.0,
+                              jitter_c=0.04, jitter_rms=18.0,
+                              n_fit=8, sxx=1e11, m_bar=280000.0, label="x")
+        cm2 = CalibrationModel.from_dict(cm.to_dict())
+        for M in (150000, 300000, 600000):
+            self.assertAlmostEqual(cm.mean(M), cm2.mean(M))
+            self.assertAlmostEqual(cm.total_sigma(M), cm2.total_sigma(M))
+
+    def test_save_load(self):
+        cm = CalibrationModel(kind="quad", coeffs=(1.0, 2.0, 0.5),
+                              m_center=3e5, m_scale=1e5, jitter_c=0.03)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cal.json")
+            cm.save(path)
+            cm2 = CalibrationModel.load(path)
+        self.assertEqual(cm2.kind, "quad")
+        self.assertAlmostEqual(cm2.mean(400000), cm.mean(400000))
+
+
+class TestFitAdapterParity(unittest.TestCase):
+    """build_calibration_model must agree with calibrate_timer's own closures."""
+
+    def _runs_path(self):
+        return os.path.join(os.path.dirname(__file__), "..", "data", "compass_runs.jsonl")
+
+    def test_parity_with_calibrate_timer(self):
+        import calibration_tools as ct
+        path = self._runs_path()
+        if not os.path.exists(path):
+            self.skipTest("no compass_runs.jsonl data present")
+        full = ct.calibrate_timer(path=path, verbose=False)
+        cm = ct.build_calibration_model(path=path)
+        # Independent re-fit of the same data -> an equal (not identical) model.
+        self.assertEqual(cm, full["calibration_model"])
+        # The reusable model's predict(M) must match the notebook closure predict(delay, cal).
+        delay, cal = 420000, -5000
+        M = delay + cal
+        a = full["predict"](delay, cal)
+        b = cm.predict(M)
+        self.assertAlmostEqual(a["expected"], b["expected"], places=6)
+        self.assertAlmostEqual(a["lo"], b["lo"], places=6)
+        self.assertAlmostEqual(a["hi"], b["hi"], places=6)
+        hp_a = full["hit_probability"](delay, cal, round(a["expected"]), tolerance=25)
+        hp_b = cm.hit_probability(M, round(b["expected"]), tolerance=25)
+        self.assertAlmostEqual(hp_a["p"], hp_b["p"], places=9)
+
+
+if __name__ == "__main__":
+    unittest.main()

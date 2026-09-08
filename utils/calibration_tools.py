@@ -20,6 +20,7 @@ import os
 import statistics
 
 from claytonlib.safari import advance_rng
+from claytonlib.calibration import CalibrationModel, DEFAULT_MODEL_PATH
 
 # Tokens accepted in a roamer readout to leave a roamer unconstrained.
 _REL_WILDCARDS = (".", "-", "*", "?")
@@ -590,6 +591,16 @@ def _prompt_default(prompt, default, parse=lambda s: s):
             print(f"  invalid input{f': {e}' if str(e) else ''} -- try again")
 
 
+def _parse_bool(s):
+    """Parse a y/n-style answer to a bool (for _prompt_default); raises ValueError otherwise."""
+    v = s.strip().lower()
+    if v in ("y", "yes", "true", "t", "1"):
+        return True
+    if v in ("n", "no", "false", "f", "0"):
+        return False
+    raise ValueError("enter y/n")
+
+
 def _prompt_yes_no(prompt):
     """Loop until the user answers yes/no/y/n (case-insensitive); returns a bool."""
     while True:
@@ -601,7 +612,8 @@ def _prompt_yes_no(prompt):
         print("  please answer y/n.")
 
 
-def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH):
+def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
+                     model_path=DEFAULT_MODEL_PATH):
     """Prompt for run metadata, preview the record, and append it to compass_runs.jsonl.
 
     Persists one JSON line combining the two identified seeds (`a_seed` from the
@@ -622,6 +634,12 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH):
         "Target timer delay", prev.get("target_timer_delay"), int)
     target_timer_calibration = _prompt_default(
         "Target timer calibration", prev.get("target_timer_calibration"), int)
+    # Provenance -- battles cost ~800 frames each, so a run that traversed prior battles this
+    # boot is off the fresh-boot F_b-vs-M trend and must be kept out of the fit (see
+    # notes/refined_chart.md 5.5).  The recommended protocol is a fresh boot straight to one
+    # battle, so the defaults (fresh boot, 0 prior battles) are just two Enters.
+    fresh_boot = _prompt_default("Fresh boot? (y/n)", True, _parse_bool)
+    prior_battles = _prompt_default("Prior battles this boot", 0, int)
     notes = input("Notes: ").strip()
 
     record = {
@@ -629,6 +647,8 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH):
         "tag": tag,
         "target_timer_delay": target_timer_delay,
         "target_timer_calibration": target_timer_calibration,
+        "fresh_boot": fresh_boot,
+        "prior_battles": prior_battles,
         "notes": notes,
         "a_seed": _seed_summary(a_seed),
         "b_seed": _seed_summary(b_seed),
@@ -643,6 +663,122 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH):
     with open(path, "a") as f:
         f.write(json.dumps(record) + "\n")
     print(f"Saved to {path}")
+
+    # Loop-back: refresh the shared calibration-model artifact so the chart/expedition pick
+    # up this run without a manual re-fit.  Best-effort -- never fail a save over it.
+    if update_model:
+        try:
+            cm = export_calibration_model(runs_path=path, out_path=model_path)
+            print(f"Updated calibration model ({cm.n_runs} run(s), {cm.n_fit} in fit) "
+                  f"-> {model_path}")
+        except Exception as e:  # noqa: BLE001 - advisory only
+            print(f"  (calibration model not updated: {e})")
+    return record
+
+
+# --------------------------------------------------------------------------- #
+# Persisting a SAFARI compass run                                               #
+# --------------------------------------------------------------------------- #
+# The safari path has a Safari-Zone loading screen the metronome path lacks, so its runs
+# are collected separately (data/safari_runs.jsonl) -- keeping them apart lets the load
+# offset between the two be measured later rather than assumed zero (notes/refined_chart.md).
+# Unlike metronome-compass, safari-compass often can't pin a single seed, so the seed is
+# recorded only when the candidate set narrowed to exactly one.
+SAFARI_RUNS_PATH = os.path.join("data", "safari_runs.jsonl")
+
+
+def load_safari_runs(path=SAFARI_RUNS_PATH):
+    """Every saved safari run record (list of dicts) from safari_runs.jsonl (or [])."""
+    return load_compass_runs(path)  # identical JSONL reader
+
+
+def _safari_seed_delay(inputs, seed_int):
+    """Recover the delay of `seed_int` from a CompassSafariInput's candidate window (or None).
+
+    compass_safari returns only hex seeds; the delay lives on the (ctx, seed, delay) triples
+    _generate_candidates produces, so we re-derive it here without changing compass_safari.
+    """
+    if inputs is None:
+        return None
+    try:
+        from claytonlib.compass._core import _generate_candidates
+        for _ctx, s, d in _generate_candidates(inputs):
+            if s == seed_int:
+                return d
+    except Exception:
+        return None
+    return None
+
+
+def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH):
+    """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
+
+    Parameters
+    ----------
+    matched:
+        The return of compass_safari(...) -- a list of hex seed strings (e.g. ['0x0C0E02CA'])
+        that matched the observed path.  The identified seed is recorded ONLY when exactly one
+        matched; otherwise the ambiguous candidate set is still saved (as matched_seeds) but
+        `seed` is null, so it can be excluded from any fit that needs a confident seed.
+    inputs:
+        Optional CompassSafariInput -- when given and the seed is unique, its delay (the F_b
+        analog) is recovered from the candidate window for the later safari-vs-metronome
+        offset analysis.
+    path:
+        Optional observed-safari-path string; prompted for if omitted.
+    save_path:
+        Destination JSONL (default data/safari_runs.jsonl).
+
+    Metadata (tag / target timer delay / calibration / fresh_boot) default to the previous
+    safari run on blank input.  The record is pretty-printed and confirmed (y/n) before it is
+    written.  Returns the saved record dict, or None if the user declined.
+    """
+    install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
+    prev = _last_run(save_path)
+
+    matched = list(matched or [])
+    seed_int = int(matched[0], 16) if len(matched) == 1 else None
+    delay = _safari_seed_delay(inputs, seed_int) if seed_int is not None else None
+
+    tag = _prompt_default("Run tag", prev.get("tag"))
+    target_timer_delay = _prompt_default(
+        "Target timer delay", prev.get("target_timer_delay"), int)
+    target_timer_calibration = _prompt_default(
+        "Target timer calibration", prev.get("target_timer_calibration"), int)
+    fresh_boot = _prompt_default("Fresh boot? (y/n)", prev.get("fresh_boot", True), _parse_bool)
+    prior_battles = _prompt_default("Prior battles this boot", 0, int)
+    if path is None:
+        path = input("Safari path (observed): ").strip()
+    notes = input("Notes: ").strip()
+
+    record = {
+        "saved_at": dt.datetime.now().isoformat(timespec="seconds"),
+        "tag": tag,
+        "target_timer_delay": target_timer_delay,
+        "target_timer_calibration": target_timer_calibration,
+        "fresh_boot": fresh_boot,
+        "prior_battles": prior_battles,
+        "path": path,
+        "n_matched": len(matched),
+        "matched_seeds": matched,
+        # Populated only when the candidate set narrowed to exactly one seed.
+        "seed": seed_int,
+        "seed_hex": f"0x{seed_int:08X}" if seed_int is not None else None,
+        "delay": delay,
+        "notes": notes,
+    }
+
+    print("\n" + json.dumps(record, indent=2))
+    if len(matched) != 1:
+        print(f"\nNote: {len(matched)} seeds matched -- seed left null (not a confident single seed).")
+    if not _prompt_yes_no("\nSave this run? (y/n): "):
+        print("Not saved.")
+        return None
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, "a") as f:
+        f.write(json.dumps(record) + "\n")
+    print(f"Saved to {save_path}")
     return record
 
 
@@ -699,7 +835,10 @@ def _run_metrics(rec):
     Tb = dt.datetime.fromisoformat(b["time"])
     dt_s = (Tb - Ta).total_seconds()
     M = rec["target_timer_delay"] + rec["target_timer_calibration"]
-    m = {"tag": rec.get("tag"), "M": M, "Fa": Fa, "Fb": Fb, "dF": Fb - Fa, "dt": dt_s}
+    m = {"tag": rec.get("tag"), "M": M, "Fa": Fa, "Fb": Fb, "dF": Fb - Fa, "dt": dt_s,
+         # Provenance (older records predate these fields -> treated as a clean fresh boot).
+         "prior_battles": rec.get("prior_battles", 0),
+         "fresh_boot": rec.get("fresh_boot", True)}
     if dt_s > 0:
         m["rate"] = m["dF"] / dt_s
         m["rate_lo"] = m["dF"] / (dt_s + 1)                       # time really longer
@@ -795,36 +934,20 @@ def _jitter_from_resid(resid):
 
 
 def _make_predictors(fit, n_fit, Sxx, M_bar, jitter_c, jitter_rms):
-    """Build (predict, solve, hit_probability) closures over a fitted mean function.
+    """Build (predict, solve, hit_probability, model) over a fitted mean function.
 
-    `fit` provides f_of_M(M) and solve_M(target).  Irreducible jitter grows as
-    jitter_c*sqrt(M); the reducible mean uncertainty uses the textbook OLS SE-of-fit
-    jitter_rms*sqrt(1/n + (M-M_bar)^2 / Sxx), so it is ~0 near the measured runs and
-    widens as you extrapolate.
+    The math lives in the reusable claytonlib.calibration.CalibrationModel (so the chart
+    and this notebook share one implementation); these closures just adapt its M-based API
+    to the notebook's (delay, calibration) call convention.  `model` is the CalibrationModel
+    itself, for the chart to consume directly.
     """
-    f_of_M, solve_M = fit["f_of_M"], fit["solve_M"]
-
-    def jitter_sigma(M):
-        if jitter_c is not None and M > 0:
-            return jitter_c * math.sqrt(M)
-        return jitter_rms or 0.0
-
-    def sigma_mean(M):
-        if not jitter_rms or not Sxx or n_fit < 1:
-            return 0.0
-        return jitter_rms * math.sqrt(1.0 / n_fit + (M - M_bar) ** 2 / Sxx)
+    cm = CalibrationModel.from_fit(fit, n_fit, Sxx, M_bar, jitter_c, jitter_rms)
 
     def predict(delay, calibration, k=2.0):
-        M = delay + calibration
-        expected = f_of_M(M)
-        band = sigma_mean(M)
-        j = jitter_sigma(M)
-        half = band + k * j
-        return {"expected": expected, "lo": expected - half, "hi": expected + half,
-                "jitter": j, "rate_band": band, "M": M}
+        return cm.predict(delay + calibration, k)
 
     def solve(target_fb, delay=None, calibration=None):
-        M = solve_M(target_fb)
+        M = cm.solve(target_fb)
         out = {"M": M}
         if delay is not None:
             out["calibration"] = M - delay
@@ -836,28 +959,18 @@ def _make_predictors(fit, n_fit, Sxx, M_bar, jitter_c, jitter_rms):
 
     def hit_probability(delay, calibration, target_fb, tolerance=0.5,
                         perfect_calibration=False):
-        M = delay + calibration
-        expected = f_of_M(M)
-        sj = jitter_sigma(M)
-        sc = sigma_mean(M)
-        sigma = sj if perfect_calibration else math.hypot(sj, sc)
-        if sigma <= 0:
-            p = 1.0 if abs(target_fb - expected) <= tolerance else 0.0
-        else:
-            p = (_norm_cdf((target_fb + tolerance - expected) / sigma)
-                 - _norm_cdf((target_fb - tolerance - expected) / sigma))
-        return {"p": p, "expected": expected, "delta": target_fb - expected,
-                "sigma_jitter": sj, "sigma_calib": sc, "sigma_total": sigma,
-                "tolerance": tolerance, "M": M}
+        return cm.hit_probability(delay + calibration, target_fb, tolerance,
+                                  include_calibration=not perfect_calibration)
 
-    return predict, solve, hit_probability
+    return predict, solve, hit_probability, cm
 
 
 def _line_fit(slope, intercept, Ms, Fbs):
     """Fit dict for a fixed straight line F_b = intercept + slope*M."""
     f = lambda M: intercept + slope * M
     solve_M = (lambda t: (t - intercept) / slope) if slope else (lambda t: 0.0)
-    return {"f_of_M": f, "dfdM": (lambda M: slope), "solve_M": solve_M,
+    return {"kind": "line", "beta": slope, "alpha": intercept,
+            "f_of_M": f, "dfdM": (lambda M: slope), "solve_M": solve_M,
             "resid": [(M, F - f(M)) for M, F in zip(Ms, Fbs)]}
 
 
@@ -889,11 +1002,12 @@ def _poly_model(Ms, Fbs, degree, M_bar, M_scale):
                 break
         return M
 
-    return {"coeffs": coeffs, "f_of_M": f_of_M, "dfdM": dfdM, "solve_M": solve_M,
+    return {"kind": "quad", "coeffs": coeffs, "m_center": M_bar, "m_scale": M_scale,
+            "f_of_M": f_of_M, "dfdM": dfdM, "solve_M": solve_M,
             "resid": [(M, F - f_of_M(M)) for M, F in zip(Ms, Fbs)]}
 
 
-def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
+def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     """Fit F_b as a function of the commanded countdown M and return a calibration model.
 
     Builds several candidate models (in `model["models"]`), each carrying predict / solve /
@@ -923,6 +1037,13 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
     if not all_runs:
         raise ValueError(f"no usable runs in {path} (need both a_seed and b_seed identified)")
 
+    # --- contamination screening (provenance) --------------------------------
+    # A run that traversed prior battles this boot sits ~800 frames/battle off the fresh-boot
+    # F_b-vs-M trend (notes/refined_chart.md 5.5).  With fresh_only (default) these are marked
+    # and excluded from the fit up front -- by construction, not by the statistical detector.
+    for m in all_runs:
+        m["contaminated"] = fresh_only and m.get("prior_battles", 0) > 0
+
     # --- outlier screening (robust, M-aware) ---------------------------------
     # Flag a run whose F_b is a robust outlier off the F_b-vs-M trend.  We fit that trend
     # with Theil-Sen (which tolerates the very outliers we're hunting), then flag any run
@@ -933,19 +1054,23 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
     # A mis-identified seed or a mis-entered delay both push F_b off the line, so this one
     # test covers what the old rate/offset pair did.  The scale is floored at ~1 s of
     # countdown (slope*1000 frames) so a tight clean cluster isn't a hair-trigger.
-    ts_all = _theil_sen([m["M"] for m in all_runs], [m["Fb"] for m in all_runs])
+    for m in all_runs:
+        m["outlier"] = False
+        m["outlier_reason"] = ""
+    # Detect off-trend outliers on the non-contaminated subset so the ~800-frame battle
+    # offset can't distort the trend line used to catch them.
+    screen = [m for m in all_runs if not m["contaminated"]]
+    ts_all = _theil_sen([m["M"] for m in screen], [m["Fb"] for m in screen]) if len(screen) >= 2 else None
     if ts_all is not None:
         slope0, intercept0 = ts_all
-        resid_all = [m["Fb"] - (intercept0 + slope0 * m["M"]) for m in all_runs]
-        resid_flags = _robust_flags(resid_all, _OUTLIER_K, slope0 * 1000.0)
-    else:
-        resid_flags = [False] * len(all_runs)
-    for m, rf in zip(all_runs, resid_flags):
-        m["outlier"] = bool(rf)
-        m["outlier_reason"] = "off-trend" if rf else ""
+        resids = [m["Fb"] - (intercept0 + slope0 * m["M"]) for m in screen]
+        for m, rf in zip(screen, _robust_flags(resids, _OUTLIER_K, slope0 * 1000.0)):
+            m["outlier"] = bool(rf)
+            m["outlier_reason"] = "off-trend" if rf else ""
 
-    # Fit on the clean subset (falling back to everything if all were somehow flagged).
-    runs = [m for m in all_runs if not m["outlier"]] or list(all_runs)
+    # Fit on the clean subset: neither contaminated nor a statistical outlier
+    # (falling back to everything if that somehow leaves nothing).
+    runs = [m for m in all_runs if not m["outlier"] and not m["contaminated"]] or list(all_runs)
     timed = [m for m in runs if "rate" in m]
 
     Ms = [m["M"] for m in runs]
@@ -985,11 +1110,14 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
         if fit is None:
             return
         jc, jr = _jitter_from_resid(fit["resid"])
-        pred, solv, hp = _make_predictors(fit, len(runs), Sxx, M_bar, jc, jr)
+        pred, solv, hp, cm = _make_predictors(fit, len(runs), Sxx, M_bar, jc, jr)
+        cm.label = label
+        cm.n_runs = len(all_runs)
+        cm.m_lo, cm.m_hi = (min(Ms), max(Ms)) if Ms else (None, None)
         models[key] = {"label": label, "kind": kind, "fit": fit,
                        "f_of_M": fit["f_of_M"], "dfdM": fit.get("dfdM"),
                        "solve_M": fit["solve_M"], "coeffs": fit.get("coeffs"),
-                       "jitter_c": jc, "jitter_rms": jr,
+                       "jitter_c": jc, "jitter_rms": jr, "model": cm,
                        "predict": pred, "solve": solv, "hit_probability": hp}
 
     if within is not None:
@@ -1011,6 +1139,7 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
     model = {
         "n_runs": len(all_runs), "n_timed": sum(1 for m in all_runs if "rate" in m),
         "n_fit": len(runs), "n_outliers": sum(1 for m in all_runs if m["outlier"]),
+        "n_contaminated": sum(1 for m in all_runs if m["contaminated"]),
         "M_bar": M_bar, "Fb_bar": Fb_bar, "M_scale": M_scale, "Sxx": Sxx,
         "within": within, "regression": regression,
         "models": models, "recommended": recommended, "runs": all_runs,
@@ -1020,15 +1149,47 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True):
         model["predict"] = rec["predict"]
         model["solve"] = rec["solve"]
         model["hit_probability"] = rec["hit_probability"]
+        model["calibration_model"] = rec["model"]  # reusable CalibrationModel for the chart
     if verbose:
         print_calibration_report(model)
     return model
+
+
+def export_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL_PATH,
+                             which=None):
+    """Fit the runs and write the reusable CalibrationModel artifact to out_path.
+
+    This is the expedition "loop-back": the chart / expedition read the artifact via
+    CalibrationModel.load_default(), so re-exporting here after each saved run tightens the
+    model they use without any manual batch re-fit.  Returns the exported CalibrationModel.
+    """
+    cm = build_calibration_model(path=runs_path, which=which)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    cm.save(out_path)
+    return cm
+
+
+def build_calibration_model(path=COMPASS_RUNS_PATH, which=None):
+    """Fit the runs non-interactively and return the reusable CalibrationModel for the chart.
+
+    `which` selects a model key from calibrate_timer's `models` (default: the recommended
+    one).  This is the entry point chart code should use -- it never prints the interactive
+    report and hands back a plain claytonlib.calibration.CalibrationModel that maps a
+    commanded countdown M to (mean F_b, sigma(M)).
+    """
+    m = calibrate_timer(path=path, verbose=False)
+    key = which or m.get("recommended")
+    if key is None or key not in m["models"]:
+        raise ValueError(f"no calibration model available (which={which!r})")
+    return m["models"][key]["model"]
 
 
 def print_calibration_report(model):
     hdr = f"=== Timer calibration  ({model['n_runs']} run(s), {model['n_timed']} timed"
     if model.get("n_outliers"):
         hdr += f", {model['n_outliers']} excluded as outlier"
+    if model.get("n_contaminated"):
+        hdr += f", {model['n_contaminated']} excluded (battle-contaminated)"
     print(hdr + ") ===\n")
     print(f"  F_b as a function of M = delay + calibration (ms)\n")
 
@@ -1038,8 +1199,9 @@ def print_calibration_report(model):
               f"(dF/dt; rises with M as the slow post-boot frames dilute out)\n")
 
     # Model comparison block: label, slope/rate, jitter RMS, marked recommended.
-    Mlo = min(m["M"] for m in model["runs"] if not m.get("outlier"))
-    Mhi = max(m["M"] for m in model["runs"] if not m.get("outlier"))
+    _kept = [m for m in model["runs"] if not m.get("outlier") and not m.get("contaminated")]
+    Mlo = min(m["M"] for m in _kept)
+    Mhi = max(m["M"] for m in _kept)
     for key, sub in model["models"].items():
         star = " *" if key == model.get("recommended") else "  "
         rms = sub["jitter_rms"]
@@ -1057,6 +1219,11 @@ def print_calibration_report(model):
     print(f"\n  {'tag':<16} {'M':>8} {'Fa':>7} {'Fb':>7} {'dF':>7} {'dt':>5} {'rate':>8}")
     for m in model["runs"]:
         rate = f"{m['rate']:.3f}" if "rate" in m else "   --"
-        flag = f"   <- outlier ({m['outlier_reason']}), excluded" if m.get("outlier") else ""
+        if m.get("contaminated"):
+            flag = f"   <- contaminated ({m.get('prior_battles', 0)} prior battles), excluded"
+        elif m.get("outlier"):
+            flag = f"   <- outlier ({m['outlier_reason']}), excluded"
+        else:
+            flag = ""
         print(f"  {(m['tag'] or ''):<16} {m['M']:>8} {m['Fa']:>7} {m['Fb']:>7} "
               f"{m['dF']:>7} {m['dt']:>5.0f} {rate:>8}{flag}")

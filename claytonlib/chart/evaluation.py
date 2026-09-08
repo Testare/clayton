@@ -365,6 +365,130 @@ class NormalWindow:
         return _gather_top5(scored, delays, link_indices, initial_time, setup_delay_seconds)
 
 
+class CalibratedLandingWindow:
+    """Score each frame with an M-dependent Gaussian whose width comes from calibration.
+
+    Unlike NormalWindow's fixed sigma, the kernel width here grows with the commanded
+    countdown: aiming at a later frame means a longer timer, and the physical frame jitter
+    grows ~sqrt(M) (see claytonlib.calibration / notes/refined_chart.md).  So short-target
+    frames get a tight kernel and long-target frames a wide one -- fixing the "fixed window
+    is too wide early, too narrow late" problem.
+
+    For flat frame i (absolute delay D = base_delay + cumulative_frames(setup) + i), the
+    commanded countdown that centers the landing on D is M = model.solve(D), and the kernel
+    standard deviation is model.jitter_sigma(M) frames (optionally combined with the
+    reducible calibration band).  The score is the landing-weighted average of the success
+    mask around i -- i.e. the expected capture probability for a player who aims at frame i.
+
+    Parameters
+    ----------
+    model:
+        A claytonlib.calibration.CalibrationModel (maps M -> mean F_b and sigma(M)).
+    base_delay, setup_delay_seconds:
+        The SAME chart geometry passed to the ChartSafariInput; used to map a flat frame
+        index to its absolute delay (and hence to M).
+    sigma_cutoff:
+        Gaussian truncation in standard deviations (2.0 keeps ~95.4%).
+    include_calibration:
+        If True, widen the kernel by the reducible calibration band as well as the physical
+        jitter.  Default False: the kernel is the irreducible physical spread only (the
+        calibration band is reported separately -- see the uncertainty-reporting work).
+    sigma_floor:
+        Minimum kernel sigma in frames, so very-short-target frames don't get a degenerate
+        zero-width kernel.
+    """
+
+    def __init__(self, model, base_delay: int, setup_delay_seconds: int,
+                 sigma_cutoff: float = 2.0, include_calibration: bool = False,
+                 sigma_floor: float = 0.5):
+        self.model = model
+        self.base_delay = base_delay
+        self.setup_delay_seconds = setup_delay_seconds
+        self.sigma_cutoff = sigma_cutoff
+        self.include_calibration = include_calibration
+        self.sigma_floor = sigma_floor
+
+    @property
+    def filename(self) -> str:
+        tag = "calib" if not self.include_calibration else "calibband"
+        return f"calibrated_landing_{tag}_{self.sigma_cutoff:g}sig"
+
+    def score_to_probability(self, score: float) -> float:
+        return score  # already a landing-weighted average (weights sum to 1)
+
+    def _sigma_frames(self, M: float) -> float:
+        """Kernel sigma (frames) at commanded countdown M, clamped for M<=0 and floored."""
+        m = self.model
+        Mc = M if M > 0 else 0.0
+        if m.jitter_c is not None:
+            sj = m.jitter_c * math.sqrt(Mc)
+        else:
+            sj = m.jitter_rms
+        if self.include_calibration:
+            sj = math.hypot(sj, m.mean_band(Mc))
+        return max(sj, self.sigma_floor)
+
+    def _sigmas(self, n: int) -> list[float]:
+        """Per-frame kernel sigma for a flat array of length n."""
+        start_delay = self.base_delay + cumulative_frames(self.setup_delay_seconds)
+        solve = self.model.solve
+        return [self._sigma_frames(solve(start_delay + i)) for i in range(n)]
+
+    def score(self, flat: list[float]) -> list[float]:
+        n = len(flat)
+        result = [0.0] * n
+        if n == 0:
+            return result
+        sig = self._sigmas(n)
+        cutoff = self.sigma_cutoff
+        floor = self.sigma_floor
+
+        # Kernels vary slowly with i, so cache by a 0.25-frame sigma bucket: each entry is
+        # (half_width, weights[-hw..hw], full_weight_sum).
+        cache: dict[int, tuple[int, list[float], float]] = {}
+
+        def kernel(s: float):
+            b = round(s * 4)
+            k = cache.get(b)
+            if k is None:
+                ss = max(b / 4.0, floor)
+                hw = max(1, int(cutoff * ss))
+                ws = [math.exp(-(d * d) / (2 * ss * ss)) for d in range(-hw, hw + 1)]
+                k = (hw, ws, sum(ws))
+                cache[b] = k
+            return k
+
+        for i in range(n):
+            hw, ws, full = kernel(sig[i])
+            lo, hi = i - hw, i + hw
+            if lo >= 0 and hi < n:                     # full window in bounds (fast path)
+                acc = 0.0
+                for t in range(2 * hw + 1):
+                    acc += ws[t] * flat[lo + t]
+                result[i] = acc / full
+            else:                                       # truncated window -> renormalize
+                acc = wsum = 0.0
+                for t in range(2 * hw + 1):
+                    k = lo + t
+                    if 0 <= k < n:
+                        acc += ws[t] * flat[k]
+                        wsum += ws[t]
+                result[i] = acc / wsum if wsum > 0 else flat[i]
+        return result
+
+    def evaluate(
+        self,
+        links: list[int],
+        base_delay: int,
+        setup_delay_seconds: int,
+        initial_time: dt.datetime,
+    ) -> list[TopResult]:
+        delays, link_indices = _build_frame_info(links, base_delay, setup_delay_seconds)
+        flat = straighten_chain(links, setup_delay_seconds)
+        scored = self.score(flat)
+        return _gather_top5(scored, delays, link_indices, initial_time, setup_delay_seconds)
+
+
 # ---------------------------------------------------------------------------
 # JSON file I/O
 # ---------------------------------------------------------------------------

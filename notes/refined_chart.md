@@ -4,8 +4,22 @@ Working notes for reshaping the `chart/` tool around the probabilistic timer
 calibration (Section C/D of the Metronome Compass notebook,
 `utils/calibration_tools.py`, data in `data/compass_runs.jsonl`).
 
-Status: **ideas / brainstorm.** Nothing here is implemented yet. We are still
-collecting calibration runs (sweep 3→10 min).
+Status: **partially implemented** (epic `clayton-abf`). Done so far:
+- **§2–3 model API** — `claytonlib/calibration.py::CalibrationModel` (mean F_b, σ_jitter(M),
+  σ_band(M), predict/solve/hit_probability, save/load); `utils/calibration_tools` fits it
+  (`build_calibration_model`, `export_calibration_model`).
+- **§3 kernel** — `claytonlib/chart/evaluation.py::CalibratedLandingWindow` (σ(M)-width
+  Gaussian; drop-in EvaluationStrategy).
+- **§5.5 provenance** — `save_compass_run` records fresh_boot + prior_battles;
+  `calibrate_timer(fresh_only=True)` excludes battle-contaminated runs from the fit.
+- **§4 safari save** — `save_safari_run` / `load_safari_runs` → `data/safari_runs.jsonl`.
+- **§4 loop-back** — each saved run refreshes `data/calibration_model.json`;
+  `Expedition.calibration_model()` reads it.
+
+Still open: **§6 chain ±K coverage** (on-disk chain-format change; gates the ranking/report
+work), the ranking/report itself, the uncertainty-reporting layer, and the data-gated pieces
+(reboot-fresh σ(M) sweep; safari-vs-metronome offset). Real fit today (34 runs):
+σ_jitter ≈ 0.128·√M.
 
 ---
 
@@ -278,3 +292,141 @@ convolve the success mask against the landing distribution over `(second,
 delay)`, where the RTC second is nearly pinned by M and the delay carries the
 σ(M) spread. Probability weight concentrates near the predicted `(T*, D*)`; K
 just guards the tails.
+
+### 6.5 DECIDED design — "swap the axes" (second → wide frame band)
+
+Supersedes the "±K seconds per frame" framing of 6.2. Instead of indexing by
+frame and storing N seeds per frame, **index by RTC second and give each second a
+wide band of frames**:
+
+- A "link" is still **one row per RTC second** (append-one-per-second → still
+  resumable), but each row is now a **1-bit-per-frame** bitmask of
+  `capture(calculate_seed(T, D))` over a band
+  `D ∈ [center(T)−W(T), center(T)+W(T)]` — dropping the old 2-bit seed_a/seed_b
+  duality.
+- **Multi-seed-per-frame is free via row overlap**: since `W(T) ≫ 60`, consecutive
+  seconds' bands overlap, so a given absolute frame is covered by many rows
+  (= many candidate seconds/seeds) without any per-frame variable structure.
+- **Query-aligned**: the scorer, given commanded M, fixes the RTC second `T*(M)`
+  (RTC crystal is stable) and integrates capture over the frame band with the σ(M)
+  kernel — exactly one row's contents.
+
+**Why this shape (measured on the real metang config):** the success mask is
+**~21.7% dense** (not sparse → a bitmask beats a sparse list) and costs
+**~13 ms/seed** (machete criterion → **compute, not storage, is the bottleneck**).
+
+**Decoupling (critical):** the stored capture grid is **calibration-independent**
+— band `W(T) = ⌈k·c_ceiling·√M(T)⌉` uses a fixed conservative ceiling, not the
+live σ. The live σ(M) kernel is applied **at scoring time** (cheap), fitting
+inside the stored band by construction. So loop-back σ updates do **not**
+invalidate the expensive chains; only raising the ceiling does (an explicit,
+versioned re-precompute).
+
+**Chosen parameters / format:**
+- Band policy: **k = 3.5, c_ceiling = 0.16** (~25% margin over today's 0.128).
+- Storage: **binary bitmask rows + a JSON sidecar header** (format version, band
+  policy, setup/max seconds, row-width formula). Fixed-max-width padded rows keep
+  O(1) seek/resume; the header makes it self-describing and re-tunable.
+
+**Open worry — compute feasibility:** widening from 2 seeds/frame to a
+hundreds-wide band multiplies an already-expensive precompute (~4–7× more
+seeds/second on top of 13 ms/seed). Full-range charting may be infeasible by
+brute force; likely need to limit the charted band to promising regions and/or a
+cheaper coarse criterion. Tracked separately (abf.11) from the representation
+work.
+
+### 6.6 Canonicalize by mdmsh (the reuse the old chains had)
+
+`capture` is a **pure function of the seed**, and in the chart's model
+`seed = (mdms<<24 | hour<<16) + delay` with `mdms = (month·day+min+sec)&0xFF`
+(no year term). key_seed **fixes the hour** and pins `mdms`, so — measured on the
+real metang config — its **2858 candidate times share hour=21 and one mdms_base**;
+at second-offset 0 they give **one identical seed**, and as the offset advances the
+minute/second rollover phase splits them into only **~1–4 distinct seeds** per
+(row, frame). The whole 2858-time chart is therefore **~2–4 grids' worth of
+distinct seeds, not 2858** — the distinct-seed set is bounded and essentially
+independent of the candidate-time count.
+
+The **old** chart captured this (evaluate_chain_link_cached deduped identical
+links across all concurrent chains per batch). A naive per-datetime
+`GridFile.generate()` would **throw it away** (~2858× redundant work). So the
+store is **keyed by `mdmsh = (mdms, hour)`**, not by datetime:
+
+- **Phase 1 (generation, minimal):** `capture[mdmsh] → {frame-range bitmasks}`.
+  Enumerate every (candidate time, second-offset) → its `mdmsh` and band
+  `center±W`; accumulate per-mdmsh the *union* of frame ranges (disjoint, since a
+  given mdmsh recurs ~every 256 s at a much higher frame); evaluate `capture` once
+  per distinct `(mdmsh, frame)`. Irreducible minimum (~one grid, not 2858×).
+- **Phase 2 (scoring/convolution):** candidate M → datetime → `(mdmsh, center
+  frame)` → look up the map over `[center ± kσ(M)]` → convolve with the σ(M)
+  kernel. More indirection than a flat row, but small and bounded per query.
+
+Swap-axes primitives (`BandPolicy`, `pack_row`, bit math) carry over; only the
+store's **keying** moves from per-datetime second-rows to mdmsh → frame-ranges.
+
+**Prototype + measured (claytonlib/chart/canon.py, metang, setup 300 / max 900,
+k=3.5 c_ceiling=0.16):** 2858 candidate times → **254 distinct mdmsh** →
+**2,085,318 distinct seeds**, vs 1.5 B naive per-time-grid evaluations = **721×
+reuse**. Enumeration (Phase 1a, no eval) 1.8 s. Precompute @13.2 ms/seed ≈ **7.65 h
+canonical vs ~230 days naive** — feasible as a one-time offline run, amortized
+further by the persistent `SeedCache`. `canon.py` provides `needed_ranges`
+(enumerate), `SeedCache` (persistent memo), `build_canon` (evaluate →
+`CanonMap.captured(mdmsh, frame)`). Remaining abf.11 levers: cheaper coarse
+criterion, parallelism.
+
+**Persistent offline precompute (landed):** `CanonStore` (append-one-JSONL-line-
+per-mdmsh + a `.meta.json` config signature) + `precompute_canon` make the ~7.65 h
+run **resumable** — a crash costs at most the one mdmsh in progress, and re-running
+skips done mdmsh (config-signature-checked so resumes can't mix configs). `CanonMap.
+save/load` round-trip the map. Demonstrated on a real metang 2-second slice: 3,822
+seeds / 6 mdmsh / 953× reuse / 49.8 s cold, artifact ~1.2 KB, **resume 0.01 s** vs
+49.8 s cold; full map projects to ~0.5 MB.
+
+**Phase 2 scorer (landed) — `claytonlib/chart/scorer.py`:** resolves a commanded M
+→ mean frame F* → its RTC second → mdmsh, then `capture_probability` integrates
+the CanonMap's bits at that mdmsh against the σ(M) landing kernel (jitter, or
+jitter+band via `include_calibration`); `rank_targets` sweeps target frames (each
+with `M = model.solve(F)`), `distinct_targets` de-clusters, `print_target_report`
+prints the best commanded countdowns. Because σ grows with M it auto-prefers wide
+capture plateaus over lone spikes and reports honestly lower P far out. Demonstrated
+end-to-end on real data (16 s slice, real fit): ranked M's with P(capture) and σ.
+
+**Expedition orchestration (landed, additive):** `Expedition.precompute_chart()` drives
+`precompute_canon` from the config (key_seed → base_delay + candidate times, setup/max,
+pokemon/strategy/criteria) into a resumable `CanonStore` under the chart dir;
+`Expedition.chart_report()` loads that map + `calibration_model()` and prints ranked
+commanded countdowns. Real ETAs (machete criterion, ~13 ms/seed): **200–600 s ≈ 4.2 h**
+(1.15 M seeds), **200–900 s ≈ 8.5 h** (2.32 M seeds), 721× reuse, resumable. Note:
+calibration is well-fit to ~600 s (runs span M ≤ ~595 k); longer targets extrapolate
+(σ_band widens) until longer runs are collected. **Retirement of the old packed-chain
+path (chart_safari/evaluate_chart/choose_target + chain.py + old strategies) is staged** —
+it's entangled with the interactive `choose_target` UX and the persisted `eval_strategy`
+config, so it needs a small UX decision before deletion; the new path is additive and
+primary in the meantime.
+
+**Incremental extend (landed):** the store is now per-(mdmsh, frame-range) and its config
+signature omits setup/max, so a precompute over a wider second range appends only the new
+frame gaps on top of an existing store — no re-evaluation. `precompute_canon` computes
+`needed_ranges` for the current [setup,max], subtracts the store's `done_coverage()` per
+mdmsh (interval subtraction), evaluates only the gaps, and reports `evaluated_this_run`.
+Verified on real data: [300,302]→6,378 seeds, extend→[300,305] evaluated only the 7,684
+new (0 re-done), re-run 0 (idempotent). So **200–600 (4.2 h) then extend to 900 costs only
+the incremental ~4.3 h**, not a fresh 8.5 h. (Same mechanism finer-grains crash-resume:
+a crash now loses at most one frame-range, not a whole mdmsh.)
+
+**Parallelism (landed):** `precompute_canon(..., workers=N)` evaluates each range's seeds
+across a fork-based process pool (evaluate_seed is CPU-bound + GIL-blocked, so processes not
+threads; fork inherits the unpicklable strategy/criteria closures without pickling). Results
+still append per range in order, so resumability/idempotency are unchanged.
+`Expedition.precompute_chart(workers=None)` defaults to all CPUs and prints timestamped
+progress with a rolling ETA. Measured 4.6× on 12 cores for a machete-criterion slice
+(sub-linear from per-range barriers on tiny ranges; larger runs scale better) → **200–600 s
+≈ 55 min, 200–900 s ≈ 1.85 h** wall-clock. Further scaling (coarser batching across an
+mdmsh's gaps) is a possible future tweak.
+
+**Year handling (DECIDED):** charting stays **year-2000** on purpose —
+`times.calculate_seed` drops the year term, and the calibration/identification
+side already works from an initial seed where the year is compensated for, so the
+chart never needs it. ⚠️ **Future tools must not ignore the initial seed's year**
+(the compass/`seed_for` path includes `year−2000` in `CCCC`); only the chart's own
+`(mdmsh, frame)` space is deliberately year-free.
