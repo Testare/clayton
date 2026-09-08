@@ -424,6 +424,28 @@ progress with a rolling ETA. Measured 4.6× on 12 cores for a machete-criterion 
 ≈ 55 min, 200–900 s ≈ 1.85 h** wall-clock. Further scaling (coarser batching across an
 mdmsh's gaps) is a possible future tweak.
 
+**initial_time is an OUTPUT of charting.** key_seed is chosen up front; the boot datetime is
+what the chart *finds*.  So `Expedition.chart_report()` defaults to **mode A** — rank the
+best **(boot time, commanded M) pairs** across all candidate boot times (`scorer.rank_over_times`
++ `print_pairs_report`); capture depends only on the target second's mdmsh (≈1–4 across the
+2858 candidates), so this is cheap (~5 s).  Pass `initial_time=` for **mode B** — the best M
+for a specific preferred boot time (`rank_targets`/`print_target_report`), which must be
+RNG-consistent with key_seed (same hour) or it's rejected.  (Bug fixed: the parser now
+accepts ISO 'T'; and mode A no longer needs a single fixed datetime, so the earlier
+hour-mismatch fallback is gone.)
+
+**Findings persistence + target selection.** `chart_report()` idempotently writes its ranked
+rows to `chart_report.json` in the chart dir (overwrite, no append).  A **separate** step,
+`Expedition.select_target()` (the new choose_target), reads that file, lists the ranked
+targets, prompts for a pick, and records it: `initial_time` = boot datetime, `target_timer_delay`
+= commanded M (calibration 0), `target_delay` = expected F_b — then saves.  The Expedition
+Workflow notebook's "Choose Target" cell now calls `select_target()`.
+
+`chart_report(per_boot_time=True)` adds a third view: the best target for EACH candidate
+starting time (one row per boot time, ranked by its best P; `scorer.rank_by_boot_time` /
+`print_by_boot_time_report`).  Cheap (~6 s) — the best per `(second, mdmsh)` is computed once,
+then each boot time is the max over its seconds; findings save as mode `per_boot_time`.
+
 **Year handling (DECIDED):** charting stays **year-2000** on purpose —
 `times.calculate_seed` drops the year term, and the calibration/identification
 side already works from an initial seed where the year is compensated for, so the

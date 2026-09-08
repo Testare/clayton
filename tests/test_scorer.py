@@ -86,6 +86,63 @@ class TestRankTargets(unittest.TestCase):
         self.assertTrue(all(r["p"] == 0.0 for r in ranked))
 
 
+class TestRankOverTimes(unittest.TestCase):
+    def test_finds_pair_and_valid_boot_time(self):
+        from claytonlib.chart.scorer import rank_over_times, best_per_scenario
+        base_delay = 1000
+        setup, maxt = 5, 40
+        model = CalibrationModel(kind="line", beta=0.06, alpha=0.0,
+                                 jitter_c=None, jitter_rms=8.0)
+        centers = _centers(base_delay, maxt)
+        s0, = (20,)
+        F0 = centers[s0]
+        # two candidate boot times with different phases -> different mdmsh at s0
+        t_a = dt.datetime(2000, 6, 1, 14, 0, 0)
+        t_b = dt.datetime(2000, 6, 2, 14, 30, 15)
+        mdmsh_a = mdmsh_of(t_a + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh_a: [_all_set(F0 - 60, F0 + 60)]})
+
+        ranked = rank_over_times(cmap, model, [t_a, t_b], base_delay, setup, maxt, step=1, k=3.0)
+        best = best_per_scenario(ranked)
+        top = best[0]
+        self.assertGreater(top["p"], 0.95)
+        self.assertEqual(top["mdmsh"], mdmsh_a)
+        # the attached example boot time really yields that mdmsh at that second
+        self.assertEqual(mdmsh_of(top["initial_time"] + dt.timedelta(seconds=top["second"])),
+                         top["mdmsh"])
+
+    def test_rank_by_boot_time_one_row_each_best(self):
+        from claytonlib.chart.scorer import rank_by_boot_time
+        base_delay = 1000
+        setup, maxt = 5, 40
+        model = CalibrationModel(kind="line", beta=0.06, alpha=0.0,
+                                 jitter_c=None, jitter_rms=8.0)
+        centers = _centers(base_delay, maxt)
+        t_a = dt.datetime(2000, 6, 1, 14, 0, 0)   # gets the captured mdmsh at s0
+        t_b = dt.datetime(2000, 6, 2, 14, 30, 15)  # different phase, no capture
+        s0 = 20
+        F0 = centers[s0]
+        mdmsh_a = mdmsh_of(t_a + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh_a: [_all_set(F0 - 60, F0 + 60)]})
+
+        rows = rank_by_boot_time(cmap, model, [t_a, t_b], base_delay, setup, maxt, step=1, k=3.0)
+        self.assertEqual(len(rows), 2)                    # one row per boot time
+        boots = {r["initial_time"] for r in rows}
+        self.assertEqual(boots, {t_a, t_b})
+        by = {r["initial_time"]: r for r in rows}
+        self.assertGreater(by[t_a]["p"], 0.95)            # t_a can reach the captured region
+        self.assertEqual(by[t_b]["p"], 0.0)               # t_b never sees a capture
+        self.assertEqual(rows[0]["initial_time"], t_a)    # sorted best-first
+
+    def test_string_times_accepted(self):
+        from claytonlib.chart.scorer import rank_over_times
+        model = CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_rms=8.0)
+        cmap = CanonMap({})
+        ranked = rank_over_times(cmap, model, ["2000-06-01 14:00:00", "2000-06-01T14:00:30"],
+                                 1000, 5, 12, step=2)
+        self.assertTrue(all(r["p"] == 0.0 for r in ranked))
+
+
 class TestDistinctTargets(unittest.TestCase):
     def test_collapses_clusters(self):
         ranked = [{"F": 1000, "p": 0.9}, {"F": 1002, "p": 0.89}, {"F": 1300, "p": 0.8},

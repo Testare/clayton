@@ -49,8 +49,13 @@ from claytonlib.chart.canon import (
 from claytonlib.chart.scorer import (
     capture_probability,
     rank_targets,
+    rank_over_times,
+    rank_by_boot_time,
+    best_per_scenario,
     distinct_targets,
     print_target_report,
+    print_pairs_report,
+    print_by_boot_time_report,
 )
 
 logger = logging.getLogger(__name__)

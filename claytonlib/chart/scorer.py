@@ -81,6 +81,91 @@ def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,
     return results[:limit] if limit else results
 
 
+def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_seconds: int,
+                    max_target_seconds: int, step: int = 1, k: float = 3.5,
+                    include_calibration: bool = False, limit: int | None = None) -> list[dict]:
+    """Rank the best (boot time, commanded countdown) pairs across ALL candidate boot times.
+
+    Since capture at a target depends only on the target second's mdmsh — which collapses to a
+    few values across the (RNG-equivalent) candidate boot times — we score each distinct
+    (target frame, mdmsh) once and attach one example boot datetime realizing that mdmsh.
+    Returns dicts {M, F, second, mdmsh, initial_time (example), p, sigma} sorted by p desc.
+    Use when initial_time is an *output* (mode A); rank_targets is the fixed-time mode (B).
+    """
+    parsed = [t if isinstance(t, _dt.datetime) else _dt.datetime.fromisoformat(t) for t in times]
+    # dedup identical (month,day,hour,minute,second) phases (year is irrelevant here)
+    phases = list({(t.month, t.day, t.hour, t.minute, t.second): t for t in parsed}.values())
+
+    centers = _centers(base_delay, max_target_seconds)
+    # per second: {mdmsh -> one example boot datetime that yields it at that second}
+    groups: dict[int, dict] = {}
+    for s in range(setup_delay_seconds, max_target_seconds + 1):
+        g: dict = {}
+        for t in phases:
+            m = mdmsh_of(t + _dt.timedelta(seconds=s))
+            g.setdefault(m, t)
+        groups[s] = g
+
+    f_lo, f_hi = centers[setup_delay_seconds], centers[max_target_seconds]
+    results = []
+    for F_target in range(f_lo, f_hi + 1, step):
+        M = model.solve(F_target)
+        if M <= 0:
+            continue
+        s = bisect.bisect_right(centers, F_target) - 1
+        if s < setup_delay_seconds or s > max_target_seconds:
+            continue
+        for mdmsh, example in groups[s].items():
+            cp = capture_probability(canon_map, model, mdmsh, M, k, include_calibration)
+            results.append({"M": M, "F": F_target, "second": s, "mdmsh": mdmsh,
+                            "initial_time": example, "p": cp["p"], "sigma": cp["sigma"]})
+    results.sort(key=lambda r: (-r["p"], r["M"]))
+    return results[:limit] if limit else results
+
+
+def rank_by_boot_time(canon_map, model, times, base_delay: int, setup_delay_seconds: int,
+                      max_target_seconds: int, step: int = 1, k: float = 3.5,
+                      include_calibration: bool = False, limit: int | None = None) -> list[dict]:
+    """The BEST target (best commanded M) for EACH candidate boot time, ranked by that best P.
+
+    One row per boot time: its best achievable target over the whole range.  Boot times are
+    deduped by phase (year-equivalent times collapse).  Cheap: the best per (second, mdmsh) is
+    computed once, then each boot time is the max over its seconds.
+    """
+    # best score per (second, mdmsh), from the full over-times sweep
+    rows = rank_over_times(canon_map, model, times, base_delay, setup_delay_seconds,
+                           max_target_seconds, step=step, k=k,
+                           include_calibration=include_calibration)
+    best_sm: dict = {}
+    for r in rows:
+        key = (r["second"], r["mdmsh"])
+        if key not in best_sm or r["p"] > best_sm[key]["p"]:
+            best_sm[key] = r
+
+    parsed = [t if isinstance(t, _dt.datetime) else _dt.datetime.fromisoformat(t) for t in times]
+    phases = list({(t.month, t.day, t.hour, t.minute, t.second): t for t in parsed}.values())
+
+    out = []
+    for t in phases:
+        best = None
+        for s in range(setup_delay_seconds, max_target_seconds + 1):
+            r = best_sm.get((s, mdmsh_of(t + _dt.timedelta(seconds=s))))
+            if r is not None and (best is None or r["p"] > best["p"]):
+                best = r
+        if best is not None:
+            out.append({**best, "initial_time": t})
+    out.sort(key=lambda r: (-r["p"], r["M"]))
+    return out[:limit] if limit else out
+
+
+def best_per_scenario(ranked: list[dict]) -> list[dict]:
+    """Keep the best-scoring row per (second, mdmsh) scenario (ranked must be p-desc sorted)."""
+    seen: dict = {}
+    for r in ranked:
+        seen.setdefault((r["second"], r["mdmsh"]), r)
+    return sorted(seen.values(), key=lambda r: (-r["p"], r["M"]))
+
+
 def distinct_targets(ranked: list[dict], min_separation: int, n: int) -> list[dict]:
     """Top-n results that are each >= min_separation frames apart (greedy by score).
 
@@ -114,4 +199,39 @@ def print_target_report(canon_map, model, initial_time, base_delay, setup_delay_
     for i, r in enumerate(best, 1):
         print(f"  {i:>2}  {r['M']:>9.0f}  {r['F']:>10}  {r['second']:>6}  "
               f"{r['p'] * 100:>9.1f}%  {r['sigma']:>6.1f}")
+    return best
+
+
+def print_pairs_report(canon_map, model, times, base_delay, setup_delay_seconds,
+                       max_target_seconds, step: int = 1, k: float = 3.5,
+                       include_calibration: bool = False, top: int = 10) -> list[dict]:
+    """Rank and print the best (boot time, commanded countdown) pairs.  Returns the rows."""
+    ranked = rank_over_times(canon_map, model, times, base_delay, setup_delay_seconds,
+                             max_target_seconds, step=step, k=k,
+                             include_calibration=include_calibration)
+    best = best_per_scenario(ranked)[:top]
+    band = "jitter+calib" if include_calibration else "jitter"
+    print(f"Best (boot time, commanded countdown) pairs  ({band} kernel, k={k}):")
+    print(f"  {'#':>2}  {'boot time':>19}  {'M (ms)':>9}  {'target F_b':>10}  "
+          f"{'second':>6}  {'P(capture)':>10}  {'sigma':>6}")
+    for i, r in enumerate(best, 1):
+        print(f"  {i:>2}  {r['initial_time']:%Y-%m-%d %H:%M:%S}  {r['M']:>9.0f}  "
+              f"{r['F']:>10}  {r['second']:>6}  {r['p'] * 100:>9.1f}%  {r['sigma']:>6.1f}")
+    return best
+
+
+def print_by_boot_time_report(canon_map, model, times, base_delay, setup_delay_seconds,
+                              max_target_seconds, step: int = 1, k: float = 3.5,
+                              include_calibration: bool = False, top: int = 10) -> list[dict]:
+    """Rank and print the best target for each candidate starting time.  Returns the rows."""
+    best = rank_by_boot_time(canon_map, model, times, base_delay, setup_delay_seconds,
+                             max_target_seconds, step=step, k=k,
+                             include_calibration=include_calibration, limit=top)
+    band = "jitter+calib" if include_calibration else "jitter"
+    print(f"Best target for each starting time  (top {top}, {band} kernel, k={k}):")
+    print(f"  {'#':>2}  {'boot time':>19}  {'best M (ms)':>11}  {'target F_b':>10}  "
+          f"{'second':>6}  {'P(capture)':>10}  {'sigma':>6}")
+    for i, r in enumerate(best, 1):
+        print(f"  {i:>2}  {r['initial_time']:%Y-%m-%d %H:%M:%S}  {r['M']:>11.0f}  "
+              f"{r['F']:>10}  {r['second']:>6}  {r['p'] * 100:>9.1f}%  {r['sigma']:>6.1f}")
     return best

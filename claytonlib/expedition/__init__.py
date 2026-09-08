@@ -12,6 +12,7 @@ Usage:
 """
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 from claytonlib.expedition._config import (
@@ -34,8 +35,13 @@ _EXPEDITIONS_DIR = Path('data/expeditions')
 
 
 def _parse(t):
-    """A datetime from a datetime or an 'YYYY-MM-DD HH:MM:SS' string."""
-    return t if isinstance(t, dt.datetime) else dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
+    """A datetime from a datetime or a string (ISO 'T' or space separator both accepted)."""
+    if isinstance(t, dt.datetime):
+        return t
+    try:
+        return dt.datetime.fromisoformat(t)
+    except ValueError:
+        return dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S')
 
 
 def expedition(name: str) -> 'Expedition':
@@ -79,6 +85,10 @@ class Expedition:
         self.target_delay:        int | None = None
         self.initial_time:        str | None = None  # ISO format
 
+        # Chosen target (set by select_target from chart_report's findings)
+        self.target_timer_delay:       int | None = None  # commanded countdown M to dial (ms)
+        self.target_timer_calibration: int | None = None  # signed offset; M = delay + calibration
+
         # Results
         self.target_seeds:        list[str] = []
         self.target_seeds_path:   str | None = None
@@ -112,6 +122,10 @@ class Expedition:
             'window':                   self.window,
             'target_delay':             self.target_delay,
             'initial_time':             self.initial_time,
+            # getattr defaults keep save() working on instances created before these fields
+            # existed (e.g. a live notebook object after autoreload).
+            'target_timer_delay':       getattr(self, 'target_timer_delay', None),
+            'target_timer_calibration': getattr(self, 'target_timer_calibration', None),
             'target_seeds':             self.target_seeds,
             'target_seeds_path':        self.target_seeds_path,
             'compass_premetronome_histsize': self.compass_premetronome_histsize,
@@ -140,6 +154,8 @@ class Expedition:
         f.window                   = data.get('window')
         f.target_delay             = data.get('target_delay')
         f.initial_time             = data.get('initial_time')
+        f.target_timer_delay       = data.get('target_timer_delay')
+        f.target_timer_calibration = data.get('target_timer_calibration')
         f.target_seeds             = data.get('target_seeds') or []
         f.target_seeds_path        = data.get('target_seeds_path')
         f.compass_premetronome_histsize = data.get('compass_premetronome_histsize')
@@ -555,10 +571,46 @@ class Expedition:
     # canonical chart pipeline (mdmsh capture map + sigma(M) scorer)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _log(msg: str) -> None:
+        """Print a timestamped [expedition] log line."""
+        print(f"[expedition] {dt.datetime.now().strftime('%H:%M:%S')}  {msg}")
+
     def _canon_store_path(self) -> str:
         """Where this expedition's canonical capture map lives."""
         from claytonlib.chart import _output_dir
         return str(_output_dir(self._get_chart_input()) / "canon.jsonl")
+
+    def _report_path(self) -> str:
+        """Where chart_report's ranked findings are saved (for select_target to read)."""
+        from claytonlib.chart import _output_dir
+        return str(_output_dir(self._get_chart_input()) / "chart_report.json")
+
+    def _write_report(self, mode: str, rows: list, initial_time, params: dict) -> None:
+        """Idempotently persist chart_report's findings (overwrites the same file)."""
+        payload = {
+            "saved_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "mode": mode,
+            "initial_time": (initial_time.isoformat() if isinstance(initial_time, dt.datetime)
+                             else initial_time),
+            "params": params,
+            "rows": [{
+                "rank": i,
+                "initial_time": (r["initial_time"].isoformat()
+                                 if isinstance(r.get("initial_time"), dt.datetime) else None),
+                "M": round(r["M"]),
+                "target_delay": int(r["F"]),
+                "second": int(r["second"]),
+                "p": r["p"],
+                "sigma": r["sigma"],
+                "mdmsh": list(r["mdmsh"]),
+            } for i, r in enumerate(rows, 1)],
+        }
+        path = self._report_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            json.dump(payload, fh, indent=2)
+        self._log(f"findings saved -> {path}")
 
     def precompute_chart(self, workers: int | None = None):
         """Precompute the canonical capture map (resumable) — supersedes chart_safari.
@@ -572,8 +624,7 @@ class Expedition:
         """
         import os
         import time
-        start_dt = dt.datetime.now()
-        print(f"[expedition] === precompute_chart ===  {start_dt.strftime('%Y-%m-%d %H:%M:%S')}")
+        self._log(f"=== precompute_chart ===  ({dt.datetime.now().strftime('%Y-%m-%d')})")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_setup_delay_seconds()
@@ -599,54 +650,148 @@ class Expedition:
             if done == 1 or done % 5 == 0 or done == total:
                 elapsed = time.perf_counter() - t0
                 eta = elapsed / done * (total - done) if done else 0.0
-                print(f"[expedition]   {dt.datetime.now().strftime('%H:%M:%S')}  "
-                      f"mdmsh {done}/{total}  elapsed {elapsed / 60:.1f}m  "
-                      f"eta ~{eta / 60:.1f}m")
+                self._log(f"mdmsh {done}/{total}  elapsed {elapsed / 60:.1f}m  "
+                          f"eta ~{eta / 60:.1f}m")
 
-        print(f"[expedition] Charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
-              f"delay={self.setup_delay_seconds}-{self.max_target_seconds}s "
-              f"strategy={self.strategy_name} criteria={self.criteria_name}  "
-              f"workers={workers}")
+        self._log(f"charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
+                  f"delay={self.setup_delay_seconds}-{self.max_target_seconds}s "
+                  f"strategy={self.strategy_name} criteria={self.criteria_name}  "
+                  f"workers={workers}")
         stats = precompute_canon(base_delay, times, self.setup_delay_seconds,
                                  self.max_target_seconds, pokemon, strategy, criteria, store,
                                  progress=_progress, workers=workers)
         elapsed = time.perf_counter() - t0
-        print(f"[expedition] === precompute_chart complete ===  "
-              f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  (elapsed {elapsed / 60:.1f}m)")
-        print(f"[expedition] -> {store.path}  ({stats['n_distinct_seeds']:,} seeds, "
-              f"{stats.get('evaluated_this_run', 0):,} evaluated this run, "
-              f"{stats['n_mdmsh']} mdmsh, reuse {stats['reuse_factor']:.0f}x)")
+        self._log(f"=== precompute_chart complete ===  (elapsed {elapsed / 60:.1f}m)")
+        self._log(f"-> {store.path}  ({stats['n_distinct_seeds']:,} seeds, "
+                  f"{stats.get('evaluated_this_run', 0):,} evaluated this run, "
+                  f"{stats['n_mdmsh']} mdmsh, reuse {stats['reuse_factor']:.0f}x)")
         return stats
 
     def chart_report(self, top: int = 10, step: int = 4, k: float = 3.5,
-                     include_calibration: bool = False, initial_time=None):
-        """Rank commanded countdowns from the precomputed map + the calibration model.
+                     include_calibration: bool = False, initial_time=None,
+                     per_boot_time: bool = False):
+        """Rank the best targets from the precomputed map + the calibration model.
 
-        Needs precompute_chart() (the capture map) and a calibration model (from saved compass
-        runs; see Expedition.calibration_model()).  `initial_time` defaults to the expedition's
-        configured boot time, else the first RNG-equivalent candidate.
+        Default (mode A): ranks the best (boot time, commanded countdown M) PAIRS across all
+        RNG-equivalent candidate boot times — the boot datetime is itself an output of
+        charting.  `per_boot_time=True` instead lists the best target for EACH candidate
+        starting time (one row per boot time, ranked by that best P).  Pass `initial_time`
+        (mode B) to rank the best M for one fixed boot time.  Needs precompute_chart() (the
+        map) and a calibration model (from saved compass runs; see calibration_model()).
         """
-        print(f"[expedition] === chart_report ===  {dt.datetime.now().strftime('%H:%M:%S')}")
-        from claytonlib.chart import CanonStore, print_target_report
+        self._log("=== chart_report ===")
+        from claytonlib.chart import (CanonStore, print_target_report, print_pairs_report,
+                                      print_by_boot_time_report)
         from claytonlib.times import get_times
 
         store = CanonStore(self._canon_store_path())
         if store.read_meta() is None:
-            print("[expedition] No canonical map found. Run precompute_chart() first.")
+            self._log("No canonical map found. Run precompute_chart() first.")
             return None
         model = self.calibration_model()
         if model is None:
-            print("[expedition] No calibration model found. Save some compass runs first "
-                  "(utils/calibration_tools.save_compass_run).")
+            self._log("No calibration model found. Save some compass runs first "
+                      "(utils/calibration_tools.save_compass_run).")
             return None
 
         base_delay, times = get_times(self.key_seed)
-        it = initial_time if initial_time is not None else self.initial_time
-        it = _parse(it) if it is not None else _parse(times[0])
         cmap = store.load_map()
-        return print_target_report(cmap, model, it, base_delay, self.setup_delay_seconds,
+        params = {"step": step, "k": k, "include_calibration": include_calibration, "top": top}
+
+        if initial_time is None:
+            if per_boot_time:
+                # Mode A': the best target for each candidate starting time.
+                best = print_by_boot_time_report(
+                    cmap, model, times, base_delay, self.setup_delay_seconds,
+                    self.max_target_seconds, step=step, k=k,
+                    include_calibration=include_calibration, top=top)
+                self._write_report("per_boot_time", best, None, params)
+                return best
+            # Mode A: best (boot time, M) pair across all candidate boot times.
+            best = print_pairs_report(cmap, model, times, base_delay, self.setup_delay_seconds,
+                                      self.max_target_seconds, step=step, k=k,
+                                      include_calibration=include_calibration, top=top)
+            self._write_report("pairs", best, None, params)
+            return best
+
+        # Mode B: rank M for a specific boot time (must be RNG-consistent with key_seed).
+        it = _parse(initial_time)
+        key_hour = (self.key_seed >> 16) & 0xFF
+        if it.hour != key_hour:
+            self._log(f"initial_time {it:%Y-%m-%d %H:%M:%S} (hour {it.hour}) is NOT RNG-consistent "
+                      f"with key_seed 0x{self.key_seed:08X} (hour {key_hour}) -- it can't produce "
+                      f"that boot seed; pick a candidate from get_times(key_seed).")
+            return None
+        best = print_target_report(cmap, model, it, base_delay, self.setup_delay_seconds,
                                    self.max_target_seconds, step=step, k=k,
                                    include_calibration=include_calibration, top=top)
+        self._write_report("fixed", best, it, params)
+        return best
+
+    def select_target(self):
+        """Pick a target from chart_report's saved findings — the new choose_target.
+
+        A separate step from chart_report: reads chart_report.json (run chart_report() first),
+        lists the ranked targets, prompts for a selection, and records it on the expedition:
+        initial_time = the boot datetime, target_timer_delay = the commanded countdown M to dial
+        (calibration 0), target_delay = the expected battle frame F_b (for identification).
+        Returns the chosen row dict, or None if cancelled / no findings.
+        """
+        self._log("=== select_target ===")
+        path = self._report_path()
+        if not os.path.exists(path):
+            self._log("No saved findings. Run chart_report() first.")
+            return None
+        with open(path) as fh:
+            payload = json.load(fh)
+        rows = payload.get("rows") or []
+        if not rows:
+            self._log("Saved findings are empty. Re-run chart_report().")
+            return None
+
+        default_boot = payload.get("initial_time")
+        band = "jitter+calib" if payload.get("params", {}).get("include_calibration") else "jitter"
+        print(f"Targets from chart_report ({payload['mode']} mode, {band}, "
+              f"saved {payload['saved_at']}):")
+        print(f"  {'#':>2}  {'boot time':>19}  {'M (ms)':>9}  {'F_b':>8}  "
+              f"{'second':>6}  {'P(capture)':>10}")
+        for r in rows:
+            boot = r["initial_time"] or default_boot or "(get_times candidate)"
+            boot_s = boot.replace("T", " ")[:19] if isinstance(boot, str) else str(boot)
+            print(f"  {r['rank']:>2}  {boot_s:>19}  {r['M']:>9}  {r['target_delay']:>8}  "
+                  f"{r['second']:>6}  {r['p'] * 100:>9.1f}%")
+
+        while True:
+            try:
+                raw = input("\nSelect a target number (blank to cancel): ").strip()
+            except EOFError:
+                raw = ""
+            if raw == "":
+                self._log("No target selected.")
+                return None
+            try:
+                idx = int(raw)
+            except ValueError:
+                print("  enter a number.")
+                continue
+            chosen = next((r for r in rows if r["rank"] == idx), None)
+            if chosen is None:
+                print(f"  no target #{idx}.")
+                continue
+            break
+
+        boot = chosen["initial_time"] or default_boot
+        if boot is None:
+            self._log("Selected row has no boot time; cannot set target.")
+            return None
+        self.initial_time = boot
+        self.target_delay = int(chosen["target_delay"])
+        self.target_timer_delay = int(chosen["M"])
+        self.target_timer_calibration = 0
+        self.save()
+        self._log(f"target set: boot {self.initial_time}, timer M={self.target_timer_delay} ms, "
+                  f"expected F_b={self.target_delay} (P~{chosen['p'] * 100:.1f}%). Saved.")
+        return chosen
 
     # ------------------------------------------------------------------
     # choose_target helpers
