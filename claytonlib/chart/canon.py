@@ -35,8 +35,11 @@ def mdmsh_of(t: _dt.datetime) -> tuple[int, int]:
 
 
 def seed_for_mdmsh(mdmsh: tuple[int, int], frame: int) -> int:
-    """The chart seed for an (mdmsh, frame) — identical to times.calculate_seed(t, frame)
-    for any datetime t with that mdms/hour (year-2000 model, no year term)."""
+    """The chart seed for an (mdmsh, frame): (mds<<24 | hour<<16) + frame.
+
+    Adds no year term itself — `frame` is the ACTUAL battle-seed low16, so the year lives in
+    `frame` (reconstructed as dF(M) + key_seed_low16 by CalibrationModel.frame()).  mds/hour are
+    year-independent.  Equals times.calculate_seed(t, frame) for any t with this mdms/hour."""
     mdms, hour = mdmsh
     return ((mdms << 24) | (hour << 16)) + frame
 
@@ -114,8 +117,10 @@ def needed_ranges(base_delay: int, times, setup_delay_seconds: int, max_target_s
     for s in seconds:
         m_lo = max(0.0, (s - 0.5 - model.rtc_offset_seconds) * 1000.0)
         m_hi = max(0.0, (s + 0.5 - model.rtc_offset_seconds) * 1000.0)
-        f_lo = model.mean(m_lo)
-        f_hi = model.mean(m_hi)
+        # Actual battle-seed low16 = frame(M, base_delay): dF(M)+F_a for a dF model (year baked
+        # into base_delay = key_seed low16), mean(M) for a legacy Fb model.
+        f_lo = model.frame(m_lo, base_delay)
+        f_hi = model.frame(m_hi, base_delay)
         w = policy.half_width((f_lo + f_hi) / 2.0)
         bands.append((int(math.floor(min(f_lo, f_hi) - w)), int(math.ceil(max(f_lo, f_hi) + w))))
 
@@ -289,11 +294,13 @@ class CanonStore:
         return CanonMap.load(self.path) if os.path.exists(self.path) else CanonMap({})
 
 
-def _config_signature(pokemon, strategy, criteria, base_delay, policy, model) -> dict:
-    # Deliberately excludes setup/max/n_times: the map is keyed by (mdmsh, frame) and is
-    # range-agnostic, so a store can be extended to a wider second range in place.  The
-    # calibration DOES enter the signature: it places each RTC second's frame band (mean) and
-    # sets the second-from-M mapping (rtc_offset_seconds), so a different fit needs a fresh map.
+def _config_signature(pokemon, strategy, criteria, base_delay, policy) -> dict:
+    # Only the inputs that change what a given (mdmsh, frame) seed CAPTURES (pokemon/strategy/
+    # criteria) or the seed space (base_delay, policy) enter the signature.  Deliberately
+    # EXCLUDES setup/max AND the calibration model: like the second range, the model only
+    # changes WHICH frames are needed (their center), not what any seed captures -- so a refit
+    # (or the Fb->dF switch) extends the store incrementally (append the new-frame gaps) rather
+    # than invalidating it.  The map is range-agnostic, keyed by the absolute (mdmsh, frame).
     return {
         "pokemon": getattr(pokemon, "name", str(pokemon)),
         "strategy": getattr(strategy, "name", str(strategy)),
@@ -301,14 +308,13 @@ def _config_signature(pokemon, strategy, criteria, base_delay, policy, model) ->
         "base_delay": base_delay,
         "policy": [policy.k, policy.c_ceiling, policy.nominal_rate],
         "second_model": "M-based",
-        "calibration": _model_sig(model),
     }
 
 
-def _model_sig(model) -> dict:
-    """The calibration parameters that affect which (mdmsh, frame) seeds the chart needs."""
+def _model_info(model) -> dict:
+    """Calibration params recorded in the meta for PROVENANCE (not part of the signature)."""
     return {
-        "kind": model.kind,
+        "kind": model.kind, "target": getattr(model, "target", "Fb"),
         "beta": round(model.beta, 9), "alpha": round(model.alpha, 6),
         "coeffs": [round(c, 9) for c in model.coeffs],
         "m_center": model.m_center, "m_scale": model.m_scale,
@@ -347,11 +353,17 @@ def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_targe
 
     ranges, stats = needed_ranges(base_delay, times, setup_delay_seconds,
                                   max_target_seconds, model, policy)
-    sig = _config_signature(pokemon, strategy, criteria, base_delay, policy, model)
+    sig = _config_signature(pokemon, strategy, criteria, base_delay, policy)
     meta = store.read_meta()
-    if meta is not None and meta.get("signature") != sig:
-        raise ValueError("CanonStore was built for a different config; refusing to resume "
-                         "(use a fresh path or delete the existing store)")
+    if meta is not None:
+        stored = meta.get("signature", {})
+        # Subset check: every signature key we care about must match.  Extra keys in a stored
+        # signature (e.g. a legacy "calibration" block from before the model left the signature)
+        # are ignored, so an existing store stays valid across the Fb->dF switch and later refits
+        # -- precompute just appends the new-frame gaps (a fast extend, not a full rebuild).
+        if any(stored.get(k) != v for k, v in sig.items()):
+            raise ValueError("CanonStore was built for a different config; refusing to resume "
+                             "(use a fresh path or delete the existing store)")
 
     pool = None
     if workers and workers > 1:
@@ -385,7 +397,8 @@ def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_targe
             pool.join()
 
     stats = dict(stats, evaluated_this_run=evaluated)
-    store.write_meta({"signature": sig, "n_mdmsh": total,
+    store.write_meta({"signature": sig, "calibration_info": _model_info(model),
+                      "n_mdmsh": total,
                       "n_distinct_seeds": stats["n_distinct_seeds"],
                       "reuse_factor": stats["reuse_factor"],
                       "last_setup": setup_delay_seconds, "last_max": max_target_seconds})

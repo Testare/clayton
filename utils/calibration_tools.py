@@ -1187,6 +1187,7 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
         cm.n_runs = len(all_runs)
         cm.m_lo, cm.m_hi = (min(Ms), max(Ms)) if Ms else (None, None)
         cm.rtc_offset_seconds = rtc_offset_seconds
+        cm.target = target          # "Fb" (mean=F_b) or "dF" (mean=dF; frame()=dF+F_a)
         models[key] = {"label": label, "kind": kind, "fit": fit, "target": target,
                        "f_of_M": fit["f_of_M"], "dfdM": fit.get("dfdM"),
                        "solve_M": fit["solve_M"], "coeffs": fit.get("coeffs"),
@@ -1212,8 +1213,11 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
         add_model("quad_df", "dF-vs-M quadratic (option 2, experimental)", "quad",
                   _poly_model(Ms, dFs, 2, M_bar, M_scale), target="dF")
 
-    # Recommended = the direct F_b-vs-M line when available, else whatever we have.
-    recommended = ("linear_m" if "linear_m" in models
+    # Recommended = the dF-vs-M line (option 2: year-agnostic, reconstruct F_b = dF + F_a),
+    # else the direct F_b line, else whatever we have.  The chart/expedition consume this via
+    # the exported artifact and call model.frame(M, base_delay) to get the actual seed frame.
+    recommended = ("linear_df" if "linear_df" in models
+                   else "linear_m" if "linear_m" in models
                    else "within_rate" if "within_rate" in models
                    else next(iter(models), None))
 

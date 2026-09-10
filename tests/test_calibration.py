@@ -79,6 +79,39 @@ class TestQuadModel(unittest.TestCase):
         self.assertAlmostEqual(cm.mean(M), 3.5, places=4)
 
 
+class TestFrameReconstruction(unittest.TestCase):
+    """frame()/solve_frame(): dF models reconstruct the actual low16 via + F_a (year-correct)."""
+
+    def test_fb_model_ignores_base(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=368.0)  # target defaults to "Fb"
+        self.assertEqual(cm.target, "Fb")
+        for base in (0, 683, 708):
+            self.assertAlmostEqual(cm.frame(300000, base), cm.mean(300000))  # base ignored
+            self.assertAlmostEqual(cm.solve_frame(18000, base), cm.solve(18000))
+
+    def test_df_model_adds_base(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=-320.0, target="dF")
+        M = 300000
+        # frame reconstructs dF(M) + base_low16 (the initial seed's low16, year included).
+        self.assertAlmostEqual(cm.frame(M, 708), cm.mean(M) + 708)
+        # the +25 year term: same M, base 25 higher -> frame 25 higher, dF unchanged.
+        self.assertAlmostEqual(cm.frame(M, 708) - cm.frame(M, 683), 25.0)
+
+    def test_solve_frame_inverts_frame_for_df(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=-320.0, target="dF")
+        base = 708
+        target_frame = 20050
+        M = cm.solve_frame(target_frame, base)
+        self.assertAlmostEqual(cm.frame(M, base), target_frame, places=4)
+
+    def test_target_round_trips_through_serialization(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=-320.0, target="dF")
+        self.assertEqual(CalibrationModel.from_dict(cm.to_dict()).target, "dF")
+        # a legacy artifact without the field loads as the back-compat "Fb".
+        d = cm.to_dict(); del d["target"]
+        self.assertEqual(CalibrationModel.from_dict(d).target, "Fb")
+
+
 class TestSerialization(unittest.TestCase):
     def test_round_trip_preserves_predictions(self):
         cm = CalibrationModel(kind="line", beta=0.06, alpha=250.0,

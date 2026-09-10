@@ -26,29 +26,31 @@ def _centers(base_delay: int, upto_second: int) -> list[int]:
     return centers
 
 
-def _frame_bounds(model, setup_delay_seconds: int, max_target_seconds: int) -> tuple[int, int]:
+def _frame_bounds(model, base_delay: int, setup_delay_seconds: int,
+                  max_target_seconds: int) -> tuple[int, int]:
     """The battle-frame range spanning target RTC seconds [setup, max] via the calibration.
 
     A target RTC second s corresponds to a commanded M ≈ (s − rtc_offset_seconds)·1000 (real time),
-    whose battle frame is model.mean(M).  So the frame sweep runs between the frames for the
-    two endpoint seconds -- NOT the physical delay_at_second table (that frame↔second lockstep
-    is exactly the conflation this model removes)."""
+    whose battle frame is model.frame(M, base_delay) (= dF(M)+F_a for a dF model, reconstructing
+    the ACTUAL low16; = mean(M) for a legacy Fb model).  So the frame sweep runs between the
+    frames for the two endpoint seconds -- NOT the physical delay_at_second table (that frame↔
+    second lockstep is exactly the conflation this model removes)."""
     m_lo = (setup_delay_seconds - model.rtc_offset_seconds) * 1000.0
     m_hi = (max_target_seconds - model.rtc_offset_seconds) * 1000.0
-    f_lo = int(math.floor(model.mean(max(0.0, m_lo))))
-    f_hi = int(math.ceil(model.mean(m_hi)))
+    f_lo = int(math.floor(model.frame(max(0.0, m_lo), base_delay)))
+    f_hi = int(math.ceil(model.frame(m_hi, base_delay)))
     return (f_lo, f_hi) if f_lo <= f_hi else (f_hi, f_lo)
 
 
-def capture_probability(canon_map, model, mdmsh, M, k: float = 3.5,
+def capture_probability(canon_map, model, mdmsh, M, base_delay: int = 0, k: float = 3.5,
                         include_calibration: bool = False) -> dict:
     """Landing-weighted capture probability at commanded countdown M for a fixed mdmsh.
 
     Integrates the CanonMap's capture bits at `mdmsh` against a Gaussian centered at
-    mean(M) with sd sigma(M) (physical jitter; + the reducible band if include_calibration),
-    truncated at k sigma and renormalized.  Returns {p, F, sigma, lo, hi, M}.
+    frame(M, base_delay) with sd sigma(M) (physical jitter; + the reducible band if
+    include_calibration), truncated at k sigma and renormalized.  Returns {p, F, sigma, lo, hi, M}.
     """
-    F = model.mean(M)
+    F = model.frame(M, base_delay)
     sigma = (model.total_sigma(M, include_calibration=True) if include_calibration
              else model.jitter_sigma(M))
     sigma = max(sigma, 1e-9)
@@ -76,10 +78,10 @@ def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,
     capture_probability at that mdmsh.  Returns dicts {M, F, second, mdmsh, p, sigma} sorted
     by p desc (ties by smaller M).  `step` is the frame granularity of the sweep.
     """
-    f_lo, f_hi = _frame_bounds(model, setup_delay_seconds, max_target_seconds)
+    f_lo, f_hi = _frame_bounds(model, base_delay, setup_delay_seconds, max_target_seconds)
     results = []
     for F_target in range(f_lo, f_hi + 1, step):
-        M = model.solve(F_target)
+        M = model.solve_frame(F_target, base_delay)
         if M <= 0:
             continue
         # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
@@ -87,7 +89,7 @@ def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,
         if s < setup_delay_seconds or s > max_target_seconds:
             continue
         mdmsh = mdmsh_of(initial_time + _dt.timedelta(seconds=s))
-        cp = capture_probability(canon_map, model, mdmsh, M, k, include_calibration)
+        cp = capture_probability(canon_map, model, mdmsh, M, base_delay, k, include_calibration)
         results.append({"M": M, "F": F_target, "second": s, "mdmsh": mdmsh,
                         "p": cp["p"], "sigma": cp["sigma"]})
     results.sort(key=lambda r: (-r["p"], r["M"]))
@@ -118,10 +120,10 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
             g.setdefault(m, t)
         groups[s] = g
 
-    f_lo, f_hi = _frame_bounds(model, setup_delay_seconds, max_target_seconds)
+    f_lo, f_hi = _frame_bounds(model, base_delay, setup_delay_seconds, max_target_seconds)
     results = []
     for F_target in range(f_lo, f_hi + 1, step):
-        M = model.solve(F_target)
+        M = model.solve_frame(F_target, base_delay)
         if M <= 0:
             continue
         # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
@@ -129,7 +131,7 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
         if s < setup_delay_seconds or s > max_target_seconds:
             continue
         for mdmsh, example in groups[s].items():
-            cp = capture_probability(canon_map, model, mdmsh, M, k, include_calibration)
+            cp = capture_probability(canon_map, model, mdmsh, M, base_delay, k, include_calibration)
             results.append({"M": M, "F": F_target, "second": s, "mdmsh": mdmsh,
                             "initial_time": example, "p": cp["p"], "sigma": cp["sigma"]})
     results.sort(key=lambda r: (-r["p"], r["M"]))

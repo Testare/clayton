@@ -1073,7 +1073,7 @@ class Expedition:
 
         if model is not None and M is not None and self.initial_time is not None:
             initial_time = dt.datetime.fromisoformat(self.initial_time)
-            F = model.mean(M)
+            F = model.frame(M, base_delay)  # actual battle-seed low16 (dF+F_a; year-correct)
             sigma = model.jitter_sigma(M)
             print(f"[expedition] Calibrated sweep: M={M} ms → F*≈{F:.0f}  σ≈{sigma:.1f} frames "
                   f"(delay-from-key {F - base_delay:.0f}, {(F - base_delay) / DPS:.2f}s)")
@@ -1608,7 +1608,7 @@ class CheckHelper:
         M = exp.target_timer_delay + (exp.target_timer_calibration or 0)
         it = _parse(exp.initial_time)
         base_delay, _ = get_times(exp.key_seed)
-        F = model.mean(M)
+        F = model.frame(M, base_delay)  # actual battle-seed low16 (dF+F_a; year-correct)
         sigma = (model.total_sigma(M, include_calibration=True) if include_calibration
                  else model.jitter_sigma(M))
         # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
@@ -1623,7 +1623,7 @@ class CheckHelper:
         battle = it + dt.timedelta(seconds=s)
         print(f"target second={s}  mdmsh(m,h)={mdmsh}  window frames [{lo}, {hi}] ({hi-lo+1})")
         print(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}  "
-              f"(compare to your calibration hit; chart's year is 2000)")
+              f"(seeds below are the ACTUAL hit seeds -- year folded into the frame via base_delay)")
         if verify:
             pokemon = safari_pokemon_by_name(exp.pokemon_name)
             strategy = _resolve_strategy(exp.strategy_name)

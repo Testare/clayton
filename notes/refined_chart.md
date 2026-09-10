@@ -449,9 +449,22 @@ target for EVERY candidate starting time (one row each, ranked by its best P —
 One `rank_over_times` sweep feeds both: `best_per_scenario` → overall, `rank_boot_from_scored`
 → per-starting-time.  Cheap (~5 s).  `select_target` reads the `top` section.
 
-**Year handling (DECIDED):** charting stays **year-2000** on purpose —
-`times.calculate_seed` drops the year term, and the calibration/identification
-side already works from an initial seed where the year is compensated for, so the
-chart never needs it. ⚠️ **Future tools must not ignore the initial seed's year**
-(the compass/`seed_for` path includes `year−2000` in `CCCC`); only the chart's own
-`(mdmsh, frame)` space is deliberately year-free.
+**Year handling (DECIDED — option 2, implemented):** the calibration model predicts
+**dF = F_b − F_a** (year-agnostic), and the actual battle-seed low16 is reconstructed as
+`frame = dF(M) + F_a`, where `F_a = key_seed & 0xFFFF` is the low16 of the *identified*
+initial seed — which already carries `year−2000` in `CCCC`. So the chart's `(mdmsh, frame)`
+space now uses the **actual** frames (year folded into `frame` via `base_delay`); `mdms`/`hour`
+stay year-independent. This is year-correct in any year and lets one calibration data set be
+reused across target years (only `key_seed` changes with the year, not the fit).
+
+Mechanics: `CalibrationModel.target == "dF"`, and every place a prediction becomes a canon
+frame calls `model.frame(M, base_delay)` / `model.solve_frame(F, base_delay)` (scorer, canon
+`needed_ranges`, compass `from_expedition_target`, expedition `select_target`/`compass_safari`/
+`chart_check_target_landing`). A legacy `target=="Fb"` model ignores `base_delay` (back-compat).
+
+Why not option 1 (add `year−2000` at the boundary): equally accurate (LOO-CV: dF vs F_b within
+noise, F_a only wobbles ~14 frames), but option 1 bakes in a fixed year; option 2 removes year
+as a concept structurally. The canon is unaffected per-seed (capture is year-independent given
+the actual seed), so the model left the CanonStore signature — switching to dF extends the store
+incrementally (the ~25-frame shift is covered by the wide bands) instead of forcing a rebuild.
+⚠️ **Never feed a raw `model.mean(M)` (a dF value) as a seed frame — always go through `frame()`.**

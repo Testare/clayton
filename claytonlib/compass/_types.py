@@ -200,7 +200,7 @@ class CompassSafariInput:
                                ) -> 'CompassSafariInput':
         """Build a calibrated input straight from a chosen chart target + calibration model.
 
-        Resolves the commanded countdown ``M`` to a mean battle frame ``F* = model.mean(M)``
+        Resolves the commanded countdown ``M`` to a mean battle frame ``F* = model.frame(M, F_a)``
         with spread ``σ = model.jitter_sigma(M)``, and locates the RTC second ``T*`` whose
         variable-width delay band contains F* (via the same ``_centers`` table the scorer
         uses).  No hand-set delay window is needed.
@@ -210,7 +210,10 @@ class CompassSafariInput:
         from claytonlib.chart.scorer import _centers
 
         base_delay, _ = get_times(key_seed)
-        F = model.mean(M)
+        # Actual battle-seed low16: frame(M, base_delay) = dF(M)+F_a for a dF model (year carried
+        # by base_delay = key_seed low16), mean(M) for a legacy Fb model.  frame - base_delay is
+        # then the year-agnostic elapsed count, so _second_of_frame in the search is correct too.
+        F = model.frame(M, base_delay)
         sigma = model.jitter_sigma(M)
         centers = _centers(base_delay, max_target_seconds)
         target_second = bisect.bisect_right(centers, F) - 1

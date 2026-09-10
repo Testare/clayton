@@ -55,6 +55,10 @@ class TestExport(unittest.TestCase):
         self.assertEqual(loaded, cm)
         # sane slope near the synthetic 0.06 frames/ms
         self.assertAlmostEqual(loaded.slope(300000), 0.06, delta=0.01)
+        # option 2: the exported/recommended model predicts dF (reconstruct F_b via + F_a)
+        self.assertEqual(loaded.target, "dF")
+        base = 706
+        self.assertAlmostEqual(loaded.frame(300000, base), loaded.mean(300000) + base)
 
 
 class TestAutoLoopback(unittest.TestCase):

@@ -55,6 +55,14 @@ class CalibrationModel:
     reducible OLS SE-of-fit band jitter_rms*sqrt(1/n_fit + (M-m_bar)^2/sxx).
     """
     kind: str = "line"
+    # What mean()/solve() predict:
+    #   "Fb" (legacy) -- mean(M) is the battle-seed low16 frame directly.  Correct only in the
+    #        calibration year: it folds F_a AND the (year-2000) term into the intercept alpha.
+    #   "dF" (option 2) -- mean(M) is dF = F_b - F_a (year-agnostic).  The actual battle frame
+    #        is reconstructed as dF(M) + F_a, where F_a is the low16 of the *identified* initial
+    #        seed (key_seed & 0xFFFF), which already carries the year.  So a dF model needs no
+    #        year input and reuses calibration data across target years.  Use frame()/solve_frame().
+    target: str = "Fb"
     # mean-function parameters
     beta: float = 0.0            # line: frames per ms
     alpha: float = 0.0           # line: intercept (frames)
@@ -96,8 +104,25 @@ class CalibrationModel:
                        for j, c in enumerate(self.coeffs) if j >= 1) / self.m_scale
         return self.beta
 
+    def frame(self, M: float, base_low16: int = 0) -> float:
+        """The actual battle-seed low16 frame for countdown M off the initial seed.
+
+        For a dF model this reconstructs F_b = dF(M) + base_low16, where base_low16 is the
+        low16 of the identified initial seed (key_seed & 0xFFFF) -- which carries the year, so
+        the result is the actual seed frame the canon is keyed by, in any year.  For a legacy
+        Fb model mean(M) is already that frame, so base_low16 is ignored (back-compat).
+        """
+        return self.mean(M) + (base_low16 if self.target == "dF" else 0)
+
+    def solve_frame(self, target_frame: float, base_low16: int = 0) -> float:
+        """Commanded countdown M that centers the actual battle frame on target_frame.
+
+        Inverse of frame(): for a dF model it solves dF = target_frame - base_low16; for a
+        legacy Fb model it solves on target_frame directly (base_low16 ignored)."""
+        return self.solve(target_frame - (base_low16 if self.target == "dF" else 0))
+
     def solve(self, target_fb: float) -> float:
-        """Commanded countdown M that centers the landing on target_fb."""
+        """Commanded countdown M that centers the landing on target_fb (in mean()'s units)."""
         if self.kind == "quad":
             M = self.m_center  # Newton from the centroid; mean is monotonic over the data
             for _ in range(80):
