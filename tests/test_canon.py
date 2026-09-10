@@ -160,6 +160,31 @@ class TestPrecomputeCanon(unittest.TestCase):
         self.assertEqual(meta["n_mdmsh"], len(ranges))
         self.assertEqual(stats["evaluated_this_run"], stats["n_distinct_seeds"])
 
+    def test_union_over_modelset_covers_both_and_records_built_models(self):
+        # precompute over a {key: model} dict must cover the UNION of both models' needed frames
+        # and record which fps_model keys the store was built for (the switch guard).
+        from claytonlib.chart import precompute_canon
+        from claytonlib.chart.canon import _merge_intervals
+        mon, strat, crit = self._cfg()
+        times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
+        # a second model whose frames sit ABOVE MODEL's (higher intercept) so the union is wider
+        hi_model = CalibrationModel(kind="line", beta=0.06, alpha=1400.0, jitter_c=0.128,
+                                    rtc_offset_seconds=0.0)
+        r_lin, _ = needed_ranges(1000, times, 5, 12, MODEL)
+        r_hi, _ = needed_ranges(1000, times, 5, 12, hi_model)
+        store = self._store()
+        precompute_canon(1000, times, 5, 12, mon, strat, crit, store,
+                         {"linear": MODEL, "quad": hi_model})
+        self.assertEqual(store.read_meta().get("built_models"), ["linear", "quad"])
+        cov = store.done_coverage()
+        # every frame either model needs is stored (union coverage)
+        for src in (r_lin, r_hi):
+            for mdmsh, rs in src.items():
+                for lo, hi in rs:
+                    for f in (lo, (lo + hi) // 2, hi):
+                        self.assertTrue(any(a <= f <= b for a, b in cov.get(mdmsh, [])),
+                                        f"{mdmsh} frame {f} not covered by union")
+
     def test_resume_skips_done_and_completes(self):
         from claytonlib.chart import precompute_canon, build_canon
         mon, strat, crit = self._cfg()

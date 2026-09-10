@@ -468,3 +468,15 @@ as a concept structurally. The canon is unaffected per-seed (capture is year-ind
 the actual seed), so the model left the CanonStore signature — switching to dF extends the store
 incrementally (the ~25-frame shift is covered by the wide bands) instead of forcing a rebuild.
 ⚠️ **Never feed a raw `model.mean(M)` (a dF value) as a seed frame — always go through `frame()`.**
+
+**Selectable frame-rate shape (`fps_model`, DECIDED):** the calibration artifact is a MODELSET
+holding BOTH the `linear` (default) and `quad` dF fits (`CalibrationModel.save_set`/`load_set`).
+`linear` has a physically-sane flat slope (safe to extrapolate); `quad` fits the 3-10 min range
+slightly tighter (LOO-CV ~5%) but its slope runs past the ~59.83 Hz ceiling, so it must not be
+extrapolated. The expedition picks one via `x.adjust(fps_model="quadratic")` (shown in `x.print()`,
+persisted, normalized by `calibration.normalize_fps_model`); `calibration_model()` returns the
+selected one. `precompute_chart` builds over the **union** of both models' needed frames (recorded
+as `built_models` in the canon meta), so `fps_model` can be flipped with no re-precompute; a guard
+(`_warn_if_canon_missing_fps_model`) warns if the stored canon predates the selected model. This
+matters because quad centers up to ~+166 frames above linear at 600 s — a linear-only canon would
+silently under-cover quad there.

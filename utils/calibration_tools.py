@@ -674,9 +674,10 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=False,
     # in with update_model=True, or review + apply deliberately via update_calibration_model().
     if update_model:
         try:
-            cm = export_calibration_model(runs_path=path, out_path=model_path)
-            print(f"Updated calibration model ({cm.n_runs} run(s), {cm.n_fit} in fit) "
-                  f"-> {model_path}")
+            models = export_calibration_model(runs_path=path, out_path=model_path)
+            cm = models.get("linear") or next(iter(models.values()))
+            print(f"Updated calibration modelset {sorted(models)} "
+                  f"({cm.n_runs} run(s), {cm.n_fit} in fit) -> {model_path}")
         except Exception as e:  # noqa: BLE001 - advisory only
             print(f"  (calibration model not updated: {e})")
     else:
@@ -1242,18 +1243,40 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     return model
 
 
-def export_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL_PATH,
-                             which=None):
-    """Fit the runs and write the reusable CalibrationModel artifact to out_path.
+def build_calibration_model_set(path=COMPASS_RUNS_PATH):
+    """Fit the runs and return BOTH deployable models as {"linear": cm, "quad": cm}.
+
+    linear = the year-agnostic dF line (default, physically-sane slope); quad = the dF quadratic
+    (fits 3-10 min slightly tighter in-range, but its slope runs past the ~59.83 Hz ceiling, so
+    do not extrapolate).  The chart selects one via the expedition's fps_model; precompute_chart
+    covers the UNION of both, so fps_model can be flipped without a re-precompute.  Falls back to
+    the recommended model under "linear" if the dF variants aren't available (e.g. too few runs).
+    """
+    m = calibrate_timer(path=path, verbose=False)
+    models = m["models"]
+    out = {}
+    if "linear_df" in models:
+        out["linear"] = models["linear_df"]["model"]
+    if "quad_df" in models:
+        out["quad"] = models["quad_df"]["model"]
+    if not out:
+        rec = m.get("recommended")
+        if rec:
+            out["linear"] = models[rec]["model"]
+    return out
+
+
+def export_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL_PATH):
+    """Fit the runs and write the reusable calibration MODELSET artifact to out_path.
 
     This is the expedition "loop-back": the chart / expedition read the artifact via
-    CalibrationModel.load_default(), so re-exporting here after each saved run tightens the
-    model they use without any manual batch re-fit.  Returns the exported CalibrationModel.
+    CalibrationModel.load_default(which=fps_model) / load_set(), so re-exporting here after each
+    saved run tightens the models they use without any manual batch re-fit.  Writes both the
+    linear and quad dF models (default linear).  Returns the {"linear": cm, "quad": cm} dict.
     """
-    cm = build_calibration_model(path=runs_path, which=which)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    cm.save(out_path)
-    return cm
+    models = build_calibration_model_set(path=runs_path)
+    CalibrationModel.save_set(models, out_path, default="linear")
+    return models
 
 
 def build_calibration_model(path=COMPASS_RUNS_PATH, which=None):
@@ -1312,34 +1335,40 @@ def print_model_change(old, new):
 
 
 def update_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL_PATH,
-                             which=None, assume_yes=False):
-    """Review a re-fit of the calibration model and write it ONLY after you confirm.
+                             assume_yes=False):
+    """Review a re-fit of the calibration MODELSET (linear + quad) and write it ONLY after you confirm.
 
-    Fits a fresh model from the runs, shows how each parameter differs from the current
-    artifact, and (unless assume_yes) prompts before overwriting.  This is deliberately NOT
-    automatic on save: the chart and expedition read this artifact, so changing it invalidates
-    any precomputed chart -- you decide when to take the new model and re-run precompute_chart.
-    Returns the written CalibrationModel, or None if declined.
+    Fits fresh linear and quad dF models from the runs, shows how each parameter differs from the
+    current artifact (per model), and (unless assume_yes) prompts before overwriting.  This is
+    deliberately NOT automatic on save: the chart/expedition read this artifact, so changing it
+    invalidates any precomputed chart -- you decide when to take the new models and re-run
+    precompute_chart.  Returns the written {"linear": cm, "quad": cm} dict, or None if declined.
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
-    new = build_calibration_model(path=runs_path, which=which)
-    old = CalibrationModel.load(out_path) if os.path.exists(out_path) else None
+    new = build_calibration_model_set(path=runs_path)
+    old = CalibrationModel.load_set(out_path) if os.path.exists(out_path) else {}
 
     print()
-    print_model_change(old, new)
+    changed = False
+    for key in sorted(set(new) | set(old)):
+        print(f"[{key}]")
+        o, n = old.get(key), new.get(key)
+        print_model_change(o, n)
+        if o is None or n is None or _model_fields(o) != _model_fields(n):
+            changed = True
+        print()
 
-    if old is not None and _model_fields(old) == _model_fields(new):
-        print("\nNo change -- the model is already up to date.")
+    if old and not changed:
+        print("No change -- the models are already up to date.")
         return None
 
-    print("\n*** Applying this invalidates the current precomputed chart -- you'll need to "
-          "re-run precompute_chart (~1 h). ***")
-    if not (assume_yes or _prompt_yes_no("Write this model? (y/n): ")):
-        print("Model not updated.")
+    print("*** Applying this invalidates the current precomputed chart -- re-run "
+          "precompute_chart afterward (a fast incremental extend; it covers linear+quad). ***")
+    if not (assume_yes or _prompt_yes_no("Write these models? (y/n): ")):
+        print("Models not updated.")
         return None
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    new.save(out_path)
-    print(f"Updated calibration model -> {out_path}")
+    CalibrationModel.save_set(new, out_path, default="linear")
+    print(f"Updated calibration modelset ({sorted(new)}) -> {out_path}")
     return new
 
 

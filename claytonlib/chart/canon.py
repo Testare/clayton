@@ -351,8 +351,33 @@ def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_targe
     """
     from claytonlib.chart import evaluate_seed  # lazy: avoid an import cycle
 
-    ranges, stats = needed_ranges(base_delay, times, setup_delay_seconds,
-                                  max_target_seconds, model, policy)
+    # `model` may be one CalibrationModel, a list of them, or a {fps_model_key: model} dict.
+    # We evaluate the UNION of every model's needed frames, so a chart can switch fps_model
+    # (linear<->quad) with no re-precompute -- the frames both would need are already stored.
+    if isinstance(model, dict):
+        model_items = list(model.items())
+    elif isinstance(model, (list, tuple)):
+        model_items = [(None, m) for m in model]
+    else:
+        model_items = [(None, model)]
+    built_models = [k for k, _ in model_items if k]
+
+    per_model = [needed_ranges(base_delay, times, setup_delay_seconds,
+                               max_target_seconds, m, policy) for _, m in model_items]
+    if len(per_model) == 1:
+        ranges, stats = per_model[0]
+    else:
+        merged: dict = {}
+        for rs, _st in per_model:
+            for k, v in rs.items():
+                merged.setdefault(k, []).extend(v)
+        ranges = {k: _merge_intervals(v) for k, v in merged.items()}
+        n_seeds = sum(hi - lo + 1 for rr in ranges.values() for lo, hi in rr)
+        base = per_model[0][1]
+        naive = base["naive_seed_evaluations"] * len(per_model)
+        stats = {**base, "n_mdmsh": len(ranges), "n_distinct_seeds": n_seeds,
+                 "naive_seed_evaluations": naive,
+                 "reuse_factor": (naive / n_seeds) if n_seeds else 0.0}
     sig = _config_signature(pokemon, strategy, criteria, base_delay, policy)
     meta = store.read_meta()
     if meta is not None:
@@ -396,8 +421,10 @@ def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_targe
             pool.close()
             pool.join()
 
-    stats = dict(stats, evaluated_this_run=evaluated)
-    store.write_meta({"signature": sig, "calibration_info": _model_info(model),
+    stats = dict(stats, evaluated_this_run=evaluated, built_models=built_models)
+    store.write_meta({"signature": sig,
+                      "calibration_info": [_model_info(m) for _, m in model_items],
+                      "built_models": built_models,      # fps_model keys this map covers (guard)
                       "n_mdmsh": total,
                       "n_distinct_seeds": stats["n_distinct_seeds"],
                       "reuse_factor": stats["reuse_factor"],

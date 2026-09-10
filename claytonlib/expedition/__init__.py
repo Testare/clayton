@@ -81,6 +81,10 @@ class Expedition:
         self.strategy_name:       str | None = None
         self.criteria_name:       str | None = None
         self.eval_strategy_name:  str | None = None
+        # Which frame-rate model shape the chart/target math uses ("linear" default, or "quad").
+        # The calibration artifact holds both; precompute_chart covers their UNION, so this can
+        # be flipped (adjust(fps_model="quadratic")) without a re-precompute.  See notes/refined_chart.md.
+        self.fps_model:           str = "linear"
 
         # Chart tuning (I/O batching, resume validation — see chart.ChartOptions)
         from claytonlib.chart import ChartOptions
@@ -125,6 +129,7 @@ class Expedition:
             'strategy_name':            self.strategy_name,
             'criteria_name':            self.criteria_name,
             'eval_strategy_name':       self.eval_strategy_name,
+            'fps_model':                getattr(self, 'fps_model', 'linear'),
             'window':                   self.window,
             'target_delay':             self.target_delay,
             'initial_time':             self.initial_time,
@@ -157,6 +162,7 @@ class Expedition:
         f.strategy_name            = data.get('strategy_name')
         f.criteria_name            = data.get('criteria_name')
         f.eval_strategy_name       = data.get('eval_strategy_name')
+        f.fps_model                = data.get('fps_model') or 'linear'
         f.window                   = data.get('window')
         f.target_delay             = data.get('target_delay')
         f.initial_time             = data.get('initial_time')
@@ -206,6 +212,7 @@ class Expedition:
             ("strategy",         self.strategy_name       or "(not set)"),
             ("criteria",         self.criteria_name       or "(not set)"),
             ("eval_strategy",    self.eval_strategy_name  or "(not set)"),
+            ("fps_model",        getattr(self, 'fps_model', 'linear')),
             ("window",           self.window              if self.window              is not None else "(not set)"),
             ("target_delay",     self.target_delay        if self.target_delay        is not None else "(not set)"),
             ("initial_time",     self.initial_time        or "(not set)"),
@@ -336,6 +343,20 @@ class Expedition:
             except ValueError as e:
                 print(f"  {e}")
 
+    def _ensure_fps_model(self) -> None:
+        if getattr(self, "fps_model", None):
+            return
+        from claytonlib.calibration import normalize_fps_model
+        print("  Frame-rate model:  linear (default, physically-sane flat slope) | "
+              "quadratic (in-range-tighter for 3-10 min; do NOT extrapolate)")
+        while True:
+            raw = input("  fps_model [linear/quadratic]: ").strip() or "linear"
+            try:
+                self.fps_model = normalize_fps_model(raw)
+                return
+            except ValueError as e:
+                print(f"  {e}")
+
     def _ensure_eval_strategy(self) -> None:
         if self.eval_strategy_name is not None:
             return
@@ -439,6 +460,7 @@ class Expedition:
         ("strategy_name",             "strategy",           "strategy_name",             "_ensure_strategy"),
         ("criteria_name",             "criteria",           "criteria_name",             "_ensure_criteria"),
         ("eval_strategy_name",        "eval_strategy",      "eval_strategy_name",        "_ensure_eval_strategy"),
+        ("fps_model",                 "fps_model",          "fps_model",                 "_ensure_fps_model"),
         ("window",                    "window",             "window",                    "_ensure_window"),
         ("target_delay",              "target_delay",       "target_delay",              "_prompt_target_delay"),
         ("initial_time",              "initial_time",       "initial_time",              "_prompt_initial_time"),
@@ -457,6 +479,9 @@ class Expedition:
             for key, val in kwargs.items():
                 if key not in valid:
                     raise ValueError(f"Unknown field {key!r}. Adjustable fields: {sorted(valid)}")
+                if key == "fps_model":                      # validate + normalize ("quadratic"->"quad")
+                    from claytonlib.calibration import normalize_fps_model
+                    val = normalize_fps_model(val)
                 setattr(self, key, val)
                 print(f"[expedition] {key} = {val!r}")
             return
@@ -514,7 +539,24 @@ class Expedition:
         landing distribution over the battle-seed frame F_b.
         """
         from claytonlib.calibration import CalibrationModel
-        return CalibrationModel.load_default()
+        return CalibrationModel.load_default(which=getattr(self, "fps_model", "linear"))
+
+    def _warn_if_canon_missing_fps_model(self) -> None:
+        """Warn if the stored canon wasn't precomputed for the selected fps_model.
+
+        The canon covers the UNION of every model precompute_chart was run with; switching to a
+        model it doesn't list risks silent under-coverage (esp. quad at high M, which centers far
+        above linear).  A re-run of precompute_chart appends the missing frames (a fast extend).
+        """
+        from claytonlib.chart import CanonStore
+        meta = CanonStore(self._canon_store_path()).read_meta()
+        if meta is None:
+            return
+        built = meta.get("built_models")
+        fps = getattr(self, "fps_model", "linear")
+        if built and fps not in built:
+            self._log(f"[warning] canon was built for fps_model {built}, but fps_model={fps!r} "
+                      f"is selected -- run precompute_chart() to cover it (fast incremental extend).")
 
     def _eval_filename_override(self, eval_strat, chart_dir) -> str | None:
         """Return the eval JSON basename override when max_target_seconds truncates chains."""
@@ -664,12 +706,16 @@ class Expedition:
         criteria = _resolve_criteria(self.criteria_name)
         store = CanonStore(self._canon_store_path())
 
-        model = self.calibration_model()
-        if model is None:
+        # Build over the UNION of every model in the artifact (linear + quad), so fps_model can
+        # be switched later without re-precomputing.  load_set returns {} if no artifact exists.
+        from claytonlib.calibration import CalibrationModel
+        model_set = CalibrationModel.load_set()
+        if not model_set:
             raise RuntimeError(
                 "precompute_chart needs a calibration model (it places each RTC second's frame "
                 "band and maps M->second). None found at data/calibration_model.json -- save a "
                 "calibration run first (utils/calibration_tools.save_compass_run).")
+        model = model_set  # dict {fps_model_key: model}; precompute_canon unions their frames
 
         t0 = time.perf_counter()
 
@@ -683,7 +729,7 @@ class Expedition:
         self._log(f"charting {self.pokemon_name} key_seed=0x{self.key_seed:08X} "
                   f"delay={self.setup_delay_seconds}-{self.max_target_seconds}s "
                   f"strategy={self.strategy_name} criteria={self.criteria_name}  "
-                  f"workers={workers}")
+                  f"fps_models={sorted(model_set)} (union)  workers={workers}")
         stats = precompute_canon(base_delay, times, self.setup_delay_seconds,
                                  self.max_target_seconds, pokemon, strategy, criteria, store,
                                  model, progress=_progress, workers=workers)
@@ -714,6 +760,7 @@ class Expedition:
         if store.read_meta() is None:
             self._log("No canonical map found. Run precompute_chart() first.")
             return None
+        self._warn_if_canon_missing_fps_model()
         model = self.calibration_model()
         if model is None:
             self._log("No calibration model found. Save some compass runs first "
@@ -1603,6 +1650,7 @@ class CheckHelper:
         store = CanonStore(exp._canon_store_path())
         if store.read_meta() is None:
             raise RuntimeError("no canonical map; run precompute_chart() first")
+        exp._warn_if_canon_missing_fps_model()
         cmap = store.load_map()
 
         M = exp.target_timer_delay + (exp.target_timer_calibration or 0)
@@ -1622,8 +1670,7 @@ class CheckHelper:
               f"{exp.target_delay})  sigma={sigma:.1f}")
         battle = it + dt.timedelta(seconds=s)
         print(f"target second={s}  mdmsh(m,h)={mdmsh}  window frames [{lo}, {hi}] ({hi-lo+1})")
-        print(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}  "
-              f"(seeds below are the ACTUAL hit seeds -- year folded into the frame via base_delay)")
+        print(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}")
         if verify:
             pokemon = safari_pokemon_by_name(exp.pokemon_name)
             strategy = _resolve_strategy(exp.strategy_name)

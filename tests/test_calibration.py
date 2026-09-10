@@ -133,6 +133,57 @@ class TestSerialization(unittest.TestCase):
         self.assertAlmostEqual(cm2.mean(400000), cm.mean(400000))
 
 
+class TestModelSet(unittest.TestCase):
+    """The modelset artifact: save/load both fps_model shapes + fps_model normalization."""
+
+    def _pair(self):
+        lin = CalibrationModel(kind="line", beta=0.06, alpha=-320.0, target="dF", label="lin")
+        quad = CalibrationModel(kind="quad", coeffs=(19000.0, 3600.0, 40.0),
+                                m_center=3e5, m_scale=1e5, target="dF", label="quad")
+        return {"linear": lin, "quad": quad}
+
+    def test_normalize_fps_model(self):
+        from claytonlib.calibration import normalize_fps_model
+        self.assertEqual(normalize_fps_model("linear"), "linear")
+        self.assertEqual(normalize_fps_model("quad"), "quad")
+        self.assertEqual(normalize_fps_model("QUADRATIC"), "quad")
+        with self.assertRaises(ValueError):
+            normalize_fps_model("cubic")
+
+    def test_save_load_set_round_trip(self):
+        models = self._pair()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cal.json")
+            CalibrationModel.save_set(models, path, default="linear")
+            got = CalibrationModel.load_set(path)
+            self.assertEqual(set(got), {"linear", "quad"})
+            self.assertEqual(got["linear"], models["linear"])
+            self.assertEqual(got["quad"], models["quad"])
+
+    def test_load_default_selects_by_fps_model(self):
+        models = self._pair()
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cal.json")
+            CalibrationModel.save_set(models, path, default="linear")
+            self.assertEqual(CalibrationModel.load_default(path), models["linear"])  # default
+            self.assertEqual(CalibrationModel.load_default(path, "quadratic"), models["quad"])
+
+    def test_legacy_single_model_file_loads_for_any_which(self):
+        cm = CalibrationModel(kind="line", beta=0.06, alpha=250.0, target="dF")
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cal.json")
+            cm.save(path)  # legacy single-model format (bare dict, no "models" key)
+            self.assertEqual(CalibrationModel.load_default(path, "linear"), cm)
+            self.assertEqual(CalibrationModel.load_default(path, "quad"), cm)
+            self.assertEqual(CalibrationModel.load_set(path), {"linear": cm})
+
+    def test_load_default_missing_is_none(self):
+        self.assertIsNone(CalibrationModel.load_default(
+            os.path.join(tempfile.mkdtemp(), "absent.json")))
+        self.assertEqual(CalibrationModel.load_set(
+            os.path.join(tempfile.mkdtemp(), "absent.json")), {})
+
+
 class TestFitAdapterParity(unittest.TestCase):
     """build_calibration_model must agree with calibrate_timer's own closures."""
 

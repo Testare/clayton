@@ -26,6 +26,21 @@ from typing import NamedTuple
 # side has to import the other (the fitter lives in utils/, this pure model in claytonlib/).
 DEFAULT_MODEL_PATH = "data/calibration_model.json"
 
+# Selectable frame-rate model shapes (the expedition's `fps_model`).  Accepts a few spellings;
+# normalizes to the canonical modelset key ("linear" or "quad").  linear = physically-sane flat
+# slope (safe to extrapolate); quad = curvature that fits 3-10 min slightly tighter in-range but
+# whose slope runs past the ~59.83 Hz hardware ceiling, so it must not be extrapolated.
+FPS_MODEL_KEYS = {"linear": "linear", "quad": "quad", "quadratic": "quad"}
+
+
+def normalize_fps_model(name: str) -> str:
+    """Canonical modelset key ('linear'|'quad') for a user-supplied fps_model spelling."""
+    key = str(name).strip().lower()
+    if key not in FPS_MODEL_KEYS:
+        raise ValueError(f"unknown fps_model {name!r}; choose one of "
+                         f"{sorted(set(FPS_MODEL_KEYS))}")
+    return FPS_MODEL_KEYS[key]
+
 
 def _norm_cdf(z: float) -> float:
     """Standard-normal CDF via math.erf (stdlib; no scipy/numpy)."""
@@ -243,13 +258,60 @@ class CalibrationModel:
             return cls.from_dict(json.load(f))
 
     @classmethod
-    def load_default(cls, path: str = DEFAULT_MODEL_PATH) -> "CalibrationModel | None":
-        """Load the shared fitted-model artifact, or None if it hasn't been exported yet.
+    def load_default(cls, path: str = DEFAULT_MODEL_PATH,
+                     which: str = "linear") -> "CalibrationModel | None":
+        """Load one model from the shared fitted-model artifact, or None if not exported yet.
 
-        The chart / expedition call this to pick up the latest calibration without depending
-        on the (utils/) fitter -- it is refreshed automatically each time a run is saved.
+        The chart / expedition call this to pick up the latest calibration without depending on
+        the (utils/) fitter.  The artifact is a MODELSET holding both the linear and quad fits
+        (see save_set); `which` (the expedition's fps_model, any FPS_MODEL_KEYS spelling) selects
+        one.  A legacy single-model file loads as-is for any `which` (back-compat).
         """
         import os
         if not os.path.exists(path):
             return None
-        return cls.load(path)
+        with open(path) as f:
+            d = json.load(f)
+        return cls._from_artifact(d, which)
+
+    @classmethod
+    def _from_artifact(cls, d: dict, which: str = "linear") -> "CalibrationModel | None":
+        """Pick a model from a loaded artifact dict (modelset or legacy single-model)."""
+        if "models" not in d:                      # legacy: a bare CalibrationModel dict
+            return cls.from_dict(d)
+        key = normalize_fps_model(which)
+        models = d["models"]
+        chosen = models.get(key) or models.get(d.get("default", "linear"))
+        if chosen is None:
+            chosen = next(iter(models.values()), None)
+        return cls.from_dict(chosen) if chosen is not None else None
+
+    @staticmethod
+    def save_set(models: "dict[str, CalibrationModel]", path: str = DEFAULT_MODEL_PATH,
+                 default: str = "linear") -> None:
+        """Write a MODELSET artifact: {default, models:{key: model-dict}} (keys are FPS_MODEL_KEYS).
+
+        The chart/expedition read one model out of this via load_default(which=fps_model); storing
+        both lets a chart precomputed over their UNION switch fps_model with no re-precompute.
+        """
+        import os
+        payload = {"format": "modelset", "default": normalize_fps_model(default),
+                   "models": {normalize_fps_model(k): m.to_dict() for k, m in models.items()}}
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2)
+
+    @classmethod
+    def load_set(cls, path: str = DEFAULT_MODEL_PATH) -> "dict[str, CalibrationModel]":
+        """{key: CalibrationModel} from a modelset artifact; {'linear': model} for a legacy file.
+
+        Empty dict if the artifact does not exist -- callers building the canon union check this.
+        """
+        import os
+        if not os.path.exists(path):
+            return {}
+        with open(path) as f:
+            d = json.load(f)
+        if "models" not in d:
+            return {"linear": cls.from_dict(d)}
+        return {k: cls.from_dict(v) for k, v in d["models"].items()}

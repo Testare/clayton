@@ -49,16 +49,22 @@ class TestExport(unittest.TestCase):
         out = os.path.join(d, "model.json")
         _write_runs(runs, [_run_rec(M, round(0.06 * M) + 680)
                            for M in (180000, 240000, 300000, 360000, 420000)])
-        cm = ct.export_calibration_model(runs_path=runs, out_path=out)
+        models = ct.export_calibration_model(runs_path=runs, out_path=out)
         self.assertTrue(os.path.exists(out))
-        loaded = CalibrationModel.load(out)
-        self.assertEqual(loaded, cm)
+        # modelset artifact holds both fps_model shapes
+        self.assertIn("linear", models)
+        self.assertIn("quad", models)
+        loaded = CalibrationModel.load_default(out, which="linear")
+        self.assertEqual(loaded, models["linear"])
         # sane slope near the synthetic 0.06 frames/ms
         self.assertAlmostEqual(loaded.slope(300000), 0.06, delta=0.01)
-        # option 2: the exported/recommended model predicts dF (reconstruct F_b via + F_a)
+        # option 2: the exported model predicts dF (reconstruct F_b via + F_a)
         self.assertEqual(loaded.target, "dF")
         base = 706
         self.assertAlmostEqual(loaded.frame(300000, base), loaded.mean(300000) + base)
+        # fps_model selection: "quadratic" resolves to the quad model
+        self.assertEqual(CalibrationModel.load_default(out, which="quadratic"),
+                         models["quad"])
 
 
 class TestAutoLoopback(unittest.TestCase):
@@ -88,7 +94,7 @@ class TestAutoLoopback(unittest.TestCase):
             rec = ct.save_compass_run(a, b, path=runs, update_model=True, model_path=out)
         self.assertIsNotNone(rec)
         self.assertTrue(os.path.exists(out))
-        self.assertEqual(CalibrationModel.load(out).n_runs, 5)
+        self.assertEqual(CalibrationModel.load_default(out).n_runs, 5)
 
 
 class TestUpdateCalibrationModel(unittest.TestCase):
@@ -149,6 +155,26 @@ class TestExpeditionLoader(unittest.TestCase):
                    return_value=sentinel):
             got = Expedition("loopback-test").calibration_model()
         self.assertEqual(got, sentinel)
+
+    def test_fps_model_default_and_adjust_normalizes(self):
+        from claytonlib.expedition import Expedition
+        exp = Expedition("fps-test")
+        self.assertEqual(exp.fps_model, "linear")           # default
+        exp.adjust(fps_model="quadratic")                    # spelling normalized
+        self.assertEqual(exp.fps_model, "quad")
+        with self.assertRaises(ValueError):
+            exp.adjust(fps_model="cubic")
+
+    def test_fps_model_round_trips_and_selects_model(self):
+        from unittest.mock import patch
+        from claytonlib.expedition import Expedition
+        exp = Expedition("fps-rt"); exp.fps_model = "quad"
+        exp2 = Expedition._from_dict(exp._to_dict())
+        self.assertEqual(exp2.fps_model, "quad")
+        # calibration_model() must request the selected fps_model
+        with patch("claytonlib.calibration.CalibrationModel.load_default") as m:
+            exp2.calibration_model()
+        self.assertEqual(m.call_args.kwargs.get("which"), "quad")
 
 
 if __name__ == "__main__":
