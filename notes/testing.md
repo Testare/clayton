@@ -1,3 +1,8 @@
+  ## Wrong seed
+
+0xF80E4D7F   generates inaccurate stuff
+
+
   ## Metang shakes
 0 0  1 t 1 1 0 0
 

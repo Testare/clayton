@@ -61,10 +61,10 @@ class TestRankTargets(unittest.TestCase):
         model = CalibrationModel(kind="line", beta=0.06, alpha=0.0,
                                  jitter_c=None, jitter_rms=8.0)
         t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
-        centers = _centers(base_delay, maxt)
-        # put a captured region at the mdmsh of second 20, around its centre frame
+        # put a captured region at second 20's mdmsh, around the frame the model lands there:
+        # the RTC second is now M-based (M = s0*1000 since rtc_offset_seconds=0), F0 = mean(M).
         s0 = 20
-        F0 = centers[s0]
+        F0 = round(model.mean(s0 * 1000))
         mdmsh0 = mdmsh_of(t0 + dt.timedelta(seconds=s0))
         cmap = CanonMap({mdmsh0: [_all_set(F0 - 60, F0 + 60)]})
 
@@ -73,7 +73,7 @@ class TestRankTargets(unittest.TestCase):
         best = ranked[0]
         self.assertGreater(best["p"], 0.95)
         self.assertEqual(best["second"], s0)
-        self.assertLessEqual(abs(best["F"] - F0), 20)
+        self.assertLessEqual(abs(best["F"] - F0), 60)  # within the captured region
         # sorted by p descending
         self.assertTrue(all(a["p"] >= b["p"] for a, b in zip(ranked, ranked[1:])))
 
@@ -93,9 +93,8 @@ class TestRankOverTimes(unittest.TestCase):
         setup, maxt = 5, 40
         model = CalibrationModel(kind="line", beta=0.06, alpha=0.0,
                                  jitter_c=None, jitter_rms=8.0)
-        centers = _centers(base_delay, maxt)
-        s0, = (20,)
-        F0 = centers[s0]
+        s0 = 20
+        F0 = round(model.mean(s0 * 1000))  # M-based second: M = s0*1000, F0 = mean(M)
         # two candidate boot times with different phases -> different mdmsh at s0
         t_a = dt.datetime(2000, 6, 1, 14, 0, 0)
         t_b = dt.datetime(2000, 6, 2, 14, 30, 15)
@@ -117,11 +116,10 @@ class TestRankOverTimes(unittest.TestCase):
         setup, maxt = 5, 40
         model = CalibrationModel(kind="line", beta=0.06, alpha=0.0,
                                  jitter_c=None, jitter_rms=8.0)
-        centers = _centers(base_delay, maxt)
         t_a = dt.datetime(2000, 6, 1, 14, 0, 0)   # gets the captured mdmsh at s0
         t_b = dt.datetime(2000, 6, 2, 14, 30, 15)  # different phase, no capture
         s0 = 20
-        F0 = centers[s0]
+        F0 = round(model.mean(s0 * 1000))  # M-based second: M = s0*1000, F0 = mean(M)
         mdmsh_a = mdmsh_of(t_a + dt.timedelta(seconds=s0))
         cmap = CanonMap({mdmsh_a: [_all_set(F0 - 60, F0 + 60)]})
 

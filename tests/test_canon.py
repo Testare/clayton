@@ -4,11 +4,17 @@ import os
 import tempfile
 import unittest
 
+from claytonlib.calibration import CalibrationModel
 from claytonlib.chart.canon import (
     mdmsh_of, seed_for_mdmsh, needed_ranges, SeedCache, build_canon, _merge_intervals,
 )
 from claytonlib.chart.grid import BandPolicy
 from claytonlib.times import calculate_seed
+
+# A line calibration whose mean(M) ~ base_delay + s*60 for M ~ s*1000 (so the frame bands land
+# near the old delay_at_second centers used by these fixtures).  rtc_offset_seconds=0 => RTC second
+# is exactly M/1000 from the initial seed.
+MODEL = CalibrationModel(kind="line", beta=0.06, alpha=1000.0, jitter_c=0.128, rtc_offset_seconds=0.0)
 
 
 class TestMdmsh(unittest.TestCase):
@@ -32,7 +38,7 @@ class TestNeededRanges(unittest.TestCase):
         times = [dt.datetime(2000, 9, 18, 21, 32, 42),
                  dt.datetime(2000, 9, 21, 21, 6, 41),   # different date, may share mdmsh at s
                  dt.datetime(2000, 9, 18, 21, 32, 42)]  # exact dup -> deduped by phase
-        ranges, stats = needed_ranges(1000, times, 5, 20)
+        ranges, stats = needed_ranges(1000, times, 5, 20, MODEL)
         self.assertEqual(stats["n_candidate_times"], 3)
         self.assertLessEqual(stats["n_phase_classes"], 2)  # the exact dup collapses
         self.assertGreater(stats["n_distinct_seeds"], 0)
@@ -41,7 +47,7 @@ class TestNeededRanges(unittest.TestCase):
     def test_ranges_cover_expected_frames(self):
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
         policy = BandPolicy()
-        ranges, _ = needed_ranges(1000, times, 5, 8, policy)
+        ranges, _ = needed_ranges(1000, times, 5, 8, MODEL, policy)
         # every listed range is within some second's band and non-empty
         for mdmsh, rs in ranges.items():
             for lo, hi in rs:
@@ -79,7 +85,7 @@ class TestBuildCanon(unittest.TestCase):
         from claytonlib.chart import evaluate_seed
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0), dt.datetime(2000, 6, 2, 21, 0, 30)]
-        ranges, _ = needed_ranges(1000, times, 5, 8)
+        ranges, _ = needed_ranges(1000, times, 5, 8, MODEL)
         cmap, cache = build_canon(ranges, mon, strat, crit)
         checked = 0
         for mdmsh, rs in ranges.items():
@@ -93,7 +99,7 @@ class TestBuildCanon(unittest.TestCase):
     def test_out_of_range_is_false(self):
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
-        ranges, _ = needed_ranges(1000, times, 5, 8)
+        ranges, _ = needed_ranges(1000, times, 5, 8, MODEL)
         cmap, _ = build_canon(ranges, mon, strat, crit)
         some = next(iter(ranges))
         self.assertFalse(cmap.captured(some, -999999))
@@ -102,7 +108,7 @@ class TestBuildCanon(unittest.TestCase):
     def test_cache_reuse_second_build_all_hits(self):
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
-        ranges, _ = needed_ranges(1000, times, 5, 8)
+        ranges, _ = needed_ranges(1000, times, 5, 8, MODEL)
         cache = SeedCache()
         build_canon(ranges, mon, strat, crit, cache=cache)
         first_misses = cache.misses
@@ -121,7 +127,7 @@ class TestCanonMapSerialization(unittest.TestCase):
         from claytonlib.chart import STRATEGY_ONLY_BALLS, CRITERIA_CAPTURE
         mon = safari_pokemon_by_name("metang")
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
-        ranges, _ = needed_ranges(1000, times, 5, 8)
+        ranges, _ = needed_ranges(1000, times, 5, 8, MODEL)
         cmap, _ = build_canon(ranges, mon, STRATEGY_ONLY_BALLS, CRITERIA_CAPTURE)
         path = os.path.join(tempfile.mkdtemp(), "canon.jsonl")
         cmap.save(path)
@@ -143,10 +149,10 @@ class TestPrecomputeCanon(unittest.TestCase):
         from claytonlib.chart import precompute_canon, build_canon
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0), dt.datetime(2000, 6, 2, 21, 0, 30)]
-        ranges, _ = needed_ranges(1000, times, 5, 9)
+        ranges, _ = needed_ranges(1000, times, 5, 9, MODEL)
         expected, _ = build_canon(ranges, mon, strat, crit)
         store = self._store()
-        stats = precompute_canon(1000, times, 5, 9, mon, strat, crit, store)
+        stats = precompute_canon(1000, times, 5, 9, mon, strat, crit, store, MODEL)
         self.assertGreater(stats["n_distinct_seeds"], 0)
         got = store.load_map()
         self.assertEqual(got.ranges, expected.ranges)
@@ -158,7 +164,7 @@ class TestPrecomputeCanon(unittest.TestCase):
         from claytonlib.chart import precompute_canon, build_canon
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
-        ranges, _ = needed_ranges(1000, times, 5, 12)
+        ranges, _ = needed_ranges(1000, times, 5, 12, MODEL)
         expected, _ = build_canon(ranges, mon, strat, crit)
         store = self._store()
 
@@ -170,13 +176,13 @@ class TestPrecomputeCanon(unittest.TestCase):
             if done >= 1:
                 raise Stop
         with self.assertRaises(Stop):
-            precompute_canon(1000, times, 5, 12, mon, strat, crit, store, progress=stop_after_one)
+            precompute_canon(1000, times, 5, 12, mon, strat, crit, store, MODEL, progress=stop_after_one)
         partial = len(store.done_mdmsh())
         self.assertGreaterEqual(partial, 1)
         self.assertLess(partial, len(ranges))  # not finished
 
         # Resume: completes without redoing the done mdmsh.
-        precompute_canon(1000, times, 5, 12, mon, strat, crit, store)
+        precompute_canon(1000, times, 5, 12, mon, strat, crit, store, MODEL)
         self.assertEqual(len(store.done_mdmsh()), len(ranges))
         self.assertEqual(store.load_map().ranges, expected.ranges)
 
@@ -187,10 +193,10 @@ class TestPrecomputeCanon(unittest.TestCase):
             self.skipTest("fork start method unavailable")
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
-        ranges, _ = needed_ranges(1000, times, 5, 10)
+        ranges, _ = needed_ranges(1000, times, 5, 10, MODEL)
         expected, _ = build_canon(ranges, mon, strat, crit)
         store = self._store()
-        precompute_canon(1000, times, 5, 10, mon, strat, crit, store, workers=2)
+        precompute_canon(1000, times, 5, 10, mon, strat, crit, store, MODEL, workers=2)
         got = store.load_map()
         for mdmsh, built in expected.ranges.items():
             for lo, hi, _bm in built:
@@ -202,10 +208,10 @@ class TestPrecomputeCanon(unittest.TestCase):
         mon, strat, crit = self._cfg()
         times = [dt.datetime(2000, 6, 1, 21, 0, 0)]
         store = self._store()
-        precompute_canon(1000, times, 5, 8, mon, strat, crit, store)
+        precompute_canon(1000, times, 5, 8, mon, strat, crit, store, MODEL)
         # different base_delay -> different signature -> refuse (setup/max are NOT in the sig)
         with self.assertRaises(ValueError):
-            precompute_canon(2000, times, 5, 8, mon, strat, crit, store)
+            precompute_canon(2000, times, 5, 8, mon, strat, crit, store, MODEL)
 
     def test_incremental_extend(self):
         from claytonlib.chart import precompute_canon, build_canon
@@ -214,9 +220,9 @@ class TestPrecomputeCanon(unittest.TestCase):
         store = self._store()
 
         # 1) precompute the narrow range [5, 9]
-        s_small = precompute_canon(1000, times, 5, 9, mon, strat, crit, store)
+        s_small = precompute_canon(1000, times, 5, 9, mon, strat, crit, store, MODEL)
         # 2) extend to [5, 18] on the SAME store (allowed: setup/max not in signature)
-        s_big = precompute_canon(1000, times, 5, 18, mon, strat, crit, store)
+        s_big = precompute_canon(1000, times, 5, 18, mon, strat, crit, store, MODEL)
 
         # the extend only evaluated the new frames, not the ones already stored
         self.assertGreater(s_big["evaluated_this_run"], 0)
@@ -226,7 +232,7 @@ class TestPrecomputeCanon(unittest.TestCase):
 
         # the resulting store matches a direct one-shot [5, 18] build, frame-by-frame
         # (range partitioning legitimately differs: extend appends gap ranges separately)
-        ranges_big, _ = needed_ranges(1000, times, 5, 18)
+        ranges_big, _ = needed_ranges(1000, times, 5, 18, MODEL)
         expected, _ = build_canon(ranges_big, mon, strat, crit)
         got = store.load_map()
         self.assertEqual(set(got.ranges), set(expected.ranges))

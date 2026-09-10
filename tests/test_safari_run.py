@@ -103,6 +103,46 @@ class TestSaveSafariRun(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["seed"], 5)
 
+    def test_calibrated_inputs_record_frame_second_delta(self):
+        # A calibrated CompassSafariInput lets the loop-back recover (frame, second, δ).
+        import datetime as dt
+        from unittest.mock import patch
+        from claytonlib.calibration import CalibrationModel
+        from claytonlib.safari import safari_pokemon_by_name
+        from claytonlib.chart import STRATEGY_ONLY_BALLS, CRITERIA_CAPTURE
+        from claytonlib.compass import CompassSafariInput, calibrated_candidates
+
+        KEY = 0xF613087B
+        TIME_A = dt.datetime(2000, 4, 30, 19, 57, 59)
+
+        def fake_get_times(key_seed):
+            return key_seed & 0xFFFF, [TIME_A]
+
+        model = CalibrationModel(kind="line", beta=0.06, alpha=float(KEY & 0xFFFF),
+                                 jitter_c=0.128)
+        with patch('claytonlib.times.get_times', side_effect=fake_get_times), \
+             patch('claytonlib.compass._core.get_times', side_effect=fake_get_times):
+            inp = CompassSafariInput.from_expedition_target(
+                model=model, M=5000, initial_time=TIME_A, key_seed=KEY,
+                max_target_seconds=30, pokemon=safari_pokemon_by_name('metang'),
+                strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+                second_offsets=(-1, 0, 1))
+            cands, meta = calibrated_candidates(inp)
+            seed = cands[len(cands) // 2][1]
+            m = meta[seed]
+
+            p = self._path()
+            answers = ["cal", "5000", "0", "", "", "", "y"]
+            with _answers(answers):
+                rec = ct.save_safari_run([f"0x{seed:08X}"], inputs=inp,
+                                         path="mmb0", save_path=p)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["seed"], seed)
+        self.assertEqual(rec["frame"], m["frame"])
+        self.assertEqual(rec["second_offset"], m["delta"])
+        self.assertEqual(rec["delay"], m["frame"])   # frame is the F_b analog
+        self.assertIsNotNone(rec["second"])
+
 
 if __name__ == "__main__":
     unittest.main()

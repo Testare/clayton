@@ -68,6 +68,12 @@ class CalibrationModel:
     n_fit: int = 0
     sxx: float = 0.0
     m_bar: float = 0.0
+    # RTC-second calibration (SEPARATE from the frame fit): the battle RTC second advances
+    # with REAL time, so it is M/1000 seconds past the initial seed plus this fixed real-time
+    # setup offset -- NOT derived from the frame counter (which lags real time across loads).
+    # 0 = "the RTC second is exactly M ms from the initial seed"; fit from data as it's gathered.
+    # A Safari-Zone-entry offset (its extra loading) would add on top of this and is future work.
+    rtc_offset_seconds: float = 0.0
     # metadata (not used in the math)
     label: str = ""
     n_runs: int = 0
@@ -138,6 +144,19 @@ class CalibrationModel:
     def landing(self, M: float) -> Landing:
         """The full landing distribution at M as a Landing(mean, sigma_jitter, sigma_band)."""
         return Landing(M, self.mean(M), self.jitter_sigma(M), self.mean_band(M))
+
+    # -- RTC second (real-time; NOT frame-derived) -------------------------
+    def battle_second_offset(self, M: float) -> int:
+        """RTC seconds from the initial seed to the battle, computed from REAL time.
+
+        M is a real-time countdown (ms), so the RTC clock advances ~M/1000 s during it; the
+        battle second is that plus the fixed real-time setup offset.  Deliberately independent
+        of the frame counter (which lags real time across loading screens) -- deriving the
+        second from the frame is what put the chart on the wrong mdms.  Rounded to the nearest
+        second (so e.g. M=100999 ms -> 101 s); the exact sub-second tick depends on the boot's
+        sub-second phase, which is a data-collection question, not modeled here yet.
+        """
+        return round(M / 1000.0 + self.rtc_offset_seconds)
 
     # -- convenience: prediction / hit probability -------------------------
     def predict(self, M: float, k: float = 2.0) -> dict:

@@ -18,10 +18,10 @@ Phase 2 (scoring, later): read this map under the sigma(M) landing kernel.
 """
 import datetime as _dt
 import json
+import math
 import os
 from dataclasses import dataclass
 
-from claytonlib.chart.evaluation import delay_at_second
 from claytonlib.chart.grid import BandPolicy, get_bit, pack_row
 
 
@@ -85,14 +85,18 @@ def _subtract_intervals(needed: list[tuple[int, int]],
 # ---------------------------------------------------------------------------
 
 def needed_ranges(base_delay: int, times, setup_delay_seconds: int, max_target_seconds: int,
-                  policy: BandPolicy = BandPolicy()) -> tuple[dict, dict]:
+                  model, policy: BandPolicy = BandPolicy()) -> tuple[dict, dict]:
     """Which (mdmsh, frame) seeds the chart needs, as merged frame ranges per mdmsh.
 
-    For each candidate time t and second-offset s in [setup, max_target], the datetime t+s
-    has some mdmsh and a frame band [center(s)-W, center(s)+W] (center = delay_at_second,
-    calibration-independent W from `policy`).  We accumulate, per mdmsh, the union of those
-    bands.  Candidate times are first deduped by their (month,day,hour,minute,second) phase
-    (year is irrelevant in the chart model), so year-equivalent times aren't re-walked.
+    For each candidate time t and RTC second s in [setup, max_target], the datetime t+s has
+    some mdmsh, and the battle frame for the commanded M that lands on second s is placed by
+    the CALIBRATION: M(s) ≈ (s − rtc_offset_seconds)·1000 (real time), frame ≈ model.mean(M(s)).
+    The band per second spans that second's M-range (±0.5 s of M) widened by `policy`, so it
+    covers the jitter.  Crucially the second s (which sets mdmsh) is REAL time, not the frame's
+    physical delay band -- deriving the second from the frame is what mis-placed the mdms.
+
+    Candidate times are first deduped by their (month,day,hour,minute,second) phase (year is
+    irrelevant in the chart model), so year-equivalent times aren't re-walked.
 
     Returns (ranges, stats) where ranges maps mdmsh -> merged [(lo, hi), ...] and stats
     reports the collapse (distinct seeds vs the naive per-time grid).
@@ -102,21 +106,29 @@ def needed_ranges(base_delay: int, times, setup_delay_seconds: int, max_target_s
     phases = list({(t.month, t.day, t.hour, t.minute, t.second): t
                    for t in (_parse(x) for x in times)}.values())
 
-    # centers/bands per second are shared across all times (base_delay is shared).
+    # Per-second frame band = [mean(M at s−0.5s) − W, mean(M at s+0.5s) + W]; M-based, so it's
+    # shared across all times.  W absorbs the sigma jitter (policy); the M-range covers the
+    # ~1 s worth of commanded values that round to this RTC second.
     seconds = range(setup_delay_seconds, max_target_seconds + 1)
-    bands = [(delay_at_second(base_delay, s), policy.half_width(delay_at_second(base_delay, s)))
-             for s in seconds]
+    bands = []
+    for s in seconds:
+        m_lo = max(0.0, (s - 0.5 - model.rtc_offset_seconds) * 1000.0)
+        m_hi = max(0.0, (s + 0.5 - model.rtc_offset_seconds) * 1000.0)
+        f_lo = model.mean(m_lo)
+        f_hi = model.mean(m_hi)
+        w = policy.half_width((f_lo + f_hi) / 2.0)
+        bands.append((int(math.floor(min(f_lo, f_hi) - w)), int(math.ceil(max(f_lo, f_hi) + w))))
 
     per: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for tt in phases:
         for s_idx, s in enumerate(seconds):
-            center, w = bands[s_idx]
+            lo, hi = bands[s_idx]
             key = mdmsh_of(tt + _dt.timedelta(seconds=s))
-            per.setdefault(key, []).append((center - w, center + w))
+            per.setdefault(key, []).append((lo, hi))
 
     ranges = {k: _merge_intervals(v) for k, v in per.items()}
     n_seeds = sum(hi - lo + 1 for rs in ranges.values() for lo, hi in rs)
-    naive = len(list(times)) * sum(2 * w + 1 for _, w in bands)
+    naive = len(list(times)) * sum(hi - lo + 1 for lo, hi in bands)
     stats = {
         "n_candidate_times": len(list(times)),
         "n_phase_classes": len(phases),
@@ -277,15 +289,30 @@ class CanonStore:
         return CanonMap.load(self.path) if os.path.exists(self.path) else CanonMap({})
 
 
-def _config_signature(pokemon, strategy, criteria, base_delay, policy) -> dict:
+def _config_signature(pokemon, strategy, criteria, base_delay, policy, model) -> dict:
     # Deliberately excludes setup/max/n_times: the map is keyed by (mdmsh, frame) and is
-    # range-agnostic, so a store can be extended to a wider second range in place.
+    # range-agnostic, so a store can be extended to a wider second range in place.  The
+    # calibration DOES enter the signature: it places each RTC second's frame band (mean) and
+    # sets the second-from-M mapping (rtc_offset_seconds), so a different fit needs a fresh map.
     return {
         "pokemon": getattr(pokemon, "name", str(pokemon)),
         "strategy": getattr(strategy, "name", str(strategy)),
         "criteria": getattr(criteria, "name", str(criteria)),
         "base_delay": base_delay,
         "policy": [policy.k, policy.c_ceiling, policy.nominal_rate],
+        "second_model": "M-based",
+        "calibration": _model_sig(model),
+    }
+
+
+def _model_sig(model) -> dict:
+    """The calibration parameters that affect which (mdmsh, frame) seeds the chart needs."""
+    return {
+        "kind": model.kind,
+        "beta": round(model.beta, 9), "alpha": round(model.alpha, 6),
+        "coeffs": [round(c, 9) for c in model.coeffs],
+        "m_center": model.m_center, "m_scale": model.m_scale,
+        "rtc_offset_seconds": model.rtc_offset_seconds,
     }
 
 
@@ -301,7 +328,7 @@ def _worker_eval(seed):
 
 
 def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_target_seconds: int,
-                     pokemon, strategy, criteria, store: CanonStore,
+                     pokemon, strategy, criteria, store: CanonStore, model,
                      policy: BandPolicy = BandPolicy(), progress=None, workers: int = 1) -> dict:
     """Evaluate the canonical map to `store`, resumably and INCREMENTALLY.
 
@@ -319,8 +346,8 @@ def precompute_canon(base_delay: int, times, setup_delay_seconds: int, max_targe
     from claytonlib.chart import evaluate_seed  # lazy: avoid an import cycle
 
     ranges, stats = needed_ranges(base_delay, times, setup_delay_seconds,
-                                  max_target_seconds, policy)
-    sig = _config_signature(pokemon, strategy, criteria, base_delay, policy)
+                                  max_target_seconds, model, policy)
+    sig = _config_signature(pokemon, strategy, criteria, base_delay, policy, model)
     meta = store.read_meta()
     if meta is not None and meta.get("signature") != sig:
         raise ValueError("CanonStore was built for a different config; refusing to resume "

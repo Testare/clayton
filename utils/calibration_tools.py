@@ -546,7 +546,9 @@ def _seed_summary(row):
         return None
     out = {"seed": row["seed"], "seed_hex": f"0x{row['seed']:08X}"}
     if isinstance(row.get("time"), dt.datetime):
-        out["time"] = row["time"].isoformat()
+        # The seed depends only on whole seconds; M-based b_target_time carries millis we don't
+        # actually know, so drop the sub-second part rather than record a spurious fraction.
+        out["time"] = row["time"].replace(microsecond=0).isoformat()
     for k in _SEED_PERSIST_KEYS:
         if k in row:
             out[k] = row[k]
@@ -612,7 +614,7 @@ def _prompt_yes_no(prompt):
         print("  please answer y/n.")
 
 
-def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
+def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=False,
                      model_path=DEFAULT_MODEL_PATH):
     """Prompt for run metadata, preview the record, and append it to compass_runs.jsonl.
 
@@ -625,6 +627,12 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
     The first three default to the previous run's values on blank input.  The record is
     pretty-printed and confirmed (y/n, re-prompting) before it is written.  Returns the
     saved record dict, or None if the user declined.
+
+    Saving does NOT touch the shared calibration model by default: changing it would
+    invalidate a precomputed chart (an hour to rebuild), and you often save test runs while
+    charting a target from the current model.  Review and apply model changes deliberately
+    with ``update_calibration_model()`` (its own notebook cell).  ``update_model=True`` opts
+    back into the old auto-refresh.
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
     prev = _last_run(path)
@@ -634,21 +642,18 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
         "Target timer delay", prev.get("target_timer_delay"), int)
     target_timer_calibration = _prompt_default(
         "Target timer calibration", prev.get("target_timer_calibration"), int)
-    # Provenance -- battles cost ~800 frames each, so a run that traversed prior battles this
-    # boot is off the fresh-boot F_b-vs-M trend and must be kept out of the fit (see
-    # notes/refined_chart.md 5.5).  The recommended protocol is a fresh boot straight to one
-    # battle, so the defaults (fresh boot, 0 prior battles) are just two Enters.
-    fresh_boot = _prompt_default("Fresh boot? (y/n)", True, _parse_bool)
-    prior_battles = _prompt_default("Prior battles this boot", 0, int)
     notes = input("Notes: ").strip()
 
+    # The calibration protocol is always a fresh boot straight to one battle, so provenance is
+    # fixed (fresh_boot=True, prior_battles=0).  The fields are still recorded so the fit's
+    # contamination screen keeps working over older, mixed-provenance runs.
     record = {
         "saved_at": dt.datetime.now().isoformat(timespec="seconds"),
         "tag": tag,
         "target_timer_delay": target_timer_delay,
         "target_timer_calibration": target_timer_calibration,
-        "fresh_boot": fresh_boot,
-        "prior_battles": prior_battles,
+        "fresh_boot": True,
+        "prior_battles": 0,
         "notes": notes,
         "a_seed": _seed_summary(a_seed),
         "b_seed": _seed_summary(b_seed),
@@ -664,8 +669,9 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
         f.write(json.dumps(record) + "\n")
     print(f"Saved to {path}")
 
-    # Loop-back: refresh the shared calibration-model artifact so the chart/expedition pick
-    # up this run without a manual re-fit.  Best-effort -- never fail a save over it.
+    # By default the shared calibration model is left untouched -- refitting it here would
+    # silently change what the chart/expedition use (invalidating a precomputed chart).  Opt
+    # in with update_model=True, or review + apply deliberately via update_calibration_model().
     if update_model:
         try:
             cm = export_calibration_model(runs_path=path, out_path=model_path)
@@ -673,6 +679,9 @@ def save_compass_run(a_seed, b_seed, path=COMPASS_RUNS_PATH, update_model=True,
                   f"-> {model_path}")
         except Exception as e:  # noqa: BLE001 - advisory only
             print(f"  (calibration model not updated: {e})")
+    else:
+        print("Calibration model NOT updated (run update_calibration_model() to review "
+              "+ apply changes).")
     return record
 
 
@@ -710,6 +719,38 @@ def _safari_seed_delay(inputs, seed_int):
     return None
 
 
+def _safari_calibrated_meta(inputs, seed_int):
+    """Recover (frame, second, delta) for `seed_int` from a calibrated CompassSafariInput.
+
+    The calibrated sweep keys each candidate by its battle frame and the second-offset δ that
+    was actually hit; regenerating the candidate meta lets the loop-back record the inferred
+    δ (timing feedback) and the (frame, second) landing without a capture.  Returns a dict or
+    None (legacy inputs / seed not found).
+    """
+    if inputs is None or not getattr(inputs, "calibrated", False) or seed_int is None:
+        return None
+    try:
+        from claytonlib.compass import calibrated_candidates
+        from claytonlib.compass._core import _second_of_frame
+        from claytonlib.times import get_times
+        _cands, meta = calibrated_candidates(inputs)
+        m = meta.get(seed_int)
+        if m is None:
+            return None
+        base_delay, _ = get_times(inputs.key_seed)
+        delta = m["delta"]
+        return {"frame": m["frame"], "delta": delta,
+                "second": _second_of_frame(base_delay, m["frame"]) + delta}
+    except Exception:
+        return None
+
+
+def _offset_phrase(delta):
+    if delta == 0:
+        return "on time (δ=0)"
+    return f"{delta:+d}s {'late' if delta > 0 else 'early'} (δ={delta:+d})"
+
+
 def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH):
     """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
 
@@ -738,7 +779,16 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH)
 
     matched = list(matched or [])
     seed_int = int(matched[0], 16) if len(matched) == 1 else None
-    delay = _safari_seed_delay(inputs, seed_int) if seed_int is not None else None
+
+    # Calibrated flow: recover (frame, second, δ) from the candidate meta; the frame is the
+    # F_b analog (delay).  Legacy flow: recover the delay from the legacy candidate window.
+    cal = _safari_calibrated_meta(inputs, seed_int)
+    if cal is not None:
+        delay = cal["frame"]
+        print(f"Inferred timer offset: {_offset_phrase(cal['delta'])}  "
+              f"(frame {cal['frame']}, RTC second {cal['second']}).")
+    else:
+        delay = _safari_seed_delay(inputs, seed_int) if seed_int is not None else None
 
     tag = _prompt_default("Run tag", prev.get("tag"))
     target_timer_delay = _prompt_default(
@@ -765,6 +815,10 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH)
         "seed": seed_int,
         "seed_hex": f"0x{seed_int:08X}" if seed_int is not None else None,
         "delay": delay,
+        # Calibrated-flow landing (null in the legacy flow or when >1 seed matched):
+        "frame": cal["frame"] if cal else None,
+        "second": cal["second"] if cal else None,
+        "second_offset": cal["delta"] if cal else None,
         "notes": notes,
     }
 
@@ -1075,8 +1129,18 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
 
     Ms = [m["M"] for m in runs]
     Fbs = [m["Fb"] for m in runs]
+    dFs = [m["dF"] for m in runs]          # F_b - F_a, per run (option-2 target)
     M_bar = statistics.mean(Ms)
     Fb_bar = statistics.mean(Fbs)
+    dF_bar = statistics.mean(dFs)
+
+    # RTC-second offset: the battle RTC second is M/1000 s past the initial seed plus a fixed
+    # real-time setup lead.  Both seeds carry their boot RTC datetime (mds/hour), so the actual
+    # elapsed RTC seconds is dt = Tb - Ta, and the lead is dt - M/1000 (independent of the frame
+    # counter).  Averaged over the clean runs; the +/-1 s spread is the timestamp truncation,
+    # which compass-safari's delta axis absorbs.  A Safari-Zone-entry lead would add on top.
+    rtc_offs = [m["dt"] - m["M"] / 1000.0 for m in runs if m.get("dt") is not None]
+    rtc_offset_seconds = statistics.mean(rtc_offs) if rtc_offs else 0.0
 
     # Within-run rate: pooled total frames / total seconds (its +/-1 s error averages down).
     within = None
@@ -1090,6 +1154,14 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     # Direct F_b-vs-M slope (robust), the correct slope for predicting F_b from M.
     ts = _theil_sen(Ms, Fbs)
     regression = {"beta": ts[0], "alpha": ts[1], "rate": ts[0] * 1000.0} if ts else None
+
+    # Option-2 target: dF = F_b - F_a vs M.  Same slope family, but the intercept now absorbs
+    # only the fixed ~5 s A-to-A lever -- NOT F_a (the initial-seed frame) and NOT the year
+    # term.  Reconstruction re-adds the run's ACTUAL F_a (= low16 of the initial seed, which
+    # already carries year), so this is year-agnostic and reuses data across target years.
+    # Its RMS residual is directly comparable to the F_b fit's: it IS option 2's F_b error.
+    ts_df = _theil_sen(Ms, dFs)
+    regression_df = {"beta": ts_df[0], "alpha": ts_df[1], "rate": ts_df[0] * 1000.0} if ts_df else None
 
     # Geometry shared by every model's uncertainty band.
     M_scale = statistics.pstdev(Ms) if len(Ms) > 1 else 1.0
@@ -1106,7 +1178,7 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     #     ~60 Hz ceiling.
     models = {}
 
-    def add_model(key, label, kind, fit):
+    def add_model(key, label, kind, fit, target="Fb"):
         if fit is None:
             return
         jc, jr = _jitter_from_resid(fit["resid"])
@@ -1114,7 +1186,8 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
         cm.label = label
         cm.n_runs = len(all_runs)
         cm.m_lo, cm.m_hi = (min(Ms), max(Ms)) if Ms else (None, None)
-        models[key] = {"label": label, "kind": kind, "fit": fit,
+        cm.rtc_offset_seconds = rtc_offset_seconds
+        models[key] = {"label": label, "kind": kind, "fit": fit, "target": target,
                        "f_of_M": fit["f_of_M"], "dfdM": fit.get("dfdM"),
                        "solve_M": fit["solve_M"], "coeffs": fit.get("coeffs"),
                        "jitter_c": jc, "jitter_rms": jr, "model": cm,
@@ -1130,6 +1203,14 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     if len(runs) >= 3 and M_scale > 0:
         add_model("quad_m", "F_b-vs-M quadratic (NEW, experimental)", "quad",
                   _poly_model(Ms, Fbs, 2, M_bar, M_scale))
+    # Option-2 candidates: fit dF = F_b - F_a vs M (reconstruct F_b by re-adding actual F_a).
+    if regression_df is not None:
+        add_model("linear_df", "dF-vs-M line (option 2)", "line",
+                  _line_fit(regression_df["beta"], regression_df["alpha"], Ms, dFs),
+                  target="dF")
+    if len(runs) >= 3 and M_scale > 0:
+        add_model("quad_df", "dF-vs-M quadratic (option 2, experimental)", "quad",
+                  _poly_model(Ms, dFs, 2, M_bar, M_scale), target="dF")
 
     # Recommended = the direct F_b-vs-M line when available, else whatever we have.
     recommended = ("linear_m" if "linear_m" in models
@@ -1141,6 +1222,8 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
         "n_fit": len(runs), "n_outliers": sum(1 for m in all_runs if m["outlier"]),
         "n_contaminated": sum(1 for m in all_runs if m["contaminated"]),
         "M_bar": M_bar, "Fb_bar": Fb_bar, "M_scale": M_scale, "Sxx": Sxx,
+        "rtc_offset_seconds": rtc_offset_seconds,
+        "rtc_offset_std": (statistics.pstdev(rtc_offs) if len(rtc_offs) > 1 else 0.0),
         "within": within, "regression": regression,
         "models": models, "recommended": recommended, "runs": all_runs,
     }
@@ -1184,6 +1267,78 @@ def build_calibration_model(path=COMPASS_RUNS_PATH, which=None):
     return m["models"][key]["model"]
 
 
+def _model_fields(cm):
+    """The math parameters of a CalibrationModel that the chart depends on, for comparison."""
+    if cm is None:
+        return {}
+    return {
+        "kind": cm.kind, "n_runs": cm.n_runs, "n_fit": cm.n_fit,
+        "beta": cm.beta, "alpha": cm.alpha, "coeffs": tuple(cm.coeffs),
+        "jitter_c": cm.jitter_c, "jitter_rms": cm.jitter_rms,
+        "rtc_offset_seconds": cm.rtc_offset_seconds,
+        "m_lo": cm.m_lo, "m_hi": cm.m_hi,
+    }
+
+
+def _fmt_val(v):
+    if isinstance(v, float):
+        return f"{v:.5g}"
+    if isinstance(v, tuple):
+        return "(" + ", ".join(f"{x:.5g}" if isinstance(x, float) else str(x) for x in v) + ")"
+    return str(v)
+
+
+def print_model_change(old, new):
+    """Print an old -> new parameter table between two CalibrationModels (old may be None)."""
+    of, nf = _model_fields(old), _model_fields(new)
+    keys = ["kind", "n_runs", "n_fit", "beta", "alpha", "coeffs",
+            "jitter_c", "jitter_rms", "rtc_offset_seconds", "m_lo", "m_hi"]
+    if old is None:
+        print("No existing model artifact -- this would CREATE one:")
+    else:
+        print("Proposed calibration-model change (old -> new):")
+    for k in keys:
+        ov, nv = of.get(k), nf.get(k)
+        changed = old is not None and ov != nv
+        mark = "  <-- changed" if changed else ""
+        if old is None:
+            print(f"  {k:<20} {_fmt_val(nv)}")
+        else:
+            print(f"  {k:<20} {_fmt_val(ov):>14} -> {_fmt_val(nv):<14}{mark}")
+
+
+def update_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL_PATH,
+                             which=None, assume_yes=False):
+    """Review a re-fit of the calibration model and write it ONLY after you confirm.
+
+    Fits a fresh model from the runs, shows how each parameter differs from the current
+    artifact, and (unless assume_yes) prompts before overwriting.  This is deliberately NOT
+    automatic on save: the chart and expedition read this artifact, so changing it invalidates
+    any precomputed chart -- you decide when to take the new model and re-run precompute_chart.
+    Returns the written CalibrationModel, or None if declined.
+    """
+    install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
+    new = build_calibration_model(path=runs_path, which=which)
+    old = CalibrationModel.load(out_path) if os.path.exists(out_path) else None
+
+    print()
+    print_model_change(old, new)
+
+    if old is not None and _model_fields(old) == _model_fields(new):
+        print("\nNo change -- the model is already up to date.")
+        return None
+
+    print("\n*** Applying this invalidates the current precomputed chart -- you'll need to "
+          "re-run precompute_chart (~1 h). ***")
+    if not (assume_yes or _prompt_yes_no("Write this model? (y/n): ")):
+        print("Model not updated.")
+        return None
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    new.save(out_path)
+    print(f"Updated calibration model -> {out_path}")
+    return new
+
+
 def print_calibration_report(model):
     hdr = f"=== Timer calibration  ({model['n_runs']} run(s), {model['n_timed']} timed"
     if model.get("n_outliers"):
@@ -1212,9 +1367,27 @@ def print_calibration_report(model):
             rate_desc = f"inst rate {rate_lo:.3f}->{rate_hi:.3f} Hz over M range"
         else:
             rate_desc = f"slope {rate_lo:.4f} Hz"
-        print(f" {star}{sub['label']:<38} {rate_desc:<34} RMS residual {rms_s:>6} frames")
+        tgt = f"[{sub.get('target', 'Fb')}]"
+        print(f" {star}{sub['label']:<38} {tgt:<5}{rate_desc:<32} RMS residual {rms_s:>6} frames")
     if model.get("recommended"):
         print(f"\n  ( * = recommended; predict/solve/hit_probability use it )")
+
+    # Option-1 vs option-2 verdict: an apples-to-apples F_b-prediction-error comparison.
+    # The dF fit's residual IS option 2's F_b error (dF - f_dF = (F_a+dF) - (f_dF+F_a)), so
+    # the two RMS numbers are directly comparable -- lower = the more accurate way to place F_b.
+    fb, df = model["models"].get("linear_m"), model["models"].get("linear_df")
+    if fb and df and fb["jitter_rms"] and df["jitter_rms"] is not None:
+        r_fb, r_df = fb["jitter_rms"], df["jitter_rms"]
+        better = "dF (option 2)" if r_df < r_fb else "F_b (option 1)"
+        pct = abs(r_df - r_fb) / r_fb * 100.0 if r_fb else 0.0
+        print(f"\n  option 1 vs 2 (F_b-placement RMS):  F_b-fit {r_fb:.1f}  vs  "
+              f"dF-fit {r_df:.1f} frames  ->  {better} tighter by {pct:.0f}%")
+        print(f"    (dF removes the run-to-run F_a wobble the F_b intercept must otherwise "
+              f"absorb; it is also year-agnostic by construction)")
+
+    print(f"\n  RTC-second offset {model.get('rtc_offset_seconds', 0.0):.2f} +/- "
+          f"{model.get('rtc_offset_std', 0.0):.2f} s  "
+          f"(battle RTC second = round(M/1000 + this); +/-1 s is timestamp truncation)")
 
     print(f"\n  {'tag':<16} {'M':>8} {'Fa':>7} {'Fb':>7} {'dF':>7} {'dt':>5} {'rate':>8}")
     for m in model["runs"]:

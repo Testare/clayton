@@ -11,6 +11,7 @@ Public API re-exported from submodules:
   _core.py    — seed generation, filtering, evaluation
   _display.py — display helpers
 """
+import dataclasses
 import os
 
 from claytonlib.safari import SafariStep
@@ -30,8 +31,15 @@ from claytonlib.compass._types import (
 )
 from claytonlib.compass._core import (
     _delay_offset_to_second_frame,
+    _second_of_frame,
     _seed_reachable,
     _generate_candidates,
+    _generate_candidates_calibrated,
+    calibrated_candidates,
+    posteriors,
+    _effective_count,
+    _offset_weight,
+    _frame_weight,
     _apply_action,
     _evaluate_context,
     _BAIT_STEPS,
@@ -41,9 +49,90 @@ from claytonlib.compass._core import (
 from claytonlib.compass._display import (
     _print_cheatsheet,
     _delta_str,
+    _sec_offset_str,
     _print_status,
+    _print_status_calibrated,
     _print_success,
 )
+
+
+# ---------------------------------------------------------------------------
+# Path replay + widen (calibrated mode: b70.6)
+# ---------------------------------------------------------------------------
+
+def _replay_path(candidates: list, path_actions: list) -> tuple:
+    """Re-apply an observed path to a fresh candidate set, reproducing (cache, pending).
+
+    Mirrors the main loop's per-action filtering exactly (a regular action resolves the
+    pending set as no-flee then filters; FLED/CAPTURED resolve as fled/captured and stop),
+    so a widened candidate set can pick up right where narrowing left off.
+    """
+    cache: list = [('', candidates)]
+    pending = None
+    for action in path_actions:
+        step = action.step
+        if step == SafariStep.FLED:
+            if pending is not None:
+                astr, cands = pending
+                cache.append((astr, [t for t in cands if t[0].has_fled()]))
+                pending = None
+            break
+        if step == SafariStep.CAPTURED:
+            if pending is not None:
+                astr, cands = pending
+                cache.append((astr, [t for t in cands if t[0].captured()]))
+                pending = None
+            break
+        if pending is not None:
+            astr, cands = pending
+            cache.append((astr, [t for t in cands if not t[0].has_fled()]))
+            pending = None
+        new_cands = _apply_action(cache[-1][1], action, filter_fled=False)
+        pending = (_action_to_str(action), new_cands)
+    return cache, pending
+
+
+def _prompt_widen(inputs: CompassSafariInput) -> CompassSafariInput | None:
+    """Prompt to widen the frame and/or second window; return a widened input, or None.
+
+    The frame window is ``±k·σ`` (widen by raising k); the second window is ``±K`` offsets
+    (widen by raising K).  Neither changes F* or σ, so the observed path stays valid and is
+    re-applied to the expanded set by the caller.
+    """
+    cur_maxoff = max((abs(d) for d in inputs.second_offsets), default=0)
+    while True:
+        try:
+            choice = input("Widen & re-apply your path?  "
+                           "[f]rame  [s]econd  [b]oth  [n]o: ").strip().lower()
+        except EOFError:
+            return None
+        if choice in ('n', ''):
+            return None
+        if choice in ('f', 's', 'b'):
+            break
+        print("  enter f, s, b, or n.")
+
+    new_k, new_offsets = inputs.k, inputs.second_offsets
+    if choice in ('f', 'b'):
+        raw = input(f"  Frame half-width in σ (current {inputs.k:g}): ").strip()
+        if raw:
+            try:
+                new_k = float(raw)
+            except ValueError:
+                print("  invalid; keeping current frame width.")
+    if choice in ('s', 'b'):
+        raw = input(f"  Max second offset ±K (current {cur_maxoff}): ").strip()
+        if raw:
+            try:
+                K = abs(int(raw))
+                new_offsets = tuple(range(-K, K + 1))
+            except ValueError:
+                print("  invalid; keeping current second offsets.")
+
+    if new_k == inputs.k and tuple(new_offsets) == tuple(inputs.second_offsets):
+        print("  No change made.")
+        return None
+    return dataclasses.replace(inputs, k=new_k, second_offsets=tuple(new_offsets))
 
 
 # ---------------------------------------------------------------------------
@@ -57,38 +146,83 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
     that matched the observed path. Returns an empty list when no seeds
     matched or the session was quit.
     """
-    candidates = _generate_candidates(inputs)
+    if inputs.calibrated:
+        candidates, meta = calibrated_candidates(inputs)
+    else:
+        candidates, meta = _generate_candidates(inputs), None
     total = len(candidates)
+
+    # Reference frame for the Δ column / "← target" marker: the commanded target delay in
+    # legacy mode, the model's mean battle frame F* in calibrated mode.
+    ref = round(inputs.frame_center) if inputs.calibrated else inputs.target_delay
 
     cache: list[tuple[str, list]] = [('', candidates)]
     pending: tuple[str, list] | None = None
     path_actions: list[CompassAction] = []
     _jane_suggested = False
 
+    def apply_widen() -> bool:
+        """Prompt to widen the calibrated window and re-apply the observed path.  Returns
+        True if the candidate set was regenerated, False if the user declined."""
+        nonlocal inputs, candidates, meta, total, cache, pending
+        new_inputs = _prompt_widen(inputs)
+        if new_inputs is None:
+            return False
+        inputs = new_inputs
+        candidates, meta = calibrated_candidates(inputs)
+        total = len(candidates)
+        cache, pending = _replay_path(candidates, path_actions)
+        print(f"  Widened to ±{inputs.k:g}σ over offsets {list(inputs.second_offsets)}: "
+              f"{total} candidates; re-applied {len(path_actions)} observed step(s).")
+        return True
+
     _print_cheatsheet(inputs)
 
     while True:
         current = pending[1] if pending is not None else cache[-1][1]
         print()
-        _print_status(current, total, inputs.target_delay, path_actions,
-                      inputs.evaluation_strategy, inputs.evaluation_criteria,
-                      inputs.options)
+        if meta is not None:
+            _print_status_calibrated(current, total, ref, meta, path_actions,
+                                     inputs.evaluation_strategy, inputs.evaluation_criteria,
+                                     inputs.options)
+        else:
+            _print_status(current, total, ref, path_actions,
+                          inputs.evaluation_strategy, inputs.evaluation_criteria,
+                          inputs.options)
 
+        # Jane offload signal: raw count in legacy mode; prior-weighted effective count in
+        # calibrated mode (a few high-posterior seeds may dominate a long tail of long-shots).
+        if meta is not None:
+            offload_n = _effective_count([s for _, s, _ in current], meta,
+                                         inputs.options.jane_mass)
+        else:
+            offload_n = len(current)
         if (not _jane_suggested and inputs.options.suggest_jane
-                and 1 < len(current) < (os.cpu_count() or 1)):
-            print("  (Tip: seed count is small enough that Jane could take over — type 'J' to switch)")
+                and 1 < offload_n < (os.cpu_count() or 1)):
+            extra = (f" ({offload_n} candidates carry {inputs.options.jane_mass:.0%} of the "
+                     f"probability)" if meta is not None else "")
+            print(f"  (Tip: seed count is small enough that Jane could take over — "
+                  f"type 'J' to switch{extra})")
             _jane_suggested = True
 
         if len(current) == 0:
             print()
-            print(f"No matching seed found in window \u00b1{inputs.window}.")
+            if inputs.calibrated:
+                print(f"No matching seed found in the frame window "
+                      f"\u00b1{inputs.k:g}\u03c3 (\u03c3\u2248{inputs.sigma:.1f}) "
+                      f"over second offsets {list(inputs.second_offsets)}.")
+                if apply_widen():
+                    continue
+            else:
+                print(f"No matching seed found in window \u00b1{inputs.window}.")
             print("Consider expanding the search window or checking for input errors.")
             return []
 
         if len(current) == 1:
             ctx, seed, delay = current[0]
             print()
-            _print_success(seed, delay, inputs.target_delay, path_actions)
+            sec_off = meta[seed]["delta"] if meta is not None and seed in meta else None
+            _print_success(seed, delay, ref, path_actions, second_offset=sec_off)
             while True:
                 raw = input("\nRun Machete to find a capture path from this point? (y/n) ").strip().lower()
                 if raw in ('y', 'yes'):
@@ -103,6 +237,10 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
                     return [f"0x{seed:08X}"]
 
         raw = input("\n>> ").strip()
+
+        if raw.lower() == 'w' and meta is not None:
+            apply_widen()
+            continue
 
         if raw.lower() == 'q':
             confirm = input("Quit compass? (y/n) ").strip().lower()
@@ -191,10 +329,19 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             event = "captured" if path_actions[-1].step == SafariStep.CAPTURED else "fled"
             print()
             print(f"Pokémon {event}. {len(final)} seed(s) matched this path:")
-            nearest_final = sorted(final, key=lambda x: (abs(x[2] - inputs.target_delay), x[1]))[:inputs.options.seeds_displayed]
-            by_prox = sorted(nearest_final, key=lambda x: (x[2] - inputs.target_delay, x[1]))
+            if meta is not None:
+                post = posteriors([s for _, s, _ in final], meta)
+                ranked = sorted(final, key=lambda x: (-post.get(x[1], 0.0), x[2]))
+                for i, (_, seed, delay) in enumerate(ranked[:inputs.options.seeds_displayed], 1):
+                    m = meta[seed]
+                    print(f"  {i}. seed=0x{seed:08X}  frame={delay}  "
+                          f"Δ={_delta_str(delay - ref)}  δ={_delta_str(m['delta'])}s  "
+                          f"P={post.get(seed, 0.0) * 100:.2f}%")
+                return [f"0x{seed:08X}" for _, seed, _ in ranked]
+            nearest_final = sorted(final, key=lambda x: (abs(x[2] - ref), x[1]))[:inputs.options.seeds_displayed]
+            by_prox = sorted(nearest_final, key=lambda x: (x[2] - ref, x[1]))
             for i, (_, seed, delay) in enumerate(by_prox, 1):
-                print(f"  {i}. seed=0x{seed:08X}  delay={delay}  \u0394={_delta_str(delay - inputs.target_delay)}")
+                print(f"  {i}. seed=0x{seed:08X}  delay={delay}  \u0394={_delta_str(delay - ref)}")
             return [f"0x{seed:08X}" for _, seed, _ in by_prox]
 
 

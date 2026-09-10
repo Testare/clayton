@@ -17,6 +17,8 @@ from claytonlib.compass import (
     _apply_action,
     _evaluate_context,
     _generate_candidates,
+    _generate_candidates_calibrated,
+    _second_of_frame,
     parse_input,
 )
 from claytonlib.safari import SafariContext, SafariStep, safari_pokemon_by_name
@@ -338,6 +340,391 @@ class TestGenerateCandidates(unittest.TestCase):
             d_a, s_a = cands[i][2], cands[i][1]
             d_b, s_b = cands[i + 1][2], cands[i + 1][1]
             self.assertLessEqual((d_a, s_a), (d_b, s_b))
+
+
+# ---------------------------------------------------------------------------
+# Calibrated (second, frame) candidate generation  (b70.1 / b70.3)
+# ---------------------------------------------------------------------------
+
+def _line_model(beta=0.06, alpha=float(BASE_DELAY), jitter_c=0.128):
+    from claytonlib.calibration import CalibrationModel
+    return CalibrationModel(kind="line", beta=beta, alpha=alpha, jitter_c=jitter_c)
+
+
+class TestCalibratedCandidateGeneration(unittest.TestCase):
+
+    # M chosen so F* = alpha + beta*M lands ~300 frames past base_delay (well inside range).
+    M = 5000
+    MAX_SECONDS = 30
+
+    def _input(self, **kwargs):
+        model = _line_model()
+        defaults = dict(
+            model=model, M=self.M, initial_time=TIME_A, key_seed=KEY_SEED,
+            max_target_seconds=self.MAX_SECONDS,
+            pokemon=safari_pokemon_by_name('metang'),
+            strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+        )
+        defaults.update(kwargs)
+        with patch('claytonlib.times.get_times', side_effect=_fake_get_times), \
+             patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            inp = CompassSafariInput.from_expedition_target(**defaults)
+        return inp, model
+
+    def _candidates(self, **kwargs):
+        inp, model = self._input(**kwargs)
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            return _generate_candidates_calibrated(inp), inp, model
+
+    def test_from_expedition_target_sets_calibrated_fields(self):
+        inp, model = self._input()
+        self.assertTrue(inp.calibrated)
+        self.assertEqual(inp.frame_center, model.mean(self.M))
+        self.assertAlmostEqual(inp.sigma, model.jitter_sigma(self.M))
+        self.assertIsNone(inp.target_delay)
+        # target_second is the band containing F*
+        self.assertEqual(_second_of_frame(BASE_DELAY, round(inp.frame_center)),
+                         inp.target_second)
+
+    def test_one_seed_per_frame_no_seed_a_b(self):
+        # δ=0: exactly one candidate per frame in [F*-kσ, F*+kσ] (no a/b duality)
+        cands, inp, _ = self._candidates()
+        sigma = inp.sigma
+        lo = max(BASE_DELAY, int(inp.frame_center - inp.k * sigma))
+        hi = int(inp.frame_center + inp.k * sigma) + 1  # ceil bound tolerance
+        frames = [f for _, _, f in cands]
+        self.assertEqual(len(frames), len(set(frames)))  # no duplicate frames
+        self.assertGreaterEqual(min(frames), lo)
+        self.assertLessEqual(max(frames), hi)
+
+    def test_frames_span_the_sigma_window(self):
+        cands, inp, _ = self._candidates()
+        frames = sorted(f for _, _, f in cands)
+        # window half-width in frames
+        half = inp.k * inp.sigma
+        self.assertLessEqual(abs(frames[0] - (inp.frame_center - half)), 1.0)
+        self.assertLessEqual(abs(frames[-1] - (inp.frame_center + half)), 1.0)
+
+    def test_seed_matches_calculate_seed_at_band_second(self):
+        cands, inp, _ = self._candidates()
+        for _, seed, frame in cands:
+            s = _second_of_frame(BASE_DELAY, frame)
+            expected = calculate_seed(TIME_A + dt.timedelta(seconds=s), frame)
+            self.assertEqual(seed, expected)
+
+    def test_no_duplicate_seeds(self):
+        cands, _, _ = self._candidates()
+        seeds = [s for _, s, _ in cands]
+        self.assertEqual(len(seeds), len(set(seeds)))
+
+    def test_second_offsets_widen_candidate_set(self):
+        base, _, _ = self._candidates()
+        wide, inp, _ = self._candidates(second_offsets=(-1, 0, 1))
+        self.assertGreater(len(wide), len(base))
+        # every base (δ=0) seed still present in the widened set
+        self.assertTrue(set(s for _, s, _ in base) <= set(s for _, s, _ in wide))
+
+    def test_offset_seeds_use_shifted_second_same_frame(self):
+        # A +1 δ candidate is calculate_seed(initial_time + (s+1), frame) at the same frame.
+        cands, inp, _ = self._candidates(second_offsets=(1,))
+        for _, seed, frame in cands:
+            s = _second_of_frame(BASE_DELAY, frame) + 1
+            expected = calculate_seed(TIME_A + dt.timedelta(seconds=s), frame)
+            self.assertEqual(seed, expected)
+
+    def test_starting_ball_count_applied(self):
+        cands, _, _ = self._candidates(options=CompassOptions(starting_ball_count=25))
+        for ctx, _, _ in cands:
+            self.assertEqual(ctx.balls_remaining, 25)
+
+    def test_sorted_by_frame_then_seed(self):
+        cands, _, _ = self._candidates(second_offsets=(-1, 0, 1))
+        for i in range(len(cands) - 1):
+            self.assertLessEqual((cands[i][2], cands[i][1]),
+                                 (cands[i + 1][2], cands[i + 1][1]))
+
+    def test_narrowing_still_works(self):
+        # An observed ball outcome filters the calibrated set the same way as legacy.
+        cands, _, _ = self._candidates()
+        action = CompassAction(step=SafariStep.BALL_0)
+        filtered = _apply_action(cands, action, filter_fled=False)
+        self.assertLessEqual(len(filtered), len(cands))
+        pokemon = safari_pokemon_by_name('metang')
+        for _, seed, _ in filtered:
+            orig = SafariContext.start_encounter(seed, pokemon)
+            self.assertEqual(orig.throw_ball(), SafariStep.BALL_0)
+
+    def test_calibrated_input_requires_sigma_and_second(self):
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            with self.assertRaises(ValueError):
+                CompassSafariInput(
+                    pokemon=safari_pokemon_by_name('metang'),
+                    strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+                    initial_time=TIME_A, key_seed=KEY_SEED,
+                    frame_center=2471.0,  # sigma/target_second missing
+                )
+
+
+# ---------------------------------------------------------------------------
+# Landing prior + posterior ranking  (b70.2 / b70.4)
+# ---------------------------------------------------------------------------
+
+class TestCalibratedPriors(unittest.TestCase):
+
+    M = 5000
+    MAX_SECONDS = 30
+
+    def _gen(self, **kwargs):
+        from claytonlib.compass import calibrated_candidates
+        model = _line_model()
+        with patch('claytonlib.times.get_times', side_effect=_fake_get_times), \
+             patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            inp = CompassSafariInput.from_expedition_target(
+                model=model, M=self.M, initial_time=TIME_A, key_seed=KEY_SEED,
+                max_target_seconds=self.MAX_SECONDS,
+                pokemon=safari_pokemon_by_name('metang'),
+                strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+                **kwargs,
+            )
+            cands, meta = calibrated_candidates(inp)
+        return cands, meta, inp
+
+    def test_meta_has_frame_delta_prior_per_seed(self):
+        cands, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        for _, seed, frame in cands:
+            self.assertIn(seed, meta)
+            m = meta[seed]
+            self.assertEqual(m["frame"], frame)
+            self.assertIn(m["delta"], (-1, 0, 1))
+            self.assertGreater(m["prior"], 0.0)
+
+    def test_prior_peaks_at_center_frame_and_delta_zero(self):
+        _, meta, inp = self._gen(second_offsets=(-1, 0, 1))
+        # the highest-prior seed should be near F* with δ=0
+        top = max(meta.values(), key=lambda m: m["prior"])
+        self.assertEqual(top["delta"], 0)
+        self.assertLessEqual(abs(top["frame"] - inp.frame_center), 1.0)
+
+    def test_delta_zero_prior_exceeds_offset_prior_same_frame(self):
+        # At a fixed frame, δ=0 must carry more prior mass than δ=±1.
+        _, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        by_frame = {}
+        for seed, m in meta.items():
+            by_frame.setdefault(m["frame"], {})[m["delta"]] = m["prior"]
+        checked = 0
+        for frame, byd in by_frame.items():
+            if {-1, 0, 1} <= set(byd):
+                self.assertGreater(byd[0], byd[1])
+                self.assertGreater(byd[0], byd[-1])
+                checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_posteriors_normalize_to_one(self):
+        from claytonlib.compass import posteriors
+        cands, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        seeds = [s for _, s, _ in cands]
+        post = posteriors(seeds, meta)
+        self.assertAlmostEqual(sum(post.values()), 1.0, places=9)
+
+    def test_posteriors_subset_renormalizes(self):
+        from claytonlib.compass import posteriors
+        cands, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        seeds = [s for _, s, _ in cands][:5]
+        post = posteriors(seeds, meta)
+        self.assertAlmostEqual(sum(post.values()), 1.0, places=9)
+        # a lone survivor has posterior 1.0
+        one = posteriors([seeds[0]], meta)
+        self.assertAlmostEqual(one[seeds[0]], 1.0, places=9)
+
+    def test_offset_weight_monotonic(self):
+        from claytonlib.compass import _offset_weight
+        self.assertGreater(_offset_weight(0, 0.6), _offset_weight(1, 0.6))
+        self.assertGreater(_offset_weight(1, 0.6), _offset_weight(2, 0.6))
+        self.assertEqual(_offset_weight(-1, 0.6), _offset_weight(1, 0.6))
+
+    def test_frame_weight_peaks_at_center(self):
+        from claytonlib.compass import _frame_weight
+        self.assertGreater(_frame_weight(100, 100.0, 5.0), _frame_weight(103, 100.0, 5.0))
+        self.assertEqual(_frame_weight(97, 100.0, 5.0), _frame_weight(103, 100.0, 5.0))
+
+    def test_print_status_calibrated_ranks_and_returns(self):
+        from claytonlib.compass import _print_status_calibrated
+        cands, meta, inp = self._gen(second_offsets=(-1, 0, 1))
+        import io, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ranked = _print_status_calibrated(cands, len(cands), round(inp.frame_center),
+                                              meta, [], None, CRITERIA_CAPTURE, inp.options)
+        out = buf.getvalue()
+        self.assertIn("P(land)", out)
+        self.assertIn("Most likely", out)
+        # returned list is posterior-desc
+        posts = [p for _, p, _ in ranked]
+        self.assertEqual(posts, sorted(posts, reverse=True))
+        self.assertAlmostEqual(sum(posts), 1.0, places=9)
+
+
+# ---------------------------------------------------------------------------
+# Mass-bounded window + prior-weighted Jane offload  (b70.5)
+# ---------------------------------------------------------------------------
+
+class TestMassCapAndEffectiveCount(unittest.TestCase):
+
+    M = 5000
+    MAX_SECONDS = 30
+
+    def _gen(self, mass_cap=None, **kwargs):
+        from claytonlib.compass import calibrated_candidates, CompassOptions
+        model = _line_model()
+        opts = CompassOptions(mass_cap=mass_cap)
+        with patch('claytonlib.times.get_times', side_effect=_fake_get_times), \
+             patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            inp = CompassSafariInput.from_expedition_target(
+                model=model, M=self.M, initial_time=TIME_A, key_seed=KEY_SEED,
+                max_target_seconds=self.MAX_SECONDS,
+                pokemon=safari_pokemon_by_name('metang'),
+                strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+                options=opts, **kwargs)
+            cands, meta = calibrated_candidates(inp)
+        return cands, meta, inp
+
+    def test_mass_cap_shrinks_set_but_keeps_high_prior(self):
+        full, full_meta, _ = self._gen(mass_cap=None, second_offsets=(-1, 0, 1))
+        capped, cap_meta, _ = self._gen(mass_cap=0.90, second_offsets=(-1, 0, 1))
+        self.assertLess(len(capped), len(full))
+        # the highest-prior seed survives the cap
+        top = max(full_meta, key=lambda s: full_meta[s]["prior"])
+        self.assertIn(top, cap_meta)
+
+    def test_mass_cap_covers_at_least_target_mass(self):
+        full, full_meta, _ = self._gen(mass_cap=None, second_offsets=(-1, 0, 1))
+        total = sum(m["prior"] for m in full_meta.values())
+        _, cap_meta, _ = self._gen(mass_cap=0.90, second_offsets=(-1, 0, 1))
+        kept = sum(m["prior"] for m in cap_meta.values())
+        self.assertGreaterEqual(kept / total, 0.90)
+
+    def test_mass_cap_none_keeps_full_window(self):
+        full, _, _ = self._gen(mass_cap=None, second_offsets=(-1, 0, 1))
+        also, _, _ = self._gen(second_offsets=(-1, 0, 1))
+        self.assertEqual(len(full), len(also))
+
+    def test_effective_count_small_when_concentrated(self):
+        from claytonlib.compass import _effective_count
+        _, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        seeds = list(meta)
+        eff = _effective_count(seeds, meta, mass=0.99)
+        # far fewer than the raw count when the posterior concentrates near F*
+        self.assertLess(eff, len(seeds))
+        self.assertGreater(eff, 0)
+
+    def test_effective_count_lone_survivor_is_one(self):
+        from claytonlib.compass import _effective_count
+        _, meta, _ = self._gen(second_offsets=(-1, 0, 1))
+        one = next(iter(meta))
+        self.assertEqual(_effective_count([one], meta, mass=0.99), 1)
+
+
+# ---------------------------------------------------------------------------
+# Graceful widen + path replay  (b70.6)
+# ---------------------------------------------------------------------------
+
+class TestWidenAndReplay(unittest.TestCase):
+
+    M = 5000
+    MAX_SECONDS = 30
+
+    def _inp(self, **kwargs):
+        model = _line_model()
+        with patch('claytonlib.times.get_times', side_effect=_fake_get_times), \
+             patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            return CompassSafariInput.from_expedition_target(
+                model=model, M=self.M, initial_time=TIME_A, key_seed=KEY_SEED,
+                max_target_seconds=self.MAX_SECONDS,
+                pokemon=safari_pokemon_by_name('metang'),
+                strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE, **kwargs)
+
+    def _gen(self, inp):
+        from claytonlib.compass import calibrated_candidates
+        with patch('claytonlib.compass._core.get_times', side_effect=_fake_get_times):
+            return calibrated_candidates(inp)
+
+    def test_replay_reproduces_manual_narrowing(self):
+        from claytonlib.compass import _replay_path
+        inp = self._inp(second_offsets=(-1, 0, 1))
+        cands, _ = self._gen(inp)
+        path = [CompassAction(step=SafariStep.BALL_0)]
+        manual = _apply_action(cands, path[0], filter_fled=False)
+        cache, pending = _replay_path(cands, path)
+        current = pending[1] if pending is not None else cache[-1][1]
+        self.assertEqual(sorted(s for _, s, _ in current),
+                         sorted(s for _, s, _ in manual))
+
+    def test_prompt_widen_both_axes(self):
+        from claytonlib.compass import _prompt_widen
+        inp = self._inp(second_offsets=(0,), k=3.5)
+        with patch('builtins.input', side_effect=['b', '5', '2']):
+            wider = _prompt_widen(inp)
+        self.assertEqual(wider.k, 5.0)
+        self.assertEqual(tuple(wider.second_offsets), (-2, -1, 0, 1, 2))
+        # original untouched (dataclasses.replace returns a new object)
+        self.assertEqual(inp.k, 3.5)
+        self.assertEqual(tuple(inp.second_offsets), (0,))
+
+    def test_prompt_widen_decline_returns_none(self):
+        from claytonlib.compass import _prompt_widen
+        inp = self._inp(second_offsets=(0,))
+        with patch('builtins.input', side_effect=['n']):
+            self.assertIsNone(_prompt_widen(inp))
+
+    def test_prompt_widen_no_change_returns_none(self):
+        import io, contextlib
+        from claytonlib.compass import _prompt_widen
+        inp = self._inp(second_offsets=(-1, 0, 1), k=3.5)
+        # choose frame, but enter blank → keeps current → no change
+        with patch('builtins.input', side_effect=['f', '']), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(_prompt_widen(inp))
+
+    def test_widen_recovers_offset_match_preserving_path(self):
+        """A path that empties the δ=0 set is recovered by widening to include the δ=±1 truth,
+        with the observed path re-applied to the expanded set."""
+        from claytonlib.compass import _replay_path, _prompt_widen
+        narrow = self._inp(second_offsets=(0,))
+        wide_all, meta_wide = self._gen(self._inp(second_offsets=(-1, 1)))  # δ=±1 only
+        cands0, _ = self._gen(narrow)
+        pokemon = safari_pokemon_by_name('metang')
+        STEP_CHAR = {SafariStep.BALL_0: SafariStep.BALL_0, SafariStep.BALL_1: SafariStep.BALL_1,
+                     SafariStep.BALL_2: SafariStep.BALL_2, SafariStep.BALL_3: SafariStep.BALL_3}
+
+        # find a δ=±1 truth whose ball-throw prefix empties the δ=0 set
+        found = None
+        for _, truth, _ in wide_all:
+            ctx = SafariContext.start_encounter(truth, pokemon)
+            ctx.balls_remaining = 30
+            path = []
+            for _ in range(8):
+                if not ctx.is_watching():
+                    break
+                path.append(CompassAction(step=STEP_CHAR[ctx.throw_ball()]))
+                cache, pending = _replay_path(cands0, path)
+                narrow_now = pending[1] if pending is not None else cache[-1][1]
+                if len(narrow_now) == 0:
+                    found = (truth, list(path))
+                    break
+            if found:
+                break
+        self.assertIsNotNone(found, "expected some δ=±1 truth to empty the δ=0 set")
+        truth, path = found
+
+        # widen seconds to ±1 and re-apply the path
+        with patch('builtins.input', side_effect=['s', '1']):
+            wider = _prompt_widen(narrow)
+        self.assertEqual(tuple(wider.second_offsets), (-1, 0, 1))
+        cands1, _ = self._gen(wider)
+        cache, pending = _replay_path(cands1, path)
+        current = pending[1] if pending is not None else cache[-1][1]
+        self.assertGreater(len(current), 0)              # match recovered
+        self.assertIn(truth, [s for _, s, _ in current])  # the truth is among survivors
 
 
 # ---------------------------------------------------------------------------

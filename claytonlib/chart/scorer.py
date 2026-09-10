@@ -11,7 +11,6 @@ Because sigma grows with M, this automatically prefers a wide contiguous capture
 a lone spike far out (the kernel is wider there), and reports honestly lower probabilities
 for long countdowns.  See notes/refined_chart.md sections 2-3, 6.6.
 """
-import bisect
 import datetime as _dt
 import math
 
@@ -25,6 +24,20 @@ def _centers(base_delay: int, upto_second: int) -> list[int]:
     for s in range(upto_second):
         centers.append(centers[-1] + frames_in_second(s))
     return centers
+
+
+def _frame_bounds(model, setup_delay_seconds: int, max_target_seconds: int) -> tuple[int, int]:
+    """The battle-frame range spanning target RTC seconds [setup, max] via the calibration.
+
+    A target RTC second s corresponds to a commanded M ≈ (s − rtc_offset_seconds)·1000 (real time),
+    whose battle frame is model.mean(M).  So the frame sweep runs between the frames for the
+    two endpoint seconds -- NOT the physical delay_at_second table (that frame↔second lockstep
+    is exactly the conflation this model removes)."""
+    m_lo = (setup_delay_seconds - model.rtc_offset_seconds) * 1000.0
+    m_hi = (max_target_seconds - model.rtc_offset_seconds) * 1000.0
+    f_lo = int(math.floor(model.mean(max(0.0, m_lo))))
+    f_hi = int(math.ceil(model.mean(m_hi)))
+    return (f_lo, f_hi) if f_lo <= f_hi else (f_hi, f_lo)
 
 
 def capture_probability(canon_map, model, mdmsh, M, k: float = 3.5,
@@ -63,14 +76,14 @@ def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,
     capture_probability at that mdmsh.  Returns dicts {M, F, second, mdmsh, p, sigma} sorted
     by p desc (ties by smaller M).  `step` is the frame granularity of the sweep.
     """
-    centers = _centers(base_delay, max_target_seconds)
-    f_lo, f_hi = centers[setup_delay_seconds], centers[max_target_seconds]
+    f_lo, f_hi = _frame_bounds(model, setup_delay_seconds, max_target_seconds)
     results = []
     for F_target in range(f_lo, f_hi + 1, step):
         M = model.solve(F_target)
         if M <= 0:
             continue
-        s = bisect.bisect_right(centers, F_target) - 1
+        # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
+        s = model.battle_second_offset(M)
         if s < setup_delay_seconds or s > max_target_seconds:
             continue
         mdmsh = mdmsh_of(initial_time + _dt.timedelta(seconds=s))
@@ -96,7 +109,6 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
     # dedup identical (month,day,hour,minute,second) phases (year is irrelevant here)
     phases = list({(t.month, t.day, t.hour, t.minute, t.second): t for t in parsed}.values())
 
-    centers = _centers(base_delay, max_target_seconds)
     # per second: {mdmsh -> one example boot datetime that yields it at that second}
     groups: dict[int, dict] = {}
     for s in range(setup_delay_seconds, max_target_seconds + 1):
@@ -106,13 +118,14 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
             g.setdefault(m, t)
         groups[s] = g
 
-    f_lo, f_hi = centers[setup_delay_seconds], centers[max_target_seconds]
+    f_lo, f_hi = _frame_bounds(model, setup_delay_seconds, max_target_seconds)
     results = []
     for F_target in range(f_lo, f_hi + 1, step):
         M = model.solve(F_target)
         if M <= 0:
             continue
-        s = bisect.bisect_right(centers, F_target) - 1
+        # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
+        s = model.battle_second_offset(M)
         if s < setup_delay_seconds or s > max_target_seconds:
             continue
         for mdmsh, example in groups[s].items():

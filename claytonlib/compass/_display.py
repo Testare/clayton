@@ -4,7 +4,7 @@ from __future__ import annotations
 from claytonlib.safari import SafariStep
 from claytonlib.chart import Strategy, SuccessCriteria
 from claytonlib.compass._types import CompassAction, CompassOptions, CompassSafariInput
-from claytonlib.compass._core import _evaluate_context
+from claytonlib.compass._core import _evaluate_context, posteriors
 from claytonlib.compass._types import _action_to_str
 
 
@@ -25,6 +25,8 @@ def _print_cheatsheet(inputs: CompassSafariInput) -> None:
         ('?x',    'Uncertain result',    '—'),
         ('J',     'Switch to Jane',      '—'),
     ]
+    if getattr(inputs, 'calibrated', False):
+        rows.append(('w', 'Widen window & re-apply path', '—'))
     key_w = max(len(r[0]) for r in rows)
     act_w = max(len(r[1]) for r in rows)
     print("=== Compass: Safari Zone Seed Identifier ===")
@@ -69,8 +71,59 @@ def _print_status(candidates: list[tuple], total: int, target_delay: int,
             print(f"  {i:>2}. 0x{seed:08X}  {delay:>7}  {_delta_str(delta):>5}{marker}")
 
 
+def _sec_offset_str(delta: int) -> str:
+    if delta == 0:
+        return "on time"
+    return f"{_delta_str(delta)}s ({'late' if delta > 0 else 'early'})"
+
+
+def _print_status_calibrated(candidates: list[tuple], total: int, ref_frame: int,
+                             meta: dict, path_actions: list,
+                             eval_strategy: Strategy | None,
+                             eval_criteria: SuccessCriteria,
+                             options: CompassOptions | None = None) -> list[tuple]:
+    """Calibrated status: survivors ranked by posterior landing probability with P%.
+
+    Returns the ranked list of (seed, posterior, meta_dict) so the caller can honor an
+    early-stop confidence threshold.
+    """
+    cfg = options or CompassOptions()
+    path_str = ''.join(_action_to_str(a) for a in path_actions) or '(none)'
+    balls = candidates[0][0].balls_remaining if candidates else cfg.starting_ball_count
+
+    ctx_by_seed = {seed: ctx for ctx, seed, _ in candidates}
+    post = posteriors(list(ctx_by_seed), meta)
+    ranked = sorted(post.items(), key=lambda kv: (-kv[1], meta[kv[0]]["frame"]))
+
+    print(f"Seeds: {len(candidates)} / {total} remaining")
+    print(f"Path:  {path_str}")
+    print(f"Balls: {balls}")
+
+    show_eval = eval_strategy is not None and len(candidates) <= cfg.evaluation_threshold
+    header = f"  {'#':>2}  {'Seed':>10}  {'Frame':>7}  {'\u0394':>6}  {'\u03b4sec':>5}  {'P(land)':>8}"
+    print(header + ("  Success" if show_eval else ""))
+
+    for i, (seed, p) in enumerate(ranked[:cfg.seeds_displayed], 1):
+        m = meta[seed]
+        row = (f"  {i:>2}. 0x{seed:08X}  {m['frame']:>7}  "
+               f"{_delta_str(m['frame'] - ref_frame):>6}  {_delta_str(m['delta']):>5}  "
+               f"{p * 100:>7.2f}%")
+        if show_eval:
+            ok = _evaluate_context(ctx_by_seed[seed], eval_strategy, eval_criteria)
+            row += f"  {'yes' if ok else 'no'}"
+        print(row)
+
+    if ranked:
+        top_seed, top_p = ranked[0]
+        tm = meta[top_seed]
+        note = "  \u2190 likely identified" if (len(ranked) > 1 and top_p >= cfg.confidence_threshold) else ""
+        print(f"  Most likely: 0x{top_seed:08X}  P={top_p * 100:.2f}%  "
+              f"(timer {_sec_offset_str(tm['delta'])}){note}")
+    return [(s, p, meta[s]) for s, p in ranked]
+
+
 def _print_success(seed: int, delay: int, target_delay: int,
-                   path_actions: list) -> None:
+                   path_actions: list, second_offset: int | None = None) -> None:
     path_str = ''.join(_action_to_str(a) for a in path_actions)
     delta = delay - target_delay
     delta_label = f"{_delta_str(delta)} (exact target)" if delta == 0 else _delta_str(delta)
@@ -81,6 +134,8 @@ def _print_success(seed: int, delay: int, target_delay: int,
         f"\u0394     = {delta_label}",
         f"path  = {path_str or '(none)'}",
     ]
+    if second_offset is not None:
+        lines.append(f"timer = {_sec_offset_str(second_offset)}")
     width = max(len(l) for l in lines) + 2
     border = '\u2550' * width
     print(f"\u2554{border}\u2557")

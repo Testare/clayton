@@ -664,6 +664,13 @@ class Expedition:
         criteria = _resolve_criteria(self.criteria_name)
         store = CanonStore(self._canon_store_path())
 
+        model = self.calibration_model()
+        if model is None:
+            raise RuntimeError(
+                "precompute_chart needs a calibration model (it places each RTC second's frame "
+                "band and maps M->second). None found at data/calibration_model.json -- save a "
+                "calibration run first (utils/calibration_tools.save_compass_run).")
+
         t0 = time.perf_counter()
 
         def _progress(done, total, stats):
@@ -679,7 +686,7 @@ class Expedition:
                   f"workers={workers}")
         stats = precompute_canon(base_delay, times, self.setup_delay_seconds,
                                  self.max_target_seconds, pokemon, strategy, criteria, store,
-                                 progress=_progress, workers=workers)
+                                 model, progress=_progress, workers=workers)
         elapsed = time.perf_counter() - t0
         self._log(f"=== precompute_chart complete ===  (elapsed {elapsed / 60:.1f}m)")
         self._log(f"-> {store.path}  ({stats['n_distinct_seeds']:,} seeds, "
@@ -798,6 +805,17 @@ class Expedition:
         self.save()
         self._log(f"target set: boot {self.initial_time}, timer M={self.target_timer_delay} ms, "
                   f"expected F_b={self.target_delay} (P~{chosen['p'] * 100:.1f}%). Saved.")
+
+        # Predicted battle RTC time (boot + M/1000 + setup), so you can compare it against the
+        # time you actually hit in the calibration notebook.  Only month/day/hour:min:sec are
+        # meaningful (the chart models the year as 2000; your real run's year differs).
+        model = self.calibration_model()
+        if model is not None:
+            M = self.target_timer_delay + (self.target_timer_calibration or 0)
+            battle = _parse(self.initial_time) + dt.timedelta(
+                seconds=model.battle_second_offset(M))
+            self._log(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}  "
+                      f"(= boot + {model.battle_second_offset(M)}s; year is the chart's 2000)")
         return chosen
 
     @staticmethod
@@ -1015,15 +1033,24 @@ class Expedition:
     # compass_safari
     # ------------------------------------------------------------------
 
-    def compass_safari(self) -> None:
-        """Run compass_safari using stored config. Saves resulting seeds."""
+    def compass_safari(self, second_offsets=(-1, 0, 1), mass_cap=0.999) -> None:
+        """Run compass_safari using stored config. Saves resulting seeds.
+
+        Prefers the calibrated (second, frame) sweep: when a calibration model is available
+        and a commanded countdown M is set (via select_target), the candidate set is built
+        from ``from_expedition_target`` — no hand-set delay window.  Falls back to the legacy
+        delay-window sweep when no model/M is available.
+
+        ``second_offsets`` covers off-by-one timer-start timing (default δ∈{−1,0,+1}); each
+        offset uses the SAME frame window (the second-offset is decoupled from the frame).
+        ``mass_cap`` bounds the candidate set to the highest-prior seeds covering that share of
+        the landing probability (trims the far tails); set None to keep the full ±kσ window.
+        """
         print(f"[expedition] === compass_safari ===  {dt.datetime.now().strftime('%H:%M:%S')}")
         self._ensure_pokemon()
         self._ensure_key_seed()
         self._ensure_strategy()
         self._ensure_criteria()
-        self._ensure_window()
-        self._ensure_target()
 
         from claytonlib.safari import safari_pokemon_by_name
         from claytonlib.chart import CRITERIA_CAPTURE
@@ -1032,31 +1059,79 @@ class Expedition:
             CompassSafariInput,
         )
         from claytonlib.times import get_times
+        from claytonlib.chart.evaluation import DPS
 
         base_delay, _ = get_times(self.key_seed)
-        delay_from_key = self.target_delay - base_delay
-        print(f"[expedition] Delay from key seed: {delay_from_key} frames  ({delay_from_key / 60:.2f}s)")
+        pokemon = safari_pokemon_by_name(self.pokemon_name)
+        strategy = _resolve_strategy(self.strategy_name)
+        criteria = _resolve_criteria(self.criteria_name)
+        eval_strategy = _resolve_strategy(self.strategy_name)
 
-        initial_time = dt.datetime.fromisoformat(self.initial_time)
-        inputs = CompassSafariInput(
-            pokemon=safari_pokemon_by_name(self.pokemon_name),
-            strategy=_resolve_strategy(self.strategy_name),
-            criteria=_resolve_criteria(self.criteria_name),
-            window=self.window,
-            initial_time=initial_time,
-            key_seed=self.key_seed,
-            target_delay=self.target_delay,
-            evaluation_strategy=_resolve_strategy(self.strategy_name),
-            evaluation_criteria=CRITERIA_CAPTURE,
-        )
+        model = self.calibration_model()
+        M = (self.target_timer_delay + (self.target_timer_calibration or 0)
+             if self.target_timer_delay is not None else None)
+
+        if model is not None and M is not None and self.initial_time is not None:
+            initial_time = dt.datetime.fromisoformat(self.initial_time)
+            F = model.mean(M)
+            sigma = model.jitter_sigma(M)
+            print(f"[expedition] Calibrated sweep: M={M} ms → F*≈{F:.0f}  σ≈{sigma:.1f} frames "
+                  f"(delay-from-key {F - base_delay:.0f}, {(F - base_delay) / DPS:.2f}s)")
+            inputs = CompassSafariInput.from_expedition_target(
+                model=model, M=M, initial_time=initial_time, key_seed=self.key_seed,
+                max_target_seconds=self.max_target_seconds,
+                pokemon=pokemon, strategy=strategy, criteria=criteria,
+                second_offsets=tuple(second_offsets), mass_cap=mass_cap,
+                evaluation_strategy=eval_strategy, evaluation_criteria=CRITERIA_CAPTURE,
+            )
+        else:
+            missing = ("no calibration model" if model is None else
+                       "no commanded M (run select_target)")
+            print(f"[expedition] Legacy sweep ({missing}).")
+            self._ensure_window()
+            self._ensure_target()
+            delay_from_key = self.target_delay - base_delay
+            print(f"[expedition] Delay from key seed: {delay_from_key} frames  "
+                  f"({delay_from_key / 60:.2f}s)")
+            inputs = CompassSafariInput(
+                pokemon=pokemon, strategy=strategy, criteria=criteria,
+                window=self.window,
+                initial_time=dt.datetime.fromisoformat(self.initial_time),
+                key_seed=self.key_seed,
+                target_delay=self.target_delay,
+                evaluation_strategy=eval_strategy,
+                evaluation_criteria=CRITERIA_CAPTURE,
+            )
 
         seeds = _compass_safari(inputs)
+        # Stash for the loop-back save (save_safari_run needs the CompassSafariInput to recover
+        # the (frame, second, δ) of the identified seed).
+        self._last_compass_inputs = inputs
+        self._last_compass_seeds = seeds
         if seeds:
             self.target_seeds = seeds
             self.target_seeds_path = f"compass_safari/{self.name}"
             print(f"[expedition] Saved {len(seeds)} seed(s) to target_seeds.")
+            if len(seeds) == 1:
+                print("[expedition] Tip: x.save_safari_run() to log this run "
+                      "(seed, path, inferred timer offset) to data/safari_runs.jsonl.")
         else:
             print("[expedition] No seeds returned from compass_safari.")
+
+    def save_safari_run(self, path: str | None = None):
+        """Loop-back: log the last compass_safari result to data/safari_runs.jsonl.
+
+        Records the identified seed, the observed path, and the calibrated landing
+        (M via the timer fields, plus frame / RTC second / second-offset δ) — no capture
+        required.  Run compass_safari() first.  Returns the saved record, or None.
+        """
+        inputs = getattr(self, "_last_compass_inputs", None)
+        seeds = getattr(self, "_last_compass_seeds", None) or self.target_seeds
+        if not seeds:
+            print("[expedition] No compass_safari result to save. Run compass_safari() first.")
+            return None
+        from utils.calibration_tools import save_safari_run as _save
+        return _save(seeds, inputs=inputs, path=path)
 
     # ------------------------------------------------------------------
     # compass_premetronome helpers
@@ -1504,7 +1579,6 @@ class CheckHelper:
         shortcuts).  `verify=True` re-runs evaluate_seed on every frame to confirm the stored
         map agrees with a live simulation.  `step` prints every step-th row (P is still exact).
         """
-        import bisect
         import math
         exp = self._exp
 
@@ -1519,7 +1593,7 @@ class CheckHelper:
 
         from claytonlib.chart import CanonStore, seed_for_mdmsh, evaluate_seed
         from claytonlib.chart.canon import mdmsh_of
-        from claytonlib.chart.scorer import _centers, capture_probability
+        from claytonlib.chart.scorer import capture_probability
         from claytonlib.times import get_times
         from claytonlib.safari import safari_pokemon_by_name
 
@@ -1537,8 +1611,8 @@ class CheckHelper:
         F = model.mean(M)
         sigma = (model.total_sigma(M, include_calibration=True) if include_calibration
                  else model.jitter_sigma(M))
-        centers = _centers(base_delay, exp.max_target_seconds)
-        s = bisect.bisect_right(centers, F) - 1
+        # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
+        s = model.battle_second_offset(M)
         mdmsh = mdmsh_of(it + dt.timedelta(seconds=s))
         lo, hi = math.floor(F - k * sigma), math.ceil(F + k * sigma)
 
@@ -1546,7 +1620,10 @@ class CheckHelper:
         print(f"\nchart_check_target_landing  ({band} kernel, k={k})")
         print(f"boot={exp.initial_time}  timer M={M} ms  ->  mean F_b={F:.1f} (target_delay="
               f"{exp.target_delay})  sigma={sigma:.1f}")
+        battle = it + dt.timedelta(seconds=s)
         print(f"target second={s}  mdmsh(m,h)={mdmsh}  window frames [{lo}, {hi}] ({hi-lo+1})")
+        print(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}  "
+              f"(compare to your calibration hit; chart's year is 2000)")
         if verify:
             pokemon = safari_pokemon_by_name(exp.pokemon_name)
             strategy = _resolve_strategy(exp.strategy_name)

@@ -3,7 +3,38 @@
 Adapting `claytonlib/compass` (safari seed identification) to the calibrated charting model
 (see `notes/refined_chart.md`).  Kept separate from the metronome compass.
 
-Status: **design / brainstorm.** Tracked under the compass-safari rework epic.
+Status: **design / brainstorm.** Tracked under the compass-safari rework epic (`clayton-b70`).
+
+**Implementation progress:**
+- ✅ **b70.1** — calibrated `(second, frame)` candidate generator (`_generate_candidates_calibrated`
+  in `compass/_core.py`).  `_generate_candidates` now dispatches: calibrated when `frame_center`
+  is set, legacy delay-window + seed_a/seed_b otherwise (kept for un-migrated callers).  The old
+  seed_a is exactly the canonical scorer seed; seed_b is dropped (the RTC second is now the δ axis).
+- ✅ **b70.3** — `CompassSafariInput.from_expedition_target(model, M, …)` (new explicit fields
+  `frame_center`/`sigma`/`target_second`/`second_offsets`/`k`); `expedition.compass_safari()` prefers
+  it, falling back to the legacy path when no model / commanded M is available.
+- ✅ **b70.2** — ±K second axis: `second_offsets` covers δ∈{−1,0,+1} (configurable via
+  `expedition.compass_safari(second_offsets=…)`), each δ using the SAME frame window; the
+  identified seed reports which δ was hit ("timer on time / +1s late / −1s early").
+- ✅ **b70.4** — landing prior `P(δ)·Normal(frame; F*, σ)` per candidate (`calibrated_candidates`
+  returns `meta[seed]={frame,delta,prior}`); survivors ranked by posterior = prior_i /
+  Σ prior_survivors and shown with P%; a `confidence_threshold` (default 95%) flags "likely
+  identified".  Capture-success is NOT a prior.  Prior model: discrete-Gaussian over δ
+  (`second_offset_sd`, default 0.6 ⇒ P(±1)≈17%) × the frame Normal.
+- ✅ **b70.6** — graceful widen: on no-match (or `w` on request) prompt to widen the frame
+  window (`k`) and/or the second window (`±K`), regenerate, and re-apply the observed path via
+  `_replay_path` — no narrowing progress lost.
+- ✅ **b70.7** — loop-back: `save_safari_run` is calibrated-aware — it recovers the identified
+  seed's `(frame, RTC second, δ)` from the candidate meta, reports the inferred timer offset
+  (e.g. "+1s late"), and records `frame`/`second`/`second_offset` (M via the timer fields) to
+  `data/safari_runs.jsonl` — no capture required.  `expedition.save_safari_run()` wires it in.
+- ✅ **b70.5** — candidate-set bounding: `CompassOptions.mass_cap` trims the sweep to the
+  highest-prior seeds covering that share of the landing mass (`expedition.compass_safari`
+  defaults 0.999; e.g. 1698→890 at 0.95 on the real model); the Jane offload now triggers on
+  the prior-weighted `_effective_count` (seeds carrying `jane_mass` of the posterior), not raw
+  count, so it fires once observations concentrate the mass — not on the wide pre-observation set.
+- 🔮 b70.8 (FUTURE: safari-compass calibration runs, P4) — unblocked by b70.7, intentionally
+  deferred until compass-safari has field use.
 
 ---
 
