@@ -88,17 +88,30 @@ _ROAMER_ORDER = ("r", "e", "l")
 _ROAMER_MAPPERS = {"r": route_from_rng_j, "e": route_from_rng_j, "l": route_from_rng_k}
 
 
-def roamer_positions(seed, prev_routes, present):
+def _present_from_prev(prev_routes) -> dict:
+    """Which roamers are still roaming, inferred from prev_routes: a roamer roams iff it has an
+    entry there.  (prev_routes already carries this, so no separate `present` map is needed.)"""
+    return {k: (k in prev_routes) for k in _ROAMER_ORDER}
+
+
+def _present_from_rows(candidates) -> dict:
+    """Which roamers are roaming, inferred from candidate rows (route is None when not roaming)."""
+    return {k: any(c.get(f"{k}_route") is not None for c in candidates) for k in _ROAMER_ORDER}
+
+
+def roamer_positions(seed, prev_routes, present=None):
     """Walk the roamer relocation rolls from `seed`.
 
     prev_routes: dict like {"r": 31, "e": 30, "l": 0} of each roamer's CURRENT route
                  (0 / anything not on its route table forces the first roll to stick).
-    present:     dict like {"r": True, "e": True, "l": False} of which roamers still roam.
+                 A roamer roams iff it appears here.
 
     Returns (routes, rng_calls, state) where routes maps r/e/l -> new route (or None if
     that roamer isn't roaming) and state is the LCRNG state after the roamer rolls, ready
     for the Elm calls.
     """
+    if present is None:
+        present = _present_from_prev(prev_routes)
     state = seed
     calls = 0
     routes = {"r": None, "e": None, "l": None}
@@ -132,7 +145,6 @@ def generate_roamer_candidates_near(
     seconds_window: int,
     delay_window: int,
     prev_routes: dict,
-    present: dict,
     elm_count: int = 15,
     match_parity: bool = False,
 ):
@@ -158,7 +170,7 @@ def generate_roamer_candidates_near(
             key = (abs(delay - target_delay), abs(sec), seed)
             if seed in by_seed and by_seed[seed][0] <= key:
                 continue
-            routes, calls, state = roamer_positions(seed, prev_routes, present)
+            routes, calls, state = roamer_positions(seed, prev_routes)
             elm = elm_calls(state, elm_count)
             by_seed[seed] = (key, {
                 "seed": seed,
@@ -197,13 +209,16 @@ def print_roamer_candidates(rows, limit=20):
 # --------------------------------------------------------------------------- #
 # Filtering (pure cores)                                                       #
 # --------------------------------------------------------------------------- #
-def filter_rel(candidates, present, observed):
+def filter_rel(candidates, observed, present=None):
     """Keep candidates matching an observed roamer readout string.
 
     observed: one route per roaming legendary in R E L order, space-separated
               (e.g. "38 42 11"); a wildcard token (. - * ?) leaves one free.
+    present:  which roamers roam (default: inferred from the candidate rows).
     Returns (matched, keys, tokens).
     """
+    if present is None:
+        present = _present_from_rows(candidates)
     keys = [k for k in _ROAMER_ORDER if present.get(k)]
     tokens = observed.split()
     if len(tokens) != len(keys):
@@ -247,13 +262,15 @@ def parse_elm_input(s):
 # --------------------------------------------------------------------------- #
 # Interactive drivers (prompt / print)                                         #
 # --------------------------------------------------------------------------- #
-def filter_by_observed_rel(candidates, present, observed=None, limit=20):
+def filter_by_observed_rel(candidates, observed=None, limit=20, present=None):
     """Prompt for (or take) an observed roamer readout and print the matches."""
+    if present is None:
+        present = _present_from_rows(candidates)
     keys = [k for k in _ROAMER_ORDER if present.get(k)]
     if observed is None:
         labels = " ".join(k.upper() for k in keys)
         observed = input(f"Observed roamer routes ({labels}, space-separated, . = any): ")
-    matched, keys, tokens = filter_rel(candidates, present, observed)
+    matched, keys, tokens = filter_rel(candidates, observed, present)
     shown = " ".join(f"{k.upper()}={t}" for k, t in zip(keys, tokens))
     print(f"\nObserved {shown}  ->  {len(matched)} / {len(candidates)} candidate(s) match\n")
     print_roamer_candidates(matched, limit=limit)
@@ -307,17 +324,18 @@ def narrow_by_elm(candidates, limit=20):
     return None
 
 
-def identify_seed(candidates, present, observed_rel=None, display_limit=20):
+def identify_seed(candidates, observed_rel=None, display_limit=20, present=None):
     """Interactively pin down the seed you actually hit.
 
-    1. Filter by the observed roamer routes (R E L).
+    1. Filter by the observed roamer routes (R E L) -- which roamers roam is inferred from
+       the candidate rows, so no separate `present` map is needed.
     2. If more than one remains, narrow by the Elm call sequence (or M to pick).
     3. Print the single result and return the whole candidate row (dict), for use
        as `a_seed` -- its integer seed is `a_seed["seed"]`.
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
-    matched = filter_by_observed_rel(candidates, present,
-                                     observed=observed_rel, limit=display_limit)
+    matched = filter_by_observed_rel(candidates, observed=observed_rel,
+                                     limit=display_limit, present=present)
     if not matched:
         print("\nNo candidates match -- check the observed routes or widen the window.")
         return None
@@ -412,6 +430,20 @@ def print_candidates(candidates, limit=20):
         print(f"  ... and {len(candidates) - limit} more")
 
 
+class _AbortRun(Exception):
+    """Raised when the user types ABORT at any prompt during narrow_candidates."""
+
+
+def _abort_on_keyword(orig_input):
+    """Wrap input() so typing ABORT (any case) at ANY prompt raises _AbortRun."""
+    def wrapped(prompt=""):
+        s = orig_input(prompt)
+        if s.strip().upper() == "ABORT":
+            raise _AbortRun()
+        return s
+    return wrapped
+
+
 def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_only=False):
     """Interactively narrow `candidates` to a single seed.
 
@@ -420,6 +452,10 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     "Metronome selected? (move name or M###)", "Hit, crit, or miss?", status prompts,
     ...).  After each turn, candidates whose precomputed path diverges from what you
     observed are dropped.  Returns the identified candidate dict (whole row) or None.
+
+    Type ABORT at any prompt to stop and leave the seed unidentified (returns None); the
+    run also aborts automatically once no remaining seed has a further turn to observe
+    (e.g. the Metronome user Explodes and every path ends).
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
     from claytonlib.metronome_compass import (
@@ -468,33 +504,49 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
         if len(remaining) > 15:
             print(f"  ... and {len(remaining) - 15} more")
 
+    import builtins
     remaining = list(candidates)
     turn_n = 0
-    while True:
-        show(remaining, turn_n + 1)
-        if len(remaining) == 1:
-            c = remaining[0]
-            print(f"\nSeed identified: 0x{c['seed']:08X}  "
-                  f"time={c['time'].strftime('%Y-%m-%d %H:%M:%S')}  delay={c['delay']}  "
-                  f"dD={c['delay_delta']:+d}")
-            print(f"Full path: {c['path_str']}")
-            # Metronome moves remaining in the identified seed's path (turns not yet observed).
-            print(f"Remaining Metronome moves (turn {turn_n + 1}+):")
-            for turn_idx in range(turn_n, len(c["path"])):
-                for tok in c["path"][turn_idx]:
-                    if isinstance(tok, MetronomeMove):
-                        print(f"  Turn {turn_idx + 1}: {moves_by_num[tok.move_num].name} (M{tok.move_num:03d})")
-            return c
-        if not remaining:
-            print("\nNo seeds match -- check your answers or widen the window above.")
-            return None
+    orig_input = builtins.input
+    builtins.input = _abort_on_keyword(orig_input)  # ABORT at any prompt stops the run
+    try:
+        while True:
+            show(remaining, turn_n + 1)
+            if len(remaining) == 1:
+                c = remaining[0]
+                print(f"\nSeed identified: 0x{c['seed']:08X}  "
+                      f"time={c['time'].strftime('%Y-%m-%d %H:%M:%S')}  delay={c['delay']}  "
+                      f"dD={c['delay_delta']:+d}")
+                print(f"Full path: {c['path_str']}")
+                # Metronome moves remaining in the identified seed's path (turns not yet observed).
+                print(f"Remaining Metronome moves (turn {turn_n + 1}+):")
+                for turn_idx in range(turn_n, len(c["path"])):
+                    for tok in c["path"][turn_idx]:
+                        if isinstance(tok, MetronomeMove):
+                            print(f"  Turn {turn_idx + 1}: {moves_by_num[tok.move_num].name} (M{tok.move_num:03d})")
+                return c
+            if not remaining:
+                print("\nNo seeds match -- check your answers or widen the window above.")
+                return None
+            # No remaining seed has a turn beyond this one -> nothing left to observe (e.g. the
+            # Metronome user Exploded and every path ends).  Can't narrow further; abort.
+            if not any(len(c["path"]) > turn_n for c in remaining):
+                print(f"\nAll {len(remaining)} remaining seeds' paths end here -- no further turn "
+                      f"to observe. Aborting; seed left unidentified.")
+                return None
 
-        turn_n += 1
-        print(f"\n--- Turn {turn_n}: answer what happened in the battle ---")
-        simulate_turn(ctx, state, moves_by_num, known, magikarp_level)
-        observed = ctx.path[turn_n - 1]
-        remaining = [c for c in remaining
-                     if len(c["path"]) >= turn_n and c["path"][turn_n - 1] == observed]
+            turn_n += 1
+            print(f"\n--- Turn {turn_n}: answer what happened in the battle "
+                  f"(or type ABORT to stop) ---")
+            simulate_turn(ctx, state, moves_by_num, known, magikarp_level)
+            observed = ctx.path[turn_n - 1]
+            remaining = [c for c in remaining
+                         if len(c["path"]) >= turn_n and c["path"][turn_n - 1] == observed]
+    except _AbortRun:
+        print("\nRun aborted -- seed left unidentified (b_seed = None).")
+        return None
+    finally:
+        builtins.input = orig_input
 
 
 def _prompt_until(prompt, parse):
@@ -1169,14 +1221,9 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     Sxx = sum((M - M_bar) ** 2 for M in Ms)
 
     # ---- build the candidate models (each: mean fn + jitter + closures) ------
-    # Two families:
-    #   * within_rate (PREVIOUS): line whose slope is the within-run *average* rate.  This
-    #     conflates the average rate with the F_b-vs-M slope, so its residuals blow up as M
-    #     leaves the centroid -- kept only for comparison.
-    #   * F_b-vs-M fits (NEW): fit F_b directly against M.  linear_m is the recommended one;
-    #     quad_m adds a curvature term to test whether the (real) rising instantaneous rate
-    #     bends F_b(M) measurably -- so far it doesn't, since 3-7 min is already near the
-    #     ~60 Hz ceiling.
+    # Deployed: the dF fits (linear default, quad optional) -- fit dF = F_b - F_a vs M and
+    # reconstruct F_b = dF + F_a.  Also fit F_b directly and the within-run average rate as
+    # diagnostic baselines (their RMS lets you sanity-check the dF fit and see the rate).
     models = {}
 
     def add_model(key, label, kind, fit, target="Fb"):
@@ -1196,27 +1243,27 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
                        "predict": pred, "solve": solv, "hit_probability": hp}
 
     if within is not None:
-        add_model("within_rate", "within-run-rate slope (previous)", "line",
+        add_model("within_rate", "within-run-rate slope", "line",
                   _line_fit(within["rate"] / 1000.0,
                             Fb_bar - (within["rate"] / 1000.0) * M_bar, Ms, Fbs))
     if regression is not None:
-        add_model("linear_m", "F_b-vs-M line (NEW)", "line",
+        add_model("linear_m", "F_b line", "line",
                   _line_fit(regression["beta"], regression["alpha"], Ms, Fbs))
     if len(runs) >= 3 and M_scale > 0:
-        add_model("quad_m", "F_b-vs-M quadratic (NEW, experimental)", "quad",
+        add_model("quad_m", "F_b quadratic", "quad",
                   _poly_model(Ms, Fbs, 2, M_bar, M_scale))
-    # Option-2 candidates: fit dF = F_b - F_a vs M (reconstruct F_b by re-adding actual F_a).
+    # dF models (deployed): fit dF = F_b - F_a vs M; reconstruct F_b by re-adding actual F_a.
     if regression_df is not None:
-        add_model("linear_df", "dF-vs-M line (option 2)", "line",
+        add_model("linear_df", "dF line (deployed)", "line",
                   _line_fit(regression_df["beta"], regression_df["alpha"], Ms, dFs),
                   target="dF")
     if len(runs) >= 3 and M_scale > 0:
-        add_model("quad_df", "dF-vs-M quadratic (option 2, experimental)", "quad",
+        add_model("quad_df", "dF quadratic (deployed, fps_model=quad)", "quad",
                   _poly_model(Ms, dFs, 2, M_bar, M_scale), target="dF")
 
-    # Recommended = the dF-vs-M line (option 2: year-agnostic, reconstruct F_b = dF + F_a),
-    # else the direct F_b line, else whatever we have.  The chart/expedition consume this via
-    # the exported artifact and call model.frame(M, base_delay) to get the actual seed frame.
+    # Deployed default = the dF line (year-agnostic; reconstruct F_b = dF + F_a); fall back to the
+    # F_b line, then whatever we have.  The chart/expedition consume this via the exported artifact
+    # and call model.frame(M, base_delay) to get the actual seed frame.
     recommended = ("linear_df" if "linear_df" in models
                    else "linear_m" if "linear_m" in models
                    else "within_rate" if "within_rate" in models
@@ -1401,22 +1448,10 @@ def print_calibration_report(model):
         else:
             rate_desc = f"slope {rate_lo:.4f} Hz"
         tgt = f"[{sub.get('target', 'Fb')}]"
-        print(f" {star}{sub['label']:<38} {tgt:<5}{rate_desc:<32} RMS residual {rms_s:>6} frames")
+        print(f" {star}{sub['label']:<40} {tgt:<5}{rate_desc:<32} RMS residual {rms_s:>6} frames")
     if model.get("recommended"):
-        print(f"\n  ( * = recommended; predict/solve/hit_probability use it )")
-
-    # Option-1 vs option-2 verdict: an apples-to-apples F_b-prediction-error comparison.
-    # The dF fit's residual IS option 2's F_b error (dF - f_dF = (F_a+dF) - (f_dF+F_a)), so
-    # the two RMS numbers are directly comparable -- lower = the more accurate way to place F_b.
-    fb, df = model["models"].get("linear_m"), model["models"].get("linear_df")
-    if fb and df and fb["jitter_rms"] and df["jitter_rms"] is not None:
-        r_fb, r_df = fb["jitter_rms"], df["jitter_rms"]
-        better = "dF (option 2)" if r_df < r_fb else "F_b (option 1)"
-        pct = abs(r_df - r_fb) / r_fb * 100.0 if r_fb else 0.0
-        print(f"\n  option 1 vs 2 (F_b-placement RMS):  F_b-fit {r_fb:.1f}  vs  "
-              f"dF-fit {r_df:.1f} frames  ->  {better} tighter by {pct:.0f}%")
-        print(f"    (dF removes the run-to-run F_a wobble the F_b intercept must otherwise "
-              f"absorb; it is also year-agnostic by construction)")
+        print(f"\n  ( * = deployed default; predict/solve/hit_probability use it. "
+              f"[dF] models reconstruct F_b = dF + F_a )")
 
     print(f"\n  RTC-second offset {model.get('rtc_offset_seconds', 0.0):.2f} +/- "
           f"{model.get('rtc_offset_std', 0.0):.2f} s  "

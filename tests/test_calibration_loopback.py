@@ -177,5 +177,53 @@ class TestExpeditionLoader(unittest.TestCase):
         self.assertEqual(m.call_args.kwargs.get("which"), "quad")
 
 
+class TestRoamerPresence(unittest.TestCase):
+    """Section A: `present` is derived (from prev_routes / candidate rows), not passed in."""
+
+    def test_present_from_prev(self):
+        self.assertEqual(ct._present_from_prev({"r": 43, "e": 45, "l": 6}),
+                         {"r": True, "e": True, "l": True})
+        self.assertEqual(ct._present_from_prev({"r": 43, "e": 45})["l"], False)
+
+    def test_generate_infers_present_from_prev_routes(self):
+        import datetime as _dt
+        t = _dt.datetime(2025, 7, 24, 14, 45, 55)
+        rows = ct.generate_roamer_candidates_near(t, 681, 0, 5, prev_routes={"r": 43, "e": 45})
+        self.assertTrue(rows)
+        # l isn't roaming -> its route column is None on every row; present-from-rows agrees
+        self.assertTrue(all(c["l_route"] is None for c in rows))
+        self.assertEqual(ct._present_from_rows(rows), {"r": True, "e": True, "l": False})
+
+
+class TestNarrowAbort(unittest.TestCase):
+    """Section B: ABORT keyword + auto-abort when no seed has a further turn."""
+
+    def test_abort_keyword_wrapper(self):
+        wrapped = ct._abort_on_keyword(lambda prompt="": "ABORT")
+        with self.assertRaises(ct._AbortRun):
+            wrapped("x? ")
+        wrapped2 = ct._abort_on_keyword(lambda prompt="": "  abort  ")  # case/space-insensitive
+        with self.assertRaises(ct._AbortRun):
+            wrapped2("x? ")
+        # non-abort input passes through untouched
+        self.assertEqual(ct._abort_on_keyword(lambda prompt="": "sp")("?"), "sp")
+
+    def test_auto_abort_when_all_paths_ended(self):
+        # two candidates, both with no turns left -> nothing to observe -> abort (None), no input
+        cands = [{"seed": 1, "delay": 700, "delay_delta": 0, "sec_delta": 0,
+                  "time": dt.datetime(2025, 7, 24, 14, 49), "path": [], "path_str": ""},
+                 {"seed": 2, "delay": 701, "delay_delta": 1, "sec_delta": 0,
+                  "time": dt.datetime(2025, 7, 24, 14, 49), "path": [], "path_str": ""}]
+        def _boom(prompt=""):
+            raise AssertionError("should not prompt when all paths have ended")
+        orig = builtins.input
+        builtins.input = _boom
+        try:
+            result = ct.narrow_candidates(cands, magikarp_level=5, opposite_gender=False)
+        finally:
+            builtins.input = orig
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
