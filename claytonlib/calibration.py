@@ -17,7 +17,7 @@ See notes/refined_chart.md for the model derivation.
 """
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import NamedTuple
 
 
@@ -97,6 +97,19 @@ class CalibrationModel:
     # 0 = "the RTC second is exactly M ms from the initial seed"; fit from data as it's gathered.
     # A Safari-Zone-entry offset (its extra loading) would add on top of this and is future work.
     rtc_offset_seconds: float = 0.0
+    # Spread of the battle RTC second (σ_S): the second isn't deterministic -- the sub-second phase
+    # at the load press and the timer-vs-DS misalignment (δ0) wander it, mostly INDEPENDENTLY of the
+    # frame (see notes/seed_hitting_process.md).  Used to marginalize capture over the second
+    # distribution.  0 = deterministic (commit to round(M/1000 + rtc_offset_seconds), the old behavior).
+    rtc_offset_std: float = 0.0
+    # Safari load-path offset (frames): safari-compass runs land a fixed Δα off the metronome
+    # fit's intercept -- the extra Safari-Zone-entry loading screen (abf.10).  It is fit holding
+    # the metronome slope (beta) and applied ONLY when a caller asks for the safari path
+    # (frame(..., safari=True) / solve_frame(..., safari=True)); the metronome alpha/beta are
+    # untouched, so the metronome/chart path is unchanged.  None = not fit yet.
+    safari_offset: float | None = None
+    safari_offset_n: int = 0          # safari runs behind the offset
+    safari_offset_std: float = 0.0    # spread of the per-run residuals (frames)
     # metadata (not used in the math)
     label: str = ""
     n_runs: int = 0
@@ -126,6 +139,9 @@ class CalibrationModel:
         low16 of the identified initial seed (key_seed & 0xFFFF) -- which carries the year, so
         the result is the actual seed frame the canon is keyed by, in any year.  For a legacy
         Fb model mean(M) is already that frame, so base_low16 is ignored (back-compat).
+
+        To score the safari loading path, hand the scorer ``with_safari_offset()`` rather than
+        threading a flag here -- that model's mean already includes the offset.
         """
         return self.mean(M) + (base_low16 if self.target == "dF" else 0)
 
@@ -135,6 +151,24 @@ class CalibrationModel:
         Inverse of frame(): for a dF model it solves dF = target_frame - base_low16; for a
         legacy Fb model it solves on target_frame directly (base_low16 ignored)."""
         return self.solve(target_frame - (base_low16 if self.target == "dF" else 0))
+
+    def with_safari_offset(self) -> "CalibrationModel":
+        """A copy with the safari load-path offset folded into the mean, or self if none is set.
+
+        The offset is baked into the intercept (``alpha`` for a line, the constant ``coeffs[0]``
+        for a quad) and ``safari_offset`` is cleared, so the mean now IS the safari-path frame at
+        every M.  This lets the existing chart scorer -- which calls ``frame``/``solve_frame`` --
+        score the safari path just by being handed this model, with no per-call flag threaded
+        through its internals (ctd.11).
+        """
+        if self.safari_offset is None:
+            return self
+        if self.kind == "quad":
+            coeffs = list(self.coeffs)
+            if coeffs:
+                coeffs[0] += self.safari_offset
+            return replace(self, coeffs=tuple(coeffs), safari_offset=None)
+        return replace(self, alpha=self.alpha + self.safari_offset, safari_offset=None)
 
     def solve(self, target_fb: float) -> float:
         """Commanded countdown M that centers the landing on target_fb (in mean()'s units)."""
@@ -198,6 +232,31 @@ class CalibrationModel:
         """
         return round(M / 1000.0 + self.rtc_offset_seconds)
 
+    def second_distribution(self, M: float, k_sigma: float = 3.0,
+                            min_prob: float = 1e-3) -> list[tuple[int, float]]:
+        """Distribution over the battle RTC second for countdown M, as [(second, prob), ...].
+
+        The second is S = round(R) for real elapsed R ~ N(μ, σ_S), μ = M/1000 + rtc_offset_seconds,
+        σ_S = rtc_offset_std -- so P(S=s) = Φ((s+0.5−μ)/σ_S) − Φ((s−0.5−μ)/σ_S).  Covers round(μ)
+        ± ceil(k_sigma·σ_S), drops seconds below `min_prob`, renormalizes, and returns them sorted
+        by probability descending (so [0] is the modal second).  When σ_S = 0 this is exactly the
+        old point estimate [(round(μ), 1.0)] -- i.e. the whole feature is opt-in via a fitted σ_S.
+        """
+        mu = M / 1000.0 + self.rtc_offset_seconds
+        sigma = self.rtc_offset_std
+        if sigma <= 0:
+            return [(round(mu), 1.0)]
+        center = round(mu)
+        span = max(1, int(math.ceil(k_sigma * sigma)))
+        raw = [(s, _norm_cdf((s + 0.5 - mu) / sigma) - _norm_cdf((s - 0.5 - mu) / sigma))
+               for s in range(center - span, center + span + 1)]
+        tot = sum(p for _, p in raw) or 1.0
+        kept = [(s, p / tot) for s, p in raw if p / tot >= min_prob]
+        tot2 = sum(p for _, p in kept) or 1.0
+        dist = [(s, p / tot2) for s, p in kept]
+        dist.sort(key=lambda sp: -sp[1])
+        return dist
+
     # -- convenience: prediction / hit probability -------------------------
     def predict(self, M: float, k: float = 2.0) -> dict:
         """Expected F_b with a +/-(band + k*jitter) range at M."""
@@ -246,6 +305,13 @@ class CalibrationModel:
     def from_dict(cls, d: dict) -> "CalibrationModel":
         d = dict(d)
         d["coeffs"] = tuple(d.get("coeffs", ()))
+        # Defensive: a null in the artifact (e.g. an rtc_offset_std written before it was fit)
+        # would otherwise flow into `sigma <= 0` comparisons and raise -- coerce to 0.0 (which
+        # means "deterministic", the safe default) instead.
+        if d.get("rtc_offset_std") is None:
+            d["rtc_offset_std"] = 0.0
+        if d.get("rtc_offset_seconds") is None:
+            d["rtc_offset_seconds"] = 0.0
         return cls(**d)
 
     def save(self, path: str) -> None:

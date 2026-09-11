@@ -77,6 +77,22 @@ class TestRankTargets(unittest.TestCase):
         # sorted by p descending
         self.assertTrue(all(a["p"] >= b["p"] for a, b in zip(ranked, ranked[1:])))
 
+    def test_setup_max_bound_M_not_battle_second(self):
+        # setup/max bound the countdown M (seconds); with a real rtc_offset the battle second is
+        # M/1000+offset, so no target M may dip below setup, and battle seconds run above max.
+        model = CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_c=None,
+                                 jitter_rms=8.0, rtc_offset_seconds=5.0)  # 5 s encounter lead
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        cmap = CanonMap({})
+        setup, maxt = 180, 200
+        ranked = rank_targets(cmap, model, t0, 1000, setup, maxt, step=50)
+        self.assertTrue(ranked)
+        Ms = [r["M"] for r in ranked]
+        self.assertGreaterEqual(min(Ms), setup * 1000)      # never below the setup floor
+        self.assertLessEqual(max(Ms), maxt * 1000)
+        # battle seconds are M/1000 + 5, so they exceed max (185..205), not clipped to [setup,max]
+        self.assertTrue(all(r["second"] >= setup + 5 for r in ranked))
+
     def test_no_capture_anywhere_all_zero(self):
         model = CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_rms=8.0)
         t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
@@ -84,6 +100,56 @@ class TestRankTargets(unittest.TestCase):
         ranked = rank_targets(cmap, model, t0, 1000, 5, 15, step=2)
         self.assertTrue(ranked)
         self.assertTrue(all(r["p"] == 0.0 for r in ranked))
+
+
+class TestSecondMarginalization(unittest.TestCase):
+    """Capture is marginalized over the RTC-second distribution (σ_S), same frame center."""
+
+    def _model(self, sigma_s):
+        # Fb model so frame(M)=0.06*M ignores base; μ = M/1000 (rtc_offset 0).
+        return CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_c=None,
+                                jitter_rms=8.0, rtc_offset_seconds=0.0, rtc_offset_std=sigma_s)
+
+    def test_sigma_zero_is_single_second(self):
+        from claytonlib.chart.scorer import marginal_capture
+        model = self._model(0.0)
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        mdmsh20 = mdmsh_of(t0 + dt.timedelta(seconds=20))
+        cmap = CanonMap({mdmsh20: [_all_set(1000, 1400)]})
+        mc = marginal_capture(cmap, model, t0, 20000, 1000, k=3.5)  # μ=20.0
+        self.assertEqual(len(mc["breakdown"]), 1)      # deterministic single second
+        self.assertGreater(mc["p"], 0.99)
+
+    def test_split_second_is_penalised(self):
+        from claytonlib.chart.scorer import marginal_capture
+        model = self._model(0.25)  # μ=20.0 concentrates ~95%; μ=20.5 splits ~48/48
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        # only second 20's mdmsh is captured; second 21's is a different (uncaptured) mdmsh
+        mdmsh20 = mdmsh_of(t0 + dt.timedelta(seconds=20))
+        cmap = CanonMap({mdmsh20: [_all_set(1000, 1400)]})
+        clean = marginal_capture(cmap, model, t0, 20000, 1000, k=3.5)  # μ=20.0 (concentrated)
+        split = marginal_capture(cmap, model, t0, 20500, 1000, k=3.5)  # μ=20.5 (split w/ s=21)
+        self.assertGreater(clean["p"], 0.9)
+        self.assertTrue(0.4 < split["p"] < 0.65)       # ~half its mass leaks to the uncaptured second
+        self.assertLess(split["p"], clean["p"])        # the split M is penalised
+        self.assertGreaterEqual(len(split["breakdown"]), 2)  # multiple seconds shown
+        # same frame center at every second (not recentered per second)
+        self.assertEqual({b["F"] for b in split["breakdown"]}, {model.frame(20500, 1000)})
+
+    def test_rank_boot_marginal_orders_by_marginal_p(self):
+        from claytonlib.chart.scorer import rank_boot_marginal
+        model = self._model(0.3)
+        s0 = 20
+        F0 = round(model.mean(s0 * 1000))
+        t_a = dt.datetime(2000, 6, 1, 14, 0, 0)
+        t_b = dt.datetime(2000, 6, 2, 14, 30, 15)
+        mdmsh_a = mdmsh_of(t_a + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh_a: [_all_set(F0 - 60, F0 + 60)]})
+        rows = rank_boot_marginal(cmap, model, [t_a, t_b], 1000, 5, 40, step=1, k=3.0)
+        self.assertTrue(rows)
+        self.assertTrue(all(a["p"] >= b["p"] for a, b in zip(rows, rows[1:])))  # sorted desc
+        self.assertEqual(len(rows), 2)                 # one row per boot phase
+        self.assertEqual(rows[0]["initial_time"], t_a)  # the boot whose second-20 mdmsh is captured
 
 
 class TestRankOverTimes(unittest.TestCase):

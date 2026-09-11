@@ -165,6 +165,28 @@ class TestExpeditionLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             exp.adjust(fps_model="cubic")
 
+    def test_select_target_reuse_last_starting_time(self):
+        # [l] reuses the persisted initial_time instead of retyping the datetime.
+        from claytonlib.expedition import Expedition
+        exp = Expedition("reuse-test")
+        exp.key_seed = 0xF70E02C1
+        boot = "2000-07-24T14:45:55"
+        row = {"initial_time": boot, "M": 327919, "target_delay": 20063,
+               "second": 333, "p": 0.65, "rank": 1}
+        payload = {"top": [row], "per_initial_time": [row], "initial_time": None}
+        d = tempfile.mkdtemp()
+        rp = os.path.join(d, "report.json")
+        json.dump(payload, open(rp, "w"))
+        exp._report_path = lambda: rp
+        exp.save = lambda: None
+        exp.calibration_model = lambda: None
+        exp.initial_time = boot                       # last-used time
+        with _answers(["l"]):
+            chosen = exp.select_target()
+        self.assertIsNotNone(chosen)
+        self.assertEqual(exp.initial_time, boot)      # reused, not cleared/retyped
+        self.assertEqual(exp.target_timer_delay, 327919)
+
     def test_fps_model_round_trips_and_selects_model(self):
         from unittest.mock import patch
         from claytonlib.expedition import Expedition

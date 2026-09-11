@@ -804,7 +804,8 @@ def _offset_phrase(delta):
     return f"{delta:+d}s {'late' if delta > 0 else 'early'} (δ={delta:+d})"
 
 
-def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH):
+def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
+                    a_seed=None):
     """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
 
     Parameters
@@ -814,6 +815,10 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH)
         that matched the observed path.  The identified seed is recorded ONLY when exactly one
         matched; otherwise the ambiguous candidate set is still saved (as matched_seeds) but
         `seed` is null, so it can be excluded from any fit that needs a confident seed.
+    a_seed:
+        The Section-A initial-seed row (from identify_seed), if known.  Stored as `a_seed` so
+        the safari offset fit has F_a (= a_seed low16, carries the year) to reconstruct the dF
+        prediction -- exactly like the metronome run's a_seed.  Optional (older runs omit it).
     inputs:
         Optional CompassSafariInput -- when given and the seed is unique, its delay (the F_b
         analog) is recovered from the candidate window for the later safari-vs-metronome
@@ -872,6 +877,8 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH)
         "frame": cal["frame"] if cal else None,
         "second": cal["second"] if cal else None,
         "second_offset": cal["delta"] if cal else None,
+        # Section-A initial seed (for F_a in the safari offset fit); null on older runs.
+        "a_seed": _seed_summary(a_seed),
         "notes": notes,
     }
 
@@ -1194,6 +1201,10 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
     # which compass-safari's delta axis absorbs.  A Safari-Zone-entry lead would add on top.
     rtc_offs = [m["dt"] - m["M"] / 1000.0 for m in runs if m.get("dt") is not None]
     rtc_offset_seconds = statistics.mean(rtc_offs) if rtc_offs else 0.0
+    # Spread of that offset = σ_S, the battle-second wander (used to marginalize capture over the
+    # RTC second).  NOTE: this cross-run spread likely OVERstates the within-session σ_S (it also
+    # absorbs session-to-session δ0 drift); refine as sub-second data is gathered.
+    rtc_offset_std = statistics.pstdev(rtc_offs) if len(rtc_offs) > 1 else 0.0
 
     # Within-run rate: pooled total frames / total seconds (its +/-1 s error averages down).
     within = None
@@ -1235,6 +1246,7 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
         cm.n_runs = len(all_runs)
         cm.m_lo, cm.m_hi = (min(Ms), max(Ms)) if Ms else (None, None)
         cm.rtc_offset_seconds = rtc_offset_seconds
+        cm.rtc_offset_std = rtc_offset_std     # σ_S: battle-second spread (marginalization)
         cm.target = target          # "Fb" (mean=F_b) or "dF" (mean=dF; frame()=dF+F_a)
         models[key] = {"label": label, "kind": kind, "fit": fit, "target": target,
                        "f_of_M": fit["f_of_M"], "dfdM": fit.get("dfdM"),
@@ -1350,6 +1362,7 @@ def _model_fields(cm):
         "beta": cm.beta, "alpha": cm.alpha, "coeffs": tuple(cm.coeffs),
         "jitter_c": cm.jitter_c, "jitter_rms": cm.jitter_rms,
         "rtc_offset_seconds": cm.rtc_offset_seconds,
+        "rtc_offset_std": cm.rtc_offset_std,
         "m_lo": cm.m_lo, "m_hi": cm.m_hi,
     }
 
@@ -1366,7 +1379,7 @@ def print_model_change(old, new):
     """Print an old -> new parameter table between two CalibrationModels (old may be None)."""
     of, nf = _model_fields(old), _model_fields(new)
     keys = ["kind", "n_runs", "n_fit", "beta", "alpha", "coeffs",
-            "jitter_c", "jitter_rms", "rtc_offset_seconds", "m_lo", "m_hi"]
+            "jitter_c", "jitter_rms", "rtc_offset_seconds", "rtc_offset_std", "m_lo", "m_hi"]
     if old is None:
         print("No existing model artifact -- this would CREATE one:")
     else:
@@ -1417,6 +1430,94 @@ def update_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL
     CalibrationModel.save_set(new, out_path, default="linear")
     print(f"Updated calibration modelset ({sorted(new)}) -> {out_path}")
     return new
+
+
+def _safari_run_point(rec, fresh_only=True):
+    """(M, Fa, Fb) for a safari run, or None if it can't feed the offset fit.
+
+    Needs a confident single identified seed (trusted battle frame), the Section-A a_seed
+    (for F_a), and a commanded countdown M.  With `fresh_only`, battle-contaminated runs
+    (prior_battles > 0) are skipped, matching the metronome fit's provenance screen.
+    """
+    if rec.get("seed") is None:                       # ambiguous / unidentified
+        return None
+    if fresh_only and rec.get("prior_battles", 0) > 0:
+        return None
+    a = rec.get("a_seed")
+    if not a or a.get("delay") is None:               # need F_a
+        return None
+    Fb = rec.get("frame")
+    if Fb is None:
+        Fb = rec.get("delay")
+    if Fb is None:
+        return None
+    if rec.get("target_timer_delay") is None or rec.get("target_timer_calibration") is None:
+        return None
+    return rec["target_timer_delay"] + rec["target_timer_calibration"], a["delay"], Fb
+
+
+def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True):
+    """Fit the safari load-path offset Δα for `model`, holding its slope/shape fixed.
+
+    Δα = median over usable safari runs of (actual battle frame − model.frame(M, F_a)): how
+    many frames the extra Safari-Zone loading screen lands off this (metronome-fit) model
+    (abf.10).  Median so one mis-identified run can't drag it.  Returns
+    ``{"offset", "n", "std", "residuals"}`` or None if there are no usable runs.
+    """
+    pts = [p for p in (_safari_run_point(r, fresh_only)
+                       for r in load_safari_runs(runs_path)) if p]
+    if not pts:
+        return None
+    resid = [Fb - model.frame(M, Fa) for (M, Fa, Fb) in pts]   # metronome-path prediction
+    return {"offset": statistics.median(resid), "n": len(resid),
+            "std": statistics.pstdev(resid) if len(resid) > 1 else 0.0,
+            "residuals": resid}
+
+
+def update_safari_offset(model_path=DEFAULT_MODEL_PATH, runs_path=SAFARI_RUNS_PATH,
+                         fresh_only=True, assume_yes=False):
+    """Section E (safari): fit and write the safari offset into the deployed modelset on confirm.
+
+    Holds each model's metronome alpha/beta and sets only ``safari_offset`` (+ n/std), so the
+    metronome/chart path is untouched; a report opts into it via ``use_safari_offset``.  Unlike
+    the metronome Section E this does NOT change the frame→capture canon, so no chart REBUILD is
+    needed -- just re-run the report.  Returns the updated {key: CalibrationModel}, or None.
+    """
+    install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
+    models = CalibrationModel.load_set(model_path)
+    if not models:
+        print(f"No deployed model at {model_path}; run the metronome Section E first.")
+        return None
+    fits = {k: fit_safari_offset(m, runs_path, fresh_only) for k, m in models.items()}
+    if not any(fits.values()):
+        print(f"No usable safari runs in {runs_path} "
+              f"(need a_seed + a confident single seed).")
+        return None
+
+    print()
+    for k in sorted(models):
+        old, fit = models[k].safari_offset, fits[k]
+        old_s = f"{old:+.2f}" if old is not None else "None"
+        if fit is None:
+            print(f"[{k}] no usable runs -> unchanged (safari_offset={old_s})")
+        else:
+            print(f"[{k}] safari_offset {old_s} -> {fit['offset']:+.2f} frames  "
+                  f"(n={fit['n']}, std={fit['std']:.2f})")
+    print("\n*** This shifts only the safari load path (frame(..., safari=True)); the "
+          "metronome/chart path is unchanged, and no chart rebuild is needed. ***")
+    if not (assume_yes or _prompt_yes_no("Write the safari offset? (y/n): ")):
+        print("Safari offset not updated.")
+        return None
+
+    for k, m in models.items():
+        fit = fits[k]
+        if fit is not None:
+            m.safari_offset = fit["offset"]
+            m.safari_offset_n = fit["n"]
+            m.safari_offset_std = fit["std"]
+    CalibrationModel.save_set(models, model_path, default="linear")
+    print(f"Wrote safari offset into {sorted(models)} -> {model_path}")
+    return models
 
 
 def print_calibration_report(model):

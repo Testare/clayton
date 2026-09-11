@@ -751,9 +751,8 @@ class Expedition:
         precompute_chart() (the map) and a calibration model (see calibration_model()).
         """
         self._log("=== chart_report ===")
-        from claytonlib.chart import (CanonStore, rank_over_times, best_per_scenario,
-                                      rank_boot_from_scored, print_pairs_rows,
-                                      print_target_report)
+        from claytonlib.chart import (CanonStore, rank_boot_marginal, best_per_scenario,
+                                      print_pairs_rows, print_target_report)
         from claytonlib.times import get_times
 
         store = CanonStore(self._canon_store_path())
@@ -773,11 +772,12 @@ class Expedition:
         setup, maxt = self.setup_delay_seconds, self.max_target_seconds
 
         if initial_time is None:
-            # One over-times sweep feeds both the overall pairs and the per-starting-time bests.
-            scored = rank_over_times(cmap, model, times, base_delay, setup, maxt,
-                                     step=step, k=k, include_calibration=include_calibration)
-            overall = best_per_scenario(scored)
-            per_time = rank_boot_from_scored(scored, times, setup, maxt)
+            # One marginalized per-boot sweep feeds both the overall pairs and the per-time bests.
+            # Each boot's score is the SECOND-marginalized capture prob (Σ_s P(S=s|M)·cp), so an M
+            # whose second is split across seeds is penalised (notes/seed_hitting_process.md).
+            per_time = rank_boot_marginal(cmap, model, times, base_delay, setup, maxt,
+                                          step=step, k=k, include_calibration=include_calibration)
+            overall = best_per_scenario(per_time)
             print_pairs_rows(overall[:top], k, include_calibration,
                              title=f"Best (boot time, M) pairs  [top {top} of {len(overall)}]")
             self._log(f"best target for each of {len(per_time)} starting times also saved")
@@ -819,9 +819,19 @@ class Expedition:
             self._log("Saved findings are empty. Re-run chart_report().")
             return None
         default_boot = payload.get("initial_time")
+        # The last starting time we used (persisted on the expedition), offered as a shortcut so
+        # you don't have to retype it -- only when it's actually one of this report's candidates.
+        last_boot = getattr(self, "initial_time", None)
+        last_dt = _parse(last_boot) if last_boot else None
+        reuse_ok = bool(per_time and last_dt and any(
+            r.get("initial_time") and _phase(r["initial_time"]) == (
+                last_dt.month, last_dt.day, last_dt.hour, last_dt.minute, last_dt.second)
+            for r in per_time))
 
         while True:
             opts = "[t] top ranking" + ("   [s] specific starting time" if per_time else "")
+            if reuse_ok:
+                opts += f"   [l] reuse last ({last_dt:%m-%d %H:%M:%S})"
             try:
                 raw = input(f"\nSelect by  {opts}  (blank to cancel): ").strip().lower()
             except EOFError:
@@ -835,7 +845,10 @@ class Expedition:
             if raw in ("s", "specific", "time") and per_time:
                 chosen = self._select_by_time(per_time)
                 break
-            print("  enter t or s.")
+            if raw in ("l", "last") and reuse_ok:
+                chosen = self._row_for_time(per_time, last_dt)
+                break
+            print("  enter " + ("t, s" + (", or l" if reuse_ok else "") if per_time else "t") + ".")
 
         if chosen is None:
             self._log("No target selected.")
@@ -909,6 +922,10 @@ class Expedition:
         if t is None:
             self._log("Couldn't parse that time.")
             return None
+        return self._row_for_time(per_time, t)
+
+    def _row_for_time(self, per_time, t):
+        """The per-time row whose boot phase matches datetime `t` (year ignored), or None."""
         key = (t.month, t.day, t.hour, t.minute, t.second)
         match = next((r for r in per_time
                       if r.get("initial_time") and _phase(r["initial_time"]) == key), None)
@@ -1616,15 +1633,16 @@ class CheckHelper:
 
     def chart_check_target_landing(self, k: float = 3.5, step: int = 1,
                                    include_calibration: bool = False, verify: bool = False):
-        """Show every frame in the selected target's landing window, its seed, hit, and weight.
+        """Break down the selected target's landing probability, one RTC second at a time.
 
-        The new-process analogue of chart_check_target_window: for the target chosen by
-        select_target (initial_time + timer M), it reconstructs the sigma(M) landing kernel and
-        lists each frame in [F-k*sigma, F+k*sigma] with its seed, whether it captures (from the
-        canonical map), and the frame's Gaussian weight.  P(capture) is the weighted fraction of
-        capturing frames, printed with the running total so you can see it build up (no rounding
-        shortcuts).  `verify=True` re-runs evaluate_seed on every frame to confirm the stored
-        map agrees with a live simulation.  `step` prints every step-th row (P is still exact).
+        The battle RTC second isn't certain (σ_S wander), and each candidate second is a DIFFERENT
+        mdmsh -- a different seed set -- so the frames must NOT be pooled across seconds.  This
+        prints a SEPARATE frame breakdown per candidate second, ordered by P(S=s): the most likely
+        second first (full landing window), then the next, then a third if it carries meaningful
+        mass, each culled to a tighter window since it matters less.  The frame center is the SAME
+        at every second (a second miss is a phase/δ0 effect that doesn't move the frame).  The
+        bottom line is the MARGINAL P(capture) = Σ_s P(S=s)·cp_s.  `verify=True` re-evaluates every
+        shown seed live; `step` prints every step-th frame row (the cp per second is still exact).
         """
         import math
         exp = self._exp
@@ -1639,8 +1657,7 @@ class CheckHelper:
             raise RuntimeError(f"check: expedition fields not set: {', '.join(missing)}")
 
         from claytonlib.chart import CanonStore, seed_for_mdmsh, evaluate_seed
-        from claytonlib.chart.canon import mdmsh_of
-        from claytonlib.chart.scorer import capture_probability
+        from claytonlib.chart.scorer import marginal_capture
         from claytonlib.times import get_times
         from claytonlib.safari import safari_pokemon_by_name
 
@@ -1659,69 +1676,86 @@ class CheckHelper:
         F = model.frame(M, base_delay)  # actual battle-seed low16 (dF+F_a; year-correct)
         sigma = (model.total_sigma(M, include_calibration=True) if include_calibration
                  else model.jitter_sigma(M))
-        # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
-        s = model.battle_second_offset(M)
-        mdmsh = mdmsh_of(it + dt.timedelta(seconds=s))
-        lo, hi = math.floor(F - k * sigma), math.ceil(F + k * sigma)
+        mc = marginal_capture(cmap, model, it, M, base_delay, k=k,
+                              include_calibration=include_calibration)
+        if mc is None:
+            raise RuntimeError("empty second distribution for this target")
+        breakdown = mc["breakdown"]  # per second, sorted by P(S=s) desc
 
         band = "jitter+calib" if include_calibration else "jitter"
         print(f"\nchart_check_target_landing  ({band} kernel, k={k})")
         print(f"boot={exp.initial_time}  timer M={M} ms  ->  mean F_b={F:.1f} (target_delay="
               f"{exp.target_delay})  sigma={sigma:.1f}")
-        battle = it + dt.timedelta(seconds=s)
-        print(f"target second={s}  mdmsh(m,h)={mdmsh}  window frames [{lo}, {hi}] ({hi-lo+1})")
-        print(f"predicted battle time (m/d h:m:s): {battle:%m-%d %H:%M:%S}")
+        dist_str = "  ".join(f"{b['second']}={b['p_second'] * 100:.0f}%" for b in breakdown)
+        print(f"RTC-second distribution (σ_S={model.rtc_offset_std:.2f}s):  {dist_str}")
+
         if verify:
             pokemon = safari_pokemon_by_name(exp.pokemon_name)
             strategy = _resolve_strategy(exp.strategy_name)
             criteria = _resolve_criteria(exp.criteria_name)
-            print(f"verify=True: re-evaluating all {hi-lo+1} seeds live (this is slower)")
 
         head = f"{'frame':>7}  {'Δ':>5}  {'seed':>10}  {'hit':>3}  {'weight':>8}  {'w%':>8}  {'cumP%':>9}"
         if verify:
             head += f"  {'live':>4}"
-        print(head)
-        print("-" * len(head))
 
+        # Show the seconds carrying meaningful mass (>=2%), most-likely first, at most 3.
+        shown = [b for b in breakdown if b["p_second"] >= 0.02][:3] or breakdown[:1]
+        p_top = shown[0]["p_second"]
         two_s2 = 2.0 * sigma * sigma
         center_frame = round(F)
-        # Pass 1: evaluate every frame (weight, map hit, optional live re-eval).
-        data = []
-        for frame in range(lo, hi + 1):
-            w = math.exp(-((frame - F) ** 2) / two_s2)
-            cap = cmap.captured(mdmsh, frame)
-            live = (evaluate_seed(seed_for_mdmsh(mdmsh, frame), pokemon, strategy, criteria)
-                    if verify else None)
-            data.append((frame, w, cap, live))
-        den = sum(w for _, w, _, _ in data) or 1.0
-        num = sum(w for _, w, cap, _ in data if cap)
-        ncap = sum(1 for _, _, cap, _ in data if cap)
-        mismatches = sum(1 for _, _, cap, live in data if verify and live != cap)
+        mismatches = 0
 
-        # Pass 2: print with exact w% (of total) and a true cumulative P building to the final.
-        run_num = 0.0
-        for frame, w, cap, live in data:
-            if cap:
-                run_num += w
-            if (frame - lo) % step == 0 or frame == center_frame:
-                seedv = seed_for_mdmsh(mdmsh, frame)
-                mark = "  ←" if frame == center_frame else ""
-                line = (f"{frame:>7}  {frame - center_frame:>+5}  0x{seedv:08X}  "
-                        f"{'✓' if cap else '✗':>3}  {w:>8.4f}  {w / den * 100:>7.3f}%  "
-                        f"{run_num / den * 100:>8.3f}%")
-                if verify:
-                    flag = ('✓' if live else '✗') if live == cap else f"!{'✓' if live else '✗'}"
-                    line += f"  {flag:>4}"
-                print(line + mark)
+        for idx, b in enumerate(shown):
+            s, ps, mdmsh_s, cp_s = b["second"], b["p_second"], b["mdmsh"], b["cp"]
+            full_lo, full_hi = b["lo"], b["hi"]
+            # Less-likely seconds matter less -> cull their far frames (tighter display window).
+            k_disp = k if idx == 0 else max(1.0, k * ps / p_top)
+            disp_lo = max(full_lo, math.floor(F - k_disp * sigma))
+            disp_hi = min(full_hi, math.ceil(F + k_disp * sigma))
+            battle_s = it + dt.timedelta(seconds=s)
+            print(f"\n=== second {s}  P(S={s})={ps * 100:.1f}%   mdmsh(m,h)={mdmsh_s}   "
+                  f"battle {battle_s:%m-%d %H:%M:%S}")
+            print(f"    cp(this second) = {cp_s * 100:.2f}%   ->  contributes P·cp = "
+                  f"{ps * cp_s * 100:.2f}% to the total")
+            if disp_lo > full_lo or disp_hi < full_hi:
+                print(f"    (showing frames [{disp_lo}, {disp_hi}] of [{full_lo}, {full_hi}]; "
+                      f"far tails culled)")
+            print("    " + head)
+            print("    " + "-" * len(head))
+            # den over the FULL window so w%/cumP are exact even when the display is culled.
+            data = []
+            for frame in range(full_lo, full_hi + 1):
+                w = math.exp(-((frame - F) ** 2) / two_s2)
+                cap = cmap.captured(mdmsh_s, frame)
+                live = (evaluate_seed(seed_for_mdmsh(mdmsh_s, frame), pokemon, strategy, criteria)
+                        if verify else None)
+                if verify and live != cap:
+                    mismatches += 1
+                data.append((frame, w, cap, live))
+            den = sum(w for _, w, _, _ in data) or 1.0
+            run_num = 0.0
+            for frame, w, cap, live in data:
+                if cap:
+                    run_num += w
+                if disp_lo <= frame <= disp_hi and ((frame - disp_lo) % step == 0
+                                                    or frame == center_frame):
+                    seedv = seed_for_mdmsh(mdmsh_s, frame)
+                    mark = "  ←" if frame == center_frame else ""
+                    line = (f"{frame:>7}  {frame - center_frame:>+5}  0x{seedv:08X}  "
+                            f"{'✓' if cap else '✗':>3}  {w:>8.4f}  {w / den * 100:>7.3f}%  "
+                            f"{run_num / den * 100:>8.3f}%")
+                    if verify:
+                        flag = ('✓' if live else '✗') if live == cap else f"!{'✓' if live else '✗'}"
+                        line += f"  {flag:>4}"
+                    print("    " + line + mark)
 
-        p = num / den
-        print("-" * len(head))
-        print(f"frames checked: {hi - lo + 1}   captured: {ncap} ({100 * ncap / (hi - lo + 1):.0f}%)")
-        print(f"P(capture) = weighted captures / total weight = {num:.3f} / {den:.3f} = {p * 100:.3f}%")
-        cp = capture_probability(cmap, model, mdmsh, M, k=k, include_calibration=include_calibration)
-        print(f"scorer.capture_probability = {cp['p'] * 100:.3f}%   (agree: {abs(cp['p'] - p) < 1e-9})")
+        print("\n" + "=" * (len(head) + 4))
+        contrib = "  +  ".join(f"{b['p_second'] * 100:.0f}%·{b['cp'] * 100:.1f}%" for b in shown)
+        print(f"MARGINAL P(capture) = Σ P(S=s)·cp_s  ({contrib})  =  {mc['p'] * 100:.3f}%")
         if verify:
-            print(f"map vs live re-evaluation: {mismatches} mismatch(es) out of {hi - lo + 1} "
-                  f"({'MAP MATCHES LIVE SIMULATION' if mismatches == 0 else 'DISCREPANCY!'})")
-        return {"p": p, "n_frames": hi - lo + 1, "n_captured": ncap,
+            print(f"map vs live: {mismatches} mismatch(es) across shown seconds "
+                  f"({'MAP MATCHES LIVE' if mismatches == 0 else 'DISCREPANCY!'})")
+        return {"p": mc["p"],
+                "seconds": [{"second": b["second"], "p_second": b["p_second"], "cp": b["cp"]}
+                            for b in breakdown],
                 "mismatches": mismatches if verify else None}

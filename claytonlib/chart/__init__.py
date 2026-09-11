@@ -48,8 +48,10 @@ from claytonlib.chart.canon import (
 )
 from claytonlib.chart.scorer import (
     capture_probability,
+    marginal_capture,
     rank_targets,
     rank_over_times,
+    rank_boot_marginal,
     rank_by_boot_time,
     rank_boot_from_scored,
     best_per_scenario,

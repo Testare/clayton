@@ -91,12 +91,13 @@ def needed_ranges(base_delay: int, times, setup_delay_seconds: int, max_target_s
                   model, policy: BandPolicy = BandPolicy()) -> tuple[dict, dict]:
     """Which (mdmsh, frame) seeds the chart needs, as merged frame ranges per mdmsh.
 
-    For each candidate time t and RTC second s in [setup, max_target], the datetime t+s has
-    some mdmsh, and the battle frame for the commanded M that lands on second s is placed by
-    the CALIBRATION: M(s) ≈ (s − rtc_offset_seconds)·1000 (real time), frame ≈ model.mean(M(s)).
-    The band per second spans that second's M-range (±0.5 s of M) widened by `policy`, so it
-    covers the jitter.  Crucially the second s (which sets mdmsh) is REAL time, not the frame's
-    physical delay band -- deriving the second from the frame is what mis-placed the mdms.
+    setup/max bound the commanded countdown M ∈ [setup, max] SECONDS (the t2→t3 prep duration),
+    NOT the battle RTC second.  The battle second for a countdown M is derived: s ≈ M/1000 +
+    rtc_offset_seconds, spread by ±k·σ_S (the second wanders independently of the frame -- see
+    notes/seed_hitting_process.md).  So we walk each REACHABLE battle second s, gather the M's
+    whose second-distribution includes s (clipped to the [setup, max] M-range), and band the frame
+    over those M's (via model.frame, dF(M)+F_a) widened by `policy` for the jitter.  The frame
+    center is the same across seconds, so a second miss doesn't move the frame band.
 
     Candidate times are first deduped by their (month,day,hour,minute,second) phase (year is
     irrelevant in the chart model), so year-equivalent times aren't re-walked.
@@ -109,31 +110,34 @@ def needed_ranges(base_delay: int, times, setup_delay_seconds: int, max_target_s
     phases = list({(t.month, t.day, t.hour, t.minute, t.second): t
                    for t in (_parse(x) for x in times)}.values())
 
-    # Per-second frame band = [mean(M at s−0.5s) − W, mean(M at s+0.5s) + W]; M-based, so it's
-    # shared across all times.  W absorbs the sigma jitter (policy); the M-range covers the
-    # ~1 s worth of commanded values that round to this RTC second.
-    seconds = range(setup_delay_seconds, max_target_seconds + 1)
-    bands = []
-    for s in seconds:
-        m_lo = max(0.0, (s - 0.5 - model.rtc_offset_seconds) * 1000.0)
-        m_hi = max(0.0, (s + 0.5 - model.rtc_offset_seconds) * 1000.0)
-        # Actual battle-seed low16 = frame(M, base_delay): dF(M)+F_a for a dF model (year baked
-        # into base_delay = key_seed low16), mean(M) for a legacy Fb model.
-        f_lo = model.frame(m_lo, base_delay)
+    # Battle seconds reachable from M ∈ [setup, max]s: s ≈ M/1000 + rtc_offset ± half, where half
+    # is the M-spread (in seconds) that maps to one battle second -- max(0.5 s rounding, k·σ_S).
+    rtc = model.rtc_offset_seconds
+    half = max(0.5, 3.0 * (model.rtc_offset_std or 0.0))
+    s_lo = int(math.floor(setup_delay_seconds + rtc - half))
+    s_hi = int(math.ceil(max_target_seconds + rtc + half))
+    band_by_second = []                       # (second, (lo, hi)) for reachable battle seconds
+    for s in range(max(0, s_lo), s_hi + 1):
+        # M (ms) whose second-distribution includes s, clipped to the searched [setup, max] range.
+        m_lo = max(setup_delay_seconds * 1000.0, (s - rtc - half) * 1000.0)
+        m_hi = min(max_target_seconds * 1000.0, (s - rtc + half) * 1000.0)
+        if m_lo > m_hi:
+            continue                          # this battle second isn't reachable from the M-range
+        f_lo = model.frame(m_lo, base_delay)  # dF(M)+F_a (year baked into base_delay), same center
         f_hi = model.frame(m_hi, base_delay)
         w = policy.half_width((f_lo + f_hi) / 2.0)
-        bands.append((int(math.floor(min(f_lo, f_hi) - w)), int(math.ceil(max(f_lo, f_hi) + w))))
+        band_by_second.append((s, (int(math.floor(min(f_lo, f_hi) - w)),
+                                    int(math.ceil(max(f_lo, f_hi) + w)))))
 
     per: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for tt in phases:
-        for s_idx, s in enumerate(seconds):
-            lo, hi = bands[s_idx]
+        for s, band in band_by_second:
             key = mdmsh_of(tt + _dt.timedelta(seconds=s))
-            per.setdefault(key, []).append((lo, hi))
+            per.setdefault(key, []).append(band)
 
     ranges = {k: _merge_intervals(v) for k, v in per.items()}
     n_seeds = sum(hi - lo + 1 for rs in ranges.values() for lo, hi in rs)
-    naive = len(list(times)) * sum(hi - lo + 1 for lo, hi in bands)
+    naive = len(list(times)) * sum(hi - lo + 1 for _, (lo, hi) in band_by_second)
     stats = {
         "n_candidate_times": len(list(times)),
         "n_phase_classes": len(phases),

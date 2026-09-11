@@ -28,17 +28,15 @@ def _centers(base_delay: int, upto_second: int) -> list[int]:
 
 def _frame_bounds(model, base_delay: int, setup_delay_seconds: int,
                   max_target_seconds: int) -> tuple[int, int]:
-    """The battle-frame range spanning target RTC seconds [setup, max] via the calibration.
+    """The battle-frame range spanning commanded countdowns M ∈ [setup, max] SECONDS.
 
-    A target RTC second s corresponds to a commanded M ≈ (s − rtc_offset_seconds)·1000 (real time),
-    whose battle frame is model.frame(M, base_delay) (= dF(M)+F_a for a dF model, reconstructing
-    the ACTUAL low16; = mean(M) for a legacy Fb model).  So the frame sweep runs between the
-    frames for the two endpoint seconds -- NOT the physical delay_at_second table (that frame↔
-    second lockstep is exactly the conflation this model removes)."""
-    m_lo = (setup_delay_seconds - model.rtc_offset_seconds) * 1000.0
-    m_hi = (max_target_seconds - model.rtc_offset_seconds) * 1000.0
-    f_lo = int(math.floor(model.frame(max(0.0, m_lo), base_delay)))
-    f_hi = int(math.ceil(model.frame(m_hi, base_delay)))
+    setup/max bound the countdown M itself (the t2→t3 prep duration), NOT the derived battle RTC
+    second -- the ~rtc_offset_seconds encounter lead is post-countdown and isn't usable prep time,
+    so M must be ≥ setup.  The battle frame is model.frame(M, base_delay) (= dF(M)+F_a for a dF
+    model; = mean(M) for a legacy Fb model), so the sweep runs between the frames at M=setup·1000
+    and M=max·1000."""
+    f_lo = int(math.floor(model.frame(setup_delay_seconds * 1000.0, base_delay)))
+    f_hi = int(math.ceil(model.frame(max_target_seconds * 1000.0, base_delay)))
     return (f_lo, f_hi) if f_lo <= f_hi else (f_hi, f_lo)
 
 
@@ -67,31 +65,58 @@ def capture_probability(canon_map, model, mdmsh, M, base_delay: int = 0, k: floa
             "lo": lo, "hi": hi, "M": M}
 
 
+def marginal_capture(canon_map, model, initial_time: _dt.datetime, M, base_delay: int,
+                     k: float = 3.5, include_calibration: bool = False) -> dict | None:
+    """Capture probability at countdown M, MARGINALIZED over the RTC-second distribution.
+
+    P(capture|M) = Σ_s P(S=s|M) · capture_probability(mdmsh(initial_time + s), M).  The frame
+    center is the SAME at every second (model.frame(M, base_delay)) -- a second miss is a phase/δ0
+    effect that doesn't move the frame (notes/seed_hitting_process.md), so we do NOT recenter per
+    second.  The battle second is derived from M (M/1000 + rtc_offset ± σ_S), so it is not clipped
+    to the M-range bounds.  Returns {p, F, second (modal), mdmsh (modal), sigma, M, breakdown} or
+    None if the distribution is empty.  With σ_S=0 this reduces to the single modal second.
+    """
+    secs = model.second_distribution(M)
+    if not secs:
+        return None
+    p = 0.0
+    breakdown = []
+    for s, ps in secs:
+        mdmsh = mdmsh_of(initial_time + _dt.timedelta(seconds=s))
+        cp = capture_probability(canon_map, model, mdmsh, M, base_delay, k, include_calibration)
+        p += ps * cp["p"]
+        breakdown.append({"second": s, "p_second": ps, "mdmsh": mdmsh, "cp": cp["p"],
+                          "F": cp["F"], "sigma": cp["sigma"], "lo": cp["lo"], "hi": cp["hi"]})
+    modal_s = secs[0][0]
+    return {"p": p, "F": model.frame(M, base_delay), "second": modal_s,
+            "mdmsh": mdmsh_of(initial_time + _dt.timedelta(seconds=modal_s)),
+            "sigma": model.jitter_sigma(M), "M": M, "breakdown": breakdown}
+
+
 def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,
                  setup_delay_seconds: int, max_target_seconds: int, step: int = 1,
                  k: float = 3.5, include_calibration: bool = False,
                  limit: int | None = None) -> list[dict]:
     """Rank candidate target frames (each with the M that centers on it) by capture prob.
 
-    For each target frame F across the charted range, M = model.solve(F) is the countdown to
-    center there; the frame's RTC second fixes the mdmsh (from initial_time), and the score is
-    capture_probability at that mdmsh.  Returns dicts {M, F, second, mdmsh, p, sigma} sorted
-    by p desc (ties by smaller M).  `step` is the frame granularity of the sweep.
+    For each target frame F across the charted range, M = model.solve_frame(F) is the countdown to
+    center there (kept only when M ∈ [setup, max] SECONDS -- setup/max bound the countdown itself),
+    and the score is the SECOND-MARGINALIZED capture probability (Σ_s P(S=s|M)·cp at that second's
+    mdmsh) -- so an M whose second is split across two seeds is penalised.  Returns dicts
+    {M, F, second (modal), mdmsh (modal), p, sigma} sorted by p desc (ties by smaller M).
     """
     f_lo, f_hi = _frame_bounds(model, base_delay, setup_delay_seconds, max_target_seconds)
+    m_min, m_max = setup_delay_seconds * 1000.0, max_target_seconds * 1000.0
     results = []
     for F_target in range(f_lo, f_hi + 1, step):
         M = model.solve_frame(F_target, base_delay)
-        if M <= 0:
+        if not (m_min <= M <= m_max):
             continue
-        # RTC second from REAL time (M), not the frame -- see model.battle_second_offset.
-        s = model.battle_second_offset(M)
-        if s < setup_delay_seconds or s > max_target_seconds:
+        mc = marginal_capture(canon_map, model, initial_time, M, base_delay, k, include_calibration)
+        if mc is None:
             continue
-        mdmsh = mdmsh_of(initial_time + _dt.timedelta(seconds=s))
-        cp = capture_probability(canon_map, model, mdmsh, M, base_delay, k, include_calibration)
-        results.append({"M": M, "F": F_target, "second": s, "mdmsh": mdmsh,
-                        "p": cp["p"], "sigma": cp["sigma"]})
+        results.append({"M": M, "F": F_target, "second": mc["second"], "mdmsh": mc["mdmsh"],
+                        "p": mc["p"], "sigma": mc["sigma"]})
     results.sort(key=lambda r: (-r["p"], r["M"]))
     return results[:limit] if limit else results
 
@@ -136,6 +161,67 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
                             "initial_time": example, "p": cp["p"], "sigma": cp["sigma"]})
     results.sort(key=lambda r: (-r["p"], r["M"]))
     return results[:limit] if limit else results
+
+
+def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_seconds: int,
+                       max_target_seconds: int, step: int = 1, k: float = 3.5,
+                       include_calibration: bool = False, limit: int | None = None) -> list[dict]:
+    """Best target M for EACH candidate boot time, scored by SECOND-MARGINALIZED capture prob.
+
+    For each boot phase and target frame F, P(capture) = Σ_s P(S=s|M(F)) · cp(mdmsh(boot+s), F),
+    the full second-marginalized probability with the frame center fixed across seconds.  Unlike
+    rank_over_times (which scores one modal second per F and attaches an example boot), this must
+    combine each boot's several seconds, so it works per boot phase.  Returns one row per phase
+    {M, F, second (modal), mdmsh (modal), initial_time, p, sigma}, sorted by p desc.
+
+    cp(F, mdmsh) is memoized and each phase's mdmsh(boot+s) is pretabulated, so the cost stays
+    close to the single-second sweep despite the per-boot marginalization.
+    """
+    parsed = [t if isinstance(t, _dt.datetime) else _dt.datetime.fromisoformat(t) for t in times]
+    phases = list({(t.month, t.day, t.hour, t.minute, t.second): t for t in parsed}.values())
+    # Battle seconds are derived (M/1000 + rtc_offset ± σ_S), so they run above `max`; pretabulate
+    # mdmsh(phase + s) across that derived range (removes datetime math from the hot loop).
+    _pad = model.rtc_offset_seconds + 3.0 * (model.rtc_offset_std or 0.0) + 1.0
+    s_lo = max(0, int(math.floor(setup_delay_seconds + model.rtc_offset_seconds
+                                 - 3.0 * (model.rtc_offset_std or 0.0) - 1.0)))
+    s_hi = int(math.ceil(max_target_seconds + _pad))
+    mtab = [{s: mdmsh_of(t + _dt.timedelta(seconds=s)) for s in range(s_lo, s_hi + 1)}
+            for t in phases]
+
+    f_lo, f_hi = _frame_bounds(model, base_delay, setup_delay_seconds, max_target_seconds)
+    m_min, m_max = setup_delay_seconds * 1000.0, max_target_seconds * 1000.0
+    cp_memo: dict = {}
+    best: dict = {}
+    for F_target in range(f_lo, f_hi + 1, step):
+        M = model.solve_frame(F_target, base_delay)
+        if not (m_min <= M <= m_max):     # setup/max bound the countdown M (in seconds)
+            continue
+        secs = model.second_distribution(M)
+        if not secs:
+            continue
+        modal_s = secs[0][0]
+        sigma = model.jitter_sigma(M)
+        for i, t in enumerate(phases):
+            tab = mtab[i]
+            pmarg = 0.0
+            for s, ps in secs:
+                mm = tab.get(s)
+                if mm is None:                # edge rounding beyond the pretabulated span
+                    mm = mdmsh_of(t + _dt.timedelta(seconds=s))
+                key = (F_target, mm)
+                cp = cp_memo.get(key)
+                if cp is None:
+                    cp = capture_probability(canon_map, model, mm, M, base_delay, k,
+                                             include_calibration)["p"]
+                    cp_memo[key] = cp
+                pmarg += ps * cp
+            tkey = (t.month, t.day, t.hour, t.minute, t.second)
+            prev = best.get(tkey)
+            if prev is None or pmarg > prev["p"]:
+                best[tkey] = {"M": M, "F": F_target, "second": modal_s, "mdmsh": tab[modal_s],
+                              "initial_time": t, "p": pmarg, "sigma": sigma}
+    rows = sorted(best.values(), key=lambda r: (-r["p"], r["M"]))
+    return rows[:limit] if limit else rows
 
 
 def rank_boot_from_scored(scored: list[dict], times, setup_delay_seconds: int,
@@ -215,8 +301,15 @@ def distinct_targets(ranked: list[dict], min_separation: int, n: int) -> list[di
 
 def print_target_report(canon_map, model, initial_time, base_delay, setup_delay_seconds,
                         max_target_seconds, step: int = 1, k: float = 3.5,
-                        include_calibration: bool = False, top: int = 10) -> list[dict]:
-    """Print the top-`top` distinct commanded countdowns; RETURN the full ranked list."""
+                        include_calibration: bool = False, top: int = 10,
+                        use_safari_offset: bool = True) -> list[dict]:
+    """Print the top-`top` distinct commanded countdowns; RETURN the full ranked list.
+
+    ``use_safari_offset`` (default True) scores the safari loading path when the model carries a
+    fitted ``safari_offset``: the offset is folded into the model here (``with_safari_offset``),
+    so the scorer internals are untouched.  A no-op when no offset is set."""
+    if use_safari_offset:
+        model = model.with_safari_offset()
     ranked = rank_targets(canon_map, model, initial_time, base_delay, setup_delay_seconds,
                           max_target_seconds, step=step, k=k,
                           include_calibration=include_calibration)
@@ -236,8 +329,14 @@ def print_target_report(canon_map, model, initial_time, base_delay, setup_delay_
 
 def print_pairs_report(canon_map, model, times, base_delay, setup_delay_seconds,
                        max_target_seconds, step: int = 1, k: float = 3.5,
-                       include_calibration: bool = False, top: int = 10) -> list[dict]:
-    """Rank and print the best (boot time, commanded countdown) pairs.  Returns the rows."""
+                       include_calibration: bool = False, top: int = 10,
+                       use_safari_offset: bool = True) -> list[dict]:
+    """Rank and print the best (boot time, commanded countdown) pairs.  Returns the rows.
+
+    ``use_safari_offset`` (default True): fold a fitted ``safari_offset`` into the model to score
+    the safari loading path (no-op when unset)."""
+    if use_safari_offset:
+        model = model.with_safari_offset()
     ranked = rank_over_times(canon_map, model, times, base_delay, setup_delay_seconds,
                              max_target_seconds, step=step, k=k,
                              include_calibration=include_calibration)
@@ -254,8 +353,14 @@ def print_pairs_report(canon_map, model, times, base_delay, setup_delay_seconds,
 
 def print_by_boot_time_report(canon_map, model, times, base_delay, setup_delay_seconds,
                               max_target_seconds, step: int = 1, k: float = 3.5,
-                              include_calibration: bool = False, top: int = 10) -> list[dict]:
-    """Rank and print the best target for each candidate starting time.  Returns the rows."""
+                              include_calibration: bool = False, top: int = 10,
+                              use_safari_offset: bool = True) -> list[dict]:
+    """Rank and print the best target for each candidate starting time.  Returns the rows.
+
+    ``use_safari_offset`` (default True): fold a fitted ``safari_offset`` into the model to score
+    the safari loading path (no-op when unset)."""
+    if use_safari_offset:
+        model = model.with_safari_offset()
     best = rank_by_boot_time(canon_map, model, times, base_delay, setup_delay_seconds,
                              max_target_seconds, step=step, k=k,
                              include_calibration=include_calibration, limit=top)

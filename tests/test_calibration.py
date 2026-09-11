@@ -104,6 +104,14 @@ class TestFrameReconstruction(unittest.TestCase):
         M = cm.solve_frame(target_frame, base)
         self.assertAlmostEqual(cm.frame(M, base), target_frame, places=4)
 
+    def test_null_rtc_offset_std_loads_as_deterministic(self):
+        # a null in the artifact (e.g. written before σ_S was fit) must load as 0.0, not crash
+        cm = CalibrationModel.from_dict({"kind": "line", "beta": 0.06, "alpha": -320.0,
+                                         "rtc_offset_std": None, "rtc_offset_seconds": None})
+        self.assertEqual(cm.rtc_offset_std, 0.0)
+        self.assertEqual(cm.rtc_offset_seconds, 0.0)
+        self.assertEqual(cm.second_distribution(300000), [(round(300000 / 1000.0), 1.0)])
+
     def test_target_round_trips_through_serialization(self):
         cm = CalibrationModel(kind="line", beta=0.06, alpha=-320.0, target="dF")
         self.assertEqual(CalibrationModel.from_dict(cm.to_dict()).target, "dF")
