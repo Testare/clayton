@@ -36,6 +36,21 @@ def _print_cheatsheet(inputs: CompassSafariInput) -> None:
     print()
 
 
+# Ball-consuming outcomes -- each throws one ball (0-3 shakes, or a capture).
+_BALL_OUTCOME_STEPS = frozenset((SafariStep.BALL_0, SafariStep.BALL_1, SafariStep.BALL_2,
+                                 SafariStep.BALL_3, SafariStep.CAPTURED))
+
+
+def _balls_remaining(candidates: list, path_actions: list, starting: int) -> int:
+    """Balls left.  Read a surviving candidate's context when one exists; otherwise derive it
+    from the observed throws (each 0-3/C consumed a ball; bait/mud don't) so the count stays
+    correct even after the last observed step eliminated every candidate (empty set)."""
+    if candidates:
+        return candidates[0][0].balls_remaining
+    thrown = sum(1 for a in path_actions if getattr(a, "step", None) in _BALL_OUTCOME_STEPS)
+    return starting - thrown
+
+
 def _delta_str(delta: int) -> str:
     return f"+{delta}" if delta > 0 else str(delta)
 
@@ -46,7 +61,7 @@ def _print_status(candidates: list[tuple], total: int, target_delay: int,
                   options: CompassOptions | None = None) -> None:
     cfg = options or CompassOptions()
     path_str = ''.join(_action_to_str(a) for a in path_actions) or '(none)'
-    balls = candidates[0][0].balls_remaining if candidates else cfg.starting_ball_count
+    balls = _balls_remaining(candidates, path_actions, cfg.starting_ball_count)
 
     print(f"Seeds: {len(candidates)} / {total} remaining")
     print(f"Path:  {path_str}")
@@ -89,7 +104,7 @@ def _print_status_calibrated(candidates: list[tuple], total: int, ref_frame: int
     """
     cfg = options or CompassOptions()
     path_str = ''.join(_action_to_str(a) for a in path_actions) or '(none)'
-    balls = candidates[0][0].balls_remaining if candidates else cfg.starting_ball_count
+    balls = _balls_remaining(candidates, path_actions, cfg.starting_ball_count)
 
     ctx_by_seed = {seed: ctx for ctx, seed, _ in candidates}
     post = posteriors(list(ctx_by_seed), meta)

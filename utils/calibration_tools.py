@@ -806,7 +806,7 @@ def _offset_phrase(delta):
 
 
 def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
-                    a_seed=None):
+                    a_seed=None, target_timer_delay=None):
     """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
 
     Parameters
@@ -826,11 +826,18 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         offset analysis.
     path:
         Optional observed-safari-path string; prompted for if omitted.
+    target_timer_delay:
+        The commanded countdown M (ms) -- pass the notebook's ``b_target_timer_delay`` directly;
+        it is recorded as-is with no prompt.  Falls back to the previous run's value if omitted.
+        Safari runs use no separate timer calibration (M = target_timer_delay).
     save_path:
         Destination JSONL (default data/safari_runs.jsonl).
 
-    Metadata (tag / target timer delay / calibration / fresh_boot) default to the previous
-    safari run on blank input.  The record is pretty-printed and confirmed (y/n) before it is
+    The only interactive prompts are the run tag, the notes, and the final save confirmation.
+    The record captures the landing -- ``frame`` (battle frame hit), ``target_frame`` (the model's
+    F*), and ``frame_delta`` (the signed miss) -- plus the RTC second / offset; it carries no
+    fresh_boot / prior_battles / timer-calibration fields (safari runs are always a fresh boot with
+    M = target_timer_delay).  The record is pretty-printed and confirmed (y/n) before it is
     written.  Returns the saved record dict, or None if the user declined.
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
@@ -849,13 +856,18 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
     else:
         delay = _safari_seed_delay(inputs, seed_int) if seed_int is not None else None
 
+    if target_timer_delay is None:
+        target_timer_delay = prev.get("target_timer_delay")
+
+    # Reference battle frame (F* in calibrated mode, the commanded delay in legacy) and the signed
+    # frame miss (hit - target) -- the core calibration signal shown as Δ in the compass.
+    if inputs is not None and getattr(inputs, "calibrated", False):
+        target_frame = round(inputs.frame_center)
+    else:
+        target_frame = getattr(inputs, "target_delay", None) if inputs is not None else None
+    frame_delta = (delay - target_frame) if (delay is not None and target_frame is not None) else None
+
     tag = _prompt_default("Run tag", prev.get("tag"))
-    target_timer_delay = _prompt_default(
-        "Target timer delay", prev.get("target_timer_delay"), int)
-    target_timer_calibration = _prompt_default(
-        "Target timer calibration", prev.get("target_timer_calibration"), int)
-    fresh_boot = _prompt_default("Fresh boot? (y/n)", prev.get("fresh_boot", True), _parse_bool)
-    prior_battles = _prompt_default("Prior battles this boot", 0, int)
     if path is None:
         path = input("Safari path (observed): ").strip()
     notes = input("Notes: ").strip()
@@ -864,9 +876,6 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         "saved_at": dt.datetime.now().isoformat(timespec="seconds"),
         "tag": tag,
         "target_timer_delay": target_timer_delay,
-        "target_timer_calibration": target_timer_calibration,
-        "fresh_boot": fresh_boot,
-        "prior_battles": prior_battles,
         "path": path,
         "n_matched": len(matched),
         "matched_seeds": matched,
@@ -874,8 +883,10 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         "seed": seed_int,
         "seed_hex": f"0x{seed_int:08X}" if seed_int is not None else None,
         "delay": delay,
-        # Calibrated-flow landing (null in the legacy flow or when >1 seed matched):
+        # Landing: the battle frame hit, the model's target frame F*, and the signed miss.
         "frame": cal["frame"] if cal else None,
+        "target_frame": target_frame,
+        "frame_delta": frame_delta,
         "second": cal["second"] if cal else None,
         "second_offset": cal["delta"] if cal else None,
         # Section-A initial seed (for F_a in the safari offset fit); null on older runs.
@@ -1452,9 +1463,11 @@ def _safari_run_point(rec, fresh_only=True):
         Fb = rec.get("delay")
     if Fb is None:
         return None
-    if rec.get("target_timer_delay") is None or rec.get("target_timer_calibration") is None:
+    if rec.get("target_timer_delay") is None:
         return None
-    return rec["target_timer_delay"] + rec["target_timer_calibration"], a["delay"], Fb
+    # M = commanded countdown; calibration defaults to 0 (safari runs no longer record it).
+    M = rec["target_timer_delay"] + (rec.get("target_timer_calibration") or 0)
+    return M, a["delay"], Fb
 
 
 def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True):

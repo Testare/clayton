@@ -738,11 +738,51 @@ class TestWidenAndReplay(unittest.TestCase):
         self.assertEqual(wider.k, 3.5)                  # frames unchanged
         self.assertEqual(tuple(wider.second_offsets), (-1, 0, 1))
 
+    def test_prompt_expand_lifts_mass_cap(self):
+        # Regression (clayton-43a): expanding must drop mass_cap so the wider window actually
+        # surfaces tail seeds; otherwise calibrated_candidates re-trims to the central mass.
+        from claytonlib.compass import _prompt_expand
+        inp = self._inp(second_offsets=(0,), k=3.5, mass_cap=0.999)
+        self.assertEqual(inp.options.mass_cap, 0.999)
+        with patch('builtins.input', side_effect=['10', '1']):
+            wider = _prompt_expand(inp)
+        self.assertIsNone(wider.options.mass_cap)
+        self.assertEqual(inp.options.mass_cap, 0.999)      # original untouched
+
+    def test_prompt_widen_lifts_mass_cap(self):
+        from claytonlib.compass import _prompt_widen
+        inp = self._inp(second_offsets=(0,), k=3.5, mass_cap=0.999)
+        with patch('builtins.input', side_effect=['b', '5', '2']):
+            wider = _prompt_widen(inp)
+        self.assertIsNone(wider.options.mass_cap)
+
+    def test_expand_grows_candidate_set_past_the_cap(self):
+        # The concrete symptom: with mass_cap set, a big window is frozen; after _prompt_expand
+        # (which lifts the cap) the candidate count actually grows.
+        from claytonlib.compass import _prompt_expand
+        inp = self._inp(second_offsets=(-1, 0, 1), k=10.0, mass_cap=0.999)
+        before = len(self._gen(inp)[1])
+        with patch('builtins.input', side_effect=['500', '3']):
+            wider = _prompt_expand(inp)
+        after = len(self._gen(wider)[1])
+        self.assertGreater(after, before)
+
     def test_observed_path_line(self):
         from claytonlib.compass import _observed_path_line
         actions = [CompassAction(step=SafariStep.MUD), CompassAction(step=SafariStep.BALL_0)]
         self.assertEqual(_observed_path_line(actions), "Observed path: m0")
         self.assertEqual(_observed_path_line([]), "Observed path: (none)")
+
+    def test_balls_remaining_derived_from_path_when_empty(self):
+        # Regression (clayton-43a): when the observed path eliminates every candidate, the Balls
+        # line must reflect the throws so far (4 balls -> 26), not fall back to starting_ball_count.
+        from claytonlib.compass._display import _balls_remaining
+        path = [CompassAction(step=s) for s in (
+            SafariStep.BAIT, SafariStep.BALL_0, SafariStep.BALL_1, SafariStep.MUD,
+            SafariStep.BALL_0, SafariStep.BALL_2)]        # 4 ball throws, 2 non-ball
+        self.assertEqual(_balls_remaining([], path, 30), 26)
+        # a capture also consumes a ball
+        self.assertEqual(_balls_remaining([], [CompassAction(step=SafariStep.CAPTURED)], 30), 29)
 
     def test_widen_recovers_offset_match_preserving_path(self):
         """A path that empties the δ=0 set is recovered by widening to include the δ=±1 truth,

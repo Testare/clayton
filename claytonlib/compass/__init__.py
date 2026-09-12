@@ -132,7 +132,11 @@ def _prompt_widen(inputs: CompassSafariInput) -> CompassSafariInput | None:
     if new_k == inputs.k and tuple(new_offsets) == tuple(inputs.second_offsets):
         print("  No change made.")
         return None
-    return dataclasses.replace(inputs, k=new_k, second_offsets=tuple(new_offsets))
+    # Widening exists to consider seeds the prior-mass cap trimmed, so drop mass_cap -- otherwise
+    # calibrated_candidates re-trims to the central mass_cap of the mass and the wider window
+    # surfaces nothing new (the sought seed lives in the trimmed tail).
+    opts = dataclasses.replace(inputs.options, mass_cap=None)
+    return dataclasses.replace(inputs, k=new_k, second_offsets=tuple(new_offsets), options=opts)
 
 
 def _prompt_expand(inputs: CompassSafariInput) -> CompassSafariInput | None:
@@ -170,8 +174,12 @@ def _prompt_expand(inputs: CompassSafariInput) -> CompassSafariInput | None:
         return None
     new_k = inputs.k + add_frames / sigma
     new_K = cur_maxoff + add_secs
+    # Expanding is a deliberate search into the tail the initial mass_cap excluded, so lift the
+    # cap -- otherwise calibrated_candidates re-trims to the central mass and the expansion is a
+    # no-op past a point (the eliminated-everything case means the truth IS in that tail).
+    opts = dataclasses.replace(inputs.options, mass_cap=None)
     return dataclasses.replace(inputs, k=new_k,
-                               second_offsets=tuple(range(-new_K, new_K + 1)))
+                               second_offsets=tuple(range(-new_K, new_K + 1)), options=opts)
 
 
 def _observed_path_line(path_actions) -> str:

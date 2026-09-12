@@ -33,10 +33,11 @@ class TestSaveSafariRun(unittest.TestCase):
 
     def test_unique_seed_recorded(self):
         p = self._path()
-        # tag, delay, cal, fresh_boot, prior_battles, notes, confirm
-        answers = ["safari test", "300000", "-5000", "", "", "", "y"]
-        with _answers(answers):
-            rec = ct.save_safari_run(["0x0C0E02CA"], path="mmb0F", save_path=p)
+        # Only three prompts now: tag, notes, confirm.  target_timer_delay is passed in; there is
+        # no timer-calibration / fresh-boot / prior-battles prompt for safari runs.
+        with _answers(["safari test", "", "y"]):
+            rec = ct.save_safari_run(["0x0C0E02CA"], path="mmb0F", save_path=p,
+                                     target_timer_delay=300000)
         self.assertIsNotNone(rec)
         rows = self._read(p)
         self.assertEqual(len(rows), 1)
@@ -47,58 +48,57 @@ class TestSaveSafariRun(unittest.TestCase):
         self.assertEqual(r["matched_seeds"], ["0x0C0E02CA"])
         self.assertEqual(r["path"], "mmb0F")
         self.assertEqual(r["target_timer_delay"], 300000)
-        self.assertEqual(r["target_timer_calibration"], -5000)
-        self.assertTrue(r["fresh_boot"])
-        self.assertEqual(r["prior_battles"], 0)
+        # Dropped for safari runs: calibration, fresh_boot, prior_battles.
+        self.assertNotIn("target_timer_calibration", r)
+        self.assertNotIn("fresh_boot", r)
+        self.assertNotIn("prior_battles", r)
         self.assertIsNone(r["delay"])  # no inputs given -> not derivable
+        self.assertIsNone(r["frame_delta"])  # no target frame without inputs
 
     def test_ambiguous_leaves_seed_null(self):
         p = self._path()
-        answers = ["amb", "300000", "-5000", "y", "1", "", "y"]
-        with _answers(answers):
-            rec = ct.save_safari_run(["0xAAAA1111", "0xBBBB2222"], path="mm0", save_path=p)
+        with _answers(["amb", "", "y"]):
+            rec = ct.save_safari_run(["0xAAAA1111", "0xBBBB2222"], path="mm0", save_path=p,
+                                     target_timer_delay=300000)
         self.assertIsNotNone(rec)
         r = self._read(p)[0]
         self.assertIsNone(r["seed"])
         self.assertIsNone(r["seed_hex"])
         self.assertEqual(r["n_matched"], 2)
-        self.assertEqual(r["prior_battles"], 1)
+        self.assertNotIn("prior_battles", r)                 # dropped
         self.assertEqual(len(r["matched_seeds"]), 2)
 
     def test_decline_does_not_write(self):
         p = self._path()
-        answers = ["t", "300000", "0", "", "", "", "n"]
-        with _answers(answers):
-            rec = ct.save_safari_run(["0x1"], path="F", save_path=p)
+        with _answers(["t", "", "n"]):
+            rec = ct.save_safari_run(["0x1"], path="F", save_path=p, target_timer_delay=300000)
         self.assertIsNone(rec)
         self.assertFalse(os.path.exists(p))
 
     def test_path_prompted_when_omitted(self):
         p = self._path()
-        # path not passed -> extra "Safari path" prompt inserted before notes
-        answers = ["t", "300000", "0", "", "", "bb0C", "notes here", "y"]
-        with _answers(answers):
-            ct.save_safari_run(["0x2"], save_path=p)
+        # path not passed -> a "Safari path" prompt is inserted between tag and notes.
+        with _answers(["t", "bb0C", "notes here", "y"]):
+            ct.save_safari_run(["0x2"], save_path=p, target_timer_delay=300000)
         r = self._read(p)[0]
         self.assertEqual(r["path"], "bb0C")
         self.assertEqual(r["notes"], "notes here")
 
     def test_defaults_from_previous_run(self):
         p = self._path()
-        with _answers(["first", "420000", "-5000", "", "", "", "y"]):
-            ct.save_safari_run(["0x3"], path="F", save_path=p)
-        # blank tag/delay/cal -> reuse previous (420000/-5000); blank fresh -> True
-        with _answers(["", "", "", "", "", "", "y"]):
+        with _answers(["first", "", "y"]):
+            ct.save_safari_run(["0x3"], path="F", save_path=p, target_timer_delay=420000)
+        # blank tag -> reuse "first"; target_timer_delay omitted -> reuse previous (420000).
+        with _answers(["", "", "y"]):
             ct.save_safari_run(["0x4"], path="C", save_path=p)
         rows = self._read(p)
         self.assertEqual(rows[1]["tag"], "first")
         self.assertEqual(rows[1]["target_timer_delay"], 420000)
-        self.assertEqual(rows[1]["target_timer_calibration"], -5000)
 
     def test_load_safari_runs(self):
         p = self._path()
-        with _answers(["t", "300000", "0", "", "", "", "y"]):
-            ct.save_safari_run(["0x5"], path="F", save_path=p)
+        with _answers(["t", "", "y"]):
+            ct.save_safari_run(["0x5"], path="F", save_path=p, target_timer_delay=300000)
         rows = ct.load_safari_runs(p)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["seed"], 5)
@@ -132,16 +132,20 @@ class TestSaveSafariRun(unittest.TestCase):
             m = meta[seed]
 
             p = self._path()
-            answers = ["cal", "5000", "0", "", "", "", "y"]
-            with _answers(answers):
+            with _answers(["cal", "", "y"]):     # tag, notes, confirm
                 rec = ct.save_safari_run([f"0x{seed:08X}"], inputs=inp,
-                                         path="mmb0", save_path=p)
+                                         path="mmb0", save_path=p, target_timer_delay=5000)
         self.assertIsNotNone(rec)
         self.assertEqual(rec["seed"], seed)
         self.assertEqual(rec["frame"], m["frame"])
         self.assertEqual(rec["second_offset"], m["delta"])
         self.assertEqual(rec["delay"], m["frame"])   # frame is the F_b analog
         self.assertIsNotNone(rec["second"])
+        # Frame hit + target frame + signed miss are recorded (the calibration signal).
+        self.assertEqual(rec["target_frame"], round(inp.frame_center))
+        self.assertEqual(rec["frame_delta"], m["frame"] - round(inp.frame_center))
+        self.assertNotIn("fresh_boot", rec)
+        self.assertNotIn("prior_battles", rec)
 
 
 if __name__ == "__main__":
