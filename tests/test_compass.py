@@ -826,6 +826,35 @@ class TestWidenAndReplay(unittest.TestCase):
         self.assertIn(truth, [s for _, s, _ in current])  # the truth is among survivors
 
 
+class TestCapturePreservesSeed(unittest.TestCase):
+    """Regression (clayton-chs): a capturing 'C' must KEEP the seeds whose ball throw captured,
+    not drop them.  The bug treated capture like flee -- filtering the pre-throw pending set by
+    captured() (always False) -- so the identified seed was eliminated on the winning throw."""
+
+    def test_capture_keeps_capturing_seed(self):
+        import datetime as dt
+        from claytonlib.calibration import CalibrationModel
+        from claytonlib.compass import CompassSafariInput, calibrated_candidates, _replay_path
+        from claytonlib.compass._types import parse_input
+
+        model = CalibrationModel.load_default()
+        inp = CompassSafariInput.from_expedition_target(
+            model=model, M=327792, initial_time=dt.datetime(2025, 7, 24, 14, 45, 56),
+            key_seed=219022016, max_target_seconds=600,
+            pokemon=safari_pokemon_by_name('metang'),
+            strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+            second_offsets=(-1, 0, 1), mass_cap=0.999)
+        cands, _ = calibrated_candidates(inp)
+        # The real run: this path captured 0xF80E4DBB but the compass reported 0 seeds.
+        actions = parse_input('bbbbbb02012000002mM1mm1Mmbb1m1mmmm2mC')
+        cache, pending = _replay_path(cands, actions)
+        final = pending[1] if pending is not None else cache[-1][1]
+        seeds = [s for _, s, _ in final]
+        self.assertGreater(len(final), 0)                        # NOT eliminated on capture
+        self.assertIn(0xF80E4DBB, seeds)                         # the identified seed survives
+        self.assertTrue(all(c.captured() for c, _, _ in final))  # survivors actually captured
+
+
 # ---------------------------------------------------------------------------
 # _apply_action
 # ---------------------------------------------------------------------------

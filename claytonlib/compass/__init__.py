@@ -78,10 +78,14 @@ def _replay_path(candidates: list, path_actions: list) -> tuple:
                 pending = None
             break
         if step == SafariStep.CAPTURED:
+            # Capture = a ball throw resulting in CAPTURED (mirrors the main loop): resolve the
+            # pending action as no-flee, then throw the ball and keep the seeds that captured.
             if pending is not None:
                 astr, cands = pending
-                cache.append((astr, [t for t in cands if t[0].captured()]))
+                cache.append((astr, [t for t in cands if not t[0].has_fled()]))
                 pending = None
+            cache.append((_action_to_str(action),
+                          _apply_action(cache[-1][1], action, filter_fled=False)))
             break
         if pending is not None:
             astr, cands = pending
@@ -182,21 +186,36 @@ def _prompt_expand(inputs: CompassSafariInput) -> CompassSafariInput | None:
                                second_offsets=tuple(range(-new_K, new_K + 1)), options=opts)
 
 
+def _observed_path(path_actions) -> str:
+    """The full observed path as a token string (e.g. 'bbb0mC'), '' if nothing entered."""
+    return "".join(_action_to_str(a) for a in path_actions)
+
+
 def _observed_path_line(path_actions) -> str:
     """The full observed path as a copy-pasteable string (for recording the run)."""
-    return "Observed path: " + ("".join(_action_to_str(a) for a in path_actions) or "(none)")
+    return "Observed path: " + (_observed_path(path_actions) or "(none)")
+
+
+class CompassResult(list):
+    """The matched seed hex strings -- a plain list, so every existing caller keeps working --
+    with the observed path recorded on ``.path`` (e.g. 'bbbbbb0...C') so callers don't have to
+    re-enter it.  The attribute is dropped by json serialization (it's an ordinary list there)."""
+
+    def __init__(self, seeds, path: str = ""):
+        super().__init__(seeds)
+        self.path = path
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
-def compass_safari(inputs: CompassSafariInput) -> list[str]:
+def compass_safari(inputs: CompassSafariInput) -> 'CompassResult':
     """Interactive safari zone seed identifier.
 
-    Returns a list of hex seed strings (e.g. ['0xABCD1234']) for all seeds
-    that matched the observed path. Returns an empty list when no seeds
-    matched or the session was quit.
+    Returns a ``CompassResult`` -- a list of hex seed strings (e.g. ['0xABCD1234']) for all seeds
+    that matched the observed path (empty when nothing matched or the session was quit), with the
+    observed path token string on ``.path`` so callers can record it without re-prompting.
     """
     if inputs.calibrated:
         candidates, meta = calibrated_candidates(inputs)
@@ -213,6 +232,10 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
     path_actions: list[CompassAction] = []
     _jane_suggested = False
     _identified_seed: int | None = None   # the seed we last showed the Machete preview for
+
+    def _result(seeds) -> CompassResult:
+        """Wrap the matched seeds with the observed path so callers needn't re-enter it."""
+        return CompassResult(seeds, path=_observed_path(path_actions))
 
     def apply_new_inputs(new_inputs) -> bool:
         """Adopt a widened/expanded input, regenerate candidates, and re-apply the full
@@ -275,7 +298,7 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             else:
                 print(f"No matching seed found in window \u00b1{inputs.window}.")
             print(_observed_path_line(path_actions))
-            return []
+            return _result([])
 
         if len(current) == 1:
             ctx, seed, delay = current[0]
@@ -309,7 +332,7 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             if confirm in ('y', 'yes'):
                 current = pending[1] if pending is not None else cache[-1][1]
                 print(_observed_path_line(path_actions))
-                return [f"0x{seed:08X}" for _, seed, _ in current]
+                return _result([f"0x{seed:08X}" for _, seed, _ in current])
             continue
 
         result = parse_input(raw)
@@ -338,7 +361,7 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
                 jane_candidates = [(ctx, seed) for ctx, seed, delay in current]
                 machete_jane(jane_candidates, pokemon=inputs.pokemon, interactive=True,
                              max_turns=jane_max_turns)
-                return [f"0x{seed:08X}" for _, seed, _ in current]
+                return _result([f"0x{seed:08X}" for _, seed, _ in current])
             continue
 
         terminal = False
@@ -367,11 +390,16 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
                 break
 
             if step == SafariStep.CAPTURED:
+                # A capture IS a ball throw whose outcome is CAPTURED (not a resolution of the
+                # previous action like FLED).  Resolve the previous action's flee check as no-flee,
+                # then throw the ball and keep only the seeds that captured.
                 if pending is not None:
                     astr, cands = pending
-                    filtered = [(c, s, d) for c, s, d in cands if c.captured()]
+                    filtered = [(c, s, d) for c, s, d in cands if not c.has_fled()]
                     cache.append((astr, filtered))
                     pending = None
+                new_cands = _apply_action(cache[-1][1], action, filter_fled=False)
+                cache.append((_action_to_str(action), new_cands))
                 path_actions.append(action)
                 terminal = True
                 break
@@ -401,12 +429,12 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
                     print(f"  {i}. seed=0x{seed:08X}  frame={delay}  "
                           f"Δ={_delta_str(delay - ref)}  δ={_delta_str(m['delta'])}s  "
                           f"P={post.get(seed, 0.0) * 100:.2f}%")
-                return [f"0x{seed:08X}" for _, seed, _ in ranked]
+                return _result([f"0x{seed:08X}" for _, seed, _ in ranked])
             nearest_final = sorted(final, key=lambda x: (abs(x[2] - ref), x[1]))[:inputs.options.seeds_displayed]
             by_prox = sorted(nearest_final, key=lambda x: (x[2] - ref, x[1]))
             for i, (_, seed, delay) in enumerate(by_prox, 1):
                 print(f"  {i}. seed=0x{seed:08X}  delay={delay}  \u0394={_delta_str(delay - ref)}")
-            return [f"0x{seed:08X}" for _, seed, _ in by_prox]
+            return _result([f"0x{seed:08X}" for _, seed, _ in by_prox])
 
 
 from claytonlib.compass_premetronome import (  # noqa: E402, F401

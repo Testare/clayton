@@ -1,4 +1,20 @@
-   ## Attemp 3
+   ## Attempt 4: GOOD OMEN1
+╔═══════════════════════════╗
+║  Seed identified!         ║
+║  seed  = 0xF80E4DBB       ║
+║  delay = 19899            ║
+║  Δ     = -157             ║
+║  path  = bbbbbb02012000002║
+║  timer = on time          ║
+╚═══════════════════════════╝
+
+Run Machete to preview the capture path from here? (y/n)  y
+Machete path (predicted): mM1mm1Mmbb1m1mmmm2mC
+bb1m1mmmm2m
+
+FULL PATH: bbbbbb02012000002mM1mm1Mmbb1m1mmmm2mC
+
+## Attempt 3
 
 bbbbBb000 yields:
    #        Seed    Frame       Δ   δsec   P(land)
