@@ -201,22 +201,25 @@ class CompassSafariInput:
         """Build a calibrated input straight from a chosen chart target + calibration model.
 
         Resolves the commanded countdown ``M`` to a mean battle frame ``F* = model.frame(M, F_a)``
-        with spread ``σ = model.jitter_sigma(M)``, and locates the RTC second ``T*`` whose
-        variable-width delay band contains F* (via the same ``_centers`` table the scorer
-        uses).  No hand-set delay window is needed.
+        with spread ``σ = model.jitter_sigma(M)``, and the battle RTC second ``T*`` from the MODEL
+        (``μ = M/1000 + rtc_offset_seconds``).  No hand-set delay window is needed.
+
+        The RTC second is derived from the model, NOT from F: the frame and the second miss
+        near-independently (notes/seed_hitting_process.md §3-4), so deriving the second from the
+        frame couples the two axes and yields a ~rtc_offset_seconds-shifted candidate set that is
+        disjoint from the chart scorer's ``marginal_capture`` (which holds the frame center fixed
+        and takes the second from ``model.second_distribution``).
         """
-        import bisect
         from claytonlib.times import get_times
-        from claytonlib.chart.scorer import _centers
 
         base_delay, _ = get_times(key_seed)
         # Actual battle-seed low16: frame(M, base_delay) = dF(M)+F_a for a dF model (year carried
-        # by base_delay = key_seed low16), mean(M) for a legacy Fb model.  frame - base_delay is
-        # then the year-agnostic elapsed count, so _second_of_frame in the search is correct too.
+        # by base_delay = key_seed low16), mean(M) for a legacy Fb model.
         F = model.frame(M, base_delay)
         sigma = model.jitter_sigma(M)
-        centers = _centers(base_delay, max_target_seconds)
-        target_second = bisect.bisect_right(centers, F) - 1
+        # Modal battle RTC second from the model (== model.second_distribution(M)[0][0]); the
+        # ±δ spread over this is covered by second_offsets, weighted by second_offset_sd ≈ σ_S.
+        target_second = round(M / 1000.0 + model.rtc_offset_seconds)
         opts = options or CompassOptions()
         if mass_cap is not None:
             opts = replace(opts, mass_cap=mass_cap)

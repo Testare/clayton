@@ -18,7 +18,6 @@ from claytonlib.compass import (
     _evaluate_context,
     _generate_candidates,
     _generate_candidates_calibrated,
-    _second_of_frame,
     parse_input,
 )
 from claytonlib.safari import SafariContext, SafariStep, safari_pokemon_by_name
@@ -382,9 +381,9 @@ class TestCalibratedCandidateGeneration(unittest.TestCase):
         self.assertEqual(inp.frame_center, model.mean(self.M))
         self.assertAlmostEqual(inp.sigma, model.jitter_sigma(self.M))
         self.assertIsNone(inp.target_delay)
-        # target_second is the band containing F*
-        self.assertEqual(_second_of_frame(BASE_DELAY, round(inp.frame_center)),
-                         inp.target_second)
+        # target_second comes from the MODEL (μ = M/1000 + rtc_offset_seconds), independent of F*.
+        self.assertEqual(inp.target_second,
+                         round(self.M / 1000.0 + model.rtc_offset_seconds))
 
     def test_one_seed_per_frame_no_seed_a_b(self):
         # δ=0: exactly one candidate per frame in [F*-kσ, F*+kσ] (no a/b duality)
@@ -405,11 +404,12 @@ class TestCalibratedCandidateGeneration(unittest.TestCase):
         self.assertLessEqual(abs(frames[0] - (inp.frame_center - half)), 1.0)
         self.assertLessEqual(abs(frames[-1] - (inp.frame_center + half)), 1.0)
 
-    def test_seed_matches_calculate_seed_at_band_second(self):
+    def test_seed_matches_calculate_seed_at_model_second(self):
+        # Every δ=0 candidate is calculate_seed(initial_time + target_second, frame): the RTC
+        # second is fixed at the model-derived target_second, NOT re-derived from the frame.
         cands, inp, _ = self._candidates()
         for _, seed, frame in cands:
-            s = _second_of_frame(BASE_DELAY, frame)
-            expected = calculate_seed(TIME_A + dt.timedelta(seconds=s), frame)
+            expected = calculate_seed(TIME_A + dt.timedelta(seconds=inp.target_second), frame)
             self.assertEqual(seed, expected)
 
     def test_no_duplicate_seeds(self):
@@ -425,12 +425,42 @@ class TestCalibratedCandidateGeneration(unittest.TestCase):
         self.assertTrue(set(s for _, s, _ in base) <= set(s for _, s, _ in wide))
 
     def test_offset_seeds_use_shifted_second_same_frame(self):
-        # A +1 δ candidate is calculate_seed(initial_time + (s+1), frame) at the same frame.
+        # A +1 δ candidate is calculate_seed(initial_time + (target_second + 1), frame): δ shifts
+        # the RTC second off the fixed model second, holding the frame center.
         cands, inp, _ = self._candidates(second_offsets=(1,))
         for _, seed, frame in cands:
-            s = _second_of_frame(BASE_DELAY, frame) + 1
+            s = inp.target_second + 1
             expected = calculate_seed(TIME_A + dt.timedelta(seconds=s), frame)
             self.assertEqual(seed, expected)
+
+    def test_calibrated_second_axis_matches_chart_scorer(self):
+        # Regression (clayton-xqf): compass and the chart scorer must share the RTC-second axis --
+        # both take the second from the MODEL (μ=M/1000+rtc_offset) holding the frame center -- so
+        # compass candidates are a subset of the scorer-style seed set.  When the compass derived
+        # the second from the frame (_second_of_frame) the two sets were FULLY DISJOINT.
+        import math
+        from claytonlib.calibration import CalibrationModel
+        from claytonlib.chart.canon import mdmsh_of, seed_for_mdmsh
+        from claytonlib.times import get_times as real_get_times
+        model = CalibrationModel.load_default()
+        key = 202244802
+        it = dt.datetime(2000, 7, 24, 14, 45, 55)
+        M = 327792
+        inp = CompassSafariInput.from_expedition_target(
+            model=model, M=M, initial_time=it, key_seed=key, max_target_seconds=600,
+            pokemon=safari_pokemon_by_name('metang'), strategy=STRATEGY_ONLY_BALLS,
+            criteria=CRITERIA_CAPTURE, second_offsets=(-1, 0, 1), mass_cap=None)
+        self.assertEqual(inp.target_second, round(M / 1000.0 + model.rtc_offset_seconds))
+        cand_seeds = {s for _, s, _ in _generate_candidates_calibrated(inp)}
+        base_delay, _ = real_get_times(key)
+        lo = max(base_delay, int(math.floor(inp.frame_center - inp.k * inp.sigma)))
+        hi = int(math.ceil(inp.frame_center + inp.k * inp.sigma))
+        scorer_seeds = {seed_for_mdmsh(mdmsh_of(it + dt.timedelta(seconds=s)), frame)
+                        for s, _ in model.second_distribution(M) for frame in range(lo, hi + 1)}
+        self.assertTrue(cand_seeds)
+        self.assertTrue(cand_seeds <= scorer_seeds,
+                        f"{len(cand_seeds - scorer_seeds)} compass candidates absent from the "
+                        f"chart-scorer seed set (second axes disagree)")
 
     def test_starting_ball_count_applied(self):
         cands, _, _ = self._candidates(options=CompassOptions(starting_ball_count=25))
@@ -684,6 +714,35 @@ class TestWidenAndReplay(unittest.TestCase):
         with patch('builtins.input', side_effect=['f', '']), \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertIsNone(_prompt_widen(inp))
+
+    def test_prompt_expand_frames_and_seconds(self):
+        from claytonlib.compass import _prompt_expand
+        inp = self._inp(second_offsets=(0,), k=3.5)
+        with patch('builtins.input', side_effect=['10', '2']):
+            wider = _prompt_expand(inp)
+        self.assertAlmostEqual(wider.k, 3.5 + 10 / inp.sigma)
+        self.assertEqual(tuple(wider.second_offsets), (-2, -1, 0, 1, 2))
+        self.assertEqual(inp.k, 3.5)                    # original untouched
+
+    def test_prompt_expand_zero_returns_none(self):
+        from claytonlib.compass import _prompt_expand
+        inp = self._inp(second_offsets=(0,))
+        with patch('builtins.input', side_effect=['0', '0']):
+            self.assertIsNone(_prompt_expand(inp))
+
+    def test_prompt_expand_seconds_only(self):
+        from claytonlib.compass import _prompt_expand
+        inp = self._inp(second_offsets=(0,), k=3.5)
+        with patch('builtins.input', side_effect=['', '1']):
+            wider = _prompt_expand(inp)
+        self.assertEqual(wider.k, 3.5)                  # frames unchanged
+        self.assertEqual(tuple(wider.second_offsets), (-1, 0, 1))
+
+    def test_observed_path_line(self):
+        from claytonlib.compass import _observed_path_line
+        actions = [CompassAction(step=SafariStep.MUD), CompassAction(step=SafariStep.BALL_0)]
+        self.assertEqual(_observed_path_line(actions), "Observed path: m0")
+        self.assertEqual(_observed_path_line([]), "Observed path: (none)")
 
     def test_widen_recovers_offset_match_preserving_path(self):
         """A path that empties the δ=0 set is recovered by widening to include the δ=±1 truth,

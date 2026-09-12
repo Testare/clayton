@@ -104,11 +104,17 @@ def calibrated_candidates(inputs: CompassSafariInput) -> tuple[list[tuple], dict
     lo = max(base_delay, int(math.floor(inputs.frame_center - inputs.k * sigma)))
     hi = int(math.ceil(inputs.frame_center + inputs.k * sigma))
 
+    # The base battle RTC second is FIXED at the model-derived target_second for the whole frame
+    # window -- it does NOT slide with the frame.  Frame and second miss near-independently
+    # (notes/seed_hitting_process.md §3-4): the frame center is held across seconds and the second
+    # comes from the model (μ=M/1000+rtc_offset), exactly as the chart scorer's marginal_capture
+    # does.  Deriving s0 from the frame (the old _second_of_frame here) coupled the two axes and
+    # produced a candidate set disjoint from chart_check_target_landing.
+    s0 = inputs.target_second
     results: list[tuple] = []
     meta: dict[int, dict] = {}
     for frame in range(lo, hi + 1):
         fw = _frame_weight(frame, inputs.frame_center, sigma)
-        s0 = _second_of_frame(base_delay, frame)
         for delta in inputs.second_offsets:
             s = s0 + delta
             if s < 0:

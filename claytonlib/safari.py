@@ -67,8 +67,15 @@ class SafariPokemon:
     adjusted_catch_rates_b: tuple[int, ...] = field(init=False)
 
     def __adjusted_catch_rate_b(self, stage_modifier: int):
+        # Mirrors the game's catch calc (battle_command.c GetShakeCount, Safari path):
+        #   catchRate  = (stage_num * base) / stage_den
+        #   modified   = ((catchRate * 15) / 10) / 3    # Safari Ball is x1.5; /3 is the full-HP
+        #                                               # lostHp/maxHpTimes3 factor (3M-2M)/(3M)
+        #   b(shakeProb) = 0xFFFF0 / isqrt(isqrt(0xFF0000 / modified))
+        # NB: the full-HP factor is /3 (NOT /2 -- that was the bug that over-eased captures
+        # after heavy mud; verified against emulator ground truth, clayton-ctd.15).
         species_mod = math.floor(STAGE_MULTIPLIERS[stage_modifier] * self.base_catch_rate)
-        a = math.floor(math.floor(species_mod * 1.5) / 2)
+        a = math.floor(math.floor(species_mod * 1.5) / 3)
         b_div = math.floor(math.sqrt(math.floor(math.sqrt(0xFF0000 / max(a, 1)))))
         return math.floor(0xFFFF0 / b_div)
 

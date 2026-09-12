@@ -6,6 +6,8 @@ space bar on Windows to remotely drive an emulator. Runs on port 62628.
 Endpoints:
   GET/POST / or /press        - Sends F3 key press (back-compat), returns counter
   GET/POST /press/f<N>        - Sends F<N> key press (N in 1..8), returns counter
+  GET/POST /key/<k>           - Enqueue one key (a letter or 'space')
+  GET/POST /keys/<seq>        - Enqueue a sequence, e.g. /keys/s+a+space (Bait)
   GET      /ping              - Health check: {status: "ok"}
   GET      /status            - Returns current counter without pressing a key
   GET/POST /reset             - Resets counter to 0
@@ -22,6 +24,8 @@ Enter (any terminal input) also cancels auto-space.
 import sys
 import time
 import json
+import queue
+import re
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -50,6 +54,25 @@ _auto_space_lock = threading.Lock()
 # OS Detection
 IS_WINDOWS = sys.platform.startswith('win')
 
+# Letter keys the queue understands (a..z -> their VK code == ASCII uppercase).  The safari
+# reader uses s/a/d + space to pick and throw safari actions; letters are supported generally.
+_LETTER_VKS = {chr(c): 0x41 + (c - ord('a')) for c in range(ord('a'), ord('z') + 1)}
+
+
+def parse_key_sequence(seq):
+    """Parse a key sequence like 's+a+space' or 's,a,space' -> ['s','a','space'].
+
+    Keys are split on '+', ',' or whitespace, lower-cased, and validated against the known
+    keys (the 26 letters plus 'space').  Raises ValueError on an unknown key.  Pure -- no OS
+    calls -- so it is unit-testable off Windows.
+    """
+    tokens = [t for t in re.split(r"[+,\s]+", seq.strip().lower()) if t]
+    for t in tokens:
+        if t != "space" and t not in _LETTER_VKS:
+            raise ValueError(f"unknown key {t!r} (use a letter or 'space')")
+    return tokens
+
+
 if IS_WINDOWS:
     import ctypes
     # Virtual key codes: https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
@@ -70,12 +93,57 @@ if IS_WINDOWS:
 
     def press_space():
         _press_vk(VK_SPACE)
+
+    def press_named_key(name):
+        vk = VK_SPACE if name == "space" else _LETTER_VKS.get(name)
+        if vk is None:
+            raise ValueError(f"unknown key {name!r}")
+        _press_vk(vk)
 else:
     def press_fkey(n):
         logging.info(f"[Mock] F{n} pressed (Running on non-Windows OS)")
 
     def press_space():
         logging.info("[Mock] Space pressed (Running on non-Windows OS)")
+
+    def press_named_key(name):
+        logging.info(f"[Mock] key '{name}' pressed (Running on non-Windows OS)")
+
+
+# --- Keypress queue ---------------------------------------------------------
+# The emulator drops keys sent too close together, so queued keys are played out one at a time
+# with a fixed gap.  The safari reader enqueues short sequences (e.g. s,a,space for Bait) in
+# response to the "What will <name> throw?" prompt; fire-and-forget, the worker paces them.
+KEY_QUEUE_DELAY = 0.25          # seconds between queued key presses
+_key_queue: "queue.Queue[str]" = queue.Queue()
+_key_worker_thread = None
+
+
+def _key_worker():
+    while True:
+        name = _key_queue.get()
+        try:
+            press_named_key(name)
+        except Exception as e:
+            logging.error(f"Error pressing key '{name}': {e}")
+        finally:
+            _key_queue.task_done()
+        time.sleep(KEY_QUEUE_DELAY)   # keep presses far enough apart
+
+
+def start_key_worker():
+    """Start the keypress-queue worker if it isn't already running."""
+    global _key_worker_thread
+    if _key_worker_thread is not None and _key_worker_thread.is_alive():
+        return
+    _key_worker_thread = threading.Thread(target=_key_worker, daemon=True)
+    _key_worker_thread.start()
+
+
+def enqueue_keys(names):
+    """Enqueue an iterable of key names for the worker to press (spaced by KEY_QUEUE_DELAY)."""
+    for n in names:
+        _key_queue.put(n)
 
 
 # --- Auto-space control -----------------------------------------------------
@@ -226,6 +294,25 @@ class F3PressHandler(BaseHTTPRequestHandler):
                 })
             return
 
+        # Queued key presses: '/key/<k>' (one key) or '/keys/<seq>' (a sequence like s+a+space).
+        # These enqueue and return immediately; the worker paces them by KEY_QUEUE_DELAY.
+        if parts and parts[0] in ('key', 'keys'):
+            raw_seq = parts[1] if len(parts) > 1 else ''
+            try:
+                names = parse_key_sequence(raw_seq)
+            except ValueError as e:
+                self._send_json(400, {"status": "error", "message": str(e)})
+                return
+            if not names:
+                self._send_json(400, {"status": "error",
+                                      "message": "no keys given (e.g. /keys/s+a+space)"})
+                return
+            enqueue_keys(names)
+            logging.info(f"Enqueued keys: {names}")
+            self._send_json(200, {"status": "success", "queued": names,
+                                  "queue_size": _key_queue.qsize()})
+            return
+
         # Key press: '/', '/press' (default F3), or '/press/f<N>'
         fkey = None
         if not parts or parts == ['press']:
@@ -291,6 +378,7 @@ class F3PressHandler(BaseHTTPRequestHandler):
         self._send_json(404, {
             "status": "error",
             "message": ("Endpoint not found. Use '/press/f<N>' to press a key, "
+                        "'/key/<k>' or '/keys/<seq>' to enqueue keys, "
                         "'/ping' for health, '/autospace/on|off' for auto-space, "
                         "'/status' for count, or '/reset' to reset.")
         })
@@ -320,6 +408,9 @@ def _prompt_auto_space_delay():
 
 def main():
     _prompt_auto_space_delay()
+
+    # Start the keypress-queue worker (paces s/a/d/space for the safari reader).
+    start_key_worker()
 
     # Watch stdin so Enter cancels auto-space (Ctrl+C is unreliable on Windows).
     threading.Thread(target=_stdin_watcher, daemon=True).start()

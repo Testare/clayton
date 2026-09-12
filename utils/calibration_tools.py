@@ -773,27 +773,28 @@ def _safari_seed_delay(inputs, seed_int):
 
 
 def _safari_calibrated_meta(inputs, seed_int):
-    """Recover (frame, second, delta) for `seed_int` from a calibrated CompassSafariInput.
+    """Recover (frame, second, delta) for `seed_int` directly from a calibrated CompassSafariInput.
 
-    The calibrated sweep keys each candidate by its battle frame and the second-offset δ that
-    was actually hit; regenerating the candidate meta lets the loop-back record the inferred
-    δ (timing feedback) and the (frame, second) landing without a capture.  Returns a dict or
-    None (legacy inputs / seed not found).
+    Everything is decoded from the identified seed itself -- no need to regenerate the sweep:
+      * ``frame``  = the battle-seed low16 (``seed & 0xFFFF``; seed_for_mdmsh stores the frame there),
+      * ``second`` = the RTC second offset from boot whose ``mdmsh`` matches the seed's high bytes.
+        ``mdmsh_of`` is locally injective, so exactly one offset around the model's target_second
+        matches -- that IS the landing second (frame ⊥ second; notes/seed_hitting_process.md §3-4),
+      * ``delta``  = ``second - target_second`` = the timing miss vs the model's target second.
+
+    Returns a dict or None (legacy inputs, or the seed's mdms/hour matches no swept second).
     """
     if inputs is None or not getattr(inputs, "calibrated", False) or seed_int is None:
         return None
     try:
-        from claytonlib.compass import calibrated_candidates
-        from claytonlib.compass._core import _second_of_frame
-        from claytonlib.times import get_times
-        _cands, meta = calibrated_candidates(inputs)
-        m = meta.get(seed_int)
-        if m is None:
-            return None
-        base_delay, _ = get_times(inputs.key_seed)
-        delta = m["delta"]
-        return {"frame": m["frame"], "delta": delta,
-                "second": _second_of_frame(base_delay, m["frame"]) + delta}
+        from claytonlib.chart.canon import mdmsh_of
+        want = ((seed_int >> 24) & 0xFF, (seed_int >> 16) & 0xFF)   # the seed's (mds, hour)
+        # Prefer the smallest |δ| on a match (same representative the sweep keeps on an mdms tie).
+        for delta in sorted(inputs.second_offsets, key=abs):
+            s = inputs.target_second + delta
+            if s >= 0 and mdmsh_of(inputs.initial_time + dt.timedelta(seconds=s)) == want:
+                return {"frame": seed_int & 0xFFFF, "delta": delta, "second": s}
+        return None
     except Exception:
         return None
 

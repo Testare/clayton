@@ -176,16 +176,17 @@ DEFAULT_ELM_MARGIN = 3
 class AdvancePlan:
     """A recipe to reach ``encounter_frame`` from ``current_frame``.
 
-    You Sweet Scent while standing on ``pre_scent_frame`` (= encounter_frame - 1),
-    so the encounter uses the ``encounter_frame`` roll.  The bulk of the distance
-    is covered by ``chatot_flips`` (two advances each; a trailing half-flip = one
+    You Sweet Scent while standing on ``scent_frame`` -- which is the
+    ``encounter_frame`` itself (verified in-game against Pokefinder: pressing on
+    ``encounter_frame - 1`` lands one frame early).  The bulk of the distance is
+    covered by ``chatot_flips`` (two advances each; a trailing half-flip = one
     advance is fine), landing on ``land_frame``; from there ``elm_before_scent``
-    Elm calls -- the verifiable margin -- carry you to ``pre_scent_frame``.
+    Elm calls -- the verifiable margin -- carry you to ``scent_frame``.
     """
     current_frame: int
     encounter_frame: int
-    pre_scent_frame: int
-    total_advances: int          # current_frame -> pre_scent_frame
+    scent_frame: int             # the frame you stand on when pressing Sweet Scent (= encounter_frame)
+    total_advances: int          # current_frame -> scent_frame
     chatot_flips: float          # may end in .5 (a half flip = one advance)
     chatot_advances: int
     elm_before_scent: int        # the readable margin (<= margin; = margin when chatot used)
@@ -197,26 +198,26 @@ def plan_advances(current_frame, encounter_frame, margin=DEFAULT_ELM_MARGIN):
     """Plan the advances from ``current_frame`` to ``encounter_frame``.
 
     ``encounter_frame`` is the frame whose roll you want (e.g. 81 for the shiny
-    Metang); Sweet Scent fires while on ``encounter_frame - 1``.  Raises
-    ValueError if that pre-scent frame is already behind ``current_frame``
-    (overshot -- you'd need to reset).
+    Metang).  You Sweet Scent while standing ON that frame (empirically -- pressing
+    a frame early misses by one).  Raises ValueError if ``encounter_frame`` is
+    already behind ``current_frame`` (overshot -- you'd need to reset).
 
     When more than ``margin`` advances remain, chatot flips close the gap to
-    ``margin`` Elm calls short of pre-scent; otherwise the whole (short) distance
-    is Elm calls and no chatot flips are used.
+    ``margin`` Elm calls short of the scent frame; otherwise the whole (short)
+    distance is Elm calls and no chatot flips are used.
     """
-    pre_scent = encounter_frame - 1
-    total = pre_scent - current_frame
+    scent_frame = encounter_frame   # press Sweet Scent standing on the encounter frame
+    total = scent_frame - current_frame
     if total < 0:
         raise ValueError(
             f"already past the target: on frame {current_frame}, but Sweet Scent "
-            f"for encounter frame {encounter_frame} must fire on frame {pre_scent}")
+            f"for encounter frame {encounter_frame} must fire on frame {scent_frame}")
     elm_before = min(total, margin)
     chatot_advances = total - elm_before
     return AdvancePlan(
         current_frame=current_frame,
         encounter_frame=encounter_frame,
-        pre_scent_frame=pre_scent,
+        scent_frame=scent_frame,
         total_advances=total,
         chatot_flips=chatot_advances / 2,
         chatot_advances=chatot_advances,
@@ -231,8 +232,8 @@ def margin_guide(rng_calls, elm, plan, n_before=5, n_after=3):
 
     ``n_before`` calls precede the bracket (in case you land early), the bracket
     holds the ``elm_before_scent`` calls you should hear approaching the target,
-    ``!`` marks where to Sweet Scent (on ``pre_scent_frame``), and ``n_after``
-    trailing calls follow (in case you overshoot).
+    ``!`` marks where to Sweet Scent (on ``scent_frame`` = the encounter frame),
+    and ``n_after`` trailing calls follow (in case you overshoot).
 
     ``elm[i]`` is the call heard leaving frame ``rng_calls + i``, so the bracket's
     first call leaves ``land_frame``.  If ``elm`` is too short to reach the scent
@@ -256,7 +257,7 @@ def describe_plan(plan, guide=None):
     """A multi-line, human-readable instruction block for the notebook."""
     lines = [
         f"On advance frame {plan.current_frame}; want a Metang encounter on "
-        f"frame {plan.encounter_frame} (Sweet Scent on frame {plan.pre_scent_frame}).",
+        f"frame {plan.encounter_frame} (Sweet Scent while on frame {plan.scent_frame}).",
         f"  Advances to go: {plan.total_advances}",
     ]
     if plan.chatot_advances > 0:
@@ -271,7 +272,7 @@ def describe_plan(plan, guide=None):
         step2 = 2
     lines.append(
         f"  {step2}. {plan.elm_before_scent} Elm calls "
-        f"-> frame {plan.pre_scent_frame}, then Sweet Scent.")
+        f"-> frame {plan.scent_frame}, then Sweet Scent.")
     if guide is not None:
         lines.append(f"  Guide: {guide}   (]! = Sweet Scent here)")
     return "\n".join(lines)

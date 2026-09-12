@@ -129,42 +129,44 @@ class TestIdentifyFrameDriver(unittest.TestCase):
 
 
 class TestPlanAdvances(unittest.TestCase):
+    # You Sweet Scent standing ON the encounter frame (verified in-game): so
+    # total = encounter_frame - current_frame, chatot = total - margin.
     def test_worked_example_frame_9_to_81(self):
         p = sa.plan_advances(9, 81)
-        self.assertEqual(p.pre_scent_frame, 80)
-        self.assertEqual(p.total_advances, 71)
-        self.assertEqual(p.chatot_advances, 68)
-        self.assertEqual(p.chatot_flips, 34.0)
-        self.assertEqual(p.land_frame, 77)      # 9 + 68
+        self.assertEqual(p.scent_frame, 81)     # press on the encounter frame itself
+        self.assertEqual(p.total_advances, 72)  # 81 - 9
+        self.assertEqual(p.chatot_advances, 69)
+        self.assertEqual(p.chatot_flips, 34.5)  # trailing half flip
+        self.assertEqual(p.land_frame, 78)      # 9 + 69
         self.assertEqual(p.elm_before_scent, 3)
 
-    def test_half_flip_when_gap_is_odd(self):
-        p = sa.plan_advances(9, 82)
-        self.assertEqual(p.chatot_advances, 69)
-        self.assertEqual(p.chatot_flips, 34.5)  # a trailing half flip
-        self.assertEqual(p.land_frame, 78)
+    def test_whole_flips_when_gap_is_even(self):
+        p = sa.plan_advances(9, 82)             # total 73, chatot 70
+        self.assertEqual(p.chatot_advances, 70)
+        self.assertEqual(p.chatot_flips, 35.0)
+        self.assertEqual(p.land_frame, 79)
 
     def test_short_distance_uses_only_elm_no_chatot(self):
-        p = sa.plan_advances(78, 81)            # pre_scent 80, total 2
+        p = sa.plan_advances(79, 81)            # scent 81, total 2
         self.assertEqual(p.chatot_flips, 0.0)
         self.assertEqual(p.chatot_advances, 0)
         self.assertEqual(p.elm_before_scent, 2)
-        self.assertEqual(p.land_frame, 78)
+        self.assertEqual(p.land_frame, 79)
 
     def test_exactly_margin_distance_no_chatot(self):
-        p = sa.plan_advances(77, 81)            # total 3 == margin
+        p = sa.plan_advances(78, 81)            # total 3 == margin
         self.assertEqual(p.chatot_advances, 0)
         self.assertEqual(p.elm_before_scent, 3)
 
     def test_one_over_margin_uses_half_flip(self):
-        p = sa.plan_advances(76, 81)            # total 4 > margin
+        p = sa.plan_advances(77, 81)            # total 4 > margin
         self.assertEqual(p.elm_before_scent, 3)
         self.assertEqual(p.chatot_advances, 1)
         self.assertEqual(p.chatot_flips, 0.5)
-        self.assertEqual(p.land_frame, 77)
+        self.assertEqual(p.land_frame, 78)
 
-    def test_scent_now_when_already_on_pre_scent(self):
-        p = sa.plan_advances(80, 81)            # total 0
+    def test_scent_now_when_already_on_encounter_frame(self):
+        p = sa.plan_advances(81, 81)            # total 0
         self.assertEqual(p.total_advances, 0)
         self.assertEqual(p.chatot_advances, 0)
         self.assertEqual(p.elm_before_scent, 0)
@@ -175,9 +177,10 @@ class TestPlanAdvances(unittest.TestCase):
 
     def test_custom_margin(self):
         p = sa.plan_advances(9, 81, margin=5)
+        self.assertEqual(p.total_advances, 72)
         self.assertEqual(p.elm_before_scent, 5)
-        self.assertEqual(p.chatot_advances, 66)
-        self.assertEqual(p.land_frame, 75)
+        self.assertEqual(p.chatot_advances, 67)
+        self.assertEqual(p.land_frame, 76)
 
 
 class TestMarginGuide(unittest.TestCase):
@@ -198,10 +201,19 @@ class TestMarginGuide(unittest.TestCase):
     def test_bracket_length_follows_elm_margin(self):
         rng_calls = 3
         elm = "KPE" * 40
-        plan = sa.plan_advances(78, 81)         # elm_before_scent = 2
+        plan = sa.plan_advances(79, 81)         # total 2 -> elm_before_scent = 2
         guide = sa.margin_guide(rng_calls, elm, plan)
         bracket = guide[guide.index("[") + 1:guide.index("]")]
         self.assertEqual(len(bracket), 2)
+
+    def test_regression_scent_on_encounter_frame_not_before(self):
+        # In-game finding: pressing Sweet Scent on encounter_frame-1 lands one frame
+        # early.  With this Elm string the OLD (off-by-one) code produced
+        # "KPKEP[KEK]!PEE"; the corrected code must produce "PKEPK[EKP]!EEP".
+        elm = "KPKEPKEKPEEP"
+        plan = sa.plan_advances(0, 9)          # scent_frame 9, land 6 (= 9 - margin)
+        guide = sa.margin_guide(0, elm, plan, n_before=5, n_after=3)
+        self.assertEqual(guide, "PKEPK[EKP]!EEP")
 
     def test_guide_matches_real_seed_calls(self):
         seed = 0x0C0E02C2

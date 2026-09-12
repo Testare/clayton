@@ -135,6 +135,50 @@ def _prompt_widen(inputs: CompassSafariInput) -> CompassSafariInput | None:
     return dataclasses.replace(inputs, k=new_k, second_offsets=tuple(new_offsets))
 
 
+def _prompt_expand(inputs: CompassSafariInput) -> CompassSafariInput | None:
+    """Expand the calibrated search by a number of FRAMES and SECONDS, in intuitive units.
+
+    Used when the observed path has eliminated every candidate: widen the ±kσ frame window by
+    `frames` (converted via σ) and the ±K second-offset range by `seconds`, so the search looks
+    for the seed further out.  Blank/0 keeps a value; returns a widened input, or None if nothing
+    changed / declined.  (``_prompt_widen`` remains the σ-unit widen behind the `w` command.)
+    """
+    sigma = max(float(inputs.sigma or 1.0), 1e-9)
+    cur_frames = int(round(inputs.k * sigma))
+    cur_maxoff = max((abs(d) for d in inputs.second_offsets), default=0)
+    print(f"  Current window: ±{cur_frames} frames (k={inputs.k:g}σ, σ≈{sigma:.1f}), "
+          f"±{cur_maxoff}s.")
+    try:
+        raw_f = input("  Expand frames by how many (each side)? [0] ").strip()
+        raw_s = input("  Expand seconds by how many (each side)? [0] ").strip()
+    except EOFError:
+        return None
+
+    def _int(raw, label):
+        if not raw:
+            return 0
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            print(f"  invalid {label}; using 0.")
+            return 0
+
+    add_frames = _int(raw_f, "frames")
+    add_secs = _int(raw_s, "seconds")
+    if add_frames == 0 and add_secs == 0:
+        print("  No expansion.")
+        return None
+    new_k = inputs.k + add_frames / sigma
+    new_K = cur_maxoff + add_secs
+    return dataclasses.replace(inputs, k=new_k,
+                               second_offsets=tuple(range(-new_K, new_K + 1)))
+
+
+def _observed_path_line(path_actions) -> str:
+    """The full observed path as a copy-pasteable string (for recording the run)."""
+    return "Observed path: " + ("".join(_action_to_str(a) for a in path_actions) or "(none)")
+
+
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
@@ -160,21 +204,25 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
     pending: tuple[str, list] | None = None
     path_actions: list[CompassAction] = []
     _jane_suggested = False
+    _identified_seed: int | None = None   # the seed we last showed the Machete preview for
 
-    def apply_widen() -> bool:
-        """Prompt to widen the calibrated window and re-apply the observed path.  Returns
-        True if the candidate set was regenerated, False if the user declined."""
+    def apply_new_inputs(new_inputs) -> bool:
+        """Adopt a widened/expanded input, regenerate candidates, and re-apply the full
+        observed path.  Returns True if it happened, False if `new_inputs` is None."""
         nonlocal inputs, candidates, meta, total, cache, pending
-        new_inputs = _prompt_widen(inputs)
         if new_inputs is None:
             return False
         inputs = new_inputs
         candidates, meta = calibrated_candidates(inputs)
         total = len(candidates)
         cache, pending = _replay_path(candidates, path_actions)
-        print(f"  Widened to ±{inputs.k:g}σ over offsets {list(inputs.second_offsets)}: "
+        print(f"  Now ±{inputs.k:g}σ over offsets {list(inputs.second_offsets)}: "
               f"{total} candidates; re-applied {len(path_actions)} observed step(s).")
         return True
+
+    def apply_widen() -> bool:
+        """Prompt to widen the calibrated window (the `w` command) and re-apply the path."""
+        return apply_new_inputs(_prompt_widen(inputs))
 
     _print_cheatsheet(inputs)
 
@@ -208,33 +256,39 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
         if len(current) == 0:
             print()
             if inputs.calibrated:
-                print(f"No matching seed found in the frame window "
-                      f"\u00b1{inputs.k:g}\u03c3 (\u03c3\u2248{inputs.sigma:.1f}) "
-                      f"over second offsets {list(inputs.second_offsets)}.")
-                if apply_widen():
+                print(f"The observed path eliminated every candidate in the current window "
+                      f"(\u00b1{inputs.k:g}\u03c3, \u03c3\u2248{inputs.sigma:.1f}, offsets "
+                      f"{list(inputs.second_offsets)}).  Expand the search to look further out, "
+                      f"or fix an input error.")
+                # Expand by a prompted number of frames + seconds, then re-apply the path.
+                if apply_new_inputs(_prompt_expand(inputs)):
+                    _identified_seed = None   # a re-found seed should re-offer the Machete preview
                     continue
             else:
                 print(f"No matching seed found in window \u00b1{inputs.window}.")
-            print("Consider expanding the search window or checking for input errors.")
+            print(_observed_path_line(path_actions))
             return []
 
         if len(current) == 1:
             ctx, seed, delay = current[0]
-            print()
-            sec_off = meta[seed]["delta"] if meta is not None and seed in meta else None
-            _print_success(seed, delay, ref, path_actions, second_offset=sec_off)
-            while True:
-                raw = input("\nRun Machete to find a capture path from this point? (y/n) ").strip().lower()
+            # Show the identification + a one-time Machete preview, but KEEP going: the user
+            # enters the ACTUAL observed steps so the whole path is recorded and a diverging
+            # step can still eliminate this (provisional) seed and trigger an expansion.
+            if seed != _identified_seed:
+                print()
+                sec_off = meta[seed]["delta"] if meta is not None and seed in meta else None
+                _print_success(seed, delay, ref, path_actions, second_offset=sec_off)
+                raw = input("\nRun Machete to preview the capture path from here? (y/n) ").strip().lower()
                 if raw in ('y', 'yes'):
                     from claytonlib.machete import machete_one
-                    path = machete_one(ctx)
-                    if path is not None:
-                        print(f"Machete found a path: {path}")
-                    else:
-                        print("Machete found no capture path from this state.")
-                    return [f"0x{seed:08X}"]
-                elif raw in ('n', 'no'):
-                    return [f"0x{seed:08X}"]
+                    mpath = machete_one(ctx)
+                    print(f"Machete path (predicted): {mpath}" if mpath is not None
+                          else "Machete found no capture path from this state.")
+                print("\nThis seed is provisional -- keep entering the ACTUAL steps you observe. "
+                      "If one diverges, the seed is eliminated and you can expand the search; "
+                      "enter C/F when captured/fled, or q to stop here.")
+                _identified_seed = seed
+            # fall through to the input prompt (do NOT return here)
 
         raw = input("\n>> ").strip()
 
@@ -246,6 +300,7 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             confirm = input("Quit compass? (y/n) ").strip().lower()
             if confirm in ('y', 'yes'):
                 current = pending[1] if pending is not None else cache[-1][1]
+                print(_observed_path_line(path_actions))
                 return [f"0x{seed:08X}" for _, seed, _ in current]
             continue
 
@@ -329,6 +384,7 @@ def compass_safari(inputs: CompassSafariInput) -> list[str]:
             event = "captured" if path_actions[-1].step == SafariStep.CAPTURED else "fled"
             print()
             print(f"Pokémon {event}. {len(final)} seed(s) matched this path:")
+            print(_observed_path_line(path_actions))
             if meta is not None:
                 post = posteriors([s for _, s, _ in final], meta)
                 ranked = sorted(final, key=lambda x: (-post.get(x[1], 0.0), x[2]))
