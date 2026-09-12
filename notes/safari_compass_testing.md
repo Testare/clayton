@@ -1,3 +1,63 @@
+   ## COMPARE WITH OFFSET
+
+[expedition] 16:35:41  === chart_report ===
+Best (boot time, M) pairs  [top 10 of 7]  (jitter kernel, k=3.5):
+   #            boot time     M (ms)  target F_b  second  P(capture)   sigma
+   1  2000-07-27 14:53:26     268337       16494     274       27.1%    62.1
+   2  2000-06-29 14:56:38     195202       12110     200       26.8%    52.9
+   3  2000-07-29 14:57:08     463584       28198     469       26.6%    81.6
+   4  2000-06-27 14:56:50     244581       15070     250       26.0%    59.3
+   5  2000-05-30 14:59:59     401660       24486     407       26.0%    75.9
+   6  2000-07-28 14:59:13     279614       17170     285       25.6%    63.4
+   7  2000-06-27 14:47:59     327792       20058     333       25.0%    68.6
+[expedition] 16:36:11  best target for each of 2464 starting times also saved
+[expedition] 16:36:11  findings saved -> data/metang_0C0E02C2/chart_six-bait-then-balls_machete-50-turns-after-5-balls/chart_report.json  (top 7 + 2464 per-starting-time)
+[expedition] Saved to data/expeditions/metang.json
+
+
+   ## Attempt 6
+╔═══════════════════════════╗
+║  Seed identified!         ║
+║  seed  = 0xF80E4BBF       ║
+║  delay = 19391            ║
+║  Δ     = -675             ║
+║  path  = bbBbbb00000000101║
+║  timer = +1s (late)       ║
+╚═══════════════════════════╝
+
+mmmmmmMmmBbmmb3
+mmbBb1
+mmC
+
+
+
+   ## Attempt 5: 
+
+╔══════════════════════╗
+║  Seed identified!    ║
+║  seed  = 0xF70E4DF9  ║
+║  delay = 19961       ║
+║  Δ     = -99         ║
+║  path  = bbbbbb000002║
+║  timer = on time     ║
+╚══════════════════════╝
+
+Run Machete to preview the capture path from here? (y/n)  y
+Machete path (predicted): Mmmmmb0Bm0bmmmC
+
+m
+
+Was regular mud, need to expand....
+
+╔══════════════════════════════╗
+║  Seed identified!            ║
+║  seed  = 0xF70E4C25          ║
+║  delay = 19493               ║
+║  Δ     = -567                ║
+║  path  = bbbbbb000002mb100002║
+║  timer = on time             ║
+╚══════════════════════════════╝
+
    ## Attempt 4: GOOD OMEN1
 ╔═══════════════════════════╗
 ║  Seed identified!         ║
