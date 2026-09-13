@@ -1,3 +1,36 @@
+## STC2 Attempt 2
+
+mm1mmmmm0b1bbbmmmmbb1bbbbmmmmM2mmmMbMbBbmbbbmmmmC
+
+╔════════════════════════════════════════╗
+║  Seed identified!                      ║
+║  seed  = 0xDE0E703D                    ║
+║  delay = 28733                         ║
+║  Δ     = 0 (exact target)              ║
+║  path  = bbbbbb010000000200000000000001║
+║  timer = on time                       ║
+╚════════════════════════════════════════╝
+
+Run Machete to preview the capture path from here? (y/n)  y
+Machete path (predicted): mm1mmmmm0b1bbbmmmmbb1bbbbmmmmM2mmmMbMbBbmbbbmmmmC
+
+mm1mmmmm0b1bbbmmmmbb1bbbbmmmmM2mmmMbMbBbmbbbmmmmC
+
+
+
+mmmM
+bM
+bBb
+mbbb
+mmmmC
+
+bbbbbb010000000200000000000001mm1mmmmm0b1bbbmmmmbb1bbbbmmmmM2mmmMbMbBbmbbbmmmm
+
+
+
+
+
+
 
    ## COMPARE WITH OFFSET
 
