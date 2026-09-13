@@ -85,6 +85,12 @@ class Expedition:
         # The calibration artifact holds both; precompute_chart covers their UNION, so this can
         # be flipped (adjust(fps_model="quadratic")) without a re-precompute.  See notes/refined_chart.md.
         self.fps_model:           str = "linear"
+        # Fold the calibration model's fitted safari load-path offset into the frame center for
+        # ALL safari scoring/identification (precompute, chart_report, compass_safari,
+        # chart_check_target_landing).  Kept uniform on purpose: the compass candidate set and the
+        # chart scorer must share one frame model or they go disjoint (clayton-xqf).  Default True;
+        # set False to score against the raw metronome fit.  No-op if no offset is fit.
+        self.use_safari_offset:   bool = True
 
         # Chart tuning (I/O batching, resume validation — see chart.ChartOptions)
         from claytonlib.chart import ChartOptions
@@ -130,6 +136,7 @@ class Expedition:
             'criteria_name':            self.criteria_name,
             'eval_strategy_name':       self.eval_strategy_name,
             'fps_model':                getattr(self, 'fps_model', 'linear'),
+            'use_safari_offset':        getattr(self, 'use_safari_offset', True),
             'window':                   self.window,
             'target_delay':             self.target_delay,
             'initial_time':             self.initial_time,
@@ -163,6 +170,7 @@ class Expedition:
         f.criteria_name            = data.get('criteria_name')
         f.eval_strategy_name       = data.get('eval_strategy_name')
         f.fps_model                = data.get('fps_model') or 'linear'
+        f.use_safari_offset        = data.get('use_safari_offset', True)
         f.window                   = data.get('window')
         f.target_delay             = data.get('target_delay')
         f.initial_time             = data.get('initial_time')
@@ -530,16 +538,27 @@ class Expedition:
             options=self.chart_options,
         )
 
-    def calibration_model(self):
+    def calibration_model(self, safari: bool | None = None):
         """The latest fitted timer-calibration model, or None if none has been exported yet.
 
         Reads the shared artifact that utils/calibration_tools refreshes after each saved run
         (the loop-back), so charting reflects the tightened model without a manual re-fit.
         Use it to build a CalibratedLandingWindow: it maps a commanded countdown M to the
         landing distribution over the battle-seed frame F_b.
+
+        By default the fitted safari load-path offset is folded into the frame center (the whole
+        expedition IS the safari path), so every caller -- chart_report, compass_safari,
+        chart_check_target_landing -- shares one frame model and stays mutually consistent
+        (clayton-xqf).  ``safari`` overrides that: None follows ``use_safari_offset`` (default
+        True); False returns the raw metronome fit.  Folding is a no-op if no offset is fit.
         """
         from claytonlib.calibration import CalibrationModel
-        return CalibrationModel.load_default(which=getattr(self, "fps_model", "linear"))
+        model = CalibrationModel.load_default(which=getattr(self, "fps_model", "linear"))
+        if model is None:
+            return None
+        if safari is None:
+            safari = getattr(self, "use_safari_offset", True)
+        return model.with_safari_offset() if safari else model
 
     def _warn_if_canon_missing_fps_model(self) -> None:
         """Warn if the stored canon wasn't precomputed for the selected fps_model.
@@ -715,6 +734,12 @@ class Expedition:
                 "precompute_chart needs a calibration model (it places each RTC second's frame "
                 "band and maps M->second). None found at data/calibration_model.json -- save a "
                 "calibration run first (utils/calibration_tools.save_compass_run).")
+        # Fold the safari load-path offset into every model so the canon covers the SHIFTED frame
+        # band the safari scorers will ask for -- otherwise precompute evaluates the raw-metronome
+        # frames and chart_report (also folded) looks them up in a canon that never computed them.
+        # Must match calibration_model()'s folding so precompute and scoring stay in lockstep.
+        if getattr(self, "use_safari_offset", True):
+            model_set = {k: m.with_safari_offset() for k, m in model_set.items()}
         model = model_set  # dict {fps_model_key: model}; precompute_canon unions their frames
 
         t0 = time.perf_counter()

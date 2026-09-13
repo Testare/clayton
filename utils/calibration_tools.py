@@ -1493,9 +1493,11 @@ def update_safari_offset(model_path=DEFAULT_MODEL_PATH, runs_path=SAFARI_RUNS_PA
     """Section E (safari): fit and write the safari offset into the deployed modelset on confirm.
 
     Holds each model's metronome alpha/beta and sets only ``safari_offset`` (+ n/std), so the
-    metronome/chart path is untouched; a report opts into it via ``use_safari_offset``.  Unlike
-    the metronome Section E this does NOT change the frame→capture canon, so no chart REBUILD is
-    needed -- just re-run the report.  Returns the updated {key: CalibrationModel}, or None.
+    pure metronome fit is untouched.  The expedition folds this offset into the frame center for
+    ALL safari scoring (``use_safari_offset``, default True), so after changing it you must RE-RUN
+    ``precompute_chart()`` -- the canon is keyed by frame and the offset shifts which frames the
+    scorers ask for (a fast incremental extend, not a full rebuild) -- then ``chart_report()``.
+    Returns the updated {key: CalibrationModel}, or None.
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
     models = CalibrationModel.load_set(model_path)
@@ -1517,8 +1519,10 @@ def update_safari_offset(model_path=DEFAULT_MODEL_PATH, runs_path=SAFARI_RUNS_PA
         else:
             print(f"[{k}] safari_offset {old_s} -> {fit['offset']:+.2f} frames  "
                   f"(n={fit['n']}, std={fit['std']:.2f})")
-    print("\n*** This shifts only the safari load path (frame(..., safari=True)); the "
-          "metronome/chart path is unchanged, and no chart rebuild is needed. ***")
+    print("\n*** This shifts the safari load-path frame center. The expedition applies it to ALL "
+          "safari scoring (use_safari_offset, default True), so RE-RUN precompute_chart() to "
+          "extend the canon to the shifted frames, then chart_report(). (Set "
+          "expedition.use_safari_offset=False to score against the raw metronome fit instead.) ***")
     if not (assume_yes or _prompt_yes_no("Write the safari offset? (y/n): ")):
         print("Safari offset not updated.")
         return None

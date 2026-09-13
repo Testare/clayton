@@ -196,5 +196,48 @@ class TestReportUsesSafariOffset(unittest.TestCase):
         self.assertEqual(seen["safari_offset"], 30.0)
 
 
+class TestExpeditionFoldsSafariOffset(unittest.TestCase):
+    """The expedition surface must fold the offset for ALL safari scoring paths, so precompute,
+    chart_report, and compass_safari share one frame model (clayton-xqf)."""
+
+    def _patch_model(self, model):
+        import claytonlib.calibration as cal
+        orig = cal.CalibrationModel.load_default
+        cal.CalibrationModel.load_default = classmethod(lambda cls, *a, **k: model)
+        self.addCleanup(setattr, cal.CalibrationModel, "load_default", orig)
+
+    def test_calibration_model_folds_offset_by_default(self):
+        from claytonlib.expedition import Expedition
+        self._patch_model(_df_model(alpha=-300.0, safari_offset=-437.0))
+        exp = Expedition("t")
+        m = exp.calibration_model()                      # default: use_safari_offset True
+        self.assertAlmostEqual(m.alpha, -737.0)          # offset baked into the intercept
+        self.assertIsNone(m.safari_offset)               # cleared, so a second fold is a no-op
+        self.assertAlmostEqual(exp.calibration_model(safari=False).alpha, -300.0)
+
+    def test_use_safari_offset_toggle(self):
+        from claytonlib.expedition import Expedition
+        self._patch_model(_df_model(alpha=-300.0, safari_offset=-437.0))
+        exp = Expedition("t")
+        exp.use_safari_offset = False
+        self.assertAlmostEqual(exp.calibration_model().alpha, -300.0)
+
+    def test_no_offset_is_noop(self):
+        from claytonlib.expedition import Expedition
+        self._patch_model(_df_model(alpha=-300.0, safari_offset=None))
+        exp = Expedition("t")
+        self.assertAlmostEqual(exp.calibration_model().alpha, -300.0)
+
+    def test_config_roundtrips_flag_and_defaults_true(self):
+        from claytonlib.expedition import Expedition
+        exp = Expedition("t")
+        exp.use_safari_offset = False
+        self.assertFalse(Expedition._from_dict(exp._to_dict()).use_safari_offset)
+        # an older config with no such key opts in (default True)
+        d = exp._to_dict()
+        d.pop("use_safari_offset")
+        self.assertTrue(Expedition._from_dict(d).use_safari_offset)
+
+
 if __name__ == "__main__":
     unittest.main()
