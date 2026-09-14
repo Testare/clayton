@@ -305,7 +305,13 @@ def narrow_by_elm(candidates, limit=20):
 
     Type P/E/K as you hear each Elm call (across as many inputs as you like);
     non-P/E/K characters are ignored.  Type M at any point to switch to picking
-    a candidate manually.  Returns the single surviving candidate dict (or None).
+    a candidate manually.
+
+    Returns ``(candidate_or_None, elm_so_far)``: the single surviving candidate dict
+    (or None if the calls stopped matching / the user aborted), and the P/E/K calls
+    actually entered.  Those calls advance the same Seed A stream the frame-ID step
+    walks, so the caller can hand them straight to ``identify_frame(..., observed=...)``
+    to avoid re-typing them (clayton-pwy).
     """
     elm_so_far = ""
     remaining = list(candidates)
@@ -314,14 +320,14 @@ def narrow_by_elm(candidates, limit=20):
         add, manual = parse_elm_input(raw)
         elm_so_far += add
         if manual:
-            return manual_select(filter_elm(candidates, elm_so_far))
+            return manual_select(filter_elm(candidates, elm_so_far)), elm_so_far
         print(f"Elm calls so far: {elm_so_far}")
         remaining = filter_elm(candidates, elm_so_far)
         print_roamer_candidates(remaining, limit=limit)
     if len(remaining) == 1:
-        return remaining[0]
+        return remaining[0], elm_so_far
     print("\nNo candidates match those Elm calls -- check your input.")
-    return None
+    return None, elm_so_far
 
 
 def identify_seed(candidates, observed_rel=None, display_limit=20, present=None):
@@ -339,9 +345,17 @@ def identify_seed(candidates, observed_rel=None, display_limit=20, present=None)
     if not matched:
         print("\nNo candidates match -- check the observed routes or widen the window.")
         return None
-    result = matched[0] if len(matched) == 1 else narrow_by_elm(matched, limit=display_limit)
+    # A single roamer-route match needs no Elm calls to disambiguate, so the carried-over
+    # progress must be EMPTY (A.2 starts fresh); otherwise it's whatever the user typed while
+    # narrowing.  Recorded on the row as `elm_observed` so Section A.2's identify_frame can
+    # pre-fill its `observed` and the user doesn't re-enter the same calls (clayton-pwy).
+    if len(matched) == 1:
+        result, elm_observed = matched[0], ""
+    else:
+        result, elm_observed = narrow_by_elm(matched, limit=display_limit)
     if result is None:
         return None
+    result["elm_observed"] = elm_observed
     # The winning row was just printed by the step above; confirm it on one line rather
     # than re-printing the whole table.
     c = result

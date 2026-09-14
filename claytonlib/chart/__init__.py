@@ -151,6 +151,27 @@ def machete_x_turns_n_balls_criteria(turns: int, n_balls: int) -> SuccessCriteri
     return SuccessCriteria(f"machete-{turns}-turns-after-{n_balls}-balls", _check)
 
 
+def n_balls_no_flee_criteria(n_balls: int) -> SuccessCriteria:
+    """Success if the run reaches ``n_balls`` thrown without fleeing (or is captured).
+
+    A *calibration*-oriented criteria: the point is to collect a long-enough observed path
+    to identify the landed seed, not to catch anything.  Success means either the encounter
+    was captured (rare enough that it almost always pins the seed) OR ``n_balls`` balls were
+    thrown while the pokemon is still on screen.  The ONLY failure is an early flee -- a short,
+    likely-unidentifiable path -- which is exactly the censoring that biases the safari jitter
+    high (see notes on selection bias).  Pairs with a bait-then-balls strategy: bait suppresses
+    fleeing while the balls collect discriminating shake outcomes.
+
+    ``balls_remaining`` (not ``turn_count``) counts the balls, so a bait prefix does not count
+    toward ``n_balls``.
+    """
+    def _check(ctx: SafariContext) -> bool:
+        if ctx.captured():
+            return True
+        return (30 - ctx.balls_remaining) >= n_balls and ctx.is_watching()
+    return SuccessCriteria(f"{n_balls}-balls-no-flee", _check)
+
+
 # ---------------------------------------------------------------------------
 # ChartOptions
 # ---------------------------------------------------------------------------

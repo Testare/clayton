@@ -1,3 +1,9 @@
+## STC3 Attempt 2
+
+bbbbbb0100010?
+
+bbbbbb0100010?02F
+
 ## STC2 Attempt 2
 
 mm1mmmmm0b1bbbmmmmbb1bbbbmmmmM2mmmMbMbBbmbbbmmmmC

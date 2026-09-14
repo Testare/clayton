@@ -12,6 +12,7 @@ from claytonlib.chart import (
     ChartSafariInput,
     STRATEGY_ONLY_BALLS,
     CRITERIA_CAPTURE,
+    n_balls_no_flee_criteria,
     chart_safari,
 )
 from claytonlib.safari import safari_pokemon_by_name
@@ -197,6 +198,51 @@ class TestChartSafari(unittest.TestCase):
         inputs_val = _make_inputs(options=ChartOptions(resume_validation_enabled=True, resume_strict=True))
         with self.assertRaises(RuntimeError):
             self._run(inputs_val, store)
+
+
+class TestNBallsNoFleeCriteria(unittest.TestCase):
+    """The calibration criteria: success on capture, or on reaching N balls while watching."""
+
+    def _ctx(self, *, balls_remaining, state):
+        from claytonlib.safari import SafariContext, SafariContextState
+        pokemon = safari_pokemon_by_name('metang')
+        return SafariContext(pokemon=pokemon, rng_state=0,
+                             balls_remaining=balls_remaining, state=state)
+
+    def test_reaching_n_balls_while_watching_succeeds(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_balls_no_flee_criteria(5)
+        # 5 balls thrown (30 - 25), still on screen
+        self.assertTrue(crit.met(self._ctx(balls_remaining=25,
+                                           state=SafariContextState.WATCHING_WONT_FLEE)))
+        # "will flee next turn" still counts as watching -- the flee hasn't happened yet
+        self.assertTrue(crit.met(self._ctx(balls_remaining=25,
+                                           state=SafariContextState.WATCHING_WILL_FLEE)))
+
+    def test_fewer_than_n_balls_does_not_succeed(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_balls_no_flee_criteria(5)
+        self.assertFalse(crit.met(self._ctx(balls_remaining=26,  # only 4 balls
+                                            state=SafariContextState.WATCHING_WONT_FLEE)))
+
+    def test_early_flee_fails_even_if_balls_thrown(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_balls_no_flee_criteria(5)
+        self.assertFalse(crit.met(self._ctx(balls_remaining=25,
+                                            state=SafariContextState.FLED)))
+
+    def test_capture_counts_regardless_of_ball_count(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_balls_no_flee_criteria(5)
+        # captured on the very first ball -- rare, but a fully identifiable outcome
+        self.assertTrue(crit.met(self._ctx(balls_remaining=29,
+                                           state=SafariContextState.CAPTURED)))
+
+    def test_name_and_resolver(self):
+        from claytonlib.expedition._config import _resolve_criteria
+        self.assertEqual(n_balls_no_flee_criteria(6).name, '6-balls-no-flee')
+        resolved = _resolve_criteria('5-balls-no-flee')
+        self.assertEqual(resolved.name, '5-balls-no-flee')
 
 
 if __name__ == '__main__':

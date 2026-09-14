@@ -59,7 +59,10 @@ def _resolve_strategy(name: str):
 
 
 def _resolve_criteria(name: str):
-    from claytonlib.chart import machete_x_turns_n_balls_criteria
+    from claytonlib.chart import (
+        machete_x_turns_n_balls_criteria,
+        n_balls_no_flee_criteria,
+    )
     reg = _build_criteria_registry()
     if name in reg:
         return reg[name]
@@ -67,6 +70,10 @@ def _resolve_criteria(name: str):
     m = re.fullmatch(r'machete-(\d+)-turns-after-(\d+)-balls', name)
     if m:
         return machete_x_turns_n_balls_criteria(int(m.group(1)), int(m.group(2)))
+    # parameterised: "{n}-balls-no-flee" (calibration: survive to n balls, or capture)
+    m = re.fullmatch(r'(\d+)-balls-no-flee', name)
+    if m:
+        return n_balls_no_flee_criteria(int(m.group(1)))
     raise ValueError(f"Unknown criteria name: {name!r}")
 
 
