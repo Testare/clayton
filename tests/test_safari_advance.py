@@ -244,5 +244,45 @@ class TestPromptTargetFrame(unittest.TestCase):
                                    input_fn=lambda _p="": next(replies)), 11)
 
 
+class TestChooseTargetFrame(unittest.TestCase):
+    """The in-house/Pokefinder toggle + exact-seed rule (clayton-ctd.8)."""
+
+    KEY = 0x0C0E02C2
+    NEARBY = 0x0C0E02C8  # a different (nearby) seed we actually landed on
+    BLOCKS = {"peak": 56}
+
+    def test_exact_seed_ignores_toggle(self):
+        # Loaded the key seed exactly -> configured target_advances, whatever the toggle says.
+        for use in (True, False):
+            self.assertEqual(
+                sa.choose_target_frame(self.KEY, key_seed=self.KEY, target_advances=81,
+                                       use_inhouse=use, area="Mountain", tod="morning",
+                                       blocks=self.BLOCKS), 81)
+
+    def test_inhouse_finds_metang_frame(self):
+        # Independently reproduces the frame the user got from Pokefinder for this seed (31).
+        frame = sa.choose_target_frame(self.NEARBY, key_seed=self.KEY, target_advances=81,
+                                       use_inhouse=True, area="Mountain", tod="morning",
+                                       blocks=self.BLOCKS, current_frame=14)
+        self.assertEqual(frame, 31)
+        self.assertGreater(frame, 14)
+
+    def test_pokefinder_mode_prompts(self):
+        frame = sa.choose_target_frame(self.NEARBY, key_seed=self.KEY, target_advances=81,
+                                       use_inhouse=False, input_fn=lambda _p="": "27")
+        self.assertEqual(frame, 27)
+
+    def test_inhouse_requires_blocks(self):
+        with self.assertRaises(ValueError):
+            sa.choose_target_frame(self.NEARBY, key_seed=self.KEY, target_advances=81,
+                                   use_inhouse=True, blocks=None)
+
+    def test_inhouse_raises_when_target_absent(self):
+        with self.assertRaises(RuntimeError):
+            sa.choose_target_frame(self.NEARBY, key_seed=self.KEY, target_advances=81,
+                                   use_inhouse=True, area="Mountain", tod="morning",
+                                   blocks={"peak": 0})  # no Peak -> no Metang
+
+
 if __name__ == "__main__":
     unittest.main()

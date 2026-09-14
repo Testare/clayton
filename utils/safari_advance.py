@@ -299,3 +299,40 @@ def prompt_target_frame(seed, default=DEFAULT_TARGET_FRAME, input_fn=None):
             return int(raw)
         except ValueError:
             print("  enter an integer frame (or blank for the default).")
+
+
+def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
+                        area="Mountain", tod="morning", blocks=None, target="metang",
+                        current_frame=0, search_margin=DEFAULT_ELM_MARGIN, max_frame=300,
+                        input_fn=None):
+    """Pick the advance frame to Sweet Scent on, honoring the in-house/Pokefinder toggle.
+
+    Exact-seed rule (ALWAYS, regardless of ``use_inhouse``): if the loaded ``seed`` is the intended
+    ``key_seed`` we hit the target dead-on, so the frame is exactly ``target_advances`` (the
+    configured true target, e.g. 81 for the shiny Metang).
+
+    Otherwise we landed on a nearby seed and must find *a* Metang frame:
+      * ``use_inhouse=True``  -> compute it here from the Safari block config (no Pokefinder); returns
+        the nearest ``target`` frame at least ``search_margin`` advances ahead of ``current_frame``
+        (so ``plan_advances`` has room for its verifiable Elm-call margin).
+      * ``use_inhouse=False`` -> previous behavior: print the seed and prompt for a Pokefinder frame
+        (blank keeps ``target_advances``).
+    """
+    if seed == key_seed:
+        print(f"Loaded the target seed exactly (0x{seed:08X}) -> target advances {target_advances}.")
+        return target_advances
+    if use_inhouse:
+        if blocks is None:
+            raise ValueError("in-house mode needs `blocks`, e.g. {'peak': 56}")
+        from claytonlib.safari_encounters import find_encounter_frame
+        lo = current_frame + search_margin
+        hit = find_encounter_frame(seed, area, tod, blocks, target, min_frame=lo, max_frame=max_frame)
+        if hit is None:
+            raise RuntimeError(
+                f"no {target} frame in [{lo}, {max_frame}] for {area}/{tod} blocks={blocks} -- "
+                f"check the block scores, area, and time of day.")
+        frame, level = hit
+        print(f"In-house: nearest {target} at advance frame {frame} (L{level}); "
+              f"advance {frame - current_frame} from the current frame {current_frame}.")
+        return frame
+    return prompt_target_frame(seed, default=target_advances, input_fn=input_fn)
