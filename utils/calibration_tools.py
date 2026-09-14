@@ -820,7 +820,7 @@ def _offset_phrase(delta):
 
 
 def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
-                    a_seed=None, target_timer_delay=None):
+                    a_seed=None, target_timer_delay=None, elm_calls=None, chatot_flips=None):
     """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
 
     Parameters
@@ -903,6 +903,10 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         "frame_delta": frame_delta,
         "second": cal["second"] if cal else None,
         "second_offset": cal["delta"] if cal else None,
+        # Section-A.2 advance recipe (Seed A): how many Elm calls and chatot flips reached the
+        # encounter frame -- recorded to test whether they correlate with frame_delta (Seed B miss).
+        "elm_calls": elm_calls,
+        "chatot_flips": chatot_flips,
         # Section-A initial seed (for F_a in the safari offset fit); null on older runs.
         "a_seed": _seed_summary(a_seed),
         "notes": notes,

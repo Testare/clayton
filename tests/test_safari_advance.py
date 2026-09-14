@@ -158,12 +158,13 @@ class TestPlanAdvances(unittest.TestCase):
         self.assertEqual(p.chatot_advances, 0)
         self.assertEqual(p.elm_before_scent, 3)
 
-    def test_one_over_margin_uses_half_flip(self):
-        p = sa.plan_advances(77, 81)            # total 4 > margin
-        self.assertEqual(p.elm_before_scent, 3)
-        self.assertEqual(p.chatot_advances, 1)
-        self.assertEqual(p.chatot_flips, 0.5)
-        self.assertEqual(p.land_frame, 78)
+    def test_one_over_margin_expands_elm_no_half_flip(self):
+        # A lone half flip (1 leftover advance) is folded into a 4-call Elm margin instead.
+        p = sa.plan_advances(77, 81)            # total 4 > margin 3
+        self.assertEqual(p.elm_before_scent, 4)
+        self.assertEqual(p.chatot_advances, 0)
+        self.assertEqual(p.chatot_flips, 0.0)
+        self.assertEqual(p.land_frame, 77)
 
     def test_scent_now_when_already_on_encounter_frame(self):
         p = sa.plan_advances(81, 81)            # total 0
@@ -244,12 +245,77 @@ class TestPromptTargetFrame(unittest.TestCase):
                                    input_fn=lambda _p="": next(replies)), 11)
 
 
+class TestPlanExpandsShortChatot(unittest.TestCase):
+    """A lone half/single chatot flip is folded into a 4-/5-call Elm margin (mirror of shrinking)."""
+
+    def test_one_leftover_advance_becomes_four_elm_no_chatot(self):
+        p = sa.plan_advances(0, 4)   # margin 3 -> would be 0.5 flip
+        self.assertEqual((p.chatot_advances, p.elm_before_scent), (0, 4))
+
+    def test_two_leftover_advances_become_five_elm_no_chatot(self):
+        p = sa.plan_advances(0, 5)   # would be 1 flip
+        self.assertEqual((p.chatot_advances, p.elm_before_scent), (0, 5))
+
+    def test_three_leftover_keeps_chatot(self):
+        p = sa.plan_advances(0, 6)   # 1.5 flips -- worth flipping
+        self.assertEqual((p.chatot_advances, p.elm_before_scent), (3, 3))
+
+    def test_exactly_margin_unchanged(self):
+        p = sa.plan_advances(0, 3)
+        self.assertEqual((p.chatot_advances, p.elm_before_scent), (0, 3))
+
+
+class TestMarginAmbiguous(unittest.TestCase):
+    # plan_advances(6, 12): chatot kept, land 9 -> bracket = elm[9:12] (m=3), flanks elm[8]/elm[12].
+    def _amb(self, elm):
+        return sa.margin_ambiguous(0, elm, sa.plan_advances(6, 12))
+
+    def test_run_extending_past_bracket_is_ambiguous(self):
+        self.assertTrue(self._amb("PKPKPKPK" + "E" + "EEE" + "PKP"))   # E[EEE]
+
+    def test_bounded_run_is_not_ambiguous(self):
+        self.assertFalse(self._amb("PKPKPKPK" + "K" + "EEE" + "KPK"))  # K[EEE]K
+
+    def test_period_two_repeat_is_ambiguous(self):
+        self.assertTrue(self._amb("PKPKPKP" + "EK" + "EKE" + "PKP"))   # EK[EKE]
+
+    def test_period_three_repeat_not_flagged(self):
+        self.assertFalse(self._amb("MNMNMN" + "PKE" + "PKE" + "MNM"))  # PKE[PKE], error > 2 advances
+
+    def test_mixed_calls_not_ambiguous(self):
+        self.assertFalse(self._amb("PKPKPKPKP" + "KPE" + "PKP"))
+
+
 class TestChooseTargetFrame(unittest.TestCase):
     """The in-house/Pokefinder toggle + exact-seed rule (clayton-ctd.8)."""
 
     KEY = 0x0C0E02C2
     NEARBY = 0x0C0E02C8  # a different (nearby) seed we actually landed on
     BLOCKS = {"peak": 56}
+
+    def test_inhouse_skips_ambiguous_margin_frame(self):
+        # seed 0x0D0E02D0 has Metang at frames 13 and 18. Craft elm so 13's margin is E[EEE]
+        # (ambiguous) and 18's is K,P,E with distinct flanks (unique).
+        #        idx: 0-8 filler | 9-12 EEEE | 13-17 PKKPE | 18-21 PKPK
+        elm = "PKPKPKPKP" + "EEEE" + "PKKPE" + "PKPK"
+        frame = sa.choose_target_frame(0x0D0E02D0, key_seed=self.KEY, target_advances=81,
+                                       use_inhouse=True, area="Mountain", tod="morning",
+                                       blocks=self.BLOCKS, current_frame=10, rng_calls=0, elm=elm)
+        self.assertEqual(frame, 18)
+
+    def test_exact_seed_ignores_ambiguous_margin(self):
+        # The true target seed goes to target_advances even if that frame's margin is ambiguous.
+        elm = "E" * 200
+        self.assertEqual(
+            sa.choose_target_frame(self.KEY, key_seed=self.KEY, target_advances=81,
+                                   use_inhouse=True, area="Mountain", tod="morning",
+                                   blocks=self.BLOCKS, current_frame=10, rng_calls=0, elm=elm), 81)
+
+    def test_inhouse_without_elm_takes_nearest(self):
+        frame = sa.choose_target_frame(0x0D0E02D0, key_seed=self.KEY, target_advances=81,
+                                       use_inhouse=True, area="Mountain", tod="morning",
+                                       blocks=self.BLOCKS, current_frame=10)
+        self.assertEqual(frame, 13)
 
     def test_exact_seed_ignores_toggle(self):
         # Loaded the key seed exactly -> configured target_advances, whatever the toggle says.

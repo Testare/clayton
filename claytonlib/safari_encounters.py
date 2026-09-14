@@ -133,6 +133,30 @@ def advance_frame_species(seed: int, frame: int, area: str, tod, blocks) -> tupl
     return resolve_safari_slots(area, tod, blocks)[frame_slot(seed, frame)]
 
 
+def iter_encounter_frames(seed: int, area: str, tod, blocks, target: str = "metang",
+                          min_frame: int = 0, max_frame: int = 300):
+    """Yield ``(frame, level)`` for every advance frame in ``[min_frame, max_frame]`` whose
+    encounter is ``target`` (ascending).  Empty if the target occupies no slot in this config.
+
+    Lets a caller walk successive candidate frames -- e.g. to skip one whose Elm-call approach
+    margin is ambiguous and take the next.
+    """
+    slots = resolve_safari_slots(area, tod, blocks)
+    target = str(target).lower()
+    hit_slots = {i for i, (sp, _lv) in enumerate(slots) if sp == target}
+    if not hit_slots:
+        return
+    # Walk the RNG forward once rather than re-advancing from the seed for every frame.
+    state = seed
+    for _ in range(min_frame):
+        state = advance_rng(state)
+    for frame in range(min_frame, max_frame + 1):
+        state = advance_rng(state)                # state is now advance_rng^(frame+1)(seed)
+        slot = (state >> 16) % 10
+        if slot in hit_slots:
+            yield frame, slots[slot][1]
+
+
 def find_encounter_frame(seed: int, area: str, tod, blocks, target: str = "metang",
                          min_frame: int = 0, max_frame: int = 300) -> tuple[int, int] | None:
     """Nearest advance frame in ``[min_frame, max_frame]`` whose encounter is ``target``.
@@ -141,17 +165,4 @@ def find_encounter_frame(seed: int, area: str, tod, blocks, target: str = "metan
     (e.g. its block requirement is not met) or none is found in range.  Species match is by
     lower-cased name.
     """
-    slots = resolve_safari_slots(area, tod, blocks)
-    target = str(target).lower()
-    hit_slots = {i for i, (sp, _lv) in enumerate(slots) if sp == target}
-    if not hit_slots:
-        return None
-    # Walk the RNG forward once rather than re-advancing from the seed for every frame.
-    state = seed
-    for _ in range(min_frame):
-        state = advance_rng(state)
-    for frame in range(min_frame, max_frame + 1):
-        state = advance_rng(state)                # state is now advance_rng^(frame+1)(seed)
-        if (state >> 16) % 10 in hit_slots:
-            return frame, slots[(state >> 16) % 10][1]
-    return None
+    return next(iter_encounter_frames(seed, area, tod, blocks, target, min_frame, max_frame), None)

@@ -55,6 +55,23 @@ class TestSaveSafariRun(unittest.TestCase):
         self.assertIsNone(r["delay"])  # no inputs given -> not derivable
         self.assertIsNone(r["frame_delta"])  # no target frame without inputs
 
+    def test_records_elm_and_chatot_counts(self):
+        p = self._path()
+        with _answers(["counts", "", "y"]):
+            rec = ct.save_safari_run(["0x0C0E02CA"], path="mmb0F", save_path=p,
+                                     target_timer_delay=300000, elm_calls=4, chatot_flips=5.5)
+        self.assertEqual(rec["elm_calls"], 4)
+        self.assertEqual(rec["chatot_flips"], 5.5)
+        self.assertEqual(self._read(p)[0]["elm_calls"], 4)
+
+    def test_elm_and_chatot_default_none(self):
+        p = self._path()
+        with _answers(["nocounts", "", "y"]):
+            rec = ct.save_safari_run(["0x0C0E02CA"], path="mmb0F", save_path=p,
+                                     target_timer_delay=300000)
+        self.assertIsNone(rec["elm_calls"])
+        self.assertIsNone(rec["chatot_flips"])
+
     def test_ambiguous_leaves_seed_null(self):
         p = self._path()
         with _answers(["amb", "", "y"]):

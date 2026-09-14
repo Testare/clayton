@@ -214,6 +214,12 @@ def plan_advances(current_frame, encounter_frame, margin=DEFAULT_ELM_MARGIN):
             f"for encounter frame {encounter_frame} must fire on frame {scent_frame}")
     elm_before = min(total, margin)
     chatot_advances = total - elm_before
+    # A single (or half) chatot flip -- 1 or 2 leftover advances -- isn't worth the unverifiable
+    # flip; just do those as extra Elm calls (a 4- or 5-call margin), the mirror of shrinking the
+    # margin below `margin` when that's all the distance there is.
+    if 0 < chatot_advances <= 2:
+        elm_before = total
+        chatot_advances = 0
     return AdvancePlan(
         current_frame=current_frame,
         encounter_frame=encounter_frame,
@@ -301,10 +307,48 @@ def prompt_target_frame(seed, default=DEFAULT_TARGET_FRAME, input_fn=None):
             print("  enter an integer frame (or blank for the default).")
 
 
+def margin_calls(rng_calls, elm, plan):
+    """The Elm calls you'd hear over the plan's margin (the bracketed calls before Sweet Scent)."""
+    j_land = plan.land_frame - rng_calls
+    return elm[j_land:j_land + plan.elm_before_scent]
+
+
+def margin_ambiguous(rng_calls, elm, plan):
+    """Whether the plan's Elm-call margin can't reliably confirm the Sweet-Scent frame.
+
+    The margin (the bracketed calls) confirms the frame only if it reads *uniquely* -- if the same
+    call pattern repeats one step off, a landing/count error by that step is invisible.  So the
+    margin is ambiguous when a full copy of the bracket sits ``p`` positions before or after it --
+    i.e. the bracket's pattern *continues* into a flank -- for a period ``p`` of 1 or 2 (we assume
+    landing/count errors are within 2 advances):
+
+      * a flat run only when the run extends past the bracket -- ``E[EEE]`` / ``[EEE]!E`` (ambiguous),
+        but ``K[EEE]K`` (bounded) is fine;
+      * a period-2 unit -- ``EK[EKE]`` / ``[EKE]!KE``.
+
+    (A period-3 repeat like ``PKE[PKE]`` is *not* flagged, since a 3-advance error is out of scope.)
+    A flank that runs off the known ``elm`` can't be checked, so it isn't flagged (``margin_guide``
+    already warns when ``elm`` is too short).  The fix (in ``choose_target_frame``) is to take the
+    next target frame whose margin reads uniquely.
+    """
+    m = plan.elm_before_scent
+    lo = plan.land_frame - rng_calls          # bracket = elm[lo:hi]
+    hi = lo + m
+    if m < 1 or lo < 0 or hi > len(elm):
+        return False
+    bracket = elm[lo:hi]
+    for p in range(1, min(m, 2) + 1):         # errors assumed within 2 advances
+        if lo - p >= 0 and elm[lo - p:hi - p] == bracket:      # copy p steps earlier (early landing)
+            return True
+        if hi + p <= len(elm) and elm[lo + p:hi + p] == bracket:  # copy p steps later (late landing)
+            return True
+    return False
+
+
 def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
                         area="Mountain", tod="morning", blocks=None, target="metang",
                         current_frame=0, search_margin=DEFAULT_ELM_MARGIN, max_frame=300,
-                        input_fn=None):
+                        rng_calls=None, elm=None, input_fn=None):
     """Pick the advance frame to Sweet Scent on, honoring the in-house/Pokefinder toggle.
 
     Exact-seed rule (ALWAYS, regardless of ``use_inhouse``): if the loaded ``seed`` is the intended
@@ -312,27 +356,43 @@ def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
     configured true target, e.g. 81 for the shiny Metang).
 
     Otherwise we landed on a nearby seed and must find *a* Metang frame:
-      * ``use_inhouse=True``  -> compute it here from the Safari block config (no Pokefinder); returns
-        the nearest ``target`` frame at least ``search_margin`` advances ahead of ``current_frame``
-        (so ``plan_advances`` has room for its verifiable Elm-call margin).
+      * ``use_inhouse=True``  -> compute it here from the Safari block config (no Pokefinder).  Takes
+        the nearest ``target`` frame at least ``search_margin`` advances ahead of ``current_frame``;
+        when ``rng_calls``/``elm`` are given, frames whose Elm-call approach margin is an ambiguous
+        run (``margin_ambiguous``) are skipped for the next candidate.
       * ``use_inhouse=False`` -> previous behavior: print the seed and prompt for a Pokefinder frame
         (blank keeps ``target_advances``).
     """
     if seed == key_seed:
+        # Exact target seed -> the configured target_advances (e.g. the shiny frame), even if its
+        # Elm margin is ambiguous: that's THE frame we want, so we never skip it here.  Any margin
+        # ambiguity on the true target is an accepted risk.
         print(f"Loaded the target seed exactly (0x{seed:08X}) -> target advances {target_advances}.")
         return target_advances
     if use_inhouse:
         if blocks is None:
             raise ValueError("in-house mode needs `blocks`, e.g. {'peak': 56}")
-        from claytonlib.safari_encounters import find_encounter_frame
+        from claytonlib.safari_encounters import iter_encounter_frames
         lo = current_frame + search_margin
-        hit = find_encounter_frame(seed, area, tod, blocks, target, min_frame=lo, max_frame=max_frame)
-        if hit is None:
-            raise RuntimeError(
-                f"no {target} frame in [{lo}, {max_frame}] for {area}/{tod} blocks={blocks} -- "
-                f"check the block scores, area, and time of day.")
-        frame, level = hit
-        print(f"In-house: nearest {target} at advance frame {frame} (L{level}); "
-              f"advance {frame - current_frame} from the current frame {current_frame}.")
-        return frame
+        candidates = iter_encounter_frames(seed, area, tod, blocks, target,
+                                           min_frame=lo, max_frame=max_frame)
+        first = None
+        for frame, level in candidates:
+            plan = plan_advances(current_frame, frame, margin=search_margin)
+            if first is None:
+                first = (frame, level)
+            if rng_calls is None or elm is None or not margin_ambiguous(rng_calls, elm, plan):
+                if first != (frame, level):
+                    print(f"  (skipped nearer {target} frames with an ambiguous Elm margin)")
+                print(f"In-house: {target} at advance frame {frame} (L{level}); "
+                      f"advance {frame - current_frame} from the current frame {current_frame}.")
+                return frame
+        if first is not None:      # every candidate was ambiguous -- fall back to the nearest
+            frame, level = first
+            print(f"In-house: all {target} frames in range have an ambiguous Elm margin; "
+                  f"using the nearest, advance frame {frame} (L{level}) -- verify carefully.")
+            return frame
+        raise RuntimeError(
+            f"no {target} frame in [{lo}, {max_frame}] for {area}/{tod} blocks={blocks} -- "
+            f"check the block scores, area, and time of day.")
     return prompt_target_frame(seed, default=target_advances, input_fn=input_fn)
