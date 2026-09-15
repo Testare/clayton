@@ -418,6 +418,19 @@ def compass_safari(inputs: CompassSafariInput) -> 'CompassResult':
         if terminal:
             final = cache[-1][1]
             event = "captured" if path_actions[-1].step == SafariStep.CAPTURED else "fled"
+            # If the terminal step left NO matching seed, offer to expand the window and re-apply
+            # the whole path (including the flee/capture) rather than ending empty-handed -- the
+            # true seed may sit just outside the current +/-k*sigma window (b70).  Loops so a still-
+            # empty result can be expanded again; declining falls through to the empty report.
+            while len(final) == 0 and meta is not None:
+                print()
+                print(f"Pokémon {event}, but no candidate in the current window "
+                      f"(±{inputs.k:g}σ, σ≈{inputs.sigma:.1f}, offsets "
+                      f"{list(inputs.second_offsets)}) matches the observed path.  Expand the "
+                      f"search to look further out, or decline to stop here.")
+                if not apply_new_inputs(_prompt_expand(inputs)):
+                    break
+                final = cache[-1][1]
             print()
             print(f"Pokémon {event}. {len(final)} seed(s) matched this path:")
             print(_observed_path_line(path_actions))

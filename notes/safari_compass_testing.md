@@ -1,19 +1,12 @@
-0	214	P	M 52	None	6: Raticate
-1	177	P	MH 79	Metal Coat	2: Metang
-2	214	E	MH 71	None	3: Raticate
-3	177	K	MH 62	Metal Coat	8: Magneton
-4	214	P	M 50	None	1: Lunatone
-5	177	K	M 59	None	0: Larvitar
-6	95	E	L 3	None	1: Lunatone
-7	97	E	ML 27	None	5: Rattata
-8	214	K	ML 22	None	9: Larvitar
-9	183	K	M 48	None	4: Lickitung
-10	95	E	MH 67	None	4: Lickitung
-11	177	E	H 82	Lagging Tail	7: Lickitung
-12	214	P	ML 38	None	9: Larvitar
-13	119	E	M 45	None	2: Metang
-14	110	K	ML 20	None	5: Rattata
-15	183	E	M 49	None	7: Lickitung
+## IS THIS IT?
+
+
+
+
+##  T
+
+SEED HIT - Path: bbbbbb012mmF
+What seed did I hit?
 
 ## STC3 Attempt 2
 

@@ -855,6 +855,48 @@ class TestCapturePreservesSeed(unittest.TestCase):
         self.assertTrue(all(c.captured() for c, _, _ in final))  # survivors actually captured
 
 
+class TestTerminalEmptyExpands(unittest.TestCase):
+    """After a flee/capture leaves NO matching seed, compass_safari offers to expand the window and
+    re-apply the whole observed path (flee included) instead of ending empty -- the true seed can
+    sit just outside the window (the user's report: couldn't widen after the Metang fled)."""
+
+    import datetime as _dt
+
+    def _narrow_input(self):
+        from claytonlib.calibration import CalibrationModel
+        return CompassSafariInput.from_expedition_target(
+            model=CalibrationModel.load_default(), M=327792,
+            initial_time=self._dt.datetime(2025, 7, 24, 14, 45, 56), key_seed=219022016,
+            max_target_seconds=600, pokemon=safari_pokemon_by_name('metang'),
+            strategy=STRATEGY_ONLY_BALLS, criteria=CRITERIA_CAPTURE,
+            second_offsets=(0,), mass_cap=None)   # δ=0 only; the truth 0xF90E4D6D is at δ=±1
+
+    # This fled path empties the δ=0 window but matches truth 0xF90E4D6D once seconds widen to ±1.
+    FLED_PATH = '0001010111F'
+
+    def test_flee_empty_prompts_expand_and_recovers(self):
+        import contextlib
+        import io
+        from claytonlib.compass import compass_safari
+        # >> the path (flee terminal); then _prompt_expand: 0 extra frames, 1 extra second.
+        with patch('builtins.input', side_effect=[self.FLED_PATH, '0', '1']), \
+             contextlib.redirect_stdout(io.StringIO()):
+            result = compass_safari(self._narrow_input())
+        self.assertIn('0xF90E4D6D', result)          # recovered by expanding after the flee
+        self.assertEqual(result.path, self.FLED_PATH)  # observed path preserved for the caller
+
+    def test_flee_empty_decline_returns_empty(self):
+        import contextlib
+        import io
+        from claytonlib.compass import compass_safari
+        # Declining the expand prompt (0 frames, 0 seconds) preserves the previous end-empty behavior.
+        with patch('builtins.input', side_effect=[self.FLED_PATH, '0', '0']), \
+             contextlib.redirect_stdout(io.StringIO()):
+            result = compass_safari(self._narrow_input())
+        self.assertEqual(list(result), [])
+        self.assertEqual(result.path, self.FLED_PATH)
+
+
 # ---------------------------------------------------------------------------
 # _apply_action
 # ---------------------------------------------------------------------------
