@@ -1,0 +1,179 @@
+"""facade.py — the flat API the UI calls.
+
+Every method takes and returns plain JSON-friendly values (dicts, lists, scalars),
+so the same surface works whether it's reached from the pywebview ``js_api`` bridge
+or a Python caller in a test. The UI never touches :mod:`app.models` or the Store
+directly — it goes through here, which is what lets a future shell reuse the exact
+same front end.
+
+Complex inputs arrive as a single dict (JS passes an object), not keyword
+arguments, to keep the bridge simple: ``api.create_profile({name, tid, ...})``.
+"""
+from __future__ import annotations
+
+from app.models import Expedition, MetronomeUser, Profile
+from app.store import FileStore, Store
+
+_PROFILES = "profiles"
+_EXPEDITIONS = "expeditions"
+
+
+class Facade:
+    def __init__(self, store: Store | None = None):
+        self.store = store or FileStore()
+
+    # -- internal loaders -------------------------------------------------
+
+    def _load_profile(self, profile_id: str) -> Profile:
+        doc = self.store.read(_PROFILES, profile_id)
+        if doc is None:
+            raise ValueError(f"no profile with id {profile_id!r}")
+        return Profile.from_dict(doc)
+
+    def _save_profile(self, profile: Profile) -> None:
+        self.store.write(_PROFILES, profile.id, profile.to_dict())
+
+    def _load_expedition(self, expedition_id: str) -> Expedition:
+        doc = self.store.read(_EXPEDITIONS, expedition_id)
+        if doc is None:
+            raise ValueError(f"no expedition with id {expedition_id!r}")
+        return Expedition.from_dict(doc)
+
+    # -- profiles ---------------------------------------------------------
+
+    def list_profiles(self) -> list[dict]:
+        """Summaries of every profile, for a selector/list."""
+        out = []
+        for pid in self.store.list_ids(_PROFILES):
+            doc = self.store.read(_PROFILES, pid)
+            if doc is None:
+                continue
+            p = Profile.from_dict(doc)
+            out.append({
+                "id": p.id,
+                "name": p.name,
+                "tid": p.tid,
+                "sid": p.sid,
+                "console": p.console,
+                "metronome_user_count": len(p.metronome_users),
+                "has_valid_metronome_user": p.has_valid_metronome_user,
+            })
+        out.sort(key=lambda d: d["name"].lower())
+        return out
+
+    def get_profile(self, profile_id: str) -> dict:
+        """The full profile document, with derived suitability per metronome user."""
+        p = self._load_profile(profile_id)
+        doc = p.to_dict()
+        for user_dict, user in zip(doc["metronome_users"], p.metronome_users):
+            user_dict["is_suitable"] = user.is_suitable
+            user_dict["warnings"] = user.suitability_warnings()
+        doc["has_valid_metronome_user"] = p.has_valid_metronome_user
+        return doc
+
+    def create_profile(self, fields: dict) -> dict:
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("a profile needs a name")
+        p = Profile(
+            name=name,
+            tid=fields.get("tid"),
+            sid=fields.get("sid"),
+            console=fields.get("console", ""),
+        )
+        self._save_profile(p)
+        return self.get_profile(p.id)
+
+    def delete_profile(self, profile_id: str) -> bool:
+        return self.store.delete(_PROFILES, profile_id)
+
+    # -- metronome users --------------------------------------------------
+
+    @staticmethod
+    def metronome_user_warnings(fields: dict) -> list[str]:
+        """Suitability warnings for prospective fields, so the UI can warn pre-save."""
+        probe = MetronomeUser(
+            id=0,
+            name=fields.get("name", "?"),
+            species=fields.get("species", "Chansey"),
+            gender=fields.get("gender"),
+            level=fields.get("level"),
+            moveset=list(fields.get("moveset", [])),
+            ability=fields.get("ability"),
+            lagging_tail=bool(fields.get("lagging_tail", False)),
+        )
+        return probe.suitability_warnings()
+
+    def add_metronome_user(self, profile_id: str, fields: dict) -> dict:
+        """Add a user to the profile; returns the profile plus any warnings."""
+        p = self._load_profile(profile_id)
+        user = p.add_metronome_user(
+            name=fields.get("name", ""),
+            species=fields.get("species", "Chansey"),
+            gender=fields.get("gender"),
+            level=fields.get("level"),
+            moveset=list(fields.get("moveset", [])),
+            ability=fields.get("ability"),
+            lagging_tail=bool(fields.get("lagging_tail", False)),
+        )
+        self._save_profile(p)
+        return {
+            "profile": self.get_profile(p.id),
+            "user_id": user.id,
+            "warnings": user.suitability_warnings(),
+        }
+
+    def remove_metronome_user(self, profile_id: str, user_id: int) -> dict:
+        """Remove a user. Runs referencing its id can no longer resolve it."""
+        p = self._load_profile(profile_id)
+        removed = p.remove_metronome_user(int(user_id))
+        self._save_profile(p)
+        return {"profile": self.get_profile(p.id), "removed": removed.to_dict()}
+
+    # -- expeditions ------------------------------------------------------
+
+    def list_expeditions(self, profile_id: str | None = None) -> list[dict]:
+        out = []
+        for eid in self.store.list_ids(_EXPEDITIONS):
+            doc = self.store.read(_EXPEDITIONS, eid)
+            if doc is None:
+                continue
+            e = Expedition.from_dict(doc)
+            if profile_id is not None and e.profile_id != profile_id:
+                continue
+            out.append({
+                "id": e.id,
+                "name": e.name,
+                "profile_id": e.profile_id,
+                "pokemon": e.pokemon,
+            })
+        out.sort(key=lambda d: d["name"].lower())
+        return out
+
+    def get_expedition(self, expedition_id: str) -> dict:
+        return self._load_expedition(expedition_id).to_dict()
+
+    def create_expedition(self, fields: dict) -> dict:
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("an expedition needs a name")
+        profile_id = fields.get("profile_id")
+        if not profile_id:
+            raise ValueError("an expedition must reference a profile")
+        # Fail early if the referenced profile is missing.
+        self._load_profile(profile_id)
+        e = Expedition.from_dict({**fields, "name": name})
+        self.store.write(_EXPEDITIONS, e.id, e.to_dict())
+        return e.to_dict()
+
+    def save_expedition(self, expedition: dict) -> dict:
+        """Upsert an existing expedition from its full document."""
+        if not expedition.get("id"):
+            raise ValueError("save_expedition needs an expedition id (use create_expedition for new)")
+        e = Expedition.from_dict(expedition)
+        self._load_profile(e.profile_id)  # validate the reference still resolves
+        self.store.write(_EXPEDITIONS, e.id, e.to_dict())
+        return e.to_dict()
+
+    def delete_expedition(self, expedition_id: str) -> bool:
+        return self.store.delete(_EXPEDITIONS, expedition_id)

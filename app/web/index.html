@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clayton</title>
+<style>
+  :root{
+    --bg:#f4f5f0; --surface:#ffffff; --surface-2:#eef0e8; --ink:#1b2019;
+    --ink-soft:#556052; --line:#dce0d2; --grass:#37744a; --grass-ink:#ffffff;
+    --ember:#b8632c; --danger:#ab4029; --warn-bg:#fdf3e3; --warn-ink:#8a5a13;
+    --ok:#37744a; --radius:9px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#11150e; --surface:#191e14; --surface-2:#212719; --ink:#e9ece0;
+      --ink-soft:#a6ae98; --line:#2b3222; --grass:#62b378; --grass-ink:#0e130c;
+      --ember:#d78a4c; --danger:#d76750; --warn-bg:#2a2413; --warn-ink:#e0b665;
+      --ok:#62b378;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14.5px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--ink)}
+  h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
+  button{font:inherit;cursor:pointer}
+  a{color:var(--grass)}
+  .app{display:grid;grid-template-columns:210px 1fr;grid-template-rows:auto 1fr;
+    grid-template-areas:"brand top" "nav main";height:100vh}
+  .brand{grid-area:brand;display:flex;align-items:center;gap:9px;padding:0 18px;
+    background:var(--surface);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .brand .dot{width:12px;height:12px;border-radius:50%;background:var(--grass)}
+  .brand b{font-size:16px;letter-spacing:.02em}
+  .topbar{grid-area:top;display:flex;align-items:center;padding:0 22px;
+    background:var(--surface);border-bottom:1px solid var(--line);color:var(--ink-soft);font-size:13px}
+  nav{grid-area:nav;background:var(--surface);border-right:1px solid var(--line);padding:12px 10px;
+    display:flex;flex-direction:column;gap:4px}
+  nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 12px;
+    border:0;background:transparent;color:var(--ink);border-radius:var(--radius);font-weight:550}
+  nav button:hover{background:var(--surface-2)}
+  nav button.active{background:var(--grass);color:var(--grass-ink)}
+  main{grid-area:main;overflow:auto;padding:28px 34px}
+  .wrap{max-width:840px;margin:0 auto}
+  .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:16px}
+  .head h2{font-size:22px}
+  .muted{color:var(--ink-soft)}
+  .row-list{display:flex;flex-direction:column;gap:10px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+  .card .title{font-weight:600}
+  .card .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
+  .btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
+    padding:8px 14px;border-radius:var(--radius);font-weight:550}
+  .btn:hover{background:var(--surface-2)}
+  .btn.primary{background:var(--grass);color:var(--grass-ink);border-color:transparent}
+  .btn.primary:hover{filter:brightness(1.05)}
+  .btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line))}
+  .btn.small{padding:5px 10px;font-size:12.5px}
+  .badge{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
+  .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+  .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
+  form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:22px}
+  .field{margin-bottom:15px}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);
+    margin-bottom:5px;letter-spacing:.02em}
+  .field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--line);
+    border-radius:7px;background:var(--bg);color:var(--ink);font:inherit}
+  .field .hint{font-size:12px;color:var(--ink-soft);margin-top:4px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  .actions{display:flex;gap:10px;margin-top:8px}
+  .check{display:flex;align-items:center;gap:8px}
+  .check input{width:auto}
+  table{width:100%;border-collapse:collapse;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);font-size:13.5px}
+  th{background:var(--surface-2);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)}
+  tr:last-child td{border-bottom:0}
+  .empty{background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius);
+    padding:34px;text-align:center;color:var(--ink-soft)}
+  .notice{border-radius:8px;padding:11px 14px;font-size:13px;margin-bottom:14px}
+  .notice.warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .section-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--ink-soft);margin:26px 0 12px}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--danger);
+    color:#fff;padding:10px 18px;border-radius:8px;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);
+    opacity:0;transition:opacity .2s;pointer-events:none;max-width:70ch}
+  #toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="brand"><span class="dot"></span><b>Clayton</b></div>
+  <div class="topbar" id="topbar">HGSS Safari Zone RNG toolkit</div>
+  <nav id="nav">
+    <button data-view="expeditions">📋 Expeditions</button>
+    <button data-view="profiles">🎮 Profiles</button>
+  </nav>
+  <main><div class="wrap" id="main">Loading…</div></main>
+</div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { profiles: [], view: "expeditions" };
+
+// --- bridge helpers -------------------------------------------------------
+async function api(method, ...args){
+  try{
+    return await window.pywebview.api[method](...args);
+  }catch(err){
+    toast(String(err && err.message ? err.message : err));
+    throw err;
+  }
+}
+function toast(msg){
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove("show"), 4200);
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
+  {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
+function mount(html){ $("main").innerHTML = html; }
+
+// --- navigation -----------------------------------------------------------
+function setView(view){
+  state.view = view;
+  document.querySelectorAll("#nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.view === view));
+  if(view === "expeditions") renderExpeditions();
+  else if(view === "profiles") renderProfiles();
+}
+document.querySelectorAll("#nav button").forEach(b =>
+  b.addEventListener("click", () => setView(b.dataset.view)));
+
+// --- Expeditions ----------------------------------------------------------
+async function renderExpeditions(){
+  const [expeditions, profiles] = await Promise.all([
+    api("list_expeditions"), api("list_profiles")]);
+  state.profiles = profiles;
+  const byId = Object.fromEntries(profiles.map(p => [p.id, p.name]));
+  let body;
+  if(profiles.length === 0){
+    body = `<div class="empty">You need a <b>profile</b> (your console/cartridge) before
+      creating an expedition.<br><br>
+      <button class="btn primary" onclick="setView('profiles')">Go to Profiles</button></div>`;
+  } else if(expeditions.length === 0){
+    body = `<div class="empty">No expeditions yet. Create one to start a hunt.</div>`;
+  } else {
+    body = `<div class="row-list">` + expeditions.map(e => `
+      <div class="card">
+        <div><div class="title">${esc(e.name)}</div>
+          <div class="sub">${esc(e.pokemon || "—")} · profile: ${esc(byId[e.profile_id] || "unknown")}</div></div>
+      </div>`).join("") + `</div>`;
+  }
+  mount(`<div class="head"><h2>Expeditions</h2>
+      <button class="btn primary" ${profiles.length?"":"disabled"} onclick="expeditionForm()">New expedition</button>
+    </div>${body}`);
+}
+
+function expeditionForm(){
+  const opts = state.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  mount(`<div class="head"><h2>New expedition</h2></div>
+    <form class="panel" onsubmit="return saveExpedition(event)">
+      <div class="grid2">
+        <div class="field"><label>Name</label><input name="name" required placeholder="Shiny Metang"></div>
+        <div class="field"><label>Profile</label><select name="profile_id" required>${opts}</select></div>
+        <div class="field"><label>Pokémon</label><input name="pokemon" placeholder="metang"></div>
+        <div class="field"><label>Safari area</label><input name="safari_area" placeholder="Peak"></div>
+        <div class="field"><label>Chatots (0–2)</label><input name="chatots" type="number" min="0" max="2" value="0"></div>
+        <div class="field"><label>Key seed</label><input name="key_seed" placeholder="0x0D0E02BA or decimal"></div>
+        <div class="field"><label>Key-seed advances</label><input name="key_seed_advances" type="number" min="0"></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Create</button>
+        <button class="btn" type="button" onclick="setView('expeditions')">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function saveExpedition(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const keySeedRaw = f.key_seed.value.trim();
+  const fields = {
+    name: f.name.value, profile_id: f.profile_id.value,
+    pokemon: f.pokemon.value.trim(), safari_area: f.safari_area.value.trim(),
+    chatots: numOrNull(f.chatots.value) ?? 0,
+    key_seed: keySeedRaw === "" ? null : (keySeedRaw.toLowerCase().startsWith("0x")
+      ? parseInt(keySeedRaw, 16) : Number(keySeedRaw)),
+    key_seed_advances: numOrNull(f.key_seed_advances.value),
+  };
+  await api("create_expedition", fields);
+  setView("expeditions");
+  return false;
+}
+
+// --- Profiles -------------------------------------------------------------
+async function renderProfiles(){
+  const profiles = await api("list_profiles");
+  state.profiles = profiles;
+  const body = profiles.length === 0
+    ? `<div class="empty">No profiles yet. A profile is one console/cartridge — it owns your
+        calibration models, runs, and metronome users.</div>`
+    : `<div class="row-list">` + profiles.map(p => `
+        <div class="card">
+          <div><div class="title">${esc(p.name)}</div>
+            <div class="sub">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")} ·
+              ${p.metronome_user_count} metronome user(s)</div></div>
+          <div style="display:flex;gap:10px;align-items:center">
+            ${p.has_valid_metronome_user
+              ? `<span class="badge ok">metronome ready</span>`
+              : `<span class="badge warn">no valid user</span>`}
+            <button class="btn small" onclick="openProfile('${esc(p.id)}')">Manage</button>
+          </div>
+        </div>`).join("") + `</div>`;
+  mount(`<div class="head"><h2>Profiles</h2>
+      <button class="btn primary" onclick="profileForm()">New profile</button></div>${body}`);
+}
+
+function profileForm(){
+  mount(`<div class="head"><h2>New profile</h2></div>
+    <form class="panel" onsubmit="return saveProfile(event)">
+      <div class="field"><label>Name</label><input name="name" required placeholder="SoulSilver — DS Lite">
+        <div class="hint">A console + cartridge identity. Models/runs are shared across its expeditions.</div></div>
+      <div class="grid2">
+        <div class="field"><label>TID</label><input name="tid" type="number" min="0" max="65535"></div>
+        <div class="field"><label>SID</label><input name="sid" type="number" min="0" max="65535"></div>
+      </div>
+      <div class="field"><label>Console note</label><input name="console" placeholder="original DS Lite">
+        <div class="hint">Playing this cartridge on a different console may shift timing — use a separate profile then.</div></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Create</button>
+        <button class="btn" type="button" onclick="setView('profiles')">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function saveProfile(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const p = await api("create_profile", {
+    name: f.name.value, tid: numOrNull(f.tid.value),
+    sid: numOrNull(f.sid.value), console: f.console.value.trim() });
+  openProfile(p.id);
+  return false;
+}
+
+async function openProfile(id){
+  const p = await api("get_profile", id);
+  const users = p.metronome_users.length === 0
+    ? `<div class="empty">No metronome users yet. Add the Pokémon you calibrate with
+        (P0: Chansey w/ Natural Cure, holding a Lagging Tail, knowing Metronome).</div>`
+    : `<table><thead><tr><th>id</th><th>Name</th><th>Species</th><th>Status</th><th></th></tr></thead>
+      <tbody>` + p.metronome_users.map(u => `
+        <tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.species)}</td>
+          <td>${u.is_suitable ? `<span class="badge ok">suitable</span>`
+            : `<span class="badge warn" title="${esc(u.warnings.join('; '))}">${esc(u.warnings.length)} warning(s)</span>`}</td>
+          <td style="text-align:right"><button class="btn small danger"
+            onclick="removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`).join("")
+      + `</tbody></table>`;
+
+  mount(`<div class="head"><h2>${esc(p.name)}</h2>
+      <button class="btn" onclick="setView('profiles')">← All profiles</button></div>
+    <div class="muted">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")}${p.console ? " · " + esc(p.console) : ""}</div>
+
+    <div class="section-label">Metronome users</div>
+    ${users}
+
+    <div class="section-label">Add a metronome user</div>
+    <form class="panel" onsubmit="return addUser(event,'${esc(p.id)}')">
+      <div class="grid2">
+        <div class="field"><label>Name (unique in profile)</label><input name="name" required placeholder="Chansey 1"></div>
+        <div class="field"><label>Species</label><input name="species" value="Chansey"></div>
+        <div class="field"><label>Ability</label><input name="ability" value="Natural Cure"></div>
+        <div class="field"><label>Level</label><input name="level" type="number" min="1" max="100"></div>
+        <div class="field"><label>Gender</label><select name="gender">
+          <option value="">—</option><option value="female">female</option><option value="male">male</option></select></div>
+        <div class="field"><label>Moveset (comma-separated)</label><input name="moveset" value="Metronome"></div>
+      </div>
+      <div class="field check"><input type="checkbox" name="lagging_tail" id="lt" checked>
+        <label for="lt" style="margin:0">Holding a Lagging Tail</label></div>
+      <div class="actions"><button class="btn primary" type="submit">Add user</button></div>
+      <div class="hint muted">Metronome users can't be edited after adding — to change one, add a new user and remove the old.</div>
+    </form>`);
+}
+
+async function addUser(ev, profileId){
+  ev.preventDefault();
+  const f = ev.target;
+  const fields = {
+    name: f.name.value, species: f.species.value.trim() || "Chansey",
+    ability: f.ability.value.trim() || null,
+    level: numOrNull(f.level.value), gender: f.gender.value || null,
+    moveset: f.moveset.value.split(",").map(s => s.trim()).filter(Boolean),
+    lagging_tail: f.lagging_tail.checked,
+  };
+  const res = await api("add_metronome_user", profileId, fields);
+  if(res.warnings && res.warnings.length) toast("Added, but: " + res.warnings.join("; "));
+  openProfile(profileId);
+  return false;
+}
+
+async function removeUser(profileId, userId){
+  if(!confirm("Remove this metronome user? Runs performed with it will no longer be able to "
+    + "display its information.")) return;
+  await api("remove_metronome_user", profileId, userId);
+  openProfile(profileId);
+}
+
+// --- boot -----------------------------------------------------------------
+let started = false;
+function boot(){ if(started) return; started = true; setView("expeditions"); }
+window.addEventListener("pywebviewready", boot);
+if(window.pywebview) boot();
+</script>
+</body>
+</html>

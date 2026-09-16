@@ -1,0 +1,9 @@
+# Desktop shell dependencies for the Clayton app (the claytonlib core needs none).
+#
+# pywebview wraps the HTML front end in a native window and bridges it to the
+# Python facade. It needs a system webview backend:
+#   - Linux:   PyGObject + WebKitGTK  (e.g. Arch: python-gobject webkit2gtk-4.1)
+#              or PyQt6/PyQt6-WebEngine
+#   - Windows: WebView2 runtime (usually preinstalled on Win10/11)
+#   - macOS:   WKWebView (built in)
+pywebview>=5.0
