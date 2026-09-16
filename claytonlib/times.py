@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+from claytonlib._resources import basedata_json
+
 _TIMES_DIR = Path('data/times')
 _TIME_FMT = '%Y-%m-%d %H:%M:%S'
 
@@ -24,8 +26,7 @@ def generate_times(key_seed):
     hour  = (key_seed >> _HOUR_SHIFT) & _BYTE_MASK
     delay =  key_seed & _DELAY_MASK
 
-    with open(Path(__file__).parent / "basedata" / "mdMap.json", 'r') as f:
-        md_map = json.load(f)
+    md_map = basedata_json("mdMap.json")
 
     mdms2 = (mdms + _MDMS_WINDOW) % _BYTE_MOD
 

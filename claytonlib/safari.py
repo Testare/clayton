@@ -1,8 +1,7 @@
 from enum import Enum
 from dataclasses import dataclass, field
 from fractions import Fraction
-from pathlib import Path
-import json
+from claytonlib._resources import basedata_json
 import logging
 import math
 
@@ -227,8 +226,6 @@ _safari_pokemon: dict[str, SafariPokemon] | None = None
 def safari_pokemon_by_name(name: str) -> SafariPokemon:
     global _safari_pokemon
     if _safari_pokemon is None:
-        path = Path(__file__).parent / "basedata" / "safari_pokemon.json"
-        with open(path) as f:
-            data = json.load(f)
+        data = basedata_json("safari_pokemon.json")
         _safari_pokemon = {n: SafariPokemon(n, entry["catch_rate"], entry["flee_rate"]) for n, entry in data.items()}
     return _safari_pokemon[name]

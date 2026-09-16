@@ -6,7 +6,7 @@ Used by compass_premetronome and metronome_compass.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from claytonlib._resources import basedata_json
 
 
 # ---------------------------------------------------------------------------
@@ -64,9 +64,7 @@ _moves_cache: list[Move] | None = None
 def _load_moves() -> list[Move]:
     global _moves_cache
     if _moves_cache is None:
-        path = Path(__file__).parent / "basedata" / "moves.json"
-        with open(path) as f:
-            data = json.load(f)
+        data = basedata_json("moves.json")
         _moves_cache = [
             Move(
                 number=m["number"],
