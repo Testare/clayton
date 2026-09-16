@@ -199,3 +199,16 @@ matching the frame the user independently got from Pokefinder in a saved run.
 
 Finding correction: Metang's Mountain threshold is **Peak score ≥ 56** (from the game data),
 not the 24 an early web source suggested.
+
+## EXTENSION (2026-09-15, clayton-ctd.16): optional `aim_advance` (calibration aid)
+
+`choose_target_frame` gained an optional `aim_advance` kwarg (notebook config
+`a_calibration_aim_advances`, default `None`). In-house + off-target only: when set, the finder
+returns the Metang frame *closest to that advance* (ties → lower frame) instead of the nearest one
+ahead of `current_frame`, still skipping ambiguous Elm margins (falling back to the closest if all
+are ambiguous). The scan window auto-extends past `max_frame` when `aim_advance` sits beyond it.
+Purpose: a calibration aid to sweep a range of advances (how chatot flips / Elm calls / advances
+affect `Fb`), not just low advance counts. Exact key-seed hits still return `target_advances`,
+ignoring `aim_advance`. Named distinctly from `target_advances` to avoid the singular/plural
+collision. Helper: `utils/safari_advance.py::_inhouse_nearest_to_advance`; tests in
+`TestChooseTargetFrame`.

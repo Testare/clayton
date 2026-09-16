@@ -349,6 +349,41 @@ class TestChooseTargetFrame(unittest.TestCase):
                                    use_inhouse=True, area="Mountain", tod="morning",
                                    blocks={"peak": 0})  # no Peak -> no Metang
 
+    # aim_advance: aim the in-house finder at a chosen advance (calibration data gathering), not the
+    # nearest.  seed 0x0D0E02D0 has Metang at frames [1, 13, 18, 25, 36, 43, 54, 69, 70, 72, 75, 81].
+    def _inhouse(self, **kw):
+        return sa.choose_target_frame(0x0D0E02D0, key_seed=self.KEY, target_advances=81,
+                                      use_inhouse=True, area="Mountain", tod="morning",
+                                      blocks=self.BLOCKS, current_frame=10, **kw)
+
+    def test_aim_advance_picks_frame_closest_to_it(self):
+        # nearest to current would be 13; aiming at 40 gives 43 (dist 3), not 36 (dist 4).
+        self.assertEqual(self._inhouse(aim_advance=40), 43)
+        self.assertEqual(self._inhouse(aim_advance=70), 70)   # exact hit
+
+    def test_aim_advance_none_keeps_nearest(self):
+        self.assertEqual(self._inhouse(aim_advance=None), 13)
+
+    def test_aim_advance_ties_break_to_lower_frame(self):
+        # Frames 70 and 72 are equidistant from 71; the tie breaks to the lower (earlier) frame 70.
+        self.assertEqual(self._inhouse(aim_advance=71), 70)
+
+    def test_aim_advance_extends_scan_past_max_frame(self):
+        # target beyond the default 300 window still resolves (nearest Metang frame past it is 380).
+        self.assertEqual(self._inhouse(aim_advance=400, max_frame=300), 380)
+
+    def test_aim_advance_skips_ambiguous_then_closest(self):
+        # frame 13's margin is ambiguous (E[EEE]); aiming at 13 skips it for the next unique frame 18.
+        elm = "PKPKPKPKP" + "EEEE" + "PKKPE" + "PKPK"
+        self.assertEqual(self._inhouse(aim_advance=13, rng_calls=0, elm=elm), 18)
+
+    def test_aim_advance_ignored_on_exact_seed(self):
+        # Exact key-seed hit still returns target_advances, never the aim_advance calibration aim.
+        self.assertEqual(
+            sa.choose_target_frame(self.KEY, key_seed=self.KEY, target_advances=81,
+                                   use_inhouse=True, area="Mountain", tod="morning",
+                                   blocks=self.BLOCKS, current_frame=10, aim_advance=40), 81)
+
 
 if __name__ == "__main__":
     unittest.main()

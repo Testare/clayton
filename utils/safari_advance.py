@@ -345,10 +345,53 @@ def margin_ambiguous(rng_calls, elm, plan):
     return False
 
 
+def _inhouse_nearest_to_advance(seed, area, tod, blocks, target, aim_advance, *,
+                                current_frame, lo, max_frame, search_margin, rng_calls, elm):
+    """The in-house ``target`` frame *closest to ``aim_advance``* (calibration data-gathering aim).
+
+    Same universe as the default nearest-frame path -- frames in ``[lo, max_frame]`` (extended
+    upward if ``aim_advance`` sits past ``max_frame``), ambiguous Elm margins skipped when
+    ``rng_calls``/``elm`` are given -- but ranked by distance to ``aim_advance`` instead of to
+    ``current_frame``.  Ties break toward the lower (earlier) frame.  If every candidate has an
+    ambiguous margin, falls back to the closest one with a warning, mirroring the default path.
+    """
+    from claytonlib.safari_encounters import iter_encounter_frames
+    hi = max(max_frame, aim_advance + search_margin)
+    candidates = list(iter_encounter_frames(seed, area, tod, blocks, target,
+                                            min_frame=lo, max_frame=hi))
+    if not candidates:
+        raise RuntimeError(
+            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} blocks={blocks} -- "
+            f"check the block scores, area, and time of day.")
+
+    def distance(frame_level):
+        frame = frame_level[0]
+        return (abs(frame - aim_advance), frame)   # nearest to aim_advance, lower frame on ties
+
+    have_margin = rng_calls is not None and elm is not None
+    unambiguous = [fl for fl in candidates if not have_margin
+                   or not margin_ambiguous(rng_calls, elm,
+                                           plan_advances(current_frame, fl[0], margin=search_margin))]
+    if unambiguous:
+        frame, level = min(unambiguous, key=distance)
+        if (frame, level) != min(candidates, key=distance):
+            print(f"  (skipped {target} frames closer to advance {aim_advance} with an "
+                  f"ambiguous Elm margin)")
+        print(f"In-house: {target} at advance frame {frame} (L{level}) -- closest to calibration "
+              f"aim advance {aim_advance}; advance {frame - current_frame} from the current frame "
+              f"{current_frame}.")
+        return frame
+    frame, level = min(candidates, key=distance)   # all ambiguous -> take the closest anyway
+    print(f"In-house: all {target} frames near calibration aim advance {aim_advance} have an "
+          f"ambiguous Elm margin; using the closest, advance frame {frame} (L{level}) -- verify "
+          f"carefully.")
+    return frame
+
+
 def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
                         area="Mountain", tod="morning", blocks=None, target="metang",
                         current_frame=0, search_margin=DEFAULT_ELM_MARGIN, max_frame=300,
-                        rng_calls=None, elm=None, input_fn=None):
+                        rng_calls=None, elm=None, aim_advance=None, input_fn=None):
     """Pick the advance frame to Sweet Scent on, honoring the in-house/Pokefinder toggle.
 
     Exact-seed rule (ALWAYS, regardless of ``use_inhouse``): if the loaded ``seed`` is the intended
@@ -356,10 +399,16 @@ def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
     configured true target, e.g. 81 for the shiny Metang).
 
     Otherwise we landed on a nearby seed and must find *a* Metang frame:
-      * ``use_inhouse=True``  -> compute it here from the Safari block config (no Pokefinder).  Takes
-        the nearest ``target`` frame at least ``search_margin`` advances ahead of ``current_frame``;
-        when ``rng_calls``/``elm`` are given, frames whose Elm-call approach margin is an ambiguous
-        run (``margin_ambiguous``) are skipped for the next candidate.
+      * ``use_inhouse=True``  -> compute it here from the Safari block config (no Pokefinder).
+        Frames whose Elm-call approach margin is an ambiguous run (``margin_ambiguous``) are skipped
+        when ``rng_calls``/``elm`` are given.  Which surviving ``target`` frame we return depends on
+        ``aim_advance``:
+          - ``aim_advance=None`` (default) -> the *nearest* ``target`` frame at least
+            ``search_margin`` advances ahead of ``current_frame``.
+          - ``aim_advance`` set -> the ``target`` frame *closest to that advance* (still at least
+            ``search_margin`` ahead of ``current_frame``), so a calibration data-gathering run can
+            aim at a chosen advance instead of only low advance counts.  Distinct from
+            ``target_advances``, which is the exact frame used only on an exact key-seed hit.
       * ``use_inhouse=False`` -> previous behavior: print the seed and prompt for a Pokefinder frame
         (blank keeps ``target_advances``).
     """
@@ -374,6 +423,11 @@ def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
             raise ValueError("in-house mode needs `blocks`, e.g. {'peak': 56}")
         from claytonlib.safari_encounters import iter_encounter_frames
         lo = current_frame + search_margin
+        if aim_advance is not None:
+            return _inhouse_nearest_to_advance(
+                seed, area, tod, blocks, target, aim_advance,
+                current_frame=current_frame, lo=lo, max_frame=max_frame,
+                search_margin=search_margin, rng_calls=rng_calls, elm=elm)
         candidates = iter_encounter_frames(seed, area, tod, blocks, target,
                                            min_frame=lo, max_frame=max_frame)
         first = None
