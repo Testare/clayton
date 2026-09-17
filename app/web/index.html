@@ -25,21 +25,21 @@
   h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
   button{font:inherit;cursor:pointer}
   a{color:var(--grass)}
-  .app{display:grid;grid-template-columns:210px 1fr;grid-template-rows:auto 1fr;
+  .app{display:grid;grid-template-columns:148px 1fr;grid-template-rows:auto 1fr;
     grid-template-areas:"brand top" "nav main";height:100vh}
-  .brand{grid-area:brand;display:flex;align-items:center;gap:9px;padding:0 18px;
+  .brand{grid-area:brand;display:flex;align-items:center;gap:8px;padding:0 14px;
     background:var(--surface);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
   .brand .dot{width:12px;height:12px;border-radius:50%;background:var(--grass)}
   .brand b{font-size:16px;letter-spacing:.02em}
   .topbar{grid-area:top;display:flex;align-items:center;padding:0 22px;
     background:var(--surface);border-bottom:1px solid var(--line);color:var(--ink-soft);font-size:13px}
-  nav{grid-area:nav;background:var(--surface);border-right:1px solid var(--line);padding:12px 10px;
-    display:flex;flex-direction:column;gap:4px}
-  nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:9px 12px;
-    border:0;background:transparent;color:var(--ink);border-radius:var(--radius);font-weight:550}
+  nav{grid-area:nav;background:var(--surface);border-right:1px solid var(--line);padding:10px 8px;
+    display:flex;flex-direction:column;gap:3px}
+  nav button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;
+    border:0;background:transparent;color:var(--ink);border-radius:var(--radius);font-weight:550;font-size:13.5px}
   nav button:hover{background:var(--surface-2)}
   nav button.active{background:var(--grass);color:var(--grass-ink)}
-  main{grid-area:main;overflow:auto;padding:28px 34px}
+  main{grid-area:main;overflow:auto;padding:18px 26px}
   .wrap{max-width:840px;margin:0 auto}
   .head{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:16px}
   .head h2{font-size:22px}
@@ -61,10 +61,12 @@
   .badge{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
   .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
   .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
-  form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:22px}
-  .field{margin-bottom:15px}
-  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--ink-soft);
-    margin-bottom:5px;letter-spacing:.02em}
+  form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .panel-tight{padding:12px 16px}
+  .panel-tight .field{margin-bottom:0}
+  .field{margin-bottom:11px}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);
+    margin-bottom:4px;letter-spacing:.02em}
   .field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--line);
     border-radius:7px;background:var(--bg);color:var(--ink);font:inherit}
   /* WebKitGTK ignores background on native selects (white-on-light, unreadable),
@@ -74,6 +76,9 @@
     background-repeat:no-repeat;background-position:right 11px center}
   .field .hint{font-size:12px;color:var(--ink-soft);margin-top:4px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:0 12px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:0 12px}
+  @media(max-width:820px){.grid3,.grid4{grid-template-columns:1fr 1fr}}
   .actions{display:flex;gap:10px;margin-top:8px}
   .check{display:flex;align-items:center;gap:8px}
   .check input{width:auto}
@@ -91,7 +96,7 @@
   .notice.warn{background:var(--warn-bg);color:var(--warn-ink)}
   .notice.warn ul{margin:6px 0 0;padding-left:18px}
   .section-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
-    color:var(--ink-soft);margin:26px 0 12px}
+    color:var(--ink-soft);margin:18px 0 10px}
   .tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
   .tool-cat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
   .tool-cat h3{font-size:14.5px;margin-bottom:12px}
@@ -107,6 +112,7 @@
     border:1px solid var(--line);border-radius:7px;padding:8px 11px;margin:10px 0;color:var(--ink-soft)}
   .candtable{max-height:240px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:7px}
   .candtable table{border:0;border-radius:0;font-family:ui-monospace,monospace;font-size:11.5px}
+  .candtable th,.candtable td{white-space:nowrap;padding:6px 10px}
   .candtable th{position:sticky;top:0}
   .candtable tr.pick{cursor:pointer}
   .candtable tr.pick:hover td{background:var(--surface-2)}
@@ -319,7 +325,6 @@ async function savePreferences(ev, expId){
 // --- Metronome Compass: New Run -------------------------------------------
 let nr = null;
 const REL_KEYS = ["r","e","l"];
-const relLow16 = (seed) => ((seed % 0x10000) + 0x10000) % 0x10000;
 
 function parseStartRel(s){
   const out = {};
@@ -337,7 +342,9 @@ async function metronomeNewRun(expId){
   const profile = await api("get_profile", e.profile_id);
   nr = { expId, e, profile,
     userId: (profile.metronome_users.find(u => u.is_suitable) || profile.metronome_users[0] || {}).id ?? null,
-    initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
+    initialTime: e.last_target?.initial_time || "",
+    targetDelay: e.last_target?.target_delay ?? "",
+    vectorMs: e.last_target?.vector_ms ?? "",
     seedAParams: null, seedACandidates: null, seedA: null, keyInfo: null,
     seedBSession: null, seedB: null };
   renderNewRun();
@@ -346,6 +353,7 @@ async function metronomeNewRun(expId){
 function nrCaptureHeader(){
   const u = $("nr-user"); if(u) nr.userId = Number(u.value);
   const t = $("nr-time"); if(t) nr.initialTime = t.value.trim();
+  const d = $("nr-delay"); if(d) nr.targetDelay = d.value.trim() === "" ? null : Number(d.value);
   const v = $("nr-vector"); if(v) nr.vectorMs = v.value.trim() === "" ? null : Number(v.value);
 }
 
@@ -373,17 +381,18 @@ function renderNewRun(){
         <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">Cancel</button>
       </div></div>
 
-    <form class="panel" onsubmit="return false">
-      <div class="grid2">
+    <form class="panel panel-tight" onsubmit="return false">
+      <div class="grid4">
         <div class="field"><label>Metronome user</label><select id="nr-user">${userOpts}</select></div>
         <div class="field"><label>Initial time (ISO)</label>
           <input id="nr-time" value="${esc(nr.initialTime)}" placeholder="2025-07-24T14:45:56"></div>
+        <div class="field"><label>Target delay</label>
+          <input id="nr-delay" type="number" min="0" value="${nr.targetDelay ?? ""}" placeholder="673"></div>
         <div class="field"><label>Vector ms</label>
           <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"></div>
       </div>
-      <div class="hint muted">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}
-        · search delay ≈ ${relLow16(nr.e.key_seed)}</div>
     </form>
+    <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}</div>
 
     <div class="nr-grid">
       <div class="panel" id="nr-seeda">${renderSeedA()}</div>
@@ -429,24 +438,29 @@ function renderCandA(res){
   if(res.count === 0) return `<div class="status">No candidates match.</div>`;
   const rows = res.candidates.slice(0, 60).map(c => `
     <tr class="pick" onclick="nrPickSeedA(${c.seed})">
-      <td>${esc(c.seed_hex)}</td><td>${c.delay}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
-      <td>${c.r_route??"·"} ${c.e_route??"·"} ${c.l_route??"·"}</td><td>${esc(c.elm)}</td></tr>`).join("");
+      <td>${esc(c.seed_hex)}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
+      <td>${c.r_route??"·"}</td><td>${c.e_route??"·"}</td><td>${c.l_route??"·"}</td>
+      <td>${esc(c.elm)}</td></tr>`).join("");
   return `<div class="status"><b>${res.count}</b> candidate(s) — click one to identify Seed A</div>
-    <div class="candtable"><table><thead><tr><th>seed</th><th>delay</th><th>dD</th><th>R E L</th><th>elm</th></tr></thead>
+    <div class="candtable"><table><thead><tr><th>seed</th><th>Δ</th><th>R</th><th>E</th><th>L</th><th>elm</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
 }
 
 async function nrGenerateSeedA(){
   nrCaptureHeader();
   if(!nr.initialTime){ toast("Set an initial time first."); return; }
+  if(nr.targetDelay == null || Number.isNaN(nr.targetDelay)){ toast("Set a target delay first."); return; }
   nr._startrel = $("nr-startrel").value;
   const prev = parseStartRel(nr._startrel);
   nr.seedAParams = {
-    target_time: nr.initialTime, target_delay: relLow16(nr.e.key_seed), prev_routes: prev,
+    target_time: nr.initialTime, target_delay: nr.targetDelay, prev_routes: prev,
     seconds_window: Number($("nr-secwin").value), delay_window: Number($("nr-delaywin").value),
     match_parity: $("nr-parity").checked };
   nr.seedACandidates = await api("metronome_seed_a", nr.seedAParams);
   nr.keyInfo = await api("metronome_key_seed_info", nr.e.key_seed, prev);
+  // Header values are locked in now (per Seed A completing) — remember them for next time.
+  nr.e = await api("save_expedition", {...nr.e, last_target: {
+    initial_time: nr.initialTime, target_delay: nr.targetDelay, vector_ms: nr.vectorMs}});
   renderNewRun();
 }
 
@@ -515,7 +529,7 @@ async function nrStartSeedB(){
   const moveset = (u && u.moveset) || [];
   const metronomeOnly = moveset.filter(m => m.toLowerCase() !== "metronome").length === 0;
   nr.seedBSession = await api("metronome_seed_b_start", {
-    target_time: nr.initialTime, target_delay: relLow16(nr.e.key_seed),
+    target_time: nr.initialTime, target_delay: nr.targetDelay,
     seconds_window: nr.seedAParams.seconds_window, delay_window: nr.seedAParams.delay_window,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
     metronome_only: metronomeOnly });
