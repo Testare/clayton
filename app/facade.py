@@ -11,13 +11,16 @@ arguments, to keep the bridge simple: ``api.create_profile({name, tid, ...})``.
 """
 from __future__ import annotations
 
+from app import chart as chart_lib
 from app import metronome
-from app.models import Expedition, MetronomeUser, Profile, Run
+from app.models import Chart, Expedition, MetronomeUser, Profile, Run, Target
 from app.store import FileStore, Store
 
 _PROFILES = "profiles"
 _EXPEDITIONS = "expeditions"
 _RUNS = "runs"
+_CHARTS = "charts"
+_TARGETS = "targets"
 
 
 class Facade:
@@ -25,6 +28,8 @@ class Facade:
         self._store = store or FileStore()
         from app.metronome_session import SessionRegistry
         self._sessions = SessionRegistry()
+        from app.progress_session import ProgressRegistry
+        self._chart_sessions = ProgressRegistry()
 
     # -- internal loaders -------------------------------------------------
 
@@ -303,3 +308,126 @@ class Facade:
         if env is None:
             return {"imported": False}
         return {"imported": True, **self.import_profile_bundle(env)}
+
+    # -- Safari Chart: reference data --------------------------------------
+
+    def list_chart_strategies(self) -> list[dict]:
+        return chart_lib.list_strategies()
+
+    def list_chart_criteria(self) -> list[dict]:
+        return chart_lib.list_criteria()
+
+    def list_safari_pokemon(self) -> list[str]:
+        return chart_lib.list_safari_pokemon()
+
+    def calibration_model_summary(self) -> dict | None:
+        """Info about the (currently global — see app/chart.py) calibration model, if any."""
+        return chart_lib.calibration_model_summary()
+
+    # -- Safari Chart: Chart CRUD ------------------------------------------
+
+    def create_chart(self, expedition_id: str, fields: dict) -> dict:
+        self._load_expedition(expedition_id)  # validate the reference
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("a chart needs a name")
+        c = Chart(
+            expedition_id=expedition_id, name=name,
+            strategy_name=fields["strategy_name"], criteria_name=fields["criteria_name"],
+            setup_delay_seconds=int(fields.get("setup_delay_seconds", 0)),
+            max_target_seconds=int(fields.get("max_target_seconds", 300)),
+        )
+        self._store.write(_CHARTS, c.id, c.to_dict())
+        return c.to_dict()
+
+    def list_charts(self, expedition_id: str) -> list[dict]:
+        out = []
+        for cid in self._store.list_ids(_CHARTS):
+            doc = self._store.read(_CHARTS, cid)
+            if doc is not None and doc.get("expedition_id") == expedition_id:
+                out.append(doc)
+        out.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return out
+
+    def get_chart(self, chart_id: str) -> dict:
+        doc = self._store.read(_CHARTS, chart_id)
+        if doc is None:
+            raise ValueError(f"no chart with id {chart_id!r}")
+        return doc
+
+    def delete_chart(self, chart_id: str) -> bool:
+        return self._store.delete(_CHARTS, chart_id)
+
+    # -- Safari Chart: compute ----------------------------------------------
+
+    def chart_canon_status(self, expedition_id: str, chart_id: str) -> dict:
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        return chart_lib.canon_status(exp, c)
+
+    def chart_precompute_start(self, expedition_id: str, chart_id: str) -> dict:
+        """Begin building the canon map in the background; returns the first progress snapshot."""
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        runner = chart_lib.precompute_runner(exp, c)
+        return self._chart_sessions.start(runner)
+
+    def chart_precompute_poll(self, session_id: str) -> dict:
+        return self._chart_sessions.poll(session_id)
+
+    def chart_rank_best_per_time(self, expedition_id: str, chart_id: str, params: dict) -> dict:
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        return chart_lib.rank_best_per_time(exp, c, params)
+
+    def chart_rank_at_time(self, expedition_id: str, chart_id: str,
+                           initial_time: str, params: dict) -> list[dict]:
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        return chart_lib.rank_at_time(exp, c, initial_time, params)
+
+    def chart_examine(self, expedition_id: str, chart_id: str,
+                      initial_time: str, vector_ms: int, params: dict) -> dict:
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        return chart_lib.examine(exp, c, initial_time, vector_ms, params)
+
+    # -- Safari Chart: Target CRUD -------------------------------------------
+
+    def save_target(self, expedition_id: str, chart_id: str, fields: dict) -> dict:
+        self._load_expedition(expedition_id)
+        self.get_chart(chart_id)  # validate the reference
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("a target needs a name")
+        t = Target(
+            expedition_id=expedition_id, chart_id=chart_id, name=name,
+            initial_time=fields["initial_time"], vector_ms=int(fields["vector_ms"]),
+            target_delay=int(fields["target_delay"]), p=float(fields["p"]),
+            sigma=float(fields["sigma"]), second=fields.get("second"),
+            mdmsh=list(fields.get("mdmsh", [])),
+        )
+        self._store.write(_TARGETS, t.id, t.to_dict())
+        return t.to_dict()
+
+    def list_targets(self, expedition_id: str, chart_id: str | None = None) -> list[dict]:
+        out = []
+        for tid in self._store.list_ids(_TARGETS):
+            doc = self._store.read(_TARGETS, tid)
+            if doc is None or doc.get("expedition_id") != expedition_id:
+                continue
+            if chart_id is not None and doc.get("chart_id") != chart_id:
+                continue
+            out.append(doc)
+        out.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+        return out
+
+    def get_target(self, target_id: str) -> dict:
+        doc = self._store.read(_TARGETS, target_id)
+        if doc is None:
+            raise ValueError(f"no target with id {target_id!r}")
+        return doc
+
+    def delete_target(self, target_id: str) -> bool:
+        return self._store.delete(_TARGETS, target_id)
+
+    def examine_target(self, target_id: str, params: dict) -> dict:
+        """Examine a SAVED target by id (convenience over chart_examine)."""
+        t = self.get_target(target_id)
+        return self.chart_examine(t["expedition_id"], t["chart_id"],
+                                  t["initial_time"], t["vector_ms"], params)

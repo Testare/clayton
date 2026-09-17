@@ -252,3 +252,84 @@ class Expedition:
             last_target=dict(d.get("last_target", {})),
             preferences={**_default_preferences(), **d.get("preferences", {})},
         )
+
+
+# ---------------------------------------------------------------------------
+# Chart (a strategy+criteria pairing; the canon map is built against this)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Chart:
+    """A named strategy/criteria selection, scoped to an expedition (pokemon + key seed come
+    from there). Model-independent by design (claytonlib.chart.canon) — the canon map this
+    charts builds is reused across calibration-model refits, only the ranking changes.
+    """
+
+    expedition_id: str
+    name: str
+    strategy_name: str
+    criteria_name: str
+    id: str = field(default_factory=_new_id)
+    # The delay-window (seconds after button press) the canon map is built to cover.
+    setup_delay_seconds: int = 0
+    max_target_seconds: int = 300
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Chart":
+        return cls(
+            expedition_id=d["expedition_id"],
+            name=d["name"],
+            strategy_name=d["strategy_name"],
+            criteria_name=d["criteria_name"],
+            id=d.get("id") or _new_id(),
+            setup_delay_seconds=d.get("setup_delay_seconds", 0),
+            max_target_seconds=d.get("max_target_seconds", 300),
+            created_at=d.get("created_at") or _now_iso(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Target (a saved candidate initial time + Vector ms, with its landing stats)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Target:
+    """An initial time that hits the key seed plus a Vector ms aimed at a good Seed B —
+    saved from a chart's ranking, carrying the landing stats it was picked with."""
+
+    expedition_id: str
+    chart_id: str
+    name: str
+    initial_time: str  # ISO
+    vector_ms: int      # = M, the commanded countdown (chart's "M"; identical quantity)
+    target_delay: int   # = F_b, the expected battle frame (for compass identification)
+    p: float             # capture probability at the time this was saved
+    sigma: float
+    second: int | None = None
+    mdmsh: list = field(default_factory=list)  # [mdms, hour] — informational
+    id: str = field(default_factory=_new_id)
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Target":
+        return cls(
+            expedition_id=d["expedition_id"],
+            chart_id=d["chart_id"],
+            name=d["name"],
+            initial_time=d["initial_time"],
+            vector_ms=d["vector_ms"],
+            target_delay=d["target_delay"],
+            p=d["p"],
+            sigma=d["sigma"],
+            second=d.get("second"),
+            mdmsh=list(d.get("mdmsh", [])),
+            id=d.get("id") or _new_id(),
+            created_at=d.get("created_at") or _now_iso(),
+        )

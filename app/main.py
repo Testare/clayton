@@ -39,8 +39,26 @@ def _configure_linux_gtk_env() -> None:
     os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 
+def _chdir_into_app_data() -> None:
+    """Run the process out of the app's own data directory, not wherever it was launched from.
+
+    claytonlib still has a handful of CWD-relative ``data/...`` paths (the calibration model,
+    the get_times cache, chart canon maps/reports) left over from the notebook workflow, where
+    the convention was "run from the repo root". A packaged app has no such convention — it can
+    be launched from anywhere — so this anchors those relative paths to a real, writable,
+    per-OS location instead of leaving them to resolve against an arbitrary CWD. It sits
+    alongside (not inside) app.store's FileStore root, which already uses an absolute path and
+    is unaffected either way.
+    """
+    from app.store import default_data_dir
+    root = default_data_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    os.chdir(root)
+
+
 def main() -> None:
     _configure_linux_gtk_env()
+    _chdir_into_app_data()
     try:
         import webview
     except ImportError:
@@ -54,7 +72,7 @@ def main() -> None:
     from app.store import FileStore
 
     api = Facade(FileStore())
-    index = Path(__file__).parent / "web" / "index.html"
+    index = (Path(__file__).parent / "web" / "index.html").resolve()
     webview.create_window(
         "Clayton",
         url=str(index),
