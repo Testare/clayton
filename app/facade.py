@@ -11,11 +11,13 @@ arguments, to keep the bridge simple: ``api.create_profile({name, tid, ...})``.
 """
 from __future__ import annotations
 
-from app.models import Expedition, MetronomeUser, Profile
+from app import metronome
+from app.models import Expedition, MetronomeUser, Profile, Run
 from app.store import FileStore, Store
 
 _PROFILES = "profiles"
 _EXPEDITIONS = "expeditions"
+_RUNS = "runs"
 
 
 class Facade:
@@ -185,3 +187,68 @@ class Facade:
         """The Safari Zone area names, for the expedition-config dropdown."""
         from claytonlib.safari_encounters import safari_areas
         return safari_areas()
+
+    # -- Metronome Compass: seed identification ---------------------------
+
+    @staticmethod
+    def metronome_seed_a(params: dict) -> dict:
+        """Candidate initial seeds, narrowed by observed roamer routes + Elm calls."""
+        return metronome.seed_a(params)
+
+    @staticmethod
+    def metronome_key_seed_info(key_seed: int, prev_routes: dict) -> dict:
+        """The key seed's own roamer routes + Elm (to spot a key-seed hit)."""
+        return metronome.key_seed_info(key_seed, prev_routes)
+
+    @staticmethod
+    def metronome_seed_b(params: dict) -> dict:
+        """Candidate battle seeds, each with its precomputed Metronome path."""
+        return metronome.seed_b(params)
+
+    # -- Runs (profile-scoped) --------------------------------------------
+
+    def save_metronome_run(self, profile_id: str, data: dict) -> dict:
+        """Persist a Metronome Compass run under the profile."""
+        self._load_profile(profile_id)  # validate the reference
+        run = Run(
+            profile_id=profile_id,
+            kind="metronome",
+            tag=data.get("tag", ""),
+            vector_ms=data.get("vector_ms"),
+            target_timer_calibration=data.get("target_timer_calibration", 0),
+            notes=data.get("notes", ""),
+            metronome_user_id=data.get("metronome_user_id"),
+            a_seed=dict(data.get("a_seed", {})),
+            b_seed=dict(data.get("b_seed", {})),
+        )
+        self._store.write(_RUNS, run.id, run.to_dict())
+        return run.to_dict()
+
+    def list_runs(self, profile_id: str, kind: str | None = None) -> list[dict]:
+        """Runs for a profile (optionally filtered to a kind), newest first."""
+        out = []
+        for rid in self._store.list_ids(_RUNS):
+            doc = self._store.read(_RUNS, rid)
+            if doc is None or doc.get("profile_id") != profile_id:
+                continue
+            if kind is not None and doc.get("kind") != kind:
+                continue
+            out.append(doc)
+        out.sort(key=lambda d: d.get("saved_at", ""), reverse=True)
+        return out
+
+    def get_run(self, run_id: str) -> dict:
+        doc = self._store.read(_RUNS, run_id)
+        if doc is None:
+            raise ValueError(f"no run with id {run_id!r}")
+        return doc
+
+    def set_run_excluded(self, run_id: str, excluded: bool) -> dict:
+        """Manually include/exclude a run from calibration (distinct from outliers)."""
+        run = Run.from_dict(self.get_run(run_id))
+        run.excluded = bool(excluded)
+        self._store.write(_RUNS, run.id, run.to_dict())
+        return run.to_dict()
+
+    def delete_run(self, run_id: str) -> bool:
+        return self._store.delete(_RUNS, run_id)

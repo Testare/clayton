@@ -161,6 +161,58 @@ class Profile:
 # Expedition
 # ---------------------------------------------------------------------------
 
+def _now_iso() -> str:
+    import datetime as _dt
+    return _dt.datetime.now().isoformat(timespec="seconds")
+
+
+# ---------------------------------------------------------------------------
+# Run (a saved Compass run — profile-scoped)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Run:
+    """One saved Metronome/Safari Compass run. Owned by a profile, not an expedition.
+
+    Shaped to stay compatible with the calibration record (``a_seed`` / ``b_seed``,
+    ``vector_ms`` = the aimed timer value) so these can feed the fit later, and carries
+    the app-side extras from draft2: the metronome user's id and an exclusion flag.
+    """
+
+    profile_id: str
+    kind: str = "metronome"  # "metronome" | "safari"
+    id: str = field(default_factory=_new_id)
+    tag: str = ""
+    vector_ms: int | None = None
+    target_timer_calibration: int = 0
+    notes: str = ""
+    metronome_user_id: int | None = None  # metronome runs only
+    a_seed: dict = field(default_factory=dict)
+    b_seed: dict = field(default_factory=dict)
+    saved_at: str = field(default_factory=_now_iso)
+    excluded: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Run":
+        return cls(
+            profile_id=d["profile_id"],
+            kind=d.get("kind", "metronome"),
+            id=d.get("id") or _new_id(),
+            tag=d.get("tag", ""),
+            vector_ms=d.get("vector_ms"),
+            target_timer_calibration=d.get("target_timer_calibration", 0),
+            notes=d.get("notes", ""),
+            metronome_user_id=d.get("metronome_user_id"),
+            a_seed=dict(d.get("a_seed", {})),
+            b_seed=dict(d.get("b_seed", {})),
+            saved_at=d.get("saved_at") or _now_iso(),
+            excluded=bool(d.get("excluded", False)),
+        )
+
+
 def _default_preferences() -> dict:
     return {"elm_calls_after_flips": 3}
 
