@@ -11,9 +11,10 @@ arguments, to keep the bridge simple: ``api.create_profile({name, tid, ...})``.
 """
 from __future__ import annotations
 
+from app import calibration as calibration_lib
 from app import chart as chart_lib
 from app import metronome
-from app.models import Chart, Expedition, MetronomeUser, Profile, Run, Target
+from app.models import CalibrationModelDoc, Chart, Expedition, MetronomeUser, Profile, Run, Target
 from app.store import FileStore, Store
 
 _PROFILES = "profiles"
@@ -21,6 +22,7 @@ _EXPEDITIONS = "expeditions"
 _RUNS = "runs"
 _CHARTS = "charts"
 _TARGETS = "targets"
+_CALIBRATION_MODELS = "calibration_models"
 
 
 class Facade:
@@ -275,6 +277,14 @@ class Facade:
     def delete_run(self, run_id: str) -> bool:
         return self._store.delete(_RUNS, run_id)
 
+    def set_tag_excluded(self, profile_id: str, tag: str, excluded: bool) -> dict:
+        """Exclude/include a whole tag from calibration. Does NOT touch individual runs'
+        own exclude flags — a run's effective reason shows "tag:<name>" separately."""
+        p = self._load_profile(profile_id)
+        p.set_tag_excluded(tag, bool(excluded))
+        self._save_profile(p)
+        return self.get_profile(p.id)
+
     # -- export / import --------------------------------------------------
 
     def export_expedition(self, expedition_id: str) -> dict:
@@ -320,9 +330,18 @@ class Facade:
     def list_safari_pokemon(self) -> list[str]:
         return chart_lib.list_safari_pokemon()
 
-    def calibration_model_summary(self) -> dict | None:
-        """Info about the (currently global — see app/chart.py) calibration model, if any."""
-        return chart_lib.calibration_model_summary()
+    def _resolve_calibration_models(self, profile_id: str) -> dict:
+        """The profile's active saved calibration models, or claytonlib's global model file
+        as a fallback (for a profile that hasn't used Calibrate Model yet)."""
+        from claytonlib.calibration import CalibrationModel
+        active = self.get_active_calibration_model(profile_id)
+        if active is not None:
+            return {k: CalibrationModel.from_dict(v) for k, v in active["artifact"]["models"].items()}
+        return chart_lib.global_calibration_models()
+
+    def calibration_model_summary(self, profile_id: str) -> dict | None:
+        """Info about the profile's active calibration model (or the global fallback), if any."""
+        return chart_lib.summarize_models(self._resolve_calibration_models(profile_id))
 
     # -- Safari Chart: Chart CRUD ------------------------------------------
 
@@ -367,7 +386,8 @@ class Facade:
     def chart_precompute_start(self, expedition_id: str, chart_id: str) -> dict:
         """Begin building the canon map in the background; returns the first progress snapshot."""
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
-        runner = chart_lib.precompute_runner(exp, c)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        runner = chart_lib.precompute_runner(exp, c, models)
         return self._chart_sessions.start(runner)
 
     def chart_precompute_poll(self, session_id: str) -> dict:
@@ -375,17 +395,20 @@ class Facade:
 
     def chart_rank_best_per_time(self, expedition_id: str, chart_id: str, params: dict) -> dict:
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
-        return chart_lib.rank_best_per_time(exp, c, params)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        return chart_lib.rank_best_per_time(exp, c, models, params)
 
     def chart_rank_at_time(self, expedition_id: str, chart_id: str,
                            initial_time: str, params: dict) -> list[dict]:
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
-        return chart_lib.rank_at_time(exp, c, initial_time, params)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        return chart_lib.rank_at_time(exp, c, models, initial_time, params)
 
     def chart_examine(self, expedition_id: str, chart_id: str,
                       initial_time: str, vector_ms: int, params: dict) -> dict:
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
-        return chart_lib.examine(exp, c, initial_time, vector_ms, params)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        return chart_lib.examine(exp, c, models, initial_time, vector_ms, params)
 
     # -- Safari Chart: Target CRUD -------------------------------------------
 
@@ -431,3 +454,60 @@ class Facade:
         t = self.get_target(target_id)
         return self.chart_examine(t["expedition_id"], t["chart_id"],
                                   t["initial_time"], t["vector_ms"], params)
+
+    # -- Calibrate Model ----------------------------------------------------
+
+    def preview_calibration(self, profile_id: str, params: dict | None = None) -> dict:
+        """Fit a calibration model from the profile's metronome runs (after exclusions)
+        without saving anything — the Calibrate Model view's live preview."""
+        p = self._load_profile(profile_id)
+        runs = self.list_runs(profile_id, kind="metronome")
+        return calibration_lib.preview_fit(runs, p.excluded_tags)
+
+    def save_calibration_model(self, profile_id: str, fields: dict) -> dict:
+        """Persist a previewed fit as a new, numbered model; makes it the active one
+        unless told not to (a user may want to compare before switching)."""
+        self._load_profile(profile_id)
+        preview = fields.get("preview")
+        if not preview:
+            raise ValueError("save_calibration_model needs the preview it's saving")
+        existing = self.list_calibration_models(profile_id)
+        number = (max((m["number"] for m in existing), default=0)) + 1
+        make_active = bool(fields.get("make_active", True))
+        doc = CalibrationModelDoc(
+            profile_id=profile_id, number=number, name=(fields.get("name") or "").strip(),
+            artifact=preview["artifact"], stats=preview.get("stats", {}), active=make_active)
+        if make_active:
+            for m in existing:
+                if m.get("active"):
+                    m["active"] = False
+                    self._store.write(_CALIBRATION_MODELS, m["id"], m)
+        self._store.write(_CALIBRATION_MODELS, doc.id, doc.to_dict())
+        return doc.to_dict()
+
+    def list_calibration_models(self, profile_id: str) -> list[dict]:
+        out = []
+        for mid in self._store.list_ids(_CALIBRATION_MODELS):
+            doc = self._store.read(_CALIBRATION_MODELS, mid)
+            if doc is not None and doc.get("profile_id") == profile_id:
+                out.append(doc)
+        out.sort(key=lambda d: d.get("number", 0), reverse=True)
+        return out
+
+    def get_active_calibration_model(self, profile_id: str) -> dict | None:
+        return next((m for m in self.list_calibration_models(profile_id) if m.get("active")), None)
+
+    def set_active_calibration_model(self, profile_id: str, model_id: str) -> dict:
+        """Make a previously-saved model the active one Safari Chart uses."""
+        target = self._store.read(_CALIBRATION_MODELS, model_id)
+        if target is None or target.get("profile_id") != profile_id:
+            raise ValueError(f"no calibration model {model_id!r} for this profile")
+        for m in self.list_calibration_models(profile_id):
+            active = m["id"] == model_id
+            if m.get("active") != active:
+                m["active"] = active
+                self._store.write(_CALIBRATION_MODELS, m["id"], m)
+        return self._store.read(_CALIBRATION_MODELS, model_id)
+
+    def delete_calibration_model(self, model_id: str) -> bool:
+        return self._store.delete(_CALIBRATION_MODELS, model_id)

@@ -9,12 +9,13 @@ calling it means no ``input()`` is ever reached. It is never ``.save()``d — th
 own Chart/Target entities are the persisted record; the bridge exists only to reach
 already-correct claytonlib logic without reimplementing it.
 
-CALIBRATION MODEL — TEMPORARY: the app has no per-profile calibration model store
-yet (that's the Review Data / Calibrate Model work). Until then this reads the one
-global model claytonlib already maintains (``CalibrationModel.load_set()``, the same
-file the notebooks write via ``update_calibration_model()``) — usable today by
-anyone who has calibrated through the notebooks, but not yet profile-scoped. See
-clayton-dxq.7.
+CALIBRATION MODEL: every function below that needs one takes a resolved
+``models: dict[str, CalibrationModel]`` (the modelset shape — typically
+``{"linear": ..., "quad": ...}``) as a plain parameter; this module has no opinion on
+*where* it came from. The facade resolves it — a profile's active
+``CalibrationModelDoc`` (see app/calibration.py) if one has been saved via Calibrate
+Model, else a temporary fallback to claytonlib's one global model artifact (the file
+the notebooks maintain), for anyone who calibrated there before the app could.
 
 PATHS: canon maps and chart reports are heavy, non-document data (JSONL, can run to
 many MB) and so are deliberately NOT routed through ``app.store`` — they use
@@ -74,12 +75,18 @@ def list_safari_pokemon() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Calibration model (temporary global bridge — see module docstring)
+# Calibration models — resolution is the facade's job; this module just consumes
 # ---------------------------------------------------------------------------
 
-def calibration_model_summary() -> dict | None:
-    """A JSON-friendly summary of the available calibration model(s), or None if none exist."""
-    models = CalibrationModel.load_set()
+def global_calibration_models() -> dict[str, "CalibrationModel"]:
+    """The one calibration model artifact claytonlib itself maintains (the file the
+    notebooks write). A fallback for profiles that haven't saved one via Calibrate
+    Model yet — never the primary source once that page is used."""
+    return CalibrationModel.load_set()
+
+
+def summarize_models(models: dict[str, "CalibrationModel"]) -> dict | None:
+    """A JSON-friendly summary of a resolved models dict, or None if it's empty."""
     if not models:
         return None
     return {
@@ -92,12 +99,11 @@ def calibration_model_summary() -> dict | None:
     }
 
 
-def _load_model(fps_model: str, use_safari_offset: bool) -> CalibrationModel:
-    models = CalibrationModel.load_set()
+def _pick_model(models: dict, fps_model: str, use_safari_offset: bool) -> "CalibrationModel":
     if not models:
         raise ValueError(
-            "no calibration model found — calibrate via the Metronome Compass notebooks first "
-            "(a profile-scoped Calibrate Model view is coming; see clayton-dxq.7)")
+            "no calibration model available — build one from Metronome Compass → Review "
+            "Data → Calibrate Model first")
     model = models.get(fps_model) or next(iter(models.values()))
     return model.with_safari_offset() if use_safari_offset else model
 
@@ -135,7 +141,7 @@ def canon_status(exp: dict, chart: dict) -> dict:
     }
 
 
-def precompute_runner(exp: dict, chart: dict, workers: int = 1):
+def precompute_runner(exp: dict, chart: dict, models: dict, workers: int = 1):
     """Build a ``runner(progress_cb) -> stats`` closure for a background ProgressSession.
 
     ``workers`` defaults to 1 (no process pool) — a process pool forked from inside a
@@ -143,25 +149,25 @@ def precompute_runner(exp: dict, chart: dict, workers: int = 1):
     """
     from claytonlib.chart import precompute_canon
 
+    if not models:
+        raise ValueError(
+            "no calibration model available — build one from Metronome Compass → Review "
+            "Data → Calibrate Model first")
+
     bridged = _bridge(exp, chart)
     pokemon = safari_pokemon_by_name(exp["pokemon"])
     strategy = _resolve_strategy(chart["strategy_name"])
     criteria = _resolve_criteria(chart["criteria_name"])
     store = _canon_store(exp, chart)
     base_delay, times = get_times(exp["key_seed"])
-
-    models = CalibrationModel.load_set()
-    if not models:
-        raise ValueError(
-            "no calibration model found — calibrate via the Metronome Compass notebooks first")
-    model = {k: m.with_safari_offset() for k, m in models.items()}
+    folded = {k: m.with_safari_offset() for k, m in models.items()}
 
     def runner(progress_cb):
         def _progress(done, total, stats):
             progress_cb(done=done, total=total, n_distinct_seeds=stats.get("n_distinct_seeds"))
         return precompute_canon(
             base_delay, times, bridged.setup_delay_seconds, bridged.max_target_seconds,
-            pokemon, strategy, criteria, store, model, progress=_progress, workers=workers)
+            pokemon, strategy, criteria, store, folded, progress=_progress, workers=workers)
 
     return runner
 
@@ -180,13 +186,13 @@ def _row_json(r: dict, initial_time: dt.datetime | None = None) -> dict:
     }
 
 
-def rank_best_per_time(exp: dict, chart: dict, params: dict) -> dict:
+def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> dict:
     """Mode A: the best target for each candidate boot time, collapsed to distinct scenarios."""
     store = _canon_store(exp, chart)
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _load_model(params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
     base_delay, times = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
 
@@ -202,13 +208,13 @@ def rank_best_per_time(exp: dict, chart: dict, params: dict) -> dict:
     }
 
 
-def rank_at_time(exp: dict, chart: dict, initial_time: str, params: dict) -> list[dict]:
+def rank_at_time(exp: dict, chart: dict, models: dict, initial_time: str, params: dict) -> list[dict]:
     """Mode B: rank commanded countdowns for one fixed boot time."""
     store = _canon_store(exp, chart)
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _load_model(params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
     base_delay, _ = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
     it = _parse_time(initial_time)
@@ -225,13 +231,13 @@ def rank_at_time(exp: dict, chart: dict, initial_time: str, params: dict) -> lis
 # Examine (the "Examine target" breakdown)
 # ---------------------------------------------------------------------------
 
-def examine(exp: dict, chart: dict, initial_time: str, vector_ms: int, params: dict) -> dict:
+def examine(exp: dict, chart: dict, models: dict, initial_time: str, vector_ms: int, params: dict) -> dict:
     """The per-second landing breakdown behind one (initial_time, Vector ms) target."""
     store = _canon_store(exp, chart)
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _load_model(params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
     base_delay, _ = get_times(exp["key_seed"])
     it = _parse_time(initial_time)
 

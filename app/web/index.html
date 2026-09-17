@@ -718,7 +718,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function chartFindTarget(expId){
   const e = await api("get_expedition", expId);
   const [charts, calSummary, strategies, criteria] = await Promise.all([
-    api("list_charts", expId), api("calibration_model_summary"),
+    api("list_charts", expId), api("calibration_model_summary", e.profile_id),
     api("list_chart_strategies"), api("list_chart_criteria")]);
   ct = { expId, e, charts, strategies, criteria, calSummary,
     chartId: charts[0]?.id ?? null, canonStatus: null, precompute: null,

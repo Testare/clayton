@@ -100,6 +100,10 @@ class Profile:
     # Monotonic; assigns the next metronome-user id and never rewinds, so ids are
     # never reused even after a user is removed.
     next_metronome_user_id: int = 1
+    # Tags excluded wholesale from calibration (Review Data → Tags). Distinct from a run's own
+    # `excluded` flag: excluding a tag here does NOT toggle individual runs' flags — a run's
+    # effective-excluded state is the OR of both, and the UI shows "tag:<name>" for this case.
+    excluded_tags: list[str] = field(default_factory=list)
 
     def get_metronome_user(self, user_id: int) -> MetronomeUser | None:
         return next((u for u in self.metronome_users if u.id == user_id), None)
@@ -133,6 +137,13 @@ class Profile:
     def has_valid_metronome_user(self) -> bool:
         return any(u.is_suitable for u in self.metronome_users)
 
+    def set_tag_excluded(self, tag: str, excluded: bool) -> None:
+        have = tag in self.excluded_tags
+        if excluded and not have:
+            self.excluded_tags.append(tag)
+        elif not excluded and have:
+            self.excluded_tags.remove(tag)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -142,6 +153,7 @@ class Profile:
             "console": self.console,
             "metronome_users": [u.to_dict() for u in self.metronome_users],
             "next_metronome_user_id": self.next_metronome_user_id,
+            "excluded_tags": self.excluded_tags,
         }
 
     @classmethod
@@ -153,6 +165,7 @@ class Profile:
             sid=d.get("sid"),
             console=d.get("console", ""),
             metronome_users=[MetronomeUser.from_dict(u) for u in d.get("metronome_users", [])],
+            excluded_tags=list(d.get("excluded_tags", [])),
             next_metronome_user_id=d.get("next_metronome_user_id", 1),
         )
 
@@ -331,5 +344,47 @@ class Target:
             second=d.get("second"),
             mdmsh=list(d.get("mdmsh", [])),
             id=d.get("id") or _new_id(),
+            created_at=d.get("created_at") or _now_iso(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# CalibrationModelDoc (a saved, profile-scoped timer-calibration fit)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CalibrationModelDoc:
+    """One saved calibration fit for a profile.
+
+    `artifact` is the modelset shape claytonlib.calibration.CalibrationModel.save_set/
+    load_set/_from_artifact already read and write ({"format": "modelset", "default": ...,
+    "models": {"linear": {...}, "quad": {...}}}) — app.chart hands the resolved
+    CalibrationModel objects straight to claytonlib's scorer, no reshaping needed.
+    `number` is a strict per-profile increment (never reused); `active` marks the one
+    Safari Chart currently uses (exactly one per profile, enforced by the facade).
+    """
+
+    profile_id: str
+    number: int
+    artifact: dict
+    stats: dict = field(default_factory=dict)
+    id: str = field(default_factory=_new_id)
+    name: str = ""
+    active: bool = False
+    created_at: str = field(default_factory=_now_iso)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CalibrationModelDoc":
+        return cls(
+            profile_id=d["profile_id"],
+            number=d["number"],
+            artifact=dict(d.get("artifact", {})),
+            stats=dict(d.get("stats", {})),
+            id=d.get("id") or _new_id(),
+            name=d.get("name", ""),
+            active=bool(d.get("active", False)),
             created_at=d.get("created_at") or _now_iso(),
         )

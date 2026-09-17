@@ -71,12 +71,12 @@ class TestReferenceData(unittest.TestCase):
 class TestCalibrationModelBridge(unittest.TestCase):
     def test_no_model_returns_none(self):
         with _isolated_cwd():
-            self.assertIsNone(chart.calibration_model_summary())
+            self.assertIsNone(chart.summarize_models(chart.global_calibration_models()))
 
     def test_model_present_is_summarized(self):
         with _isolated_cwd():
             _write_synthetic_model()
-            summary = chart.calibration_model_summary()
+            summary = chart.summarize_models(chart.global_calibration_models())
             self.assertEqual(summary["available"], ["linear"])
             self.assertEqual(summary["models"]["linear"]["n_runs"], 10)
 
@@ -85,15 +85,16 @@ class TestPrecomputeRankExamine(unittest.TestCase):
     def test_precompute_requires_a_calibration_model(self):
         with _isolated_cwd():
             with self.assertRaises(ValueError):
-                chart.precompute_runner(_EXP, _CHART)
+                chart.precompute_runner(_EXP, _CHART, {})
 
     def test_full_round_trip(self):
         with _isolated_cwd():
             _write_synthetic_model()
+            models = chart.global_calibration_models()
 
             self.assertFalse(chart.canon_status(_EXP, _CHART)["built"])
 
-            runner = chart.precompute_runner(_EXP, _CHART, workers=1)
+            runner = chart.precompute_runner(_EXP, _CHART, models, workers=1)
             progress_calls = []
             stats = runner(lambda **kw: progress_calls.append(kw))
             self.assertGreater(stats["n_distinct_seeds"], 0)
@@ -105,7 +106,7 @@ class TestPrecomputeRankExamine(unittest.TestCase):
             self.assertEqual(status["last_setup"], 0)
             self.assertEqual(status["last_max"], 2)
 
-            ranked = chart.rank_best_per_time(_EXP, _CHART, {"limit": 5, "step": 4})
+            ranked = chart.rank_best_per_time(_EXP, _CHART, models, {"limit": 5, "step": 4})
             self.assertIn("top", ranked)
             self.assertGreater(ranked["per_time_count"], 0)
 
@@ -118,22 +119,23 @@ class TestPrecomputeRankExamine(unittest.TestCase):
                 for key in ("vector_ms", "target_delay", "second", "mdmsh", "p", "sigma", "initial_time"):
                     self.assertIn(key, row)
 
-                ex = chart.examine(_EXP, _CHART, row["initial_time"], row["vector_ms"], {})
+                ex = chart.examine(_EXP, _CHART, models, row["initial_time"], row["vector_ms"], {})
                 self.assertGreaterEqual(ex["p"], 0.0)
                 self.assertLessEqual(ex["p"], 1.0)
                 self.assertTrue(ex["seconds"])
 
-                at_time = chart.rank_at_time(_EXP, _CHART, row["initial_time"], {"limit": 3})
+                at_time = chart.rank_at_time(_EXP, _CHART, models, row["initial_time"], {"limit": 3})
                 self.assertTrue(at_time)
                 self.assertIn("vector_ms", at_time[0])
 
     def test_rank_and_examine_need_canon_first(self):
         with _isolated_cwd():
             _write_synthetic_model()
+            models = chart.global_calibration_models()
             with self.assertRaises(ValueError):
-                chart.rank_best_per_time(_EXP, _CHART, {})
+                chart.rank_best_per_time(_EXP, _CHART, models, {})
             with self.assertRaises(ValueError):
-                chart.examine(_EXP, _CHART, "2000-01-01T00:00:00", 1000, {})
+                chart.examine(_EXP, _CHART, models, "2000-01-01T00:00:00", 1000, {})
 
 
 class TestFacadeChartCRUD(unittest.TestCase):
