@@ -4,15 +4,89 @@ import tempfile
 import unittest
 
 from app.facade import Facade
+from app.metronome import _rel_predicate, _target_delay_for_key_seed
 from app.metronome_session import SessionRegistry
 from app.models import Run
 from app.store import FileStore
+from claytonlib.calibration_tools import seed_for
+
+_TARGET_TIME = "2025-07-24T14:45:56"
+_TARGET_DT = dt.datetime(2025, 7, 24, 14, 45, 56)
+_TRUE_DELAY = 673
+# The user never supplies a delay -- only a key seed. Build one exactly as a real
+# target-selection step would (seed_for at some real delay), so the facade's
+# algebraic derivation is exercised the same way it is in the app.
+_KEY_SEED = seed_for(_TARGET_DT, _TRUE_DELAY)
 
 _TARGET = {
-    "target_time": "2025-07-24T14:45:56",
-    "target_delay": 673,
+    "target_time": _TARGET_TIME,
+    "key_seed": _KEY_SEED,
     "prev_routes": {"r": 31, "e": 30, "l": 7},
 }
+
+
+class TestTargetDelayDerivation(unittest.TestCase):
+    def test_round_trips_the_true_delay(self):
+        self.assertEqual(_target_delay_for_key_seed(_KEY_SEED, _TARGET_DT), _TRUE_DELAY)
+
+    def test_derivation_is_year_agnostic(self):
+        # The exact regression this fixes: entering a DIFFERENT calendar year for
+        # target_time (as the app previously mishandled) must still reconstruct a
+        # delay whose seed_for() low-16 field matches the key seed's -- no drift.
+        other_year_time = _TARGET_DT.replace(year=2030)
+        derived = _target_delay_for_key_seed(_KEY_SEED, other_year_time)
+        reconstructed = seed_for(other_year_time, derived)
+        self.assertEqual(reconstructed & 0xFFFF, _KEY_SEED & 0xFFFF)
+
+    def test_naive_low16_reuse_would_have_been_wrong(self):
+        # Documents the original bug: directly reusing the key seed's low 16 bits as
+        # a fresh delay double-counts the year term once seed_for() re-adds it.
+        naive_delay = _KEY_SEED & 0xFFFF
+        self.assertNotEqual(naive_delay, _TRUE_DELAY)
+        self.assertEqual(naive_delay - _TRUE_DELAY, _TARGET_DT.year - 2000)
+
+
+class TestRelPredicate(unittest.TestCase):
+    KEYS = ["r", "e", "l"]
+
+    def test_exact_two_digit_match(self):
+        pred, ok = _rel_predicate("39 44 7", self.KEYS)
+        self.assertTrue(ok)
+        self.assertTrue(pred({"r_route": 39, "e_route": 44, "l_route": 7}))
+        self.assertFalse(pred({"r_route": 39, "e_route": 45, "l_route": 7}))
+
+    def test_single_digit_r_or_e_is_tens_place_prefix(self):
+        pred, ok = _rel_predicate("39 4", self.KEYS)
+        self.assertTrue(ok)
+        # "4" for E should match any real E route starting with 4 (42-46), any L.
+        for e in (42, 43, 44, 45, 46):
+            self.assertTrue(pred({"r_route": 39, "e_route": e, "l_route": 99}))
+        self.assertFalse(pred({"r_route": 39, "e_route": 30, "l_route": 1}))
+
+    def test_l_is_never_prefix_matched(self):
+        pred, ok = _rel_predicate(". . 2", self.KEYS)
+        self.assertTrue(ok)
+        self.assertTrue(pred({"r_route": 1, "e_route": 1, "l_route": 2}))
+        self.assertFalse(pred({"r_route": 1, "e_route": 1, "l_route": 24}))  # not a prefix match
+
+    def test_missing_trailing_tokens_are_wildcards(self):
+        pred, ok = _rel_predicate("39", self.KEYS)
+        self.assertTrue(ok)
+        self.assertTrue(pred({"r_route": 39, "e_route": 999, "l_route": 999}))
+
+    def test_empty_string_matches_everything(self):
+        pred, ok = _rel_predicate("", self.KEYS)
+        self.assertTrue(ok)
+        self.assertTrue(pred({"r_route": 1, "e_route": 2, "l_route": 3}))
+
+    def test_unparseable_token_is_flagged_not_raised(self):
+        pred, ok = _rel_predicate("abc", self.KEYS)
+        self.assertFalse(ok)
+        self.assertIsNone(pred)
+
+    def test_extra_tokens_ignored(self):
+        pred, ok = _rel_predicate("39 44 7 99", self.KEYS)
+        self.assertTrue(ok)  # still-typing tail beyond the known roamers is harmless
 
 
 class TestSeedA(unittest.TestCase):
@@ -59,11 +133,49 @@ class TestSeedA(unittest.TestCase):
 
     def test_not_roaming_roamer_omitted(self):
         res = self.api.metronome_seed_a({
-            "target_time": _TARGET["target_time"], "target_delay": 673,
+            "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
             "prev_routes": {"r": 31, "l": 7},  # e not roaming
             "seconds_window": 0, "delay_window": 1})
         self.assertEqual(res["roamers"], ["r", "l"])
         self.assertIsNone(res["candidates"][0]["e_route"])
+
+    def test_exact_rel_found_within_a_tight_window_regardless_of_year(self):
+        # Regression for the reported bug: entering the exact REL for the true
+        # candidate must find it within a narrow +/-10 delay window, and this must
+        # hold no matter what year the user happens to type into target_time.
+        for year in (2000, 2025, 2030):
+            t = _TARGET_DT.replace(year=year)
+            key_seed = seed_for(t, _TRUE_DELAY)  # a key seed picked for THIS year's run
+            res = self.api.metronome_seed_a({
+                "target_time": t.isoformat(), "key_seed": key_seed,
+                "prev_routes": _TARGET["prev_routes"],
+                "seconds_window": 0, "delay_window": 10})
+            target = next(c for c in res["candidates"] if c["delay_delta"] == 0)
+            rel = f"{target['r_route']} {target['e_route']} {target['l_route']}"
+            narrowed = self.api.metronome_seed_a({
+                "target_time": t.isoformat(), "key_seed": key_seed,
+                "prev_routes": _TARGET["prev_routes"],
+                "seconds_window": 0, "delay_window": 10, "rel_observed": rel})
+            self.assertIn(target["seed"], [c["seed"] for c in narrowed["candidates"]],
+                f"year={year}: exact REL match not found within the window")
+
+    def test_single_digit_rel_prefix_narrows_live(self):
+        res = self._gen()
+        target = next(c for c in res["candidates"] if c["sec_delta"] == 0 and c["delay_delta"] == 0)
+        prefix = str(target["e_route"])[0]  # tens digit only, as if still typing
+        narrowed = self._gen(rel_observed=f"{target['r_route']} {prefix}")
+        self.assertTrue(narrowed["rel_valid"])
+        self.assertIn(target["seed"], [c["seed"] for c in narrowed["candidates"]])
+
+    def test_unparseable_rel_flags_instead_of_raising(self):
+        res = self._gen(rel_observed="xyz")
+        self.assertFalse(res["rel_valid"])
+        self.assertEqual(res["count"], 0)
+
+    def test_partial_rel_while_typing_is_not_an_error(self):
+        # A single token (still typing the rest) must not raise -- this was the CX bug.
+        res = self._gen(rel_observed="3")
+        self.assertTrue(res["rel_valid"])
 
 
 class TestSeedB(unittest.TestCase):
@@ -72,7 +184,7 @@ class TestSeedB(unittest.TestCase):
 
     def test_generates_paths(self):
         res = self.api.metronome_seed_b({
-            "target_time": _TARGET["target_time"], "target_delay": 673,
+            "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
             "seconds_window": 0, "delay_window": 1,
             "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
         self.assertGreater(res["count"], 0)
@@ -127,7 +239,7 @@ class TestSeedBSession(unittest.TestCase):
     def test_real_narrowing_session_starts_then_aborts(self):
         api = Facade(FileStore(tempfile.mkdtemp()))
         st = api.metronome_seed_b_start({
-            "target_time": "2025-07-24T14:45:56", "target_delay": 673,
+            "target_time": _TARGET_TIME, "key_seed": _KEY_SEED,
             "seconds_window": 0, "delay_window": 1,
             "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
         self.assertIn("session_id", st)
