@@ -367,6 +367,25 @@ class Facade:
         self._load_profile(profile_id)
         return portability.import_calibration_model(self._store, profile_id, envelope)
 
+    def export_calibration_model_to_file(self, model_id: str) -> dict:
+        """Export one calibration model via a native Save dialog."""
+        from app import files
+        env = self.export_calibration_model(model_id)
+        m = env["data"]["model"]
+        name = m.get("name") or f"model-{m.get('number', '')}"
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "model"
+        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        return {"saved": bool(path), "path": path}
+
+    def import_calibration_model_from_file(self, profile_id: str) -> dict:
+        """Import a calibration model via a native Open dialog. No collision handling —
+        models always land as a new, inactive, freshly-numbered entry (see portability)."""
+        from app import files
+        env = files.open_json_dialog()
+        if env is None:
+            return {"imported": False}
+        return {"imported": True, **self.import_calibration_model(profile_id, env)}
+
     def export_expedition_to_file(self, expedition_id: str) -> dict:
         """Export one expedition via a native Save dialog."""
         from app import files

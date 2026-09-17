@@ -319,6 +319,7 @@ async function openExpeditionHome(id){
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="editExpedition('${esc(id)}')">Configure</button>
         <button class="btn" onclick="preferencesPage('${esc(id)}')">Preferences</button>
+        <button class="btn" onclick="exportExpedition('${esc(id)}')">Export…</button>
         <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
       </div></div>
     <div class="muted">${esc(e.pokemon || "—")}${e.safari_area ? " · " + esc(e.safari_area) : ""}
@@ -838,9 +839,10 @@ function renderCalibrateModel(){
         <div class="actions"><button class="btn primary" type="submit">Save new model</button></div>
       </form>`;
   }
+  const savedHeader = `<div class="head" style="margin-bottom:12px"><div class="section-label" style="margin:0">Saved models</div>
+      <button class="btn small" onclick="importCalibrationModel()">Import model…</button></div>`;
   const savedList = (review.savedModels && review.savedModels.length)
-    ? `<div class="section-label">Saved models</div>
-      <div class="candtable" style="max-height:none"><table><thead><tr>
+    ? `<div class="candtable" style="max-height:none"><table><thead><tr>
           <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
         <tbody>${review.savedModels.map(m => `<tr>
           <td>${m.number}</td><td>${esc(m.name || "—")}</td>
@@ -848,9 +850,24 @@ function renderCalibrateModel(){
           <td>${m.active ? `<span class="badge ok">active</span>` : ""}</td>
           <td style="text-align:right;white-space:nowrap">
             ${!m.active ? `<button class="btn small" onclick="reviewActivateModel('${esc(m.id)}')">Make active</button>` : ""}
+            <button class="btn small" onclick="exportCalibrationModel('${esc(m.id)}')">Export</button>
             <button class="btn small danger" onclick="reviewDeleteModel('${esc(m.id)}')">Delete</button>
-          </td></tr>`).join("")}</tbody></table></div>` : "";
-  return content + savedList;
+          </td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">No models saved yet.</div>`;
+  return content + savedHeader + savedList;
+}
+
+async function exportCalibrationModel(modelId){
+  const res = await api("export_calibration_model_to_file", modelId);
+  if(res.saved) toast("Exported to " + res.path);
+}
+
+async function importCalibrationModel(){
+  const res = await api("import_calibration_model_from_file", review.profileId);
+  if(res.imported){
+    toast(`Imported as model #${res.number} (inactive — review and Make active if you want it).`);
+    await reviewLoadSavedModels();
+    renderReview();
+  }
 }
 
 async function reviewLoadSavedModels(){
@@ -1560,16 +1577,89 @@ async function renderProfiles(){
       </div></div>${body}`);
 }
 
-async function exportProfile(id){
-  const res = await api("export_profile_bundle_to_file", id);
+function exportProfile(id){
+  openModal(`<h3>Export profile bundle</h3>
+    <p class="muted">Includes expeditions, charts, targets, calibration models, and runs.</p>
+    <div class="field check"><input type="checkbox" id="exp-incl-excl" checked>
+      <label for="exp-incl-excl" style="margin:0">Include manually-excluded runs</label></div>
+    <div class="hint muted" style="margin-bottom:11px">Their exclude flag travels with them either
+      way, so leaving this on round-trips exclusion state on re-import.</div>
+    <div class="actions">
+      <button class="btn primary" onclick="exportProfileConfirmed('${esc(id)}')">Export…</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function exportProfileConfirmed(id){
+  const includeExcluded = $("exp-incl-excl").checked;
+  closeModal();
+  const res = await api("export_profile_bundle_to_file", id, includeExcluded);
   if(res.saved) toast("Exported to " + res.path);
 }
+
+let _pendingImportEnvelope = null;  // stashed here, never embedded in HTML — avoids quoting
+
 async function importProfile(){
   const res = await api("import_profile_bundle_from_file");
-  if(res.imported){
-    toast(`Imported "${res.profile_name || "profile"}" — ${res.counts.expeditions} expedition(s), ${res.counts.runs} run(s)`);
-    renderProfiles();
+  if(res.collision){
+    _pendingImportEnvelope = res.envelope;
+    openModal(`<h3>Profile already exists</h3>
+      <p>A profile named "${esc(res.existing_name)}" is already here. Import as…</p>
+      <div class="actions">
+        <button class="btn primary" onclick="importProfileResolve('new')">A new separate profile</button>
+        <button class="btn" onclick="importProfileResolve('merge')">Merge into the existing one</button>
+        <button class="btn" onclick="closeModal()">Cancel</button>
+      </div>`);
+    return;
   }
+  if(res.imported) importProfileDone(res);
+}
+async function importProfileResolve(onCollision){
+  const res = await api("import_profile_bundle_resolve", _pendingImportEnvelope, onCollision);
+  _pendingImportEnvelope = null;
+  closeModal();
+  importProfileDone(res);
+}
+function importProfileDone(res){
+  const c = res.counts;
+  toast(`Imported "${res.profile_name || "profile"}"${res.merged ? " (merged)" : ""} — ` +
+    `${c.expeditions} expedition(s), ${c.charts} chart(s), ${c.targets} target(s), ` +
+    `${c.runs} run(s), ${c.calibration_models} model(s)`);
+  renderProfiles();
+}
+
+async function exportExpedition(id){
+  const res = await api("export_expedition_to_file", id);
+  if(res.saved) toast("Exported to " + res.path);
+}
+
+let _pendingImportProfileId = null;
+
+async function importExpeditionInto(profileId){
+  const res = await api("import_expedition_from_file", profileId);
+  if(res.collision){
+    _pendingImportEnvelope = res.envelope;
+    _pendingImportProfileId = profileId;
+    openModal(`<h3>Expedition already exists</h3>
+      <p>An expedition named "${esc(res.existing_name)}" already exists in this profile. Import as…</p>
+      <div class="actions">
+        <button class="btn primary" onclick="importExpeditionResolve('copy')">A separate copy</button>
+        <button class="btn" onclick="importExpeditionResolve('replace')">Replace it</button>
+        <button class="btn" onclick="closeModal()">Cancel</button>
+      </div>`);
+    return;
+  }
+  if(res.imported){
+    toast(`Imported expedition — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
+    openProfile(profileId);
+  }
+}
+async function importExpeditionResolve(onCollision){
+  const res = await api("import_expedition_resolve", _pendingImportProfileId, _pendingImportEnvelope, onCollision);
+  const pid = _pendingImportProfileId;
+  _pendingImportEnvelope = null; _pendingImportProfileId = null;
+  closeModal();
+  toast(`Imported expedition — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
+  openProfile(pid);
 }
 
 function profileForm(){
@@ -1617,6 +1707,7 @@ async function openProfile(id){
   mount(`<div class="head"><h2>${esc(p.name)}</h2>
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="exportProfile('${esc(p.id)}')">Export bundle</button>
+        <button class="btn" onclick="importExpeditionInto('${esc(p.id)}')">Import expedition…</button>
         <button class="btn" onclick="setView('profiles')">← All profiles</button>
       </div></div>
     <div class="muted">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")}${p.console ? " · " + esc(p.console) : ""}</div>
