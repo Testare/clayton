@@ -259,7 +259,7 @@ async function openExpeditionHome(id){
   const e = await api("get_expedition", id);
   // [label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
   const cats = [
-    ["Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data"]]],
+    ["Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
     ["Safari Chart", [["Find Target","Safari Chart — Find Target"],["Manage Data","Safari Chart — Manage Data"]]],
     ["Safari Compass", [["New Run","Safari Compass — New Run"],["Review Data","Safari Compass — Review Data"]]],
   ];
@@ -571,6 +571,51 @@ async function nrSave(ev){
 function nrReset(){
   nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBSession = null;
   nr._startrel = ""; renderNewRun();
+}
+
+// --- Metronome Compass: Review Data (first cut) ---------------------------
+let review = null;
+async function metronomeReviewData(expId){
+  const e = await api("get_expedition", expId);
+  const runs = await api("list_runs", e.profile_id, "metronome");
+  review = { expId, profileId: e.profile_id, runs, tag: "" };
+  renderReview();
+}
+function renderReview(){
+  const tags = [...new Set(review.runs.map(r => r.tag).filter(Boolean))].sort();
+  const shown = review.tag ? review.runs.filter(r => r.tag === review.tag) : review.runs;
+  const tagOpts = `<option value="">All tags</option>` +
+    tags.map(t => `<option${t===review.tag?" selected":""}>${esc(t)}</option>`).join("");
+  const body = review.runs.length === 0
+    ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
+    : `<div class="candtable" style="max-height:none"><table><thead><tr>
+        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th><th>excluded</th><th></th></tr></thead>
+        <tbody>${shown.map(r => `<tr>
+          <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
+          <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td><input type="checkbox" ${r.excluded?"checked":""} onchange="reviewToggle('${esc(r.id)}',this.checked)"></td>
+          <td style="text-align:right"><button class="btn small danger" onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
+        </tr>`).join("")}</tbody></table></div>`;
+  mount(`<div class="head"><h2>Metronome Compass — Review Data</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(review.expId)}')">← Expedition</button></div>
+    <div class="head" style="margin-bottom:12px">
+      <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
+        <select onchange="review.tag=this.value;renderReview()">${tagOpts}</select></div>
+      <div class="muted">${review.runs.length} run(s) for this profile</div>
+    </div>${body}
+    <div class="hint muted" style="margin-top:14px">First cut: excluding toggles immediately. Tag weighting,
+      outlier flags, exclude-reason, and explicit Save changes are still to come.</div>`);
+}
+async function reviewToggle(runId, excluded){
+  await api("set_run_excluded", runId, excluded);
+  const r = review.runs.find(x => x.id === runId); if(r) r.excluded = excluded;
+}
+async function reviewDelete(runId){
+  if(!confirm("Delete this run permanently?")) return;
+  await api("delete_run", runId);
+  review.runs = review.runs.filter(x => x.id !== runId);
+  renderReview();
 }
 
 // --- Profiles -------------------------------------------------------------
