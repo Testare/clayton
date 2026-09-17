@@ -14,6 +14,8 @@ already; everything since is still unverified:
 
 - **Safari Chart** — Find Target, Create Chart modal, Examine target modal.
 - **Calibrate Model** — the new Runs/Tags/Calibrate Model tabs in Review Data.
+- **Safari Compass** — New Run (shared Seed A, live path-narrowing Seed B, the
+  bold-next-action Machete display) and Review Data.
 - The UI-improvements pass (emoji, Save Run modal, Seed A change/keep flow, Seed B
   transcript log) — you said you'd verify this "later."
 
@@ -41,6 +43,17 @@ already; everything since is still unverified:
   app doesn't yet ask about mid-boot battle history the way the notebook does.
 - **Review Data's Runs table doesn't show which metronome user a run used** — the
   data (`metronome_user_id`) is there, just not surfaced in that table yet.
+- **Safari Compass's Jane offload isn't wired up** (draft2 already said Jane isn't
+  an immediate priority) — typing `J` in the path field is silently ignored rather
+  than switching to Jane, unlike the notebook's interactive `compass_safari()`.
+- **Safari Compass has no widen/expand-window flow** — the notebook's interactive
+  tool can widen the ±kσ search window or expand the frame range mid-narrowing
+  when the observed path eliminates every candidate; the app's stateless version
+  doesn't offer that yet (you'd need to go back and change the header/Seed A
+  inputs and re-narrow by hand).
+- **Safari Compass Review Data has no exclude/tag/reason UI** — by design (safari
+  runs don't feed the timer calibration fit), but worth confirming that's really
+  what you want long-term and not just what's fastest to ship now.
 
 ## Untested at real scale
 
