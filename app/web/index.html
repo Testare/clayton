@@ -97,6 +97,20 @@
   .tool-cat h3{font-size:14.5px;margin-bottom:12px}
   .tool-cat .btn{width:100%;margin-bottom:8px;text-align:left}
   .tool-cat .btn:last-child{margin-bottom:0}
+  .nr-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:8px}
+  @media(max-width:900px){.nr-grid{grid-template-columns:1fr}}
+  .panel.locked{opacity:.45;pointer-events:none}
+  .panel h3{font-size:14px;margin-bottom:12px}
+  .status{font-family:ui-monospace,monospace;font-size:12.5px;margin-top:10px;color:var(--ink-soft)}
+  .status b{color:var(--ink)}
+  .info-line{font-family:ui-monospace,monospace;font-size:12px;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:7px;padding:8px 11px;margin:10px 0;color:var(--ink-soft)}
+  .candtable{max-height:240px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:7px}
+  .candtable table{border:0;border-radius:0;font-family:ui-monospace,monospace;font-size:11.5px}
+  .candtable th{position:sticky;top:0}
+  .candtable tr.pick{cursor:pointer}
+  .candtable tr.pick:hover td{background:var(--surface-2)}
+  .done{background:color-mix(in srgb,var(--ok) 12%,transparent);border-color:color-mix(in srgb,var(--ok) 35%,var(--line))}
   #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--danger);
     color:#fff;padding:10px 18px;border-radius:8px;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);
     opacity:0;transition:opacity .2s;pointer-events:none;max-width:70ch}
@@ -243,15 +257,17 @@ async function saveExpedition(ev, existingId){
 // --- Expedition home + tool pages -----------------------------------------
 async function openExpeditionHome(id){
   const e = await api("get_expedition", id);
+  // [label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
   const cats = [
-    ["Metronome Compass", [["New Run","Metronome Compass — New Run"],["Review Data","Metronome Compass — Review Data"]]],
+    ["Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data"]]],
     ["Safari Chart", [["Find Target","Safari Chart — Find Target"],["Manage Data","Safari Chart — Manage Data"]]],
     ["Safari Compass", [["New Run","Safari Compass — New Run"],["Review Data","Safari Compass — Review Data"]]],
   ];
   const grid = cats.map(([cat, tools]) => `
     <div class="tool-cat"><h3>${esc(cat)}</h3>
-      ${tools.map(([label, full]) =>
-        `<button class="btn" onclick="toolPlaceholder('${esc(id)}','${esc(full)}')">${esc(label)}</button>`).join("")}
+      ${tools.map(([label, full, handler]) =>
+        `<button class="btn" onclick="${handler
+          ? `${handler}('${esc(id)}')` : `toolPlaceholder('${esc(id)}','${esc(full)}')`}">${esc(label)}</button>`).join("")}
     </div>`).join("");
   mount(`<div class="head"><h2>${esc(e.name)}</h2>
       <div style="display:flex;gap:10px">
@@ -298,6 +314,242 @@ async function savePreferences(ev, expId){
   await api("save_expedition", {...current, preferences});
   openExpeditionHome(expId);
   return false;
+}
+
+// --- Metronome Compass: New Run -------------------------------------------
+let nr = null;
+const REL_KEYS = ["r","e","l"];
+const relLow16 = (seed) => ((seed % 0x10000) + 0x10000) % 0x10000;
+
+function parseStartRel(s){
+  const out = {};
+  (s || "").trim().split(/\s+/).filter(Boolean).forEach((tok, i) => {
+    if(i < 3 && /^\d+$/.test(tok)) out[REL_KEYS[i]] = parseInt(tok, 10);
+  });
+  return out;
+}
+function currentUser(){
+  return (nr.profile.metronome_users || []).find(u => u.id === nr.userId) || null;
+}
+
+async function metronomeNewRun(expId){
+  const e = await api("get_expedition", expId);
+  const profile = await api("get_profile", e.profile_id);
+  nr = { expId, e, profile,
+    userId: (profile.metronome_users.find(u => u.is_suitable) || profile.metronome_users[0] || {}).id ?? null,
+    initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
+    seedAParams: null, seedACandidates: null, seedA: null, keyInfo: null,
+    seedBCandidates: null, seedB: null };
+  renderNewRun();
+}
+
+function nrCaptureHeader(){
+  const u = $("nr-user"); if(u) nr.userId = Number(u.value);
+  const t = $("nr-time"); if(t) nr.initialTime = t.value.trim();
+  const v = $("nr-vector"); if(v) nr.vectorMs = v.value.trim() === "" ? null : Number(v.value);
+}
+
+function renderNewRun(){
+  const p = nr.profile;
+  if(!p.has_valid_metronome_user){
+    mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
+        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">← Expedition</button></div>
+      <div class="notice warn">This profile has no valid metronome user. Add one (Chansey w/
+        Natural Cure, Lagging Tail, Metronome) under Profiles before running.</div>`);
+    return;
+  }
+  if(nr.e.key_seed == null){
+    mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
+        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">← Expedition</button></div>
+      <div class="notice warn">Set a key seed in <b>Configure</b> first — Seed A search needs it.</div>`);
+    return;
+  }
+  const userOpts = p.metronome_users.map(u =>
+    `<option value="${u.id}"${u.id===nr.userId?" selected":""}>${esc(u.name)}${u.is_suitable?"":" (unsuitable)"}</option>`).join("");
+
+  mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="nrReset()">Reset run</button>
+        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">Cancel</button>
+      </div></div>
+
+    <form class="panel" onsubmit="return false">
+      <div class="grid2">
+        <div class="field"><label>Metronome user</label><select id="nr-user">${userOpts}</select></div>
+        <div class="field"><label>Initial time (ISO)</label>
+          <input id="nr-time" value="${esc(nr.initialTime)}" placeholder="2025-07-24T14:45:56"></div>
+        <div class="field"><label>Vector ms</label>
+          <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"></div>
+      </div>
+      <div class="hint muted">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}
+        · search delay ≈ ${relLow16(nr.e.key_seed)}</div>
+    </form>
+
+    <div class="nr-grid">
+      <div class="panel" id="nr-seeda">${renderSeedA()}</div>
+      <div class="panel ${nr.seedA?"":"locked"}" id="nr-seedb">${renderSeedB()}</div>
+    </div>
+
+    <div class="panel ${nr.seedA && nr.seedB?"":"locked"}" style="margin-top:16px">${renderSaveRun()}</div>`);
+  updateKeyInfoLine();
+}
+
+function renderSeedA(){
+  if(nr.seedA){
+    const a = nr.seedA;
+    return `<h3>Seed A — identified</h3>
+      <div class="info-line done">Seed A ${esc(a.seed_hex)} · delay ${a.delay} (${a.delay_delta>=0?"+":""}${a.delay_delta})
+        · R${a.r_route??"·"} E${a.e_route??"·"} L${a.l_route??"·"} · elm ${esc(a.elm)}</div>
+      <button class="btn small" onclick="nrResetSeedA()">Change Seed A</button>`;
+  }
+  let gen = "";
+  if(nr.seedACandidates){
+    gen = `<div class="info-line" id="nr-keyinfo">key seed readout…</div>
+      <div class="grid2">
+        <div class="field"><label>Observed roamer routes (R E L)</label>
+          <input id="nr-obsrel" placeholder="38 42 11  (. = any)" oninput="nrNarrowSeedA()"></div>
+        <div class="field"><label>Elm calls heard</label>
+          <input id="nr-elm" placeholder="EKP…" oninput="nrNarrowSeedA()"></div>
+      </div>
+      <div id="nr-candA">${renderCandA(nr.seedACandidates)}</div>`;
+  }
+  return `<h3>Seed A — initial seed</h3>
+    <div class="field"><label>Roamer starting positions (R E L)</label>
+      <input id="nr-startrel" value="${esc(nr._startrel || "")}" placeholder="31 30 7  (- = not roaming)"></div>
+    <div class="grid2">
+      <div class="field"><label>Search ± seconds</label><input id="nr-secwin" type="number" min="0" value="2"></div>
+      <div class="field"><label>Search ± delays</label><input id="nr-delaywin" type="number" min="0" value="10"></div>
+    </div>
+    <div class="field check"><input type="checkbox" id="nr-parity"><label for="nr-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <button class="btn primary" onclick="nrGenerateSeedA()">Generate</button>
+    ${gen}`;
+}
+
+function renderCandA(res){
+  if(res.count === 0) return `<div class="status">No candidates match.</div>`;
+  const rows = res.candidates.slice(0, 60).map(c => `
+    <tr class="pick" onclick="nrPickSeedA(${c.seed})">
+      <td>${esc(c.seed_hex)}</td><td>${c.delay}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
+      <td>${c.r_route??"·"} ${c.e_route??"·"} ${c.l_route??"·"}</td><td>${esc(c.elm)}</td></tr>`).join("");
+  return `<div class="status"><b>${res.count}</b> candidate(s) — click one to identify Seed A</div>
+    <div class="candtable"><table><thead><tr><th>seed</th><th>delay</th><th>dD</th><th>R E L</th><th>elm</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+async function nrGenerateSeedA(){
+  nrCaptureHeader();
+  if(!nr.initialTime){ toast("Set an initial time first."); return; }
+  nr._startrel = $("nr-startrel").value;
+  const prev = parseStartRel(nr._startrel);
+  nr.seedAParams = {
+    target_time: nr.initialTime, target_delay: relLow16(nr.e.key_seed), prev_routes: prev,
+    seconds_window: Number($("nr-secwin").value), delay_window: Number($("nr-delaywin").value),
+    match_parity: $("nr-parity").checked };
+  nr.seedACandidates = await api("metronome_seed_a", nr.seedAParams);
+  nr.keyInfo = await api("metronome_key_seed_info", nr.e.key_seed, prev);
+  renderNewRun();
+}
+
+async function nrNarrowSeedA(){
+  const params = {...nr.seedAParams,
+    rel_observed: $("nr-obsrel").value, elm_observed: $("nr-elm").value};
+  nr.seedACandidates = await api("metronome_seed_a", params);
+  $("nr-candA").innerHTML = renderCandA(nr.seedACandidates);
+}
+
+function updateKeyInfoLine(){
+  const box = $("nr-keyinfo");
+  if(box && nr.keyInfo){
+    const k = nr.keyInfo;
+    box.textContent = `key seed: R${k.r_route??"·"} E${k.e_route??"·"} L${k.l_route??"·"} · elm ${k.elm}`;
+  }
+}
+
+function nrPickSeedA(seed){
+  nr.seedA = nr.seedACandidates.candidates.find(c => c.seed === seed);
+  renderNewRun();
+}
+function nrResetSeedA(){ nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBCandidates = null; renderNewRun(); }
+
+function renderSeedB(){
+  if(!nr.seedA) return `<h3>Seed B — battle seed</h3>
+    <div class="status">Identify Seed A first.</div>`;
+  if(nr.seedB){
+    return `<h3>Seed B — identified</h3>
+      <div class="info-line done">Seed B ${esc(nr.seedB.seed_hex)} · delay ${nr.seedB.delay} · ${esc(nr.seedB.path_str)}</div>
+      <button class="btn small" onclick="nrResetSeedB()">Change Seed B</button>`;
+  }
+  let list = "";
+  if(nr.seedBCandidates){
+    const rows = nr.seedBCandidates.candidates.map(c => `
+      <tr class="pick" onclick="nrPickSeedB(${c.seed})">
+        <td>${esc(c.seed_hex)}</td><td>${c.delay}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
+        <td>${esc(c.path_str)}</td></tr>`).join("");
+    list = `<div class="status"><b>${nr.seedBCandidates.count}</b> candidate(s) — match the battle you saw, click to pick</div>
+      <div class="candtable"><table><thead><tr><th>seed</th><th>delay</th><th>dD</th><th>Metronome path</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+  }
+  return `<h3>Seed B — battle seed</h3>
+    <div class="grid2">
+      <div class="field"><label>Magikarp level</label><input id="nr-mklevel" type="number" min="1" max="100"></div>
+      <div class="field"><label>Magikarp gender</label>
+        <div class="radios">
+          <label class="radio"><input type="radio" name="nr-mkg" value="male" checked> male</label>
+          <label class="radio"><input type="radio" name="nr-mkg" value="female"> female</label>
+        </div></div>
+    </div>
+    <button class="btn primary" onclick="nrGenerateSeedB()">Start</button>
+    ${list}`;
+}
+
+async function nrGenerateSeedB(){
+  const level = Number($("nr-mklevel").value);
+  if(!level){ toast("Enter Magikarp's level."); return; }
+  const mkGender = document.querySelector('input[name="nr-mkg"]:checked').value;
+  const u = currentUser();
+  const userGender = (u && u.gender) || "female";   // Chansey is female
+  const moveset = (u && u.moveset) || [];
+  const metronomeOnly = moveset.filter(m => m.toLowerCase() !== "metronome").length === 0;
+  nr.seedBCandidates = await api("metronome_seed_b", {
+    target_time: nr.initialTime, target_delay: relLow16(nr.e.key_seed),
+    seconds_window: nr.seedAParams.seconds_window, delay_window: nr.seedAParams.delay_window,
+    magikarp_level: level, opposite_gender: mkGender !== userGender,
+    metronome_only: metronomeOnly, limit: 15 });
+  renderNewRun();
+}
+function nrPickSeedB(seed){ nr.seedB = nr.seedBCandidates.candidates.find(c => c.seed === seed); renderNewRun(); }
+function nrResetSeedB(){ nr.seedB = null; nr.seedBCandidates = null; renderNewRun(); }
+
+function renderSaveRun(){
+  if(!(nr.seedA && nr.seedB)) return `<h3>Save run</h3>
+    <div class="status">Identify both seeds to save the run.</div>`;
+  return `<h3>Save run</h3>
+    <form class="panel" style="border:0;padding:0" onsubmit="return nrSave(event)">
+      <div class="grid2">
+        <div class="field"><label>Tag</label><input name="tag" placeholder="300s Samwise"></div>
+        <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
+      </div>
+      <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
+      <button class="btn primary" type="submit">Save run</button>
+    </form>`;
+}
+
+async function nrSave(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  await api("save_metronome_run", nr.e.profile_id, {
+    tag: f.tag.value.trim(), vector_ms: nr.vectorMs,
+    target_timer_calibration: Number(f.calibration.value) || 0,
+    notes: f.notes.value.trim(), metronome_user_id: nr.userId,
+    a_seed: nr.seedA, b_seed: nr.seedB });
+  if(confirm("Run saved. Start another run?")) metronomeNewRun(nr.expId);
+  else openExpeditionHome(nr.expId);
+  return false;
+}
+
+function nrReset(){
+  nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBCandidates = null;
+  nr._startrel = ""; renderNewRun();
 }
 
 // --- Profiles -------------------------------------------------------------
