@@ -291,3 +291,20 @@ class Facade:
         """Import a profile bundle as a fresh copy; returns the new id + counts."""
         from app import portability
         return portability.import_profile_bundle(self._store, envelope)
+
+    def export_profile_bundle_to_file(self, profile_id: str) -> dict:
+        """Export a profile bundle via a native Save dialog."""
+        from app import files
+        env = self.export_profile_bundle(profile_id)
+        name = (self._store.read(_PROFILES, profile_id) or {}).get("name", "profile")
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "profile"
+        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        return {"saved": bool(path), "path": path}
+
+    def import_profile_bundle_from_file(self) -> dict:
+        """Import a profile bundle via a native Open dialog."""
+        from app import files
+        env = files.open_json_dialog()
+        if env is None:
+            return {"imported": False}
+        return {"imported": True, **self.import_profile_bundle(env)}

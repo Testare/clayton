@@ -638,7 +638,22 @@ async function renderProfiles(){
           </div>
         </div>`).join("") + `</div>`;
   mount(`<div class="head"><h2>Profiles</h2>
-      <button class="btn primary" onclick="profileForm()">New profile</button></div>${body}`);
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="importProfile()">Import…</button>
+        <button class="btn primary" onclick="profileForm()">New profile</button>
+      </div></div>${body}`);
+}
+
+async function exportProfile(id){
+  const res = await api("export_profile_bundle_to_file", id);
+  if(res.saved) toast("Exported to " + res.path);
+}
+async function importProfile(){
+  const res = await api("import_profile_bundle_from_file");
+  if(res.imported){
+    toast(`Imported "${res.profile_name || "profile"}" — ${res.counts.expeditions} expedition(s), ${res.counts.runs} run(s)`);
+    renderProfiles();
+  }
 }
 
 function profileForm(){
@@ -684,7 +699,10 @@ async function openProfile(id){
       + `</tbody></table>`;
 
   mount(`<div class="head"><h2>${esc(p.name)}</h2>
-      <button class="btn" onclick="setView('profiles')">← All profiles</button></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="exportProfile('${esc(p.id)}')">Export bundle</button>
+        <button class="btn" onclick="setView('profiles')">← All profiles</button>
+      </div></div>
     <div class="muted">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")}${p.console ? " · " + esc(p.console) : ""}</div>
 
     <div class="section-label">Metronome users</div>
