@@ -140,7 +140,8 @@ class TestFacadeSafariCompass(unittest.TestCase):
         self.assertEqual(run["kind"], "safari")
         runs = self.api.list_runs(self.pid, kind="safari")
         self.assertEqual([r["id"] for r in runs], [run["id"]])
-        # Safari runs never feed the metronome timer fit.
+        # Safari runs don't feed the F_b-vs-M TREND fit (they feed the safari load-path
+        # offset instead — see app/calibration.py) — kind="metronome" never lists them.
         self.assertEqual(self.api.list_runs(self.pid, kind="metronome"), [])
 
 

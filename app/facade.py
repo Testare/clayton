@@ -261,13 +261,16 @@ class Facade:
             metronome_user_id=data.get("metronome_user_id"),
             a_seed=dict(data.get("a_seed", {})),
             b_seed=dict(data.get("b_seed", {})),
+            elm_calls=data.get("elm_calls"),
+            chatot_flips=data.get("chatot_flips"),
+            advance_frame=data.get("advance_frame"),
         )
         self._store.write(_RUNS, run.id, run.to_dict())
         return run.to_dict()
 
     def save_safari_run(self, profile_id: str, data: dict) -> dict:
-        """Persist a Safari Compass run under the profile (kind="safari" — not used by the
-        timer calibration fit, which is metronome-only; see app/calibration.py)."""
+        """Persist a Safari Compass run under the profile (kind="safari" — feeds the safari
+        load-path offset fit, see app/calibration.py; NOT the metronome F_b-vs-M trend)."""
         self._load_profile(profile_id)
         run = Run(
             profile_id=profile_id,
@@ -278,6 +281,9 @@ class Facade:
             notes=data.get("notes", ""),
             a_seed=dict(data.get("a_seed", {})),
             b_seed=dict(data.get("b_seed", {})),
+            elm_calls=data.get("elm_calls"),
+            chatot_flips=data.get("chatot_flips"),
+            advance_frame=data.get("advance_frame"),
         )
         self._store.write(_RUNS, run.id, run.to_dict())
         return run.to_dict()
@@ -492,11 +498,13 @@ class Facade:
     # -- Calibrate Model ----------------------------------------------------
 
     def preview_calibration(self, profile_id: str, params: dict | None = None) -> dict:
-        """Fit a calibration model from the profile's metronome runs (after exclusions)
-        without saving anything — the Calibrate Model view's live preview."""
+        """Fit a calibration model from the profile's runs (after exclusions) without saving
+        anything — the Calibrate Model view's live preview. Metronome runs fit the F_b-vs-M
+        trend; safari runs fit the safari load-path offset against it (see app/calibration.py)."""
         p = self._load_profile(profile_id)
-        runs = self.list_runs(profile_id, kind="metronome")
-        return calibration_lib.preview_fit(runs, p.excluded_tags)
+        metronome_runs = self.list_runs(profile_id, kind="metronome")
+        safari_runs = self.list_runs(profile_id, kind="safari")
+        return calibration_lib.preview_fit(metronome_runs, safari_runs, p.excluded_tags)
 
     def save_calibration_model(self, profile_id: str, fields: dict) -> dict:
         """Persist a previewed fit as a new, numbered model; makes it the active one

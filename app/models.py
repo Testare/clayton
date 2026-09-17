@@ -204,6 +204,14 @@ class Run:
     b_seed: dict = field(default_factory=dict)
     saved_at: str = field(default_factory=_now_iso)
     excluded: bool = False
+    # Seed A's advance recipe, optionally recorded to test whether it correlates with a
+    # safari run's frame_delta (the user is still verifying this hypothesis — see
+    # notes/flagged_for_review.md; no fit consumes these yet, they're just captured so
+    # historical runs aren't missing the data once it's confirmed). Matches the notebook's
+    # save_safari_run(elm_calls=, chatot_flips=, advance_frame=) fields.
+    elm_calls: int | None = None
+    chatot_flips: int | None = None
+    advance_frame: int | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -223,6 +231,9 @@ class Run:
             b_seed=dict(d.get("b_seed", {})),
             saved_at=d.get("saved_at") or _now_iso(),
             excluded=bool(d.get("excluded", False)),
+            elm_calls=d.get("elm_calls"),
+            chatot_flips=d.get("chatot_flips"),
+            advance_frame=d.get("advance_frame"),
         )
 
 

@@ -69,10 +69,19 @@ class TestEffectiveIncluded(unittest.TestCase):
                                    "incomplete": "incomplete"})
 
 
+def _safari_run_dict(tag, vector_ms, seed, frame, a_delay=700, excluded=False):
+    return {
+        "kind": "safari", "tag": tag, "vector_ms": vector_ms, "target_timer_calibration": 0,
+        "excluded": excluded,
+        "a_seed": {"delay": a_delay},
+        "b_seed": {"seed": seed, "seed_hex": f"0x{seed:08X}", "frame": frame},
+    }
+
+
 class TestPreviewFit(unittest.TestCase):
     def test_no_fittable_runs_raises(self):
         with self.assertRaises(ValueError):
-            calibration.preview_fit([], [])
+            calibration.preview_fit([], [], [])
 
     def test_fit_report_shape_and_reasons(self):
         runs = [{"id": f"clean-{i}", **_run_dict("session1", M, Fb)}
@@ -80,7 +89,7 @@ class TestPreviewFit(unittest.TestCase):
         runs.append({"id": "outlier-1", **_run_dict("session1", _OUTLIER_M, _OUTLIER_FB)})
         runs.append({"id": "excluded-1", **_run_dict("standard", 400000, 25000, excluded=True)})
 
-        report = calibration.preview_fit(runs, excluded_tags=[])
+        report = calibration.preview_fit(runs, [], excluded_tags=[])
 
         self.assertEqual(report["n_input"], len(runs))
         self.assertEqual(report["n_pre_excluded"], 1)          # the manually-excluded one
@@ -88,6 +97,8 @@ class TestPreviewFit(unittest.TestCase):
         self.assertIn("linear", report["artifact"]["models"])
         self.assertEqual(report["artifact"]["format"], "modelset")
         self.assertIn("linear", report["stats"])
+        self.assertEqual(report["n_safari_input"], 0)
+        self.assertEqual(report["safari_offset"], {})
 
         # The outlier is off-trend enough to be flagged by calibrate_timer's own screening.
         self.assertEqual(report["reasons"].get("outlier-1"), "outlier")
@@ -99,9 +110,58 @@ class TestPreviewFit(unittest.TestCase):
                 for i, (M, Fb) in enumerate(_CLEAN)]
         runs.append({"id": "std-1", **_run_dict("Standard", 400000, 25000)})
 
-        report = calibration.preview_fit(runs, excluded_tags=["Standard"])
+        report = calibration.preview_fit(runs, [], excluded_tags=["Standard"])
         self.assertEqual(report["reasons"].get("std-1"), "tag:Standard")
         self.assertEqual(report["n_pre_excluded"], 1)
+
+    def test_safari_runs_fit_the_offset_against_the_new_model(self):
+        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
+                          for i, (M, Fb) in enumerate(_CLEAN)]
+        # Fabricate safari runs whose (seed, frame) sit exactly `offset` frames above what
+        # the FITTED linear model predicts for their M -- can't know that model's beta/alpha
+        # up front, so fit metronome-only first, then build safari points relative to it.
+        pre = calibration.preview_fit(metronome_runs, [], [])
+        from claytonlib.calibration import CalibrationModel
+        linear = CalibrationModel.from_dict(pre["artifact"]["models"]["linear"])
+        offset = 12.0
+        safari_runs = []
+        for i, M in enumerate([200000, 260000, 320000]):
+            frame = round(linear.frame(M, 700) + offset)
+            safari_runs.append({"id": f"sf-{i}", **_safari_run_dict("s", M, 100 + i, frame)})
+
+        report = calibration.preview_fit(metronome_runs, safari_runs, [])
+        self.assertEqual(report["n_safari_input"], 3)
+        self.assertEqual(report["n_safari_fit"], 3)
+        self.assertEqual(report["n_safari_pre_excluded"], 0)
+        self.assertIn("linear", report["safari_offset"])
+        self.assertAlmostEqual(report["safari_offset"]["linear"]["offset"], offset, delta=0.5)
+        self.assertEqual(report["safari_offset"]["linear"]["n"], 3)
+        # Folded into the artifact model itself, not just reported separately.
+        self.assertAlmostEqual(report["artifact"]["models"]["linear"]["safari_offset"],
+                               offset, delta=0.5)
+
+    def test_safari_run_exclusion_reasons(self):
+        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
+                          for i, (M, Fb) in enumerate(_CLEAN)]
+        safari_runs = [
+            {"id": "sf-manual", **_safari_run_dict("s", 200000, 1, 12000, excluded=True)},
+            {"id": "sf-tagged", **_safari_run_dict("bad", 200000, 2, 12000)},
+            {"id": "sf-incomplete", "kind": "safari", "vector_ms": None,
+             "a_seed": {}, "b_seed": {}},
+        ]
+        report = calibration.preview_fit(metronome_runs, safari_runs, excluded_tags=["bad"])
+        self.assertEqual(report["reasons"].get("sf-manual"), "manual")
+        self.assertEqual(report["reasons"].get("sf-tagged"), "tag:bad")
+        self.assertEqual(report["reasons"].get("sf-incomplete"), "incomplete")
+        self.assertEqual(report["n_safari_fit"], 0)
+        self.assertEqual(report["safari_offset"], {})
+
+    def test_safari_offset_absent_when_no_usable_safari_runs(self):
+        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
+                          for i, (M, Fb) in enumerate(_CLEAN)]
+        report = calibration.preview_fit(metronome_runs, [], [])
+        self.assertEqual(report["safari_offset"], {})
+        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset"])
 
 
 class TestFacadeCalibration(unittest.TestCase):

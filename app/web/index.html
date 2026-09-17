@@ -640,11 +640,30 @@ function openSaveRunModal(){
         <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
       </div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
+      ${_advanceRecipeFields()}
       <div class="actions">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
       </div>
     </form>`);
+}
+
+// Optional Seed A advance-recipe fields (elm calls / chatot flips / advance frame), shared by
+// both Save Run modals — captured to test whether they correlate with a safari run's frame
+// miss (unconfirmed hypothesis; nothing fits these yet, see app/calibration.py).
+function _advanceRecipeFields(){
+  return `<div class="section-label" style="margin-top:14px">Advance recipe (optional)</div>
+    <div class="grid3">
+      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>
+      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
+      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>
+    </div>
+    <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — not used by any
+      fit yet, just recorded for later analysis.</div>`;
+}
+function _readAdvanceRecipe(f){
+  const n = (el) => el.value.trim() === "" ? null : Number(el.value);
+  return { elm_calls: n(f.elm_calls), chatot_flips: n(f.chatot_flips), advance_frame: n(f.advance_frame) };
 }
 
 async function nrSave(ev){
@@ -654,7 +673,7 @@ async function nrSave(ev){
     tag: f.tag.value.trim(), vector_ms: nr.vectorMs,
     target_timer_calibration: Number(f.calibration.value) || 0,
     notes: f.notes.value.trim(), metronome_user_id: nr.userId,
-    a_seed: nr.seedA, b_seed: nr.seedB });
+    a_seed: nr.seedA, b_seed: nr.seedB, ..._readAdvanceRecipe(f) });
   closeModal();
   if(confirm("Run saved. Start another run?")) metronomeNewRun(nr.expId);
   else openExpeditionHome(nr.expId);
@@ -791,9 +810,12 @@ function renderCalibrateModel(){
       <td>${activeStats ? fmt(activeStats[key]) : "—"}</td><td>${fmt(s[key])}</td></tr>`;
     const f2 = (v) => v == null ? "—" : Number(v).toFixed(4);
     content = `
-      <div class="info-line">fit from ${pv.n_runs} run(s) (${pv.n_pre_excluded} excluded before
-        fitting) · ${pv.n_fit} used in the fit · ${pv.n_outliers} outlier(s) ·
+      <div class="info-line">metronome: fit from ${pv.n_runs} run(s) (${pv.n_pre_excluded} excluded
+        before fitting) · ${pv.n_fit} used in the fit · ${pv.n_outliers} outlier(s) ·
         ${pv.n_contaminated} contaminated</div>
+      <div class="info-line">safari (load-path offset): ${pv.n_safari_input} run(s)
+        (${pv.n_safari_pre_excluded} excluded before fitting) · ${pv.n_safari_fit} used
+        ${pv.n_safari_fit===0 ? "— save some from Safari Compass to fit this" : ""}</div>
       <div class="candtable" style="max-height:none"><table><thead><tr>
           <th>parameter</th><th>current active</th><th>new preview</th></tr></thead>
         <tbody>
@@ -803,6 +825,9 @@ function renderCalibrateModel(){
           ${row("jitter_c", "jitter_c", f2)}
           ${row("rtc_offset_seconds", "rtc_offset_seconds", f2)}
           ${row("rtc_offset_std", "rtc_offset_std", f2)}
+          ${row("safari_offset (frames)", "safari_offset", f2)}
+          ${row("safari_offset_n", "safari_offset_n", (v)=>v??"—")}
+          ${row("safari_offset_std", "safari_offset_std", f2)}
         </tbody></table></div>
       <form class="panel" style="margin-top:14px" onsubmit="return reviewSaveModel(event)">
         <div class="grid2">
@@ -1318,6 +1343,7 @@ function openSaveSafariRunModal(){
         <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
       </div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
+      ${_advanceRecipeFields()}
       <div class="actions">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -1331,7 +1357,7 @@ async function sacSaveRun(ev){
   await api("save_safari_run", sac.e.profile_id, {
     tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
     target_timer_calibration: Number(f.calibration.value) || 0,
-    notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB });
+    notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB, ..._readAdvanceRecipe(f) });
   closeModal();
   if(confirm("Run saved. Start another run?")) safariCompassNewRun(sac.expId);
   else openExpeditionHome(sac.expId);
@@ -1345,28 +1371,43 @@ function sacReset(){
 }
 
 // --- Safari Compass: Review Data --------------------------------------------
+// Safari runs feed the safari load-path offset fit (against whatever metronome-fitted
+// model exists) — see app/calibration.py. Excluding here affects that fit the next time
+// Calibrate Model (Metronome Compass → Review Data) is run, same as metronome runs do for
+// the trend fit; the two live on separate pages because each run kind is created there.
 let sreview = null;
 async function safariReviewData(expId){
   const e = await api("get_expedition", expId);
   const runs = await api("list_runs", e.profile_id, "safari");
-  sreview = { expId, profileId: e.profile_id, runs, tag: "" };
+  sreview = { expId, profileId: e.profile_id, runs, tag: "", preview: null };
+  await sreviewRefreshPreview();
   renderSafariReview();
+}
+async function sreviewRefreshPreview(){
+  if(sreview.runs.length === 0){ sreview.preview = null; return; }
+  try{ sreview.preview = await api("preview_calibration", sreview.profileId); }
+  catch(err){ sreview.preview = null; }
 }
 function renderSafariReview(){
   const tags = [...new Set(sreview.runs.map(r => r.tag).filter(Boolean))].sort();
   const shown = sreview.tag ? sreview.runs.filter(r => r.tag === sreview.tag) : sreview.runs;
   const tagOpts = `<option value="">All tags</option>` +
     tags.map(t => `<option${t===sreview.tag?" selected":""}>${esc(t)}</option>`).join("");
+  const reasons = sreview.preview?.reasons || {};
   const body = sreview.runs.length === 0
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th><th></th></tr></thead>
-        <tbody>${shown.map(r => `<tr>
+        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
+        <th>exclude</th><th>reason</th><th></th></tr></thead>
+        <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
+          return `<tr${reason?' style="opacity:.6"':""}>
           <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
           <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td><input type="checkbox" ${r.excluded?"checked":""} onchange="sreviewToggle('${esc(r.id)}',this.checked)"></td>
+          <td>${esc(reason || "—")}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
-        </tr>`).join("")}</tbody></table></div>`;
+        </tr>`;}).join("")}</tbody></table></div>`;
   mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
       <button class="btn" onclick="openExpeditionHome('${esc(sreview.expId)}')">← Expedition</button></div>
     <div class="head" style="margin-bottom:12px">
@@ -1374,13 +1415,22 @@ function renderSafariReview(){
         <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
       <div class="muted">${sreview.runs.length} run(s) for this profile</div>
     </div>${body}
-    <div class="hint muted" style="margin-top:14px">Safari runs aren't used by the timer calibration
-      fit (that's metronome-only) — this is a record/reference view, no exclude/calibrate here.</div>`);
+    <div class="hint muted" style="margin-top:14px">Safari runs fit the safari load-path offset
+      (against the currently-fitted timer model) — see Metronome Compass → Review Data →
+      Calibrate Model to run that fit. Tag exclusion is shared with metronome runs (set from
+      either Review Data page).</div>`);
+}
+async function sreviewToggle(runId, excluded){
+  await api("set_run_excluded", runId, excluded);
+  const r = sreview.runs.find(x => x.id === runId); if(r) r.excluded = excluded;
+  await sreviewRefreshPreview();
+  renderSafariReview();
 }
 async function sreviewDelete(runId){
   if(!confirm("Delete this run permanently?")) return;
   await api("delete_run", runId);
   sreview.runs = sreview.runs.filter(x => x.id !== runId);
+  await sreviewRefreshPreview();
   renderSafariReview();
 }
 

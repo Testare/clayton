@@ -51,9 +51,11 @@ already; everything since is still unverified:
   when the observed path eliminates every candidate; the app's stateless version
   doesn't offer that yet (you'd need to go back and change the header/Seed A
   inputs and re-narrow by hand).
-- **Safari Compass Review Data has no exclude/tag/reason UI** — by design (safari
-  runs don't feed the timer calibration fit), but worth confirming that's really
-  what you want long-term and not just what's fastest to ship now.
+- **The advance-recipe fields (elm calls / chatot flips / advance frame) are
+  captured but nothing fits them** — you flagged that these might affect Fb/Seed
+  B's delay and said you're still verifying it. Both Save Run modals now have
+  optional inputs for them and `Run` stores them, but no calibration parameter
+  exists yet; this is purely data capture ahead of your analysis.
 
 ## Untested at real scale
 
@@ -77,6 +79,17 @@ already; everything since is still unverified:
   Linux launch — the bundled fontconfig reading newer named constants from your
   system `/etc/fonts` it doesn't recognize; fonts still resolve via fallback.
   Judged harmless; not fixed.
+
+## Corrected this session
+
+- **I was wrong that safari runs don't matter for calibration** — you corrected
+  this: they fit the safari load-path offset (`safari_offset`), holding the
+  metronome-fitted trend fixed. Fixed in both `claytonlib.calibration_tools`
+  (`fit_safari_offset` gained the same `runs=`/`_run_id` treatment as
+  `calibrate_timer`) and the app (Calibrate Model now fits both; Safari Compass
+  Review Data now has exclude/reason columns, not just a record view). Worth a
+  skeptical look since I built and tested this same-session, under correction —
+  see the safari-offset math specifically in `preview_calibration`'s report.
 
 ## Worth knowing, not a problem
 
