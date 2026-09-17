@@ -274,3 +274,20 @@ class Facade:
 
     def delete_run(self, run_id: str) -> bool:
         return self._store.delete(_RUNS, run_id)
+
+    # -- export / import --------------------------------------------------
+
+    def export_expedition(self, expedition_id: str) -> dict:
+        """A versioned export envelope for one expedition."""
+        from app import portability
+        return portability.export_expedition(self._store, expedition_id)
+
+    def export_profile_bundle(self, profile_id: str) -> dict:
+        """A versioned export bundle: a profile + its expeditions + runs."""
+        from app import portability
+        return portability.export_profile_bundle(self._store, profile_id)
+
+    def import_profile_bundle(self, envelope: dict) -> dict:
+        """Import a profile bundle as a fresh copy; returns the new id + counts."""
+        from app import portability
+        return portability.import_profile_bundle(self._store, envelope)
