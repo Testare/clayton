@@ -1219,7 +1219,7 @@ class Expedition:
         if not seeds:
             print("[expedition] No compass_safari result to save. Run compass_safari() first.")
             return None
-        from utils.calibration_tools import save_safari_run as _save
+        from claytonlib.calibration_tools import save_safari_run as _save
         return _save(seeds, inputs=inputs, path=path)
 
     # ------------------------------------------------------------------
