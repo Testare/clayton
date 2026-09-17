@@ -229,6 +229,23 @@ class Facade:
         """Stop the narrowing without identifying a seed."""
         return self._sessions.abort(session_id)
 
+    # -- Safari Compass: seed identification -------------------------------
+
+    def safari_compass_seed_b(self, expedition_id: str, params: dict) -> dict:
+        """Candidate battle seeds for Safari Compass, narrowed by the observed path so far
+        (stateless — re-call with the full path on every keystroke, like metronome_seed_a)."""
+        from app import safari_compass
+        exp = self._load_expedition(expedition_id).to_dict()
+        models = self._resolve_calibration_models(exp["profile_id"])
+        model = models.get(params.get("fps_model", "linear")) or next(iter(models.values()), None)
+        if model is None:
+            raise ValueError(
+                "no calibration model available — build one from Metronome Compass → Review "
+                "Data → Calibrate Model first")
+        if params.get("use_safari_offset", True):
+            model = model.with_safari_offset()
+        return safari_compass.seed_b(exp, model, params)
+
     # -- Runs (profile-scoped) --------------------------------------------
 
     def save_metronome_run(self, profile_id: str, data: dict) -> dict:
@@ -242,6 +259,23 @@ class Facade:
             target_timer_calibration=data.get("target_timer_calibration", 0),
             notes=data.get("notes", ""),
             metronome_user_id=data.get("metronome_user_id"),
+            a_seed=dict(data.get("a_seed", {})),
+            b_seed=dict(data.get("b_seed", {})),
+        )
+        self._store.write(_RUNS, run.id, run.to_dict())
+        return run.to_dict()
+
+    def save_safari_run(self, profile_id: str, data: dict) -> dict:
+        """Persist a Safari Compass run under the profile (kind="safari" — not used by the
+        timer calibration fit, which is metronome-only; see app/calibration.py)."""
+        self._load_profile(profile_id)
+        run = Run(
+            profile_id=profile_id,
+            kind="safari",
+            tag=data.get("tag", ""),
+            vector_ms=data.get("vector_ms"),
+            target_timer_calibration=data.get("target_timer_calibration", 0),
+            notes=data.get("notes", ""),
             a_seed=dict(data.get("a_seed", {})),
             b_seed=dict(data.get("b_seed", {})),
         )
