@@ -138,6 +138,16 @@
   .modal{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
     padding:20px;width:440px;max-width:100%;box-shadow:0 16px 48px rgba(0,0,0,.35)}
   .modal h3{margin-bottom:14px}
+  .modal.wide{width:640px}
+  .progress-wrap{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
+    height:10px;overflow:hidden;margin:10px 0}
+  .progress-bar{height:100%;background:var(--grass);transition:width .25s ease}
+  .progress-bar.indeterminate{width:35%;animation:progress-slide 1.1s ease-in-out infinite}
+  @keyframes progress-slide{0%{margin-left:0}50%{margin-left:65%}100%{margin-left:0}}
+  .chip-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+  .chip{border:1px solid var(--line);background:var(--surface);border-radius:20px;
+    padding:6px 13px;font-size:12.5px;font-weight:550;cursor:pointer}
+  .chip.active{background:var(--grass);color:var(--grass-ink);border-color:transparent}
 </style>
 </head>
 <body>
@@ -222,13 +232,17 @@ async function renderExpeditions(){
 
 // existing: an expedition doc when editing, else null (create).
 async function expeditionForm(existing){
-  const [profiles, areas] = await Promise.all([api("list_profiles"), api("list_safari_areas")]);
+  const [profiles, areas, pokemonList] = await Promise.all(
+    [api("list_profiles"), api("list_safari_areas"), api("list_safari_pokemon")]);
   state.profiles = profiles;
   const sel = (val, cur) => val === cur ? " selected" : "";
+  const cap = (s) => s.replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
   const profileOpts = profiles.map(p =>
     `<option value="${esc(p.id)}"${sel(p.id, existing?.profile_id)}>${esc(p.name)}</option>`).join("");
   const areaOpts = `<option value="">—</option>` + areas.map(a =>
     `<option value="${esc(a)}"${sel(a, existing?.safari_area)}>${esc(a)}</option>`).join("");
+  const pokemonOpts = `<option value="">—</option>` + pokemonList.map(n =>
+    `<option value="${esc(n)}"${sel(n, existing?.pokemon)}>${esc(cap(n))}</option>`).join("");
   const chatots = existing ? existing.chatots : 2;   // default 2
   const seedHex = existing?.key_seed != null
     ? "0x" + existing.key_seed.toString(16).toUpperCase() : "";
@@ -239,8 +253,7 @@ async function expeditionForm(existing){
         <div class="field"><label>Name</label>
           <input name="name" required value="${esc(existing?.name || "")}" placeholder="Shiny Metang"></div>
         <div class="field"><label>Profile</label><select name="profile_id" required>${profileOpts}</select></div>
-        <div class="field"><label>Pokémon</label>
-          <input name="pokemon" value="${esc(existing?.pokemon || "")}" placeholder="metang"></div>
+        <div class="field"><label>Pokémon</label><select name="pokemon">${pokemonOpts}</select></div>
         <div class="field"><label>Safari area</label><select name="safari_area">${areaOpts}</select></div>
         <div class="field"><label>Chatots</label><select name="chatots">
           ${[0,1,2].map(n => `<option value="${n}"${sel(n, chatots)}>${n}</option>`).join("")}</select></div>
@@ -293,7 +306,7 @@ async function openExpeditionHome(id){
   // [emoji, label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
   const cats = [
     ["👆🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
-    ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target"],["Manage Data","Safari Chart — Manage Data"]]],
+    ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data"]]],
     ["⛺🧭", "Safari Compass", [["New Run","Safari Compass — New Run"],["Review Data","Safari Compass — Review Data"]]],
   ];
   const grid = cats.map(([emoji, cat, tools]) => `
@@ -696,6 +709,268 @@ async function reviewDelete(runId){
   await api("delete_run", runId);
   review.runs = review.runs.filter(x => x.id !== runId);
   renderReview();
+}
+
+// --- Safari Chart: Find Target ---------------------------------------------
+let ct = null;
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function chartFindTarget(expId){
+  const e = await api("get_expedition", expId);
+  const [charts, calSummary, strategies, criteria] = await Promise.all([
+    api("list_charts", expId), api("calibration_model_summary"),
+    api("list_chart_strategies"), api("list_chart_criteria")]);
+  ct = { expId, e, charts, strategies, criteria, calSummary,
+    chartId: charts[0]?.id ?? null, canonStatus: null, precompute: null,
+    ranked: null, targets: [] };
+  if(ct.chartId) await ctSelectChart(ct.chartId, false);
+  await ctLoadTargets();
+  renderChartFindTarget();
+}
+
+async function ctSelectChart(chartId, rerender = true){
+  ct.chartId = chartId;
+  ct.ranked = null;
+  ct.canonStatus = chartId ? await api("chart_canon_status", ct.expId, chartId) : null;
+  if(rerender) renderChartFindTarget();
+}
+
+async function ctLoadTargets(){
+  ct.targets = await api("list_targets", ct.expId);
+}
+
+function ctCurrentChart(){
+  return ct.charts.find(c => c.id === ct.chartId) || null;
+}
+
+function renderChartFindTarget(){
+  const noModel = !ct.calSummary;
+  const chartOpts = ct.charts.map(c =>
+    `<option value="${esc(c.id)}"${c.id===ct.chartId?" selected":""}>${esc(c.name)}</option>`).join("");
+  const chart = ctCurrentChart();
+
+  let canonSection = "";
+  if(chart){
+    const cs = ct.canonStatus;
+    const built = cs && cs.built;
+    canonSection = `<div class="section-label">Canon map</div>
+      <div class="panel">
+        <div class="muted">delay window: ${chart.setup_delay_seconds}–${chart.max_target_seconds}s
+          · strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}</div>
+        ${built ? `<div class="info-line done" style="margin-top:10px">Built —
+            ${cs.n_mdmsh} mdmsh classes, ${cs.n_distinct_seeds?.toLocaleString()} distinct seeds
+            (${cs.reuse_factor?.toFixed(0)}x reuse) · models: ${(cs.built_models||[]).join(", ") || "—"}
+            · covers ${cs.last_setup}–${cs.last_max}s</div>`
+          : `<div class="notice warn" style="margin-top:10px">Not built yet — click Build to precompute it
+              (safe to re-run any time: it resumes/extends rather than starting over).</div>`}
+        ${renderPrecomputeProgress()}
+        <div class="actions">
+          <button class="btn primary" ${noModel?"disabled":""} onclick="ctBuildCanon()">
+            ${built ? "Rebuild / extend canon map" : "Build canon map"}</button>
+          ${built ? `<button class="btn" onclick="ctRank()">Rank targets</button>` : ""}
+        </div>
+      </div>
+      ${ct.ranked ? renderRankedTargets() : ""}`;
+  }
+
+  const savedSection = `<div class="section-label">Saved targets</div>${renderSavedTargets()}`;
+
+  mount(`<div class="head"><h2>Safari Chart — Find Target</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(ct.expId)}')">← Expedition</button></div>
+    ${noModel ? `<div class="notice warn">No calibration model found yet — Chart needs one to
+        rank or examine targets (calibrate via the Metronome Compass notebooks for now; a
+        Calibrate Model page is coming). You can still create charts below.</div>` : ""}
+
+    <div class="panel panel-tight">
+      <div class="grid2">
+        <div class="field"><label>Chart</label>
+          ${ct.charts.length
+            ? `<select onchange="ctSelectChart(this.value)">${chartOpts}</select>`
+            : `<div class="muted" style="padding:9px 0">No charts yet</div>`}</div>
+        <div class="field" style="display:flex;align-items:end">
+          <button class="btn" onclick="ctOpenCreateChart()">+ New chart</button></div>
+      </div>
+    </div>
+
+    ${canonSection}
+    ${savedSection}`);
+}
+
+function renderPrecomputeProgress(){
+  const s = ct.precompute;
+  if(!s || s.done) return "";
+  const p = s.progress || {};
+  const pct = p.total ? Math.round((p.done / p.total) * 100) : null;
+  return `<div style="margin-top:10px">
+      <div class="status">Building… ${p.done ?? "?"} / ${p.total ?? "?"} mdmsh classes
+        ${p.n_distinct_seeds ? `· ${p.n_distinct_seeds.toLocaleString()} seeds so far` : ""}</div>
+      <div class="progress-wrap">
+        <div class="progress-bar ${pct==null?"indeterminate":""}" style="${pct!=null?`width:${pct}%`:""}"></div>
+      </div>
+    </div>`;
+}
+
+function ctUpdateStratDesc(name){
+  const s = ct.strategies.find(x => x.name === name);
+  $("ct-strat-desc").textContent = s ? s.description : "";
+}
+function ctUpdateCritDesc(name){
+  const c = ct.criteria.find(x => x.name === name);
+  $("ct-crit-desc").textContent = c ? c.description : "";
+}
+
+async function ctOpenCreateChart(){
+  const stratOpts = ct.strategies.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("");
+  const critOpts = ct.criteria.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  openModal(`<h3>New chart</h3>
+    <form onsubmit="return ctSaveChart(event)">
+      <div class="field"><label>Name</label><input name="name" required placeholder="Balls only" autofocus></div>
+      <div class="grid2">
+        <div class="field"><label>Strategy</label>
+          <select name="strategy_name" onchange="ctUpdateStratDesc(this.value)">${stratOpts}</select></div>
+        <div class="field"><label>Criteria</label>
+          <select name="criteria_name" onchange="ctUpdateCritDesc(this.value)">${critOpts}</select></div>
+      </div>
+      <div class="hint muted" id="ct-strat-desc">${esc(ct.strategies[0]?.description || "")}</div>
+      <div class="hint muted" id="ct-crit-desc" style="margin-bottom:11px">${esc(ct.criteria[0]?.description || "")}</div>
+      <div class="grid2">
+        <div class="field"><label>Search from (seconds)</label><input name="setup_delay_seconds" type="number" min="0" value="0"></div>
+        <div class="field"><label>Search to (seconds)</label><input name="max_target_seconds" type="number" min="1" value="300"></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Create</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function ctSaveChart(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  const c = await api("create_chart", ct.expId, {
+    name: f.name.value.trim(), strategy_name: f.strategy_name.value,
+    criteria_name: f.criteria_name.value,
+    setup_delay_seconds: Number(f.setup_delay_seconds.value),
+    max_target_seconds: Number(f.max_target_seconds.value) });
+  closeModal();
+  ct.charts = await api("list_charts", ct.expId);
+  await ctSelectChart(c.id);
+}
+
+async function ctBuildCanon(){
+  ct.precompute = await api("chart_precompute_start", ct.expId, ct.chartId);
+  renderChartFindTarget();
+  while(!ct.precompute.done){
+    await sleep(500);
+    ct.precompute = await api("chart_precompute_poll", ct.precompute.session_id);
+    renderChartFindTarget();
+  }
+  if(ct.precompute.error){ toast("Build failed: " + ct.precompute.error); return; }
+  ct.canonStatus = await api("chart_canon_status", ct.expId, ct.chartId);
+  renderChartFindTarget();
+}
+
+async function ctRank(){
+  try{
+    ct.ranked = await api("chart_rank_best_per_time", ct.expId, ct.chartId, {limit: 15, step: 4});
+  }catch(err){ ct.ranked = null; }
+  renderChartFindTarget();
+}
+
+function renderRankedTargets(){
+  if(!ct.ranked || !ct.ranked.top.length)
+    return `<div class="empty" style="margin-top:14px">No targets ranked — click Rank targets.</div>`;
+  const rows = ct.ranked.top.map((r, i) => `
+    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
+      <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn small" onclick="ctExamine(${i})">Examine</button>
+        <button class="btn small primary" onclick="ctOpenSaveTarget(${i})">Save target</button></td>
+    </tr>`).join("");
+  return `<div class="section-label">Ranked targets
+      <span class="muted" style="text-transform:none;font-weight:400">
+        (best per boot time, of ${ct.ranked.per_time_count} candidates)</span></div>
+    <div class="candtable" style="max-height:none"><table><thead><tr>
+        <th>boot time</th><th>Vector ms</th><th>target delay</th><th>P(capture)</th><th>σ</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function ctExamine(rankIdx){
+  const r = ct.ranked.top[rankIdx];
+  await ctShowExamine(r.initial_time, r.vector_ms);
+}
+
+async function ctExamineTarget(targetId){
+  const ex = await api("examine_target", targetId, {});
+  ctRenderExamineModal(ex);
+}
+
+async function ctShowExamine(initialTime, vectorMs){
+  const ex = await api("chart_examine", ct.expId, ct.chartId, initialTime, vectorMs, {});
+  ctRenderExamineModal(ex);
+}
+
+function ctRenderExamineModal(ex){
+  const rows = ex.seconds.map(s => `
+    <tr><td>${s.second}</td><td>${(s.p_second*100).toFixed(1)}%</td>
+      <td>[${s.mdmsh.join(", ")}]</td><td>${(s.cp*100).toFixed(2)}%</td>
+      <td>${(s.p_second*s.cp*100).toFixed(2)}%</td></tr>`).join("");
+  openModal(`<h3>Examine target</h3>
+    <div class="info-line">mean frame F=${ex.F.toFixed(1)} · σ=${ex.sigma.toFixed(1)}
+      · marginal P(capture) = <b>${(ex.p*100).toFixed(2)}%</b></div>
+    <div class="candtable" style="max-height:220px"><table><thead><tr>
+      <th>second</th><th>P(second)</th><th>mdmsh</th><th>cp</th><th>contributes</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+
+async function ctOpenSaveTarget(rankIdx){
+  const r = ct.ranked.top[rankIdx];
+  openModal(`<h3>Save target</h3>
+    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
+      · P(capture) ${(r.p*100).toFixed(1)}%</div>
+    <form onsubmit="return ctSaveTarget(event, ${rankIdx})">
+      <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function ctSaveTarget(ev, rankIdx){
+  ev.preventDefault();
+  const r = ct.ranked.top[rankIdx];
+  await api("save_target", ct.expId, ct.chartId, {
+    name: ev.target.name.value.trim(), initial_time: r.initial_time, vector_ms: r.vector_ms,
+    target_delay: r.target_delay, p: r.p, sigma: r.sigma, second: r.second, mdmsh: r.mdmsh });
+  closeModal();
+  await ctLoadTargets();
+  renderChartFindTarget();
+  return false;
+}
+
+function renderSavedTargets(){
+  if(!ct.targets.length) return `<div class="empty">No targets saved yet.</div>`;
+  const rows = ct.targets.map(t => {
+    const chart = ct.charts.find(c => c.id === t.chart_id);
+    return `<tr><td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
+      <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td><td>${esc(chart?.name || "—")}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn small" onclick="ctExamineTarget('${esc(t.id)}')">Examine</button>
+        <button class="btn small danger" onclick="ctDeleteTarget('${esc(t.id)}')">Delete</button></td>
+    </tr>`;
+  }).join("");
+  return `<div class="candtable" style="max-height:none"><table><thead><tr>
+      <th>name</th><th>boot time</th><th>Vector ms</th><th>P(capture)</th><th>chart</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function ctDeleteTarget(id){
+  if(!confirm("Delete this target?")) return;
+  await api("delete_target", id);
+  await ctLoadTargets();
+  renderChartFindTarget();
 }
 
 // --- Profiles -------------------------------------------------------------
