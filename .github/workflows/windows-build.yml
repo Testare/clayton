@@ -1,0 +1,33 @@
+name: Windows build
+
+# Builds the Clayton desktop app into a standalone Windows .exe and uploads it as a
+# downloadable artifact. Trigger it by hand from the Actions tab ("Run workflow"), or
+# by pushing a tag like v0.1.0.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build deps
+        run: pip install pywebview pyinstaller
+
+      - name: Build exe
+        run: pyinstaller packaging/clayton.spec
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clayton-windows
+          path: dist/clayton.exe
+          if-no-files-found: error

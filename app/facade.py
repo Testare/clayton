@@ -20,21 +20,21 @@ _EXPEDITIONS = "expeditions"
 
 class Facade:
     def __init__(self, store: Store | None = None):
-        self.store = store or FileStore()
+        self._store = store or FileStore()
 
     # -- internal loaders -------------------------------------------------
 
     def _load_profile(self, profile_id: str) -> Profile:
-        doc = self.store.read(_PROFILES, profile_id)
+        doc = self._store.read(_PROFILES, profile_id)
         if doc is None:
             raise ValueError(f"no profile with id {profile_id!r}")
         return Profile.from_dict(doc)
 
     def _save_profile(self, profile: Profile) -> None:
-        self.store.write(_PROFILES, profile.id, profile.to_dict())
+        self._store.write(_PROFILES, profile.id, profile.to_dict())
 
     def _load_expedition(self, expedition_id: str) -> Expedition:
-        doc = self.store.read(_EXPEDITIONS, expedition_id)
+        doc = self._store.read(_EXPEDITIONS, expedition_id)
         if doc is None:
             raise ValueError(f"no expedition with id {expedition_id!r}")
         return Expedition.from_dict(doc)
@@ -44,8 +44,8 @@ class Facade:
     def list_profiles(self) -> list[dict]:
         """Summaries of every profile, for a selector/list."""
         out = []
-        for pid in self.store.list_ids(_PROFILES):
-            doc = self.store.read(_PROFILES, pid)
+        for pid in self._store.list_ids(_PROFILES):
+            doc = self._store.read(_PROFILES, pid)
             if doc is None:
                 continue
             p = Profile.from_dict(doc)
@@ -85,7 +85,7 @@ class Facade:
         return self.get_profile(p.id)
 
     def delete_profile(self, profile_id: str) -> bool:
-        return self.store.delete(_PROFILES, profile_id)
+        return self._store.delete(_PROFILES, profile_id)
 
     # -- metronome users --------------------------------------------------
 
@@ -134,8 +134,8 @@ class Facade:
 
     def list_expeditions(self, profile_id: str | None = None) -> list[dict]:
         out = []
-        for eid in self.store.list_ids(_EXPEDITIONS):
-            doc = self.store.read(_EXPEDITIONS, eid)
+        for eid in self._store.list_ids(_EXPEDITIONS):
+            doc = self._store.read(_EXPEDITIONS, eid)
             if doc is None:
                 continue
             e = Expedition.from_dict(doc)
@@ -163,7 +163,7 @@ class Facade:
         # Fail early if the referenced profile is missing.
         self._load_profile(profile_id)
         e = Expedition.from_dict({**fields, "name": name})
-        self.store.write(_EXPEDITIONS, e.id, e.to_dict())
+        self._store.write(_EXPEDITIONS, e.id, e.to_dict())
         return e.to_dict()
 
     def save_expedition(self, expedition: dict) -> dict:
@@ -172,8 +172,16 @@ class Facade:
             raise ValueError("save_expedition needs an expedition id (use create_expedition for new)")
         e = Expedition.from_dict(expedition)
         self._load_profile(e.profile_id)  # validate the reference still resolves
-        self.store.write(_EXPEDITIONS, e.id, e.to_dict())
+        self._store.write(_EXPEDITIONS, e.id, e.to_dict())
         return e.to_dict()
 
     def delete_expedition(self, expedition_id: str) -> bool:
-        return self.store.delete(_EXPEDITIONS, expedition_id)
+        return self._store.delete(_EXPEDITIONS, expedition_id)
+
+    # -- reference data ---------------------------------------------------
+
+    @staticmethod
+    def list_safari_areas() -> list[str]:
+        """The Safari Zone area names, for the expedition-config dropdown."""
+        from claytonlib.safari_encounters import safari_areas
+        return safari_areas()

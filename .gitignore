@@ -36,3 +36,7 @@ data/
 *.nds
 *.sav
 *.dsv
+
+# Nix build result symlinks
+result
+result-*

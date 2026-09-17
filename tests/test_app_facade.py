@@ -109,6 +109,11 @@ class TestFacade(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.save_expedition({"name": "x", "profile_id": p["id"]})
 
+    def test_list_safari_areas(self):
+        areas = self.api.list_safari_areas()
+        self.assertIn("Peak", areas)
+        self.assertGreaterEqual(len(areas), 12)
+
 
 if __name__ == "__main__":
     unittest.main()

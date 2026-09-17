@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clayton"
+version = "0.1.0"
+description = "Clayton — HGSS Safari Zone RNG manipulation toolkit and desktop app"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+# The claytonlib core is pure standard library — no runtime deps here.
+dependencies = []
+
+[project.optional-dependencies]
+# The desktop shell (app/) needs a webview. Installed via Nix for the packaged app;
+# listed here so a plain `pip install .[desktop]` also works where pip is available.
+desktop = ["pywebview>=5.0"]
+
+[project.scripts]
+clayton = "app.main:main"
+
+# Ship the library and the desktop app; the notebook/GDB helpers under utils/ and the
+# one-offs/ scripts are development tooling and stay out of the distribution.
+[tool.setuptools.packages.find]
+include = ["claytonlib*", "app*"]
+
+[tool.setuptools.package-data]
+# Static game data and the web front end travel with their packages so importlib
+# resource loading (claytonlib) and the pywebview window (app) resolve them.
+claytonlib = ["basedata/*.json"]
+app = ["web/*.html", "web/*.css", "web/*.js"]

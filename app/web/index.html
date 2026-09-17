@@ -9,14 +9,14 @@
     --bg:#f4f5f0; --surface:#ffffff; --surface-2:#eef0e8; --ink:#1b2019;
     --ink-soft:#556052; --line:#dce0d2; --grass:#37744a; --grass-ink:#ffffff;
     --ember:#b8632c; --danger:#ab4029; --warn-bg:#fdf3e3; --warn-ink:#8a5a13;
-    --ok:#37744a; --radius:9px;
+    --ok:#37744a; --radius:9px; --chevron:%238a927e;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#11150e; --surface:#191e14; --surface-2:#212719; --ink:#e9ece0;
       --ink-soft:#a6ae98; --line:#2b3222; --grass:#62b378; --grass-ink:#0e130c;
       --ember:#d78a4c; --danger:#d76750; --warn-bg:#2a2413; --warn-ink:#e0b665;
-      --ok:#62b378;
+      --ok:#62b378; --chevron:%23a6ae98;
     }
   }
   *{box-sizing:border-box}
@@ -47,6 +47,8 @@
   .row-list{display:flex;flex-direction:column;gap:10px}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
     padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+  .card.clickable{cursor:pointer}
+  .card.clickable:hover{border-color:var(--grass)}
   .card .title{font-weight:600}
   .card .sub{font-size:12.5px;color:var(--ink-soft);margin-top:2px}
   .btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);
@@ -65,11 +67,19 @@
     margin-bottom:5px;letter-spacing:.02em}
   .field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--line);
     border-radius:7px;background:var(--bg);color:var(--ink);font:inherit}
+  /* WebKitGTK ignores background on native selects (white-on-light, unreadable),
+     so opt out of native rendering and draw our own chevron. */
+  .field select{appearance:none;-webkit-appearance:none;padding-right:30px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23888888' stroke-width='1.5'/></svg>");
+    background-repeat:no-repeat;background-position:right 11px center}
   .field .hint{font-size:12px;color:var(--ink-soft);margin-top:4px}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
   .actions{display:flex;gap:10px;margin-top:8px}
   .check{display:flex;align-items:center;gap:8px}
   .check input{width:auto}
+  .radios{display:flex;gap:18px;align-items:center;padding:7px 0}
+  .radio{display:flex;align-items:center;gap:6px;font-weight:500;cursor:pointer}
+  .radio input{width:auto;margin:0}
   table{width:100%;border-collapse:collapse;background:var(--surface);
     border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
   th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);font-size:13.5px}
@@ -79,8 +89,14 @@
     padding:34px;text-align:center;color:var(--ink-soft)}
   .notice{border-radius:8px;padding:11px 14px;font-size:13px;margin-bottom:14px}
   .notice.warn{background:var(--warn-bg);color:var(--warn-ink)}
+  .notice.warn ul{margin:6px 0 0;padding-left:18px}
   .section-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
     color:var(--ink-soft);margin:26px 0 12px}
+  .tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .tool-cat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .tool-cat h3{font-size:14.5px;margin-bottom:12px}
+  .tool-cat .btn{width:100%;margin-bottom:8px;text-align:left}
+  .tool-cat .btn:last-child{margin-bottom:0}
   #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--danger);
     color:#fff;padding:10px 18px;border-radius:8px;font-size:13.5px;box-shadow:0 6px 20px rgba(0,0,0,.25);
     opacity:0;transition:opacity .2s;pointer-events:none;max-width:70ch}
@@ -92,7 +108,7 @@
   <div class="brand"><span class="dot"></span><b>Clayton</b></div>
   <div class="topbar" id="topbar">HGSS Safari Zone RNG toolkit</div>
   <nav id="nav">
-    <button data-view="expeditions">📋 Expeditions</button>
+    <button data-view="expeditions">⛺ Expeditions</button>
     <button data-view="profiles">🎮 Profiles</button>
   </nav>
   <main><div class="wrap" id="main">Loading…</div></main>
@@ -104,7 +120,6 @@
 const $ = (id) => document.getElementById(id);
 const state = { profiles: [], view: "expeditions" };
 
-// --- bridge helpers -------------------------------------------------------
 async function api(method, ...args){
   try{
     return await window.pywebview.api[method](...args);
@@ -122,7 +137,6 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
 const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
 function mount(html){ $("main").innerHTML = html; }
 
-// --- navigation -----------------------------------------------------------
 function setView(view){
   state.view = view;
   document.querySelectorAll("#nav button").forEach(b =>
@@ -148,9 +162,10 @@ async function renderExpeditions(){
     body = `<div class="empty">No expeditions yet. Create one to start a hunt.</div>`;
   } else {
     body = `<div class="row-list">` + expeditions.map(e => `
-      <div class="card">
+      <div class="card clickable" onclick="openExpeditionHome('${esc(e.id)}')">
         <div><div class="title">${esc(e.name)}</div>
           <div class="sub">${esc(e.pokemon || "—")} · profile: ${esc(byId[e.profile_id] || "unknown")}</div></div>
+        <span class="muted">Open →</span>
       </div>`).join("") + `</div>`;
   }
   mount(`<div class="head"><h2>Expeditions</h2>
@@ -158,40 +173,130 @@ async function renderExpeditions(){
     </div>${body}`);
 }
 
-function expeditionForm(){
-  const opts = state.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
-  mount(`<div class="head"><h2>New expedition</h2></div>
-    <form class="panel" onsubmit="return saveExpedition(event)">
+// existing: an expedition doc when editing, else null (create).
+async function expeditionForm(existing){
+  const [profiles, areas] = await Promise.all([api("list_profiles"), api("list_safari_areas")]);
+  state.profiles = profiles;
+  const sel = (val, cur) => val === cur ? " selected" : "";
+  const profileOpts = profiles.map(p =>
+    `<option value="${esc(p.id)}"${sel(p.id, existing?.profile_id)}>${esc(p.name)}</option>`).join("");
+  const areaOpts = `<option value="">—</option>` + areas.map(a =>
+    `<option value="${esc(a)}"${sel(a, existing?.safari_area)}>${esc(a)}</option>`).join("");
+  const chatots = existing ? existing.chatots : 2;   // default 2
+  const seedHex = existing?.key_seed != null
+    ? "0x" + existing.key_seed.toString(16).toUpperCase() : "";
+  const editing = !!existing;
+  mount(`<div class="head"><h2>${editing ? "Configure expedition" : "New expedition"}</h2></div>
+    <form class="panel" onsubmit="return saveExpedition(event, ${editing ? `'${esc(existing.id)}'` : "null"})">
       <div class="grid2">
-        <div class="field"><label>Name</label><input name="name" required placeholder="Shiny Metang"></div>
-        <div class="field"><label>Profile</label><select name="profile_id" required>${opts}</select></div>
-        <div class="field"><label>Pokémon</label><input name="pokemon" placeholder="metang"></div>
-        <div class="field"><label>Safari area</label><input name="safari_area" placeholder="Peak"></div>
-        <div class="field"><label>Chatots (0–2)</label><input name="chatots" type="number" min="0" max="2" value="0"></div>
-        <div class="field"><label>Key seed</label><input name="key_seed" placeholder="0x0D0E02BA or decimal"></div>
-        <div class="field"><label>Key-seed advances</label><input name="key_seed_advances" type="number" min="0"></div>
+        <div class="field"><label>Name</label>
+          <input name="name" required value="${esc(existing?.name || "")}" placeholder="Shiny Metang"></div>
+        <div class="field"><label>Profile</label><select name="profile_id" required>${profileOpts}</select></div>
+        <div class="field"><label>Pokémon</label>
+          <input name="pokemon" value="${esc(existing?.pokemon || "")}" placeholder="metang"></div>
+        <div class="field"><label>Safari area</label><select name="safari_area">${areaOpts}</select></div>
+        <div class="field"><label>Chatots</label><select name="chatots">
+          ${[0,1,2].map(n => `<option value="${n}"${sel(n, chatots)}>${n}</option>`).join("")}</select></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>Key seed (hex, required)</label>
+          <input name="key_seed" required value="${esc(seedHex)}" placeholder="0x0D0E02BA">
+          <div class="hint">Hexadecimal only — e.g. <code>0D0E02BA</code> or <code>0x0D0E02BA</code>.</div></div>
+        <div class="field"><label>Key-seed advances (required)</label>
+          <input name="key_seed_advances" type="number" min="0" required
+            value="${existing?.key_seed_advances ?? ""}"></div>
       </div>
       <div class="actions">
-        <button class="btn primary" type="submit">Create</button>
-        <button class="btn" type="button" onclick="setView('expeditions')">Cancel</button>
+        <button class="btn primary" type="submit">${editing ? "Save" : "Create"}</button>
+        <button class="btn" type="button" onclick="${editing
+          ? `openExpeditionHome('${esc(existing.id)}')` : `setView('expeditions')`}">Cancel</button>
       </div>
     </form>`);
 }
 
-async function saveExpedition(ev){
+async function saveExpedition(ev, existingId){
   ev.preventDefault();
   const f = ev.target;
-  const keySeedRaw = f.key_seed.value.trim();
+  const rawSeed = f.key_seed.value.trim().replace(/^0x/i, "");
+  if(rawSeed === ""){ toast("Key seed is required."); return false; }
+  if(!/^[0-9a-fA-F]+$/.test(rawSeed)){
+    toast("Key seed must be hexadecimal (e.g. 0D0E02BA), not decimal."); return false; }
+  if(f.key_seed_advances.value.trim() === ""){ toast("Key-seed advances is required."); return false; }
   const fields = {
     name: f.name.value, profile_id: f.profile_id.value,
-    pokemon: f.pokemon.value.trim(), safari_area: f.safari_area.value.trim(),
-    chatots: numOrNull(f.chatots.value) ?? 0,
-    key_seed: keySeedRaw === "" ? null : (keySeedRaw.toLowerCase().startsWith("0x")
-      ? parseInt(keySeedRaw, 16) : Number(keySeedRaw)),
-    key_seed_advances: numOrNull(f.key_seed_advances.value),
+    pokemon: f.pokemon.value.trim(), safari_area: f.safari_area.value,
+    chatots: Number(f.chatots.value),
+    key_seed: parseInt(rawSeed, 16),
+    key_seed_advances: Number(f.key_seed_advances.value),
   };
-  await api("create_expedition", fields);
-  setView("expeditions");
+  if(existingId){
+    const current = await api("get_expedition", existingId);
+    await api("save_expedition", {...current, ...fields});
+    openExpeditionHome(existingId);
+  } else {
+    const e = await api("create_expedition", fields);
+    openExpeditionHome(e.id);
+  }
+  return false;
+}
+
+// --- Expedition home + tool pages -----------------------------------------
+async function openExpeditionHome(id){
+  const e = await api("get_expedition", id);
+  const cats = [
+    ["Metronome Compass", [["New Run","Metronome Compass — New Run"],["Review Data","Metronome Compass — Review Data"]]],
+    ["Safari Chart", [["Find Target","Safari Chart — Find Target"],["Manage Data","Safari Chart — Manage Data"]]],
+    ["Safari Compass", [["New Run","Safari Compass — New Run"],["Review Data","Safari Compass — Review Data"]]],
+  ];
+  const grid = cats.map(([cat, tools]) => `
+    <div class="tool-cat"><h3>${esc(cat)}</h3>
+      ${tools.map(([label, full]) =>
+        `<button class="btn" onclick="toolPlaceholder('${esc(id)}','${esc(full)}')">${esc(label)}</button>`).join("")}
+    </div>`).join("");
+  mount(`<div class="head"><h2>${esc(e.name)}</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="editExpedition('${esc(id)}')">Configure</button>
+        <button class="btn" onclick="preferencesPage('${esc(id)}')">Preferences</button>
+        <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
+      </div></div>
+    <div class="muted">${esc(e.pokemon || "—")}${e.safari_area ? " · " + esc(e.safari_area) : ""}
+      · key seed 0x${(e.key_seed ?? 0).toString(16).toUpperCase()} · ${e.chatots} chatot(s)</div>
+    <div class="section-label">Tools</div>
+    <div class="tools">${grid}</div>`);
+}
+
+async function editExpedition(id){
+  expeditionForm(await api("get_expedition", id));
+}
+
+function toolPlaceholder(expId, fullLabel){
+  mount(`<div class="head"><h2>${esc(fullLabel)}</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(expId)}')">← Expedition</button></div>
+    <div class="empty">This tool isn't built yet — it's next on the roadmap.</div>`);
+}
+
+async function preferencesPage(expId){
+  const e = await api("get_expedition", expId);
+  const prefs = e.preferences || {};
+  mount(`<div class="head"><h2>Preferences — ${esc(e.name)}</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(expId)}')">← Expedition</button></div>
+    <form class="panel" onsubmit="return savePreferences(event, '${esc(expId)}')">
+      <div class="field"><label>Elm calls after Chatot flips</label>
+        <input name="elm_calls_after_flips" type="number" min="0"
+          value="${prefs.elm_calls_after_flips ?? 3}">
+        <div class="hint">How many Elm calls you prefer after the Chatot flips (default 3).</div></div>
+      <div class="actions"><button class="btn primary" type="submit">Save</button></div>
+    </form>`);
+}
+
+async function savePreferences(ev, expId){
+  ev.preventDefault();
+  const f = ev.target;
+  const current = await api("get_expedition", expId);
+  const preferences = {...(current.preferences || {}),
+    elm_calls_after_flips: Number(f.elm_calls_after_flips.value)};
+  await api("save_expedition", {...current, preferences});
+  openExpeditionHome(expId);
   return false;
 }
 
@@ -268,34 +373,59 @@ async function openProfile(id){
     ${users}
 
     <div class="section-label">Add a metronome user</div>
-    <form class="panel" onsubmit="return addUser(event,'${esc(p.id)}')">
+    <form class="panel" id="add-user-form" oninput="updateUserWarnings()"
+        onsubmit="return addUser(event,'${esc(p.id)}')">
       <div class="grid2">
         <div class="field"><label>Name (unique in profile)</label><input name="name" required placeholder="Chansey 1"></div>
         <div class="field"><label>Species</label><input name="species" value="Chansey"></div>
         <div class="field"><label>Ability</label><input name="ability" value="Natural Cure"></div>
         <div class="field"><label>Level</label><input name="level" type="number" min="1" max="100"></div>
-        <div class="field"><label>Gender</label><select name="gender">
-          <option value="">—</option><option value="female">female</option><option value="male">male</option></select></div>
+        <div class="field"><label>Gender</label>
+          <div class="radios">
+            <label class="radio"><input type="radio" name="gender" value="female" checked> female</label>
+            <label class="radio"><input type="radio" name="gender" value="male"> male</label>
+            <label class="radio"><input type="radio" name="gender" value=""> —</label>
+          </div></div>
         <div class="field"><label>Moveset (comma-separated)</label><input name="moveset" value="Metronome"></div>
       </div>
       <div class="field check"><input type="checkbox" name="lagging_tail" id="lt" checked>
         <label for="lt" style="margin:0">Holding a Lagging Tail</label></div>
+      <div class="notice warn" id="mw-warnings" hidden></div>
       <div class="actions"><button class="btn primary" type="submit">Add user</button></div>
       <div class="hint muted">Metronome users can't be edited after adding — to change one, add a new user and remove the old.</div>
     </form>`);
+  updateUserWarnings();
+}
+
+function _readUserForm(){
+  const f = $("add-user-form");
+  return {
+    name: f.name.value,
+    species: f.species.value.trim() || "Chansey",
+    ability: f.ability.value.trim() || null,
+    level: numOrNull(f.level.value),
+    gender: f.gender.value || null,
+    moveset: f.moveset.value.split(",").map(s => s.trim()).filter(Boolean),
+    lagging_tail: f.lagging_tail.checked,
+  };
+}
+
+async function updateUserWarnings(){
+  const box = $("mw-warnings");
+  if(!box) return;
+  const warnings = await api("metronome_user_warnings", _readUserForm());
+  if(warnings.length){
+    box.innerHTML = `This metronome user won't be suitable for calibration:
+      <ul>${warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
+    box.hidden = false;
+  } else {
+    box.hidden = true;
+  }
 }
 
 async function addUser(ev, profileId){
   ev.preventDefault();
-  const f = ev.target;
-  const fields = {
-    name: f.name.value, species: f.species.value.trim() || "Chansey",
-    ability: f.ability.value.trim() || null,
-    level: numOrNull(f.level.value), gender: f.gender.value || null,
-    moveset: f.moveset.value.split(",").map(s => s.trim()).filter(Boolean),
-    lagging_tail: f.lagging_tail.checked,
-  };
-  const res = await api("add_metronome_user", profileId, fields);
+  const res = await api("add_metronome_user", profileId, _readUserForm());
   if(res.warnings && res.warnings.length) toast("Added, but: " + res.warnings.join("; "));
   openProfile(profileId);
   return false;
