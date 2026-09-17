@@ -29,4 +29,4 @@ include = ["claytonlib*", "app*"]
 # Static game data and the web front end travel with their packages so importlib
 # resource loading (claytonlib) and the pywebview window (app) resolve them.
 claytonlib = ["basedata/*.json"]
-app = ["web/*.html", "web/*.css", "web/*.js"]
+app = ["web/*.html", "web/*.css", "web/*.js", "resources/*.json"]

@@ -66,7 +66,8 @@ class TestPortability(unittest.TestCase):
         res = fresh.import_profile_bundle(env)
         self.assertNotIn("collision", res)
         self.assertEqual(res["counts"], self._empty_counts(
-            expeditions=1, charts=1, targets=1, runs=1))
+            expeditions=1, charts=1, targets=1, runs=1,
+            calibration_models=1))  # the seeded "Standard" model travels with the bundle too
 
         profiles = fresh.list_profiles()
         self.assertEqual(len(profiles), 1)
@@ -118,6 +119,7 @@ class TestPortability(unittest.TestCase):
     def test_merge_does_not_disturb_active_model_or_collide_numbers(self):
         # The shared setUp's run has no a_seed/b_seed "time" (not fittable) -- give this
         # test its own properly-fittable runs so preview_calibration has something to fit.
+        # self.pid already has model #1 -- the seeded "Standard" model -- from create_profile.
         for i, (M, Fb) in enumerate([(180000, 11500), (220000, 13900), (260000, 16300),
                                      (300000, 18700), (340000, 21100), (380000, 23500)]):
             self.api.save_metronome_run(self.pid, {
@@ -127,15 +129,16 @@ class TestPortability(unittest.TestCase):
         report = self.api.preview_calibration(self.pid)
         active = self.api.save_calibration_model(self.pid, {"name": "v1", "preview": report})
         self.assertTrue(active["active"])
+        self.assertEqual(len(self.api.list_calibration_models(self.pid)), 2)  # Standard + v1
 
-        env = self.api.export_profile_bundle(self.pid)  # bundle includes that model too
+        env = self.api.export_profile_bundle(self.pid)  # bundle includes both models
         res = self.api.import_profile_bundle(env, on_collision="merge")
-        self.assertEqual(res["counts"]["calibration_models"], 1)
+        self.assertEqual(res["counts"]["calibration_models"], 2)
 
         models = self.api.list_calibration_models(self.pid)
-        self.assertEqual(len(models), 2)                       # original + merged-in copy
+        self.assertEqual(len(models), 4)                       # 2 original + 2 merged-in copies
         numbers = sorted(m["number"] for m in models)
-        self.assertEqual(numbers, [1, 2])                       # no number collision
+        self.assertEqual(numbers, [1, 2, 3, 4])                 # no number collision
         active_models = [m for m in models if m["active"]]
         self.assertEqual([m["id"] for m in active_models], [active["id"]])  # still just the original
 
@@ -216,20 +219,25 @@ class TestCalibrationModelPortability(unittest.TestCase):
         self.assertEqual(env["data"]["model"]["name"], "v1")
 
     def test_import_into_another_profile_gets_a_fresh_inactive_numbered_entry(self):
+        # `other` already has its own seeded "Standard" model (#1, active) — see
+        # Facade._seed_standard_calibration_model — so the import numbers past it.
         env = self.api.export_calibration_model(self.model["id"])
         other = self.api.create_profile({"name": "Other"})["id"]
         res = self.api.import_calibration_model(other, env)
-        self.assertEqual(res["number"], 1)
+        self.assertEqual(res["number"], 2)
         imported = self.api.list_calibration_models(other)
-        self.assertEqual(len(imported), 1)
-        self.assertFalse(imported[0]["active"])
-        self.assertNotEqual(imported[0]["id"], self.model["id"])
+        self.assertEqual(len(imported), 2)
+        by_id = {m["id"]: m for m in imported}
+        self.assertFalse(by_id[res["model_id"]]["active"])
+        self.assertNotEqual(res["model_id"], self.model["id"])
 
     def test_import_numbers_past_existing_models(self):
+        # self.pid already has Standard (#1, seeded) + v1 (#2, from setUp) — the import
+        # numbers past both.
         env = self.api.export_calibration_model(self.model["id"])
         res = self.api.import_calibration_model(self.pid, env)  # same profile it came from
-        self.assertEqual(res["number"], 2)  # past the existing #1
-        self.assertEqual(len(self.api.list_calibration_models(self.pid)), 2)
+        self.assertEqual(res["number"], 3)
+        self.assertEqual(len(self.api.list_calibration_models(self.pid)), 3)
 
 
 if __name__ == "__main__":

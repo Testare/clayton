@@ -93,7 +93,20 @@ class Facade:
             console=fields.get("console", ""),
         )
         self._save_profile(p)
+        self._seed_standard_calibration_model(p.id)
         return self.get_profile(p.id)
+
+    def _seed_standard_calibration_model(self, profile_id: str) -> None:
+        """Every fresh profile starts with a bundled 'Standard' calibration model, active
+        by default — a real fitted model shipped with the app, so Safari Chart works
+        immediately instead of being blocked until the user re-runs their own Metronome
+        Compass calibration. Harmless to overwrite later: it's just model #1, like any
+        other saved fit, and can be replaced as the active one or deleted."""
+        from app._resources import standard_calibration_modelset
+        doc = CalibrationModelDoc(
+            profile_id=profile_id, number=1, name="Standard",
+            artifact=standard_calibration_modelset(), active=True)
+        self._store.write(_CALIBRATION_MODELS, doc.id, doc.to_dict())
 
     def delete_profile(self, profile_id: str) -> bool:
         return self._store.delete(_PROFILES, profile_id)

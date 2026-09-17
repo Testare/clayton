@@ -75,6 +75,8 @@
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' fill='none' stroke='%23888888' stroke-width='1.5'/></svg>");
     background-repeat:no-repeat;background-position:right 11px center}
   .field .hint{font-size:12px;color:var(--ink-soft);margin-top:4px}
+  .legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin:6px 0}
+  .legend b{color:var(--ink)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
   .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:0 12px}
   .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:0 12px}
@@ -183,6 +185,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
 function mount(html){ $("main").innerHTML = html; }
+function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function openModal(html){
   closeModal();
@@ -305,7 +308,7 @@ async function openExpeditionHome(id){
   const e = await api("get_expedition", id);
   // [emoji, label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
   const cats = [
-    ["👆🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
+    ["☝️🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
     ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data","chartManageData"]]],
     ["⛺🧭", "Safari Compass", [["New Run","Safari Compass — New Run","safariCompassNewRun"],["Review Data","Safari Compass — Review Data","safariReviewData"]]],
   ];
@@ -636,12 +639,9 @@ function openSaveRunModal(){
   if(!(nr.seedA && nr.seedB)) return;
   openModal(`<h3>Save run</h3>
     <form onsubmit="return nrSave(event)">
-      <div class="grid2">
-        <div class="field"><label>Tag</label><input name="tag" placeholder="300s Samwise" autofocus></div>
-        <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
-      </div>
+      <div class="field"><label>Tag</label><input name="tag" placeholder="300s Samwise" autofocus></div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
-      ${_advanceRecipeFields()}
+      ${_advanceRecipeFields(false)}
       <div class="actions">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -651,20 +651,33 @@ function openSaveRunModal(){
 
 // Optional Seed A advance-recipe fields (elm calls / chatot flips / advance frame), shared by
 // both Save Run modals — captured to test whether they correlate with a safari run's frame
-// miss (unconfirmed hypothesis; nothing fits these yet, see app/calibration.py).
-function _advanceRecipeFields(){
+// miss (unconfirmed hypothesis; nothing fits these yet, see app/calibration.py). Metronome
+// Compass only cares about Elm calls (may be needed to identify the seed) — it doesn't do
+// chatot flips or care which advance frame it lands on, so `full=false` hides those two.
+function _advanceRecipeFields(full = true){
+  const rest = full ? `
+      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
+      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>` : "";
   return `<div class="section-label" style="margin-top:14px">Advance recipe (optional)</div>
     <div class="grid3">
-      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>
-      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
-      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>
+      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>${rest}
     </div>
-    <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — not used by any
-      fit yet, just recorded for later analysis.</div>`;
+    <div class="hint muted" style="margin-bottom:11px">${full
+        ? "How Seed A was reached — not used by any fit yet, just recorded for later analysis."
+        : "Only relevant if you needed extra Elm calls to identify this seed."}</div>`;
 }
 function _readAdvanceRecipe(f){
-  const n = (el) => el.value.trim() === "" ? null : Number(el.value);
+  const n = (el) => (!el || el.value.trim() === "") ? null : Number(el.value);
   return { elm_calls: n(f.elm_calls), chatot_flips: n(f.chatot_flips), advance_frame: n(f.advance_frame) };
+}
+
+function nrShowSavedPrompt(){
+  openModal(`<h3>Run saved</h3>
+    <p class="muted" style="margin:0 0 16px">Start another run, or head back to the expedition?</p>
+    <div class="actions">
+      <button class="btn" type="button" onclick="closeModal();openExpeditionHome('${esc(nr.expId)}')">Done</button>
+      <button class="btn primary" type="button" onclick="closeModal();metronomeNewRun('${esc(nr.expId)}')">Start another run</button>
+    </div>`);
 }
 
 async function nrSave(ev){
@@ -672,12 +685,9 @@ async function nrSave(ev){
   const f = ev.target;
   await api("save_metronome_run", nr.e.profile_id, {
     tag: f.tag.value.trim(), vector_ms: nr.vectorMs,
-    target_timer_calibration: Number(f.calibration.value) || 0,
     notes: f.notes.value.trim(), metronome_user_id: nr.userId,
     a_seed: nr.seedA, b_seed: nr.seedB, ..._readAdvanceRecipe(f) });
-  closeModal();
-  if(confirm("Run saved. Start another run?")) metronomeNewRun(nr.expId);
-  else openExpeditionHome(nr.expId);
+  nrShowSavedPrompt();
   return false;
 }
 
@@ -1002,20 +1012,20 @@ function renderChartFindTarget(){
   if(chart){
     const cs = ct.canonStatus;
     const built = cs && cs.built;
-    canonSection = `<div class="section-label">Canon map</div>
+    canonSection = `<div class="section-label">Computed chart</div>
       <div class="panel">
         <div class="muted">delay window: ${chart.setup_delay_seconds}–${chart.max_target_seconds}s
           · strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}</div>
-        ${built ? `<div class="info-line done" style="margin-top:10px">Built —
+        ${built ? `<div class="info-line done" style="margin-top:10px">Computed —
             ${cs.n_mdmsh} mdmsh classes, ${cs.n_distinct_seeds?.toLocaleString()} distinct seeds
             (${cs.reuse_factor?.toFixed(0)}x reuse) · models: ${(cs.built_models||[]).join(", ") || "—"}
             · covers ${cs.last_setup}–${cs.last_max}s</div>`
-          : `<div class="notice warn" style="margin-top:10px">Not built yet — click Build to precompute it
+          : `<div class="notice warn" style="margin-top:10px">Not computed yet — click Compute chart
               (safe to re-run any time: it resumes/extends rather than starting over).</div>`}
         ${renderPrecomputeProgress()}
         <div class="actions">
           <button class="btn primary" ${noModel?"disabled":""} onclick="ctBuildCanon()">
-            ${built ? "Rebuild / extend canon map" : "Build canon map"}</button>
+            ${built ? "Recompute / extend chart" : "Compute chart"}</button>
           ${built ? `<button class="btn" onclick="ctRank()">Rank targets</button>` : ""}
         </div>
       </div>
@@ -1027,8 +1037,8 @@ function renderChartFindTarget(){
   mount(`<div class="head"><h2>Safari Chart — Find Target</h2>
       <button class="btn" onclick="openExpeditionHome('${esc(ct.expId)}')">← Expedition</button></div>
     ${noModel ? `<div class="notice warn">No calibration model found yet — Chart needs one to
-        rank or examine targets (calibrate via the Metronome Compass notebooks for now; a
-        Calibrate Model page is coming). You can still create charts below.</div>` : ""}
+        rank or examine targets (Metronome Compass → Review Data → Calibrate Model).
+        You can still create charts below.</div>` : ""}
 
     <div class="panel panel-tight">
       <div class="grid2">
@@ -1051,7 +1061,7 @@ function renderPrecomputeProgress(){
   const p = s.progress || {};
   const pct = p.total ? Math.round((p.done / p.total) * 100) : null;
   return `<div style="margin-top:10px">
-      <div class="status">Building… ${p.done ?? "?"} / ${p.total ?? "?"} mdmsh classes
+      <div class="status">Computing… ${p.done ?? "?"} / ${p.total ?? "?"} mdmsh classes
         ${p.n_distinct_seeds ? `· ${p.n_distinct_seeds.toLocaleString()} seeds so far` : ""}</div>
       <div class="progress-wrap">
         <div class="progress-bar ${pct==null?"indeterminate":""}" style="${pct!=null?`width:${pct}%`:""}"></div>
@@ -1066,6 +1076,22 @@ function ctUpdateStratDesc(name){
 function ctUpdateCritDesc(name){
   const c = ct.criteria.find(x => x.name === name);
   $("ct-crit-desc").textContent = c ? c.description : "";
+  $("ct-crit-params").innerHTML = c && c.params && c.params.length
+    ? `<div class="grid3" style="margin-top:8px">${c.params.map(p =>
+        `<div class="field"><label>${esc(p.label)}</label>
+          <input name="critparam_${esc(p.key)}" type="number" min="0" value="${esc(p.default)}"></div>`
+      ).join("")}</div>` : "";
+}
+
+function _criteriaNameFromForm(f){
+  const c = ct.criteria.find(x => x.name === f.criteria_name.value);
+  if(!c || !c.params || !c.params.length) return f.criteria_name.value;
+  let name = c.template;
+  for(const p of c.params){
+    const v = Number(f[`critparam_${p.key}`].value) || p.default;
+    name = name.replace(`{${p.key}}`, v);
+  }
+  return name;
 }
 
 async function ctOpenCreateChart(){
@@ -1081,9 +1107,10 @@ async function ctOpenCreateChart(){
           <select name="criteria_name" onchange="ctUpdateCritDesc(this.value)">${critOpts}</select></div>
       </div>
       <div class="hint muted" id="ct-strat-desc">${esc(ct.strategies[0]?.description || "")}</div>
-      <div class="hint muted" id="ct-crit-desc" style="margin-bottom:11px">${esc(ct.criteria[0]?.description || "")}</div>
-      <div class="grid2">
-        <div class="field"><label>Search from (seconds)</label><input name="setup_delay_seconds" type="number" min="0" value="0"></div>
+      <div class="hint muted" id="ct-crit-desc" style="margin-bottom:0">${esc(ct.criteria[0]?.description || "")}</div>
+      <div id="ct-crit-params"></div>
+      <div class="grid2" style="margin-top:11px">
+        <div class="field"><label>Search from (seconds)</label><input name="setup_delay_seconds" type="number" min="0" value="180"></div>
         <div class="field"><label>Search to (seconds)</label><input name="max_target_seconds" type="number" min="1" value="300"></div>
       </div>
       <div class="actions">
@@ -1091,6 +1118,7 @@ async function ctOpenCreateChart(){
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
       </div>
     </form>`);
+  ctUpdateCritDesc(ct.criteria[0]?.name);
 }
 
 async function ctSaveChart(ev){
@@ -1098,7 +1126,7 @@ async function ctSaveChart(ev){
   const f = ev.target;
   const c = await api("create_chart", ct.expId, {
     name: f.name.value.trim(), strategy_name: f.strategy_name.value,
-    criteria_name: f.criteria_name.value,
+    criteria_name: _criteriaNameFromForm(f),
     setup_delay_seconds: Number(f.setup_delay_seconds.value),
     max_target_seconds: Number(f.max_target_seconds.value) });
   closeModal();
@@ -1250,7 +1278,7 @@ function renderChartManageData(){
             : `<span class="muted">not built</span>`}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn small" onclick="cmdOpenFindTarget('${esc(c.id)}')">Open in Find Target</button>
-            ${cs.built ? `<button class="btn small danger" onclick="cmdDeleteCanon('${esc(c.id)}')">Delete canon map</button>` : ""}
+            ${cs.built ? `<button class="btn small danger" onclick="cmdDeleteCanon('${esc(c.id)}')">Delete computed data</button>` : ""}
             <button class="btn small danger" onclick="cmdDeleteChart('${esc(c.id)}')">Delete chart</button>
           </td>
         </tr>`;
@@ -1274,9 +1302,9 @@ function renderChartManageData(){
   mount(`<div class="head"><h2>Safari Chart — Manage Data</h2>
       <button class="btn" onclick="openExpeditionHome('${esc(cmd.expId)}')">← Expedition</button></div>
 
-    <div class="section-label">Charts &amp; canon maps</div>
+    <div class="section-label">Charts &amp; computed data</div>
     <div style="overflow-x:auto"><table><thead><tr>
-        <th>name</th><th>strategy</th><th>criteria</th><th>window</th><th>canon map</th><th></th>
+        <th>name</th><th>strategy</th><th>criteria</th><th>window</th><th>computed</th><th></th>
       </tr></thead><tbody>${chartRows}</tbody></table></div>
 
     <div class="section-label">Saved targets</div>
@@ -1290,8 +1318,8 @@ function cmdOpenFindTarget(chartId){
 }
 
 async function cmdDeleteCanon(chartId){
-  if(!confirm("Delete this chart's canon map? It can be rebuilt later, but the next build " +
-    "will be a full one instead of an incremental extend.")) return;
+  if(!confirm("Delete this chart's computed data? It can be recomputed later, but the next " +
+    "compute will be a full one instead of an incremental extend.")) return;
   await api("chart_delete_canon", cmd.expId, chartId);
   cmd.canonStatus[chartId] = await api("chart_canon_status", cmd.expId, chartId);
   renderChartManageData();
@@ -1300,7 +1328,7 @@ async function cmdDeleteCanon(chartId){
 async function cmdDeleteChart(chartId){
   const hasTargets = cmd.targets.some(t => t.chart_id === chartId);
   const msg = hasTargets
-    ? "Delete this chart? Its canon map on disk is left in place (delete it separately if " +
+    ? "Delete this chart? Its computed data on disk is left in place (delete it separately if " +
       "you also want that gone), but targets saved from it will lose their chart link."
     : "Delete this chart?";
   if(!confirm(msg)) return;
@@ -1443,6 +1471,9 @@ function sacPickSeedA(seed){
   sac.editingSeedA = false;
   if(changed){ sac.seedB = null; sac.seedBResult = null; sac.path = ""; }
   renderSafariCompassNewRun();
+  // Show the full "seeds in range" set right away (empty path = no narrowing yet), instead
+  // of leaving Seed B blank until the user's first keystroke.
+  if(!sac.seedB) sacUpdateSeedB();
 }
 function sacChangeSeedA(){ sac.editingSeedA = true; renderSafariCompassNewRun(); }
 function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); }
@@ -1491,8 +1522,15 @@ function renderSeedBSafari(){
   return `<h3>Seed B — battle seed</h3>
     <div class="field"><label>Observed path (m/M/b/B/0-3/F/C, u=undo)</label>
       <input id="sac-path" value="${esc(sac.path)}" placeholder="bbbBbb0321" oninput="sacUpdateSeedB()" autocomplete="off"></div>
-    <div class="hint muted">Enter what you actually see turn by turn — mud/bait (+crit), ball shake
-      count (0-3), F if it fled, C if captured. Narrows live as you type.</div>
+    <div class="hint muted legend">
+      <span><b>m</b> mud</span><span><b>M</b> mud, crit</span>
+      <span><b>b</b> bait</span><span><b>B</b> bait, crit</span>
+      <span><b>0–3</b> ball shake count</span>
+      <span><b>F</b> fled</span><span><b>C</b> captured</span>
+      <span><b>u</b> undo last</span>
+    </div>
+    <div class="hint muted">Enter what you actually see, turn by turn, one character per turn
+      (a ball throw is its shake count, 0-3). Narrows live as you type.</div>
     ${extra}`;
 }
 
@@ -1530,6 +1568,15 @@ function openSaveSafariRunModal(){
     </form>`);
 }
 
+function sacShowSavedPrompt(){
+  openModal(`<h3>Run saved</h3>
+    <p class="muted" style="margin:0 0 16px">Start another run, or head back to the expedition?</p>
+    <div class="actions">
+      <button class="btn" type="button" onclick="closeModal();openExpeditionHome('${esc(sac.expId)}')">Done</button>
+      <button class="btn primary" type="button" onclick="closeModal();safariCompassNewRun('${esc(sac.expId)}')">Start another run</button>
+    </div>`);
+}
+
 async function sacSaveRun(ev){
   ev.preventDefault();
   const f = ev.target;
@@ -1537,9 +1584,7 @@ async function sacSaveRun(ev){
     tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
     target_timer_calibration: Number(f.calibration.value) || 0,
     notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB, ..._readAdvanceRecipe(f) });
-  closeModal();
-  if(confirm("Run saved. Start another run?")) safariCompassNewRun(sac.expId);
-  else openExpeditionHome(sac.expId);
+  sacShowSavedPrompt();
   return false;
 }
 

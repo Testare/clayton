@@ -13,6 +13,7 @@ from claytonlib.chart import (
     STRATEGY_ONLY_BALLS,
     CRITERIA_CAPTURE,
     n_balls_no_flee_criteria,
+    n_turns_no_flee_criteria,
     chart_safari,
 )
 from claytonlib.safari import safari_pokemon_by_name
@@ -243,6 +244,44 @@ class TestNBallsNoFleeCriteria(unittest.TestCase):
         self.assertEqual(n_balls_no_flee_criteria(6).name, '6-balls-no-flee')
         resolved = _resolve_criteria('5-balls-no-flee')
         self.assertEqual(resolved.name, '5-balls-no-flee')
+
+
+class TestNTurnsNoFleeCriteria(unittest.TestCase):
+    """Generalizes the old hardcoded CRITERIA_WONT_FLEE_10_TURNS to arbitrary N."""
+
+    def _ctx(self, *, turn_count, state):
+        from claytonlib.safari import SafariContext
+        pokemon = safari_pokemon_by_name('metang')
+        return SafariContext(pokemon=pokemon, rng_state=0,
+                             turn_count=turn_count, state=state)
+
+    def test_reaching_n_turns_while_watching_succeeds(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_turns_no_flee_criteria(5)
+        self.assertTrue(crit.met(self._ctx(turn_count=5,
+                                           state=SafariContextState.WATCHING_WONT_FLEE)))
+
+    def test_fewer_than_n_turns_does_not_succeed(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_turns_no_flee_criteria(5)
+        self.assertFalse(crit.met(self._ctx(turn_count=4,
+                                            state=SafariContextState.WATCHING_WONT_FLEE)))
+
+    def test_fled_before_n_turns_fails(self):
+        from claytonlib.safari import SafariContextState
+        crit = n_turns_no_flee_criteria(5)
+        self.assertFalse(crit.met(self._ctx(turn_count=5, state=SafariContextState.FLED)))
+
+    def test_name_and_resolver(self):
+        from claytonlib.chart import CRITERIA_WONT_FLEE_10_TURNS
+        from claytonlib.expedition._config import _resolve_criteria
+        self.assertEqual(n_turns_no_flee_criteria(7).name, 'survived-7-turns-without-fleeing')
+        self.assertEqual(CRITERIA_WONT_FLEE_10_TURNS.name, 'survived-10-turns-without-fleeing')
+        resolved = _resolve_criteria('survived-7-turns-without-fleeing')
+        self.assertEqual(resolved.name, 'survived-7-turns-without-fleeing')
+        # The old hardcoded 10-turn name still resolves too (registry lookup, not regex).
+        resolved10 = _resolve_criteria('survived-10-turns-without-fleeing')
+        self.assertEqual(resolved10.name, 'survived-10-turns-without-fleeing')
 
 
 if __name__ == '__main__':

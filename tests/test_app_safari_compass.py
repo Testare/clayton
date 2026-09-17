@@ -106,8 +106,13 @@ class TestFacadeSafariCompass(unittest.TestCase):
             "key_seed": 0x0D0E02BA})["id"]
 
     def test_requires_a_calibration_model(self):
+        # create_profile seeds every fresh profile with the bundled "Standard" model (see
+        # Facade._seed_standard_calibration_model), so reaching the "no model" error path
+        # now means deleting it first.
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
+            standard = self.api.get_active_calibration_model(self.pid)
+            self.api.delete_calibration_model(standard["id"])
             with self.assertRaises(ValueError):
                 self.api.safari_compass_seed_b(self.eid, {**_PARAMS, "path": ""})
 

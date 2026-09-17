@@ -57,6 +57,21 @@ class TestReferenceData(unittest.TestCase):
             self.assertIn("name", row)
             self.assertTrue(row["description"])
 
+    def test_parameterized_criteria_templates_resolve_for_real(self):
+        """Every parameterized criteria's `template`, filled with its `params`' defaults,
+        must be a name that _resolve_criteria actually accepts — the Create Chart form
+        builds exactly this string client-side."""
+        from claytonlib.expedition._config import _resolve_criteria
+        for row in chart.list_criteria():
+            if not row["params"]:
+                _resolve_criteria(row["name"])  # fixed criteria are looked up by their own name
+                continue
+            name = row["template"]
+            for p in row["params"]:
+                name = name.replace("{" + p["key"] + "}", str(p["default"]))
+            resolved = _resolve_criteria(name)
+            self.assertEqual(resolved.name, name)
+
     def test_list_safari_pokemon_matches_the_case_the_lookup_expects(self):
         names = chart.list_safari_pokemon()
         self.assertIn("metang", names)

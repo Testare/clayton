@@ -178,9 +178,12 @@ class TestFacadeCalibration(unittest.TestCase):
         self.assertGreater(report["n_fit"], 0)
 
     def test_save_creates_numbered_active_model(self):
+        # A fresh profile already has model #1 — the bundled "Standard" model, seeded by
+        # create_profile (see Facade._seed_standard_calibration_model) — so the first
+        # user-saved fit is #2, and displaces Standard as the active one.
         report = self.api.preview_calibration(self.pid)
         doc = self.api.save_calibration_model(self.pid, {"name": "First fit", "preview": report})
-        self.assertEqual(doc["number"], 1)
+        self.assertEqual(doc["number"], 2)
         self.assertTrue(doc["active"])
         self.assertEqual(self.api.get_active_calibration_model(self.pid)["id"], doc["id"])
 
@@ -188,9 +191,9 @@ class TestFacadeCalibration(unittest.TestCase):
         report = self.api.preview_calibration(self.pid)
         d1 = self.api.save_calibration_model(self.pid, {"name": "v1", "preview": report})
         d2 = self.api.save_calibration_model(self.pid, {"name": "v2", "preview": report})
-        self.assertEqual((d1["number"], d2["number"]), (1, 2))
+        self.assertEqual((d1["number"], d2["number"]), (2, 3))
         models = self.api.list_calibration_models(self.pid)
-        self.assertEqual(sorted(m["number"] for m in models), [1, 2])
+        self.assertEqual(sorted(m["number"] for m in models), [1, 2, 3])
         active = [m for m in models if m["active"]]
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["id"], d2["id"])  # the newer save is active by default
@@ -224,7 +227,45 @@ class TestFacadeCalibration(unittest.TestCase):
         report = self.api.preview_calibration(self.pid)
         d = self.api.save_calibration_model(self.pid, {"name": "v1", "preview": report})
         self.assertTrue(self.api.delete_calibration_model(d["id"]))
-        self.assertEqual(self.api.list_calibration_models(self.pid), [])
+        # The seeded "Standard" model (#1) is untouched — only the one just created is gone.
+        remaining = self.api.list_calibration_models(self.pid)
+        self.assertEqual([m["name"] for m in remaining], ["Standard"])
+
+
+class TestStandardCalibrationModelSeed(unittest.TestCase):
+    """Every fresh profile ships with the bundled 'Standard' model, active by default —
+    see Facade._seed_standard_calibration_model / app/resources/standard_calibration_model.json."""
+
+    def test_fresh_profile_has_an_active_standard_model(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        pid = api.create_profile({"name": "P1"})["id"]
+        models = api.list_calibration_models(pid)
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]["number"], 1)
+        self.assertEqual(models[0]["name"], "Standard")
+        self.assertTrue(models[0]["active"])
+        self.assertEqual(models[0]["artifact"]["format"], "modelset")
+        self.assertIn("linear", models[0]["artifact"]["models"])
+
+    def test_standard_model_resolves_to_a_usable_calibration_model(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        pid = api.create_profile({"name": "P1"})["id"]
+        resolved = api._resolve_calibration_models(pid)
+        self.assertIn("linear", resolved)
+        self.assertGreater(resolved["linear"].n_runs, 0)
+
+    def test_seeded_model_is_independent_per_profile(self):
+        # Two profiles each get their OWN seeded doc (same content, different ids) — deleting
+        # one's Standard model must not affect the other's.
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        p1 = api.create_profile({"name": "P1"})["id"]
+        p2 = api.create_profile({"name": "P2"})["id"]
+        m1 = api.list_calibration_models(p1)[0]
+        m2 = api.list_calibration_models(p2)[0]
+        self.assertNotEqual(m1["id"], m2["id"])
+        api.delete_calibration_model(m1["id"])
+        self.assertEqual(api.list_calibration_models(p1), [])
+        self.assertEqual(len(api.list_calibration_models(p2)), 1)
 
 
 class TestFacadeUsesSavedModelOverGlobalFallback(unittest.TestCase):
@@ -243,8 +284,12 @@ class TestFacadeUsesSavedModelOverGlobalFallback(unittest.TestCase):
                     "tag": "session1", "vector_ms": M, "a_seed": _seed(_BASE, 700),
                     "b_seed": _seed(_BASE + dt.timedelta(seconds=5), Fb)})
 
-            # No saved model yet: falls back to the (empty, in this isolated CWD) global file.
-            self.assertEqual(self.api._resolve_calibration_models(pid), {})
+            # No user-saved model yet: resolves to the seeded "Standard" model (#1, active
+            # by default — see Facade._seed_standard_calibration_model), not the (empty, in
+            # this isolated CWD) global notebook file.
+            resolved = self.api._resolve_calibration_models(pid)
+            self.assertIn("linear", resolved)
+            self.assertEqual(resolved["linear"].label, "dF line (deployed)")
 
             report = self.api.preview_calibration(pid)
             saved = self.api.save_calibration_model(pid, {"name": "v1", "preview": report})

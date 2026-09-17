@@ -62,6 +62,7 @@ def _resolve_criteria(name: str):
     from claytonlib.chart import (
         machete_x_turns_n_balls_criteria,
         n_balls_no_flee_criteria,
+        n_turns_no_flee_criteria,
     )
     reg = _build_criteria_registry()
     if name in reg:
@@ -74,6 +75,10 @@ def _resolve_criteria(name: str):
     m = re.fullmatch(r'(\d+)-balls-no-flee', name)
     if m:
         return n_balls_no_flee_criteria(int(m.group(1)))
+    # parameterised: "survived-{turns}-turns-without-fleeing"
+    m = re.fullmatch(r'survived-(\d+)-turns-without-fleeing', name)
+    if m:
+        return n_turns_no_flee_criteria(int(m.group(1)))
     raise ValueError(f"Unknown criteria name: {name!r}")
 
 

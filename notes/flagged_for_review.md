@@ -86,6 +86,54 @@ already; everything since is still unverified:
   system `/etc/fonts` it doesn't recognize; fonts still resolve via fallback.
   Judged harmless; not fixed.
 
+## Addressed this session (your "Feedback 2" notes)
+
+Worked through `notes/clayton_v1_ui_improvements.md`'s "Feedback 2" section. Still
+**written blind** like everything else — add these to the list above needing your
+eyes — but a couple are worth flagging specifically:
+
+- **Found a real bug behind "Build canon map… isn't working when I click it"**:
+  the precompute progress-poll loop called a `sleep()` helper that was never
+  defined anywhere in the file — a `ReferenceError` that silently killed the
+  polling loop after the very first tick (uncaught, no visible error), leaving
+  the UI frozen mid-build with no further updates. That's almost certainly the
+  actual cause, independent of the progress bar's CSS/markup (which was already
+  fine). Added the missing `sleep()`. Worth specifically re-testing a real
+  (non-trivial) chart compute to confirm the progress bar now animates and the
+  page updates to "Computed" when it finishes.
+- **Also found (not just guessed) the Safari Compass "no seeds in range" bug**:
+  the candidate list only ever fetched on the path input's `oninput` — so it
+  stayed empty until your first keystroke, independent of whether a calibration
+  model existed. Now fetches the full candidate set (empty path) as soon as
+  Seed A is picked. Added an explicit m/M/b/B/0-3/F/C/u legend too.
+- **Renamed "canon map" → "Compute chart" / "computed data"** everywhere in
+  Safari Chart (Find Target + Manage Data) — button/label text only, no
+  internal names changed.
+- **Criteria can now be parameterized** — "N Machete turns after M balls" and
+  a generalized "survived N turns without fleeing" (was hardcoded to 10) both
+  get number inputs in Create Chart. Added `n_turns_no_flee_criteria` to
+  claytonlib + a regex case in `_resolve_criteria`; `machete-X-turns-after-Y-
+  balls` and `N-balls-no-flee` were already resolvable, just not exposed in the
+  UI. "Search from" now defaults to 180s.
+- **Metronome Compass Save Run**: dropped the "Timer calibration" field and the
+  Chatot-flips/Advance-frame inputs (kept Elm calls, per your note that only
+  that one might matter there). Safari Compass's Save Run modal is untouched —
+  you didn't flag it, and it may genuinely need those fields differently.
+- **Replaced the jarring `confirm()` "Run saved. Start another run?"** with a
+  proper modal (Done / Start another run) in **both** Metronome Compass and
+  Safari Compass — your note only named Metronome, but it was the exact same
+  code pattern and flaw in both places, so I fixed both rather than leaving
+  Safari Compass with the bug I'd just diagnosed. Say if you wanted Safari
+  Compass left alone.
+- **New profiles now seed a "Standard" calibration model automatically**
+  (active by default, model #1) — bundled into the app as
+  `app/resources/standard_calibration_model.json`, a literal copy of this
+  repo's own `data/calibration_model.json` per your instruction. This is your
+  *real* fitted calibration data, now baked into the packaged app for every
+  profile going forward — flag if that's not what you meant by "for now" (e.g.
+  if you'd rather this be a placeholder/fixture instead of your actual
+  numbers, or opt-in rather than automatic).
+
 ## Corrected this session
 
 - **I was wrong that safari runs don't matter for calibration** — you corrected

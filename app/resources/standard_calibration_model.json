@@ -1,0 +1,56 @@
+{
+  "format": "modelset",
+  "default": "linear",
+  "models": {
+    "linear": {
+      "kind": "line",
+      "target": "dF",
+      "beta": 0.05991649617039135,
+      "alpha": -289.88171493022674,
+      "coeffs": [],
+      "m_center": 0.0,
+      "m_scale": 1.0,
+      "jitter_c": 0.11695948999420992,
+      "jitter_rms": 73.3327591112681,
+      "n_fit": 45,
+      "sxx": 716454025314.8,
+      "m_bar": 299529.6,
+      "rtc_offset_seconds": 5.253044444444446,
+      "rtc_offset_std": 0.5031529900120086,
+      "safari_offset": -435.2663977546945,
+      "safari_offset_n": 8,
+      "safari_offset_std": 201.1396615223899,
+      "label": "dF line (deployed)",
+      "n_runs": 46,
+      "m_lo": 175000,
+      "m_hi": 595000
+    },
+    "quad": {
+      "kind": "quad",
+      "target": "dF",
+      "beta": 0.0,
+      "alpha": 0.0,
+      "coeffs": [
+        17648.846430840054,
+        7567.303161391038,
+        28.286902493277697
+      ],
+      "m_center": 299529.6,
+      "m_scale": 126179.23982395483,
+      "jitter_c": 0.09739199980461063,
+      "jitter_rms": 54.91116732096172,
+      "n_fit": 45,
+      "sxx": 716454025314.8,
+      "m_bar": 299529.6,
+      "rtc_offset_seconds": 5.253044444444446,
+      "rtc_offset_std": 0.5031529900120086,
+      "safari_offset": -460.9653198653341,
+      "safari_offset_n": 8,
+      "safari_offset_std": 215.15564758455048,
+      "label": "dF quadratic (deployed, fps_model=quad)",
+      "n_runs": 46,
+      "m_lo": 175000,
+      "m_hi": 595000
+    }
+  }
+}

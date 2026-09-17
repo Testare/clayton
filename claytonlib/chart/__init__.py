@@ -106,10 +106,14 @@ CRITERIA_CAPTURE = SuccessCriteria(
     lambda ctx: ctx.captured()
 )
 
-CRITERIA_WONT_FLEE_10_TURNS = SuccessCriteria(
-    "survived-10-turns-without-fleeing",
-    lambda ctx: ctx.turn_count >= 10 and ctx.is_watching()
-)
+def n_turns_no_flee_criteria(turns: int) -> SuccessCriteria:
+    """Success if the run is still on screen (not fled) after ``turns`` turns."""
+    def _check(ctx: SafariContext) -> bool:
+        return ctx.turn_count >= turns and ctx.is_watching()
+    return SuccessCriteria(f"survived-{turns}-turns-without-fleeing", _check)
+
+
+CRITERIA_WONT_FLEE_10_TURNS = n_turns_no_flee_criteria(10)
 
 def evaluate_seed(seed: int, pokemon: SafariPokemon, strategy: Strategy, criteria: SuccessCriteria) -> bool:
     ctx = SafariContext.start_encounter(seed, pokemon)

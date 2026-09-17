@@ -47,10 +47,30 @@ _STRATEGY_DESCRIPTIONS = {
 }
 _CRITERIA_DESCRIPTIONS = {
     "capture": "Success = captured. The straightforward goal for an actual catch attempt.",
-    "survived-10-turns-without-fleeing": "Success = still on screen after 10 turns, not "
-        "necessarily captured. Useful for calibration paths that need a long observation "
-        "window rather than an actual catch.",
 }
+
+# Criteria whose name embeds one or more numbers (claytonlib.expedition._config._resolve_criteria
+# parses these back out via regex — see its docstring-less match block). Each entry's `template`
+# is filled with `params` (in order) to build the actual criteria_name string sent to create_chart.
+_PARAMETERIZED_CRITERIA = [
+    {"name": "machete-turns-after-balls",
+     "description": "Success = captured via a Machete-solved path, checked after N balls "
+        "thrown, searching up to T turns deep. e.g. \"machete-50-turns-after-3-balls\".",
+     "template": "machete-{turns}-turns-after-{n_balls}-balls",
+     "params": [{"key": "turns", "label": "Max Machete turns", "default": 50},
+                {"key": "n_balls", "label": "Balls thrown first", "default": 3}]},
+    {"name": "survived-turns-without-fleeing",
+     "description": "Success = still on screen (not fled) after N turns, not necessarily "
+        "captured. Useful for calibration paths that need a long observation window.",
+     "template": "survived-{turns}-turns-without-fleeing",
+     "params": [{"key": "turns", "label": "Turns", "default": 10}]},
+    {"name": "balls-no-flee",
+     "description": "Success = captured, or N balls thrown without fleeing. A calibration-"
+        "oriented path: the point is a long enough observed path to identify the seed, not "
+        "necessarily a catch.",
+     "template": "{n_balls}-balls-no-flee",
+     "params": [{"key": "n_balls", "label": "Balls", "default": 10}]},
+]
 
 
 def _parse_time(s: str) -> dt.datetime:
@@ -64,9 +84,13 @@ def list_strategies() -> list[dict]:
 
 
 def list_criteria() -> list[dict]:
-    from claytonlib.chart import CRITERIA_CAPTURE, CRITERIA_WONT_FLEE_10_TURNS
-    criteria = [CRITERIA_CAPTURE, CRITERIA_WONT_FLEE_10_TURNS]
-    return [{"name": c.name, "description": _CRITERIA_DESCRIPTIONS.get(c.name, "")} for c in criteria]
+    """Fixed criteria plus parameterized templates (see _PARAMETERIZED_CRITERIA) — each
+    parameterized entry carries `template`/`params` so the Create Chart form can render
+    number inputs for it and build the actual `criteria_name` string client-side."""
+    from claytonlib.chart import CRITERIA_CAPTURE
+    fixed = [{"name": c.name, "description": _CRITERIA_DESCRIPTIONS.get(c.name, ""), "params": []}
+              for c in [CRITERIA_CAPTURE]]
+    return fixed + [dict(c) for c in _PARAMETERIZED_CRITERIA]
 
 
 def list_safari_pokemon() -> list[str]:
