@@ -307,7 +307,7 @@ async function openExpeditionHome(id){
   const cats = [
     ["👆🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
     ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data"]]],
-    ["⛺🧭", "Safari Compass", [["New Run","Safari Compass — New Run"],["Review Data","Safari Compass — Review Data"]]],
+    ["⛺🧭", "Safari Compass", [["New Run","Safari Compass — New Run","safariCompassNewRun"],["Review Data","Safari Compass — Review Data","safariReviewData"]]],
   ];
   const grid = cats.map(([emoji, cat, tools]) => `
     <div class="tool-cat"><h3>${emoji} ${esc(cat)}</h3>
@@ -476,10 +476,11 @@ function renderSeedA(){
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
 }
 
-function renderCandA(res){
+function renderCandA(res, pickFn){
+  pickFn = pickFn || "nrPickSeedA";
   if(res.count === 0) return `<div class="status">No candidates match.</div>`;
   const rows = res.candidates.slice(0, 60).map(c => `
-    <tr class="pick" onclick="nrPickSeedA(${c.seed})">
+    <tr class="pick" onclick="${pickFn}(${c.seed})">
       <td>${esc(c.seed_hex)}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
       <td>${c.sec_delta>=0?"+":""}${c.sec_delta}</td>
       <td>${c.r_route??"·"}</td><td>${c.e_route??"·"}</td><td>${c.l_route??"·"}</td>
@@ -1115,6 +1116,272 @@ async function ctDeleteTarget(id){
   await api("delete_target", id);
   await ctLoadTargets();
   renderChartFindTarget();
+}
+
+// --- Safari Compass: New Run ------------------------------------------------
+// Seed A is IDENTICAL to Metronome's (same metronome_seed_a/metronome_key_seed_info
+// calls; renderCandA/_seedASummary are reused as-is below) — only the header (no
+// metronome user) and Seed B differ.
+let sac = null;
+
+async function safariCompassNewRun(expId){
+  const e = await api("get_expedition", expId);
+  sac = { expId, e,
+    initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
+    seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
+    path: "", seedBResult: null, seedB: null };
+  renderSafariCompassNewRun();
+}
+
+function sacCaptureHeader(){
+  const t = $("sac-time"); if(t) sac.initialTime = t.value.trim();
+  const v = $("sac-vector"); if(v) sac.vectorMs = v.value.trim() === "" ? null : Number(v.value);
+}
+
+function renderSafariCompassNewRun(){
+  if(sac.e.key_seed == null){
+    mount(`<div class="head"><h2>Safari Compass — New Run</h2>
+        <button class="btn" onclick="openExpeditionHome('${esc(sac.expId)}')">← Expedition</button></div>
+      <div class="notice warn">Set a key seed in <b>Configure</b> first — Seed A search needs it.</div>`);
+    return;
+  }
+  const canSave = sac.seedA && sac.seedB;
+  mount(`<div class="head"><h2>Safari Compass — New Run</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="sacReset()">Reset run</button>
+        <button class="btn primary" ${canSave?"":"disabled"} onclick="openSaveSafariRunModal()">Save Run</button>
+        <button class="btn" onclick="openExpeditionHome('${esc(sac.expId)}')">Cancel</button>
+      </div></div>
+
+    <form class="panel panel-tight" onsubmit="return false">
+      <div class="grid2">
+        <div class="field"><label>Initial time (ISO)</label>
+          <input id="sac-time" value="${esc(sac.initialTime)}" placeholder="2025-07-24T14:45:56"></div>
+        <div class="field"><label>Vector ms</label>
+          <input id="sac-vector" value="${sac.vectorMs ?? ""}" placeholder="300000"></div>
+      </div>
+    </form>
+    <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${sac.e.key_seed.toString(16).toUpperCase()}</div>
+
+    <div class="nr-stack">
+      <div class="panel" id="sac-seeda">${renderSeedASafari()}</div>
+      <div class="panel ${sac.seedA?"":"locked"}" id="sac-seedb">${renderSeedBSafari()}</div>
+    </div>`);
+  updateSacKeyInfoLine();
+}
+
+function renderSeedASafari(){
+  if(sac.seedA && !sac.editingSeedA){
+    return `<h3>Seed A — identified</h3>
+      <div class="info-line done">${_seedASummary(sac.seedA)}</div>
+      <button class="btn small" onclick="sacChangeSeedA()">Change Seed A</button>`;
+  }
+  const hasCand = !!sac.seedACandidates;
+  const keepBar = sac.seedA ? `<div class="info-line">Currently: ${_seedASummary(sac.seedA)}</div>
+    <button class="btn small" onclick="sacKeepSeedA()">Keep this Seed A</button>` : "";
+  return `<h3>Seed A — ${sac.seedA ? "change" : "initial"} seed</h3>
+    ${keepBar}
+    <div class="rel-row">
+      <div class="field"><label>Roamer starting positions (R E L)</label>
+        <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"></div>
+      <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="2"></div>
+      <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="10"></div>
+      <button class="btn primary" onclick="sacGenerateSeedA()">Generate</button>
+    </div>
+    <div class="field check"><input type="checkbox" id="sac-parity"><label for="sac-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <div class="info-line" id="sac-keyinfo">key seed: —</div>
+    <div class="grid2">
+      <div class="field"><label>Observed roamer routes (R E L)</label>
+        <input id="sac-obsrel" placeholder="38 42 11  (. = any)" oninput="sacNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+      <div class="field"><label>Elm calls heard</label>
+        <input id="sac-elm" placeholder="EKP…" oninput="sacNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+    </div>
+    <div id="sac-candA">${hasCand ? renderCandA(sac.seedACandidates, "sacPickSeedA")
+      : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
+}
+
+async function sacGenerateSeedA(){
+  sacCaptureHeader();
+  if(!sac.initialTime){ toast("Set an initial time first."); return; }
+  sac._startrel = $("sac-startrel").value;
+  const prev = parseStartRel(sac._startrel);
+  sac.seedAParams = {
+    target_time: sac.initialTime, key_seed: sac.e.key_seed, prev_routes: prev,
+    seconds_window: Number($("sac-secwin").value), delay_window: Number($("sac-delaywin").value),
+    match_parity: $("sac-parity").checked };
+  sac.seedACandidates = await api("metronome_seed_a", sac.seedAParams);
+  sac.keyInfo = await api("metronome_key_seed_info", sac.e.key_seed, prev);
+  sac.e = await api("save_expedition", {...sac.e, last_target: {
+    initial_time: sac.initialTime, vector_ms: sac.vectorMs}});
+  renderSafariCompassNewRun();
+}
+
+async function sacNarrowSeedA(){
+  const params = {...sac.seedAParams,
+    rel_observed: $("sac-obsrel").value, elm_observed: $("sac-elm").value};
+  sac.seedACandidates = await api("metronome_seed_a", params);
+  $("sac-obsrel").classList.toggle("invalid", sac.seedACandidates.rel_valid === false);
+  $("sac-candA").innerHTML = renderCandA(sac.seedACandidates, "sacPickSeedA");
+}
+
+function updateSacKeyInfoLine(){
+  const box = $("sac-keyinfo");
+  if(box && sac.keyInfo){
+    const k = sac.keyInfo;
+    box.textContent = `key seed: R${k.r_route??"·"} E${k.e_route??"·"} L${k.l_route??"·"} · elm ${k.elm}`;
+  }
+}
+
+function sacPickSeedA(seed){
+  const picked = sac.seedACandidates.candidates.find(c => c.seed === seed);
+  const changed = sac.seedA && sac.seedA.seed !== picked.seed;
+  sac.seedA = picked;
+  sac.editingSeedA = false;
+  if(changed){ sac.seedB = null; sac.seedBResult = null; sac.path = ""; }
+  renderSafariCompassNewRun();
+}
+function sacChangeSeedA(){ sac.editingSeedA = true; renderSafariCompassNewRun(); }
+function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); }
+
+function renderCandBSafari(res){
+  if(!res.path_valid)
+    return `<div class="status" style="color:var(--danger)">Unrecognized character in the path.</div>`;
+  const rows = res.candidates.slice(0, 60).map(c => `
+    <tr><td>${esc(c.seed_hex)}</td><td>${c.frame}</td>
+      <td>${c.delta>=0?"+":""}${c.delta ?? "·"}</td><td>${(c.posterior*100).toFixed(2)}%</td></tr>`).join("");
+  return `<div class="status"><b>${res.count}</b> / ${res.total} candidate(s) match</div>
+    <div class="candtable"><table><thead><tr><th>seed</th><th>frame</th><th>δ</th><th>P</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
+
+function renderSeedBSafari(){
+  if(!sac.seedA) return `<h3>Seed B — battle seed</h3>
+    <div class="status">Identify Seed A first.</div>`;
+  if(sac.seedB){
+    return `<h3>Seed B — identified</h3>
+      <div class="info-line done">Seed B ${esc(sac.seedB.seed_hex)} · frame ${sac.seedB.frame}</div>
+      <button class="btn small" onclick="sacResetSeedB()">Change Seed B</button>`;
+  }
+  const r = sac.seedBResult;
+  let extra = "";
+  if(r){
+    if(r.path_valid && r.identified_seed){
+      const obs = sac.path, mpath = r.machete_path;
+      const pathLine = mpath && mpath.length
+        ? `${esc(obs)}<b style="color:var(--grass)">${esc(mpath[0])}</b>${esc(mpath.slice(1))}`
+        : esc(obs);
+      extra = `<div class="info-line">${pathLine}</div>
+        ${mpath ? `<div class="hint muted">Machete predicts a capture path — the bold action is next.</div>`
+          : `<div class="notice warn">Seed identified, but Machete found no capture path from here.</div>`}
+        <button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>
+        ${renderCandBSafari(r)}`;
+    } else if(r.path_valid && r.terminal){
+      extra = `<div class="notice warn">Run ended (${r.terminal}) — ${r.count} seed(s) still match
+          ${r.count>1?"(not uniquely identified; check your path or reset).":""}</div>
+        ${r.count===1?`<button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>`:""}
+        ${renderCandBSafari(r)}`;
+    } else {
+      extra = renderCandBSafari(r);
+    }
+  }
+  return `<h3>Seed B — battle seed</h3>
+    <div class="field"><label>Observed path (m/M/b/B/0-3/F/C, u=undo)</label>
+      <input id="sac-path" value="${esc(sac.path)}" placeholder="bbbBbb0321" oninput="sacUpdateSeedB()" autocomplete="off"></div>
+    <div class="hint muted">Enter what you actually see turn by turn — mud/bait (+crit), ball shake
+      count (0-3), F if it fled, C if captured. Narrows live as you type.</div>
+    ${extra}`;
+}
+
+async function sacUpdateSeedB(){
+  sac.path = $("sac-path").value;
+  sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
+    initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path});
+  $("sac-seedb").innerHTML = renderSeedBSafari();
+}
+
+function sacAcceptSeedB(){
+  const r = sac.seedBResult;
+  if(!r || !r.count) return;
+  const c = r.candidates[0];
+  sac.seedB = { seed: c.seed, seed_hex: c.seed_hex, frame: c.frame, path: sac.path };
+  renderSafariCompassNewRun();
+}
+
+function sacResetSeedB(){ sac.seedB = null; sac.seedBResult = null; sac.path = ""; renderSafariCompassNewRun(); }
+
+function openSaveSafariRunModal(){
+  if(!(sac.seedA && sac.seedB)) return;
+  openModal(`<h3>Save run</h3>
+    <form onsubmit="return sacSaveRun(event)">
+      <div class="grid2">
+        <div class="field"><label>Tag</label><input name="tag" placeholder="SCT1" autofocus></div>
+        <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
+      </div>
+      <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function sacSaveRun(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  await api("save_safari_run", sac.e.profile_id, {
+    tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
+    target_timer_calibration: Number(f.calibration.value) || 0,
+    notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB });
+  closeModal();
+  if(confirm("Run saved. Start another run?")) safariCompassNewRun(sac.expId);
+  else openExpeditionHome(sac.expId);
+  return false;
+}
+
+function sacReset(){
+  sac.seedA = null; sac.seedACandidates = null; sac.editingSeedA = false;
+  sac.seedB = null; sac.seedBResult = null; sac.path = "";
+  sac._startrel = ""; renderSafariCompassNewRun();
+}
+
+// --- Safari Compass: Review Data --------------------------------------------
+let sreview = null;
+async function safariReviewData(expId){
+  const e = await api("get_expedition", expId);
+  const runs = await api("list_runs", e.profile_id, "safari");
+  sreview = { expId, profileId: e.profile_id, runs, tag: "" };
+  renderSafariReview();
+}
+function renderSafariReview(){
+  const tags = [...new Set(sreview.runs.map(r => r.tag).filter(Boolean))].sort();
+  const shown = sreview.tag ? sreview.runs.filter(r => r.tag === sreview.tag) : sreview.runs;
+  const tagOpts = `<option value="">All tags</option>` +
+    tags.map(t => `<option${t===sreview.tag?" selected":""}>${esc(t)}</option>`).join("");
+  const body = sreview.runs.length === 0
+    ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
+    : `<div class="candtable" style="max-height:none"><table><thead><tr>
+        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th><th></th></tr></thead>
+        <tbody>${shown.map(r => `<tr>
+          <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
+          <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
+        </tr>`).join("")}</tbody></table></div>`;
+  mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(sreview.expId)}')">← Expedition</button></div>
+    <div class="head" style="margin-bottom:12px">
+      <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
+        <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
+      <div class="muted">${sreview.runs.length} run(s) for this profile</div>
+    </div>${body}
+    <div class="hint muted" style="margin-top:14px">Safari runs aren't used by the timer calibration
+      fit (that's metronome-only) — this is a record/reference view, no exclude/calibrate here.</div>`);
+}
+async function sreviewDelete(runId){
+  if(!confirm("Delete this run permanently?")) return;
+  await api("delete_run", runId);
+  sreview.runs = sreview.runs.filter(x => x.id !== runId);
+  renderSafariReview();
 }
 
 // --- Profiles -------------------------------------------------------------
