@@ -827,7 +827,8 @@ def _offset_phrase(delta):
 
 
 def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
-                    a_seed=None, target_timer_delay=None, elm_calls=None, chatot_flips=None):
+                    a_seed=None, target_timer_delay=None, elm_calls=None, chatot_flips=None,
+                    advance_frame=None):
     """Prompt for run metadata, preview the record, and append it to safari_runs.jsonl.
 
     Parameters
@@ -851,6 +852,13 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         The commanded countdown M (ms) -- pass the notebook's ``b_target_timer_delay`` directly;
         it is recorded as-is with no prompt.  Falls back to the previous run's value if omitted.
         Safari runs use no separate timer calibration (M = target_timer_delay).
+    advance_frame:
+        The Section-A Seed-A advance frame Sweet Scent was actually pressed on -- i.e. the
+        ``AdvancePlan.encounter_frame`` (pass the notebook's ``a_plan.encounter_frame`` or
+        ``a_target_frame``).  Unlike ``elm_calls``/``chatot_flips`` (the recipe's raw counts),
+        this is the landing frame itself, and is the more directly compensable signal for a
+        safari-chart target: it's the frame the encounter (species/IVs/nature) actually rolled
+        on, independent of how the approach was split between chatot flips and Elm calls.
     save_path:
         Destination JSONL (default data/safari_runs.jsonl).
 
@@ -914,6 +922,9 @@ def save_safari_run(matched, inputs=None, path=None, save_path=SAFARI_RUNS_PATH,
         # encounter frame -- recorded to test whether they correlate with frame_delta (Seed B miss).
         "elm_calls": elm_calls,
         "chatot_flips": chatot_flips,
+        # The Seed-A advance frame Sweet Scent was actually pressed on (AdvancePlan.encounter_frame).
+        # More directly useful than elm_calls/chatot_flips for compensating a safari-chart target.
+        "advance_frame": advance_frame,
         # Section-A initial seed (for F_a in the safari offset fit); null on older runs.
         "a_seed": _seed_summary(a_seed),
         "notes": notes,

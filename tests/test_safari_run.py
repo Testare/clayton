@@ -59,10 +59,13 @@ class TestSaveSafariRun(unittest.TestCase):
         p = self._path()
         with _answers(["counts", "", "y"]):
             rec = ct.save_safari_run(["0x0C0E02CA"], path="mmb0F", save_path=p,
-                                     target_timer_delay=300000, elm_calls=4, chatot_flips=5.5)
+                                     target_timer_delay=300000, elm_calls=4, chatot_flips=5.5,
+                                     advance_frame=41)
         self.assertEqual(rec["elm_calls"], 4)
         self.assertEqual(rec["chatot_flips"], 5.5)
+        self.assertEqual(rec["advance_frame"], 41)
         self.assertEqual(self._read(p)[0]["elm_calls"], 4)
+        self.assertEqual(self._read(p)[0]["advance_frame"], 41)
 
     def test_elm_and_chatot_default_none(self):
         p = self._path()
@@ -71,6 +74,7 @@ class TestSaveSafariRun(unittest.TestCase):
                                      target_timer_delay=300000)
         self.assertIsNone(rec["elm_calls"])
         self.assertIsNone(rec["chatot_flips"])
+        self.assertIsNone(rec["advance_frame"])
 
     def test_ambiguous_leaves_seed_null(self):
         p = self._path()
