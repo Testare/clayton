@@ -12,10 +12,22 @@ tests and manual precompute/rank runs against real data, never rendered in an ac
 window. You've verified and fixed real bugs in the Metronome Compass New Run flow
 already; everything since is still unverified:
 
-- **Safari Chart** — Find Target, Create Chart modal, Examine target modal.
-- **Calibrate Model** — the new Runs/Tags/Calibrate Model tabs in Review Data.
+- **Safari Chart** — Find Target, Create Chart modal, Examine target modal, and
+  the new **Manage Data** page (canon-map/target tables, delete buttons).
+- **Calibrate Model** — the Runs/Tags/Calibrate Model tabs in Review Data, now
+  including the safari-offset fit and the saved-models Export/Import buttons.
 - **Safari Compass** — New Run (shared Seed A, live path-narrowing Seed B, the
-  bold-next-action Machete display) and Review Data.
+  bold-next-action Machete display) and Review Data (now with exclude/reason
+  columns for safari runs, not just a record view).
+- **Export/Import** — the "Export…"/"Import expedition…" buttons on the
+  Profile and Expedition pages, the include-excluded-runs checkbox modal, and
+  the two-step collision-resolution modals (new-copy vs. replace/merge).
+- **Staged Save/Discard for exclusion edits** (`clayton-dxq.5`) — both Review
+  Data pages' run and tag exclude checkboxes now stage into a dirty set (shown
+  highlighted, with an "N unsaved change(s)" bar) instead of applying
+  immediately; leaving the page or switching tabs with unsaved changes prompts
+  a confirm. Delete is unaffected — that stays immediate, gated by its own
+  confirm, since the bead was specifically about exclusion toggles.
 - The UI-improvements pass (emoji, Save Run modal, Seed A change/keep flow, Seed B
   transcript log) — you said you'd verify this "later."
 
@@ -27,12 +39,6 @@ already; everything since is still unverified:
   or a replication scheme — implementing one wasn't in scope for getting Chart
   unblocked. See `app/calibration.py`'s docstring. (`clayton-dxq.3`, closed with
   this noted as a deliberate deferral, not a bug.)
-- **No staged Save/discard for exclusion edits** (`clayton-dxq.5`, open) — every
-  exclude checkbox in Review Data (run or tag) applies immediately. The original
-  design called for staging edits with an explicit Save and a Discard option.
-- **Export doesn't prompt "include excluded runs?"** (`clayton-dxq.6`, open) and
-  doesn't carry exclusion flags yet.
-- **Safari Chart → Manage Data is still a placeholder** (`clayton-9z6.3`).
 - **No fps_model picker in the Find Target UI** — always uses "linear"; "quad" is
   fit and stored but never selectable from the page.
 - **No cooperative cancel on a running canon precompute** — once started, the

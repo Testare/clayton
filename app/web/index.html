@@ -694,7 +694,8 @@ async function metronomeReviewData(expId){
   const e = await api("get_expedition", expId);
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "metronome"), api("get_profile", e.profile_id)]);
-  review = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs", preview: null };
+  review = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs", preview: null,
+    dirty: {}, dirtyTags: {} };
   await reviewRefreshPreview();
   renderReview();
 }
@@ -705,7 +706,20 @@ async function reviewRefreshPreview(){
   catch(err){ review.preview = null; }
 }
 
+function reviewHasUnsaved(){
+  return Object.keys(review.dirty).length > 0 || Object.keys(review.dirtyTags).length > 0;
+}
+
+function reviewLeavePage(expId){
+  if(reviewHasUnsaved() && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
+  openExpeditionHome(expId);
+}
+
 async function reviewSwitchView(view){
+  if(view !== review.view && reviewHasUnsaved()){
+    if(!confirm("You have unsaved exclusion changes. Switch tabs and discard them?")) return;
+    review.dirty = {}; review.dirtyTags = {};
+  }
   review.view = view;
   if(view === "calibrate" && !review.savedModels) await reviewLoadSavedModels();
   renderReview();
@@ -721,7 +735,7 @@ function renderReview(){
     : review.view === "calibrate" ? renderCalibrateModel()
     : renderReviewRuns();
   mount(`<div class="head"><h2>Metronome Compass — Review Data</h2>
-      <button class="btn" onclick="openExpeditionHome('${esc(review.expId)}')">← Expedition</button></div>
+      <button class="btn" onclick="reviewLeavePage('${esc(review.expId)}')">← Expedition</button></div>
     ${tabs}${body}`);
 }
 
@@ -731,35 +745,59 @@ function renderReviewRuns(){
   const tagOpts = `<option value="">All tags</option>` +
     tags.map(t => `<option${t===review.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = review.preview?.reasons || {};
+  const dirtyCount = Object.keys(review.dirty).length;
+  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span>${dirtyCount} unsaved exclusion change(s)</span>
+      <span><button class="btn small" onclick="reviewDiscardRunChanges()">Discard</button>
+      <button class="btn small primary" onclick="reviewSaveRunChanges()">Save changes</button></span>
+    </div>` : "";
   const body = review.runs.length === 0
     ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
         <th>exclude</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
-          return `<tr${reason?' style="opacity:.6"':""}>
+          const isDirty = review.dirty[r.id] !== undefined;
+          const staged = isDirty ? review.dirty[r.id] : r.excluded;
+          const rowStyle = isDirty ? ' style="background:rgba(255,196,0,.12)"' : (reason ? ' style="opacity:.6"' : "");
+          return `<tr${rowStyle}>
           <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
           <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td>${esc(r.b_seed?.seed_hex || "—")}</td>
-          <td><input type="checkbox" ${r.excluded?"checked":""} onchange="reviewToggle('${esc(r.id)}',this.checked)"></td>
+          <td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>
           <td>${reason.startsWith("outlier")
-              ? `<span class="badge warn">${esc(reason)}</span>` : esc(reason || "—")}</td>
+              ? `<span class="badge warn">${esc(reason)}</span>` : esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
         <select onchange="review.tag=this.value;renderReview()">${tagOpts}</select></div>
       <div class="muted">${review.runs.length} run(s) for this profile</div>
-    </div>${body}
+    </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Outliers (flagged automatically) are always left
       out of the fit regardless of this checkbox. "reason" reflects the last-loaded preview —
-      switch to Calibrate Model to refresh it.</div>`;
+      switch to Calibrate Model to refresh it. Checkbox changes are staged — click "Save changes"
+      to apply them, or "Discard" to revert.</div>`;
 }
 
-async function reviewToggle(runId, excluded){
-  await api("set_run_excluded", runId, excluded);
-  const r = review.runs.find(x => x.id === runId); if(r) r.excluded = excluded;
+function reviewStageToggle(runId, checked){
+  const r = review.runs.find(x => x.id === runId);
+  if(r && r.excluded === checked) delete review.dirty[runId];
+  else review.dirty[runId] = checked;
+  renderReview();
+}
+
+async function reviewSaveRunChanges(){
+  const ids = Object.keys(review.dirty);
+  await Promise.all(ids.map(id => api("set_run_excluded", id, review.dirty[id])));
+  for(const id of ids){ const r = review.runs.find(x => x.id === id); if(r) r.excluded = review.dirty[id]; }
+  review.dirty = {};
   await reviewRefreshPreview();
+  renderReview();
+}
+
+function reviewDiscardRunChanges(){
+  review.dirty = {};
   renderReview();
 }
 
@@ -767,6 +805,7 @@ async function reviewDelete(runId){
   if(!confirm("Delete this run permanently?")) return;
   await api("delete_run", runId);
   review.runs = review.runs.filter(x => x.id !== runId);
+  delete review.dirty[runId];
   await reviewRefreshPreview();
   renderReview();
 }
@@ -774,26 +813,49 @@ async function reviewDelete(runId){
 function renderReviewTags(){
   const tags = [...new Set(review.runs.map(r => r.tag || "(untagged)"))].sort();
   if(!tags.length) return `<div class="empty">No tags yet.</div>`;
+  const dirtyCount = Object.keys(review.dirtyTags).length;
+  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span>${dirtyCount} unsaved tag change(s)</span>
+      <span><button class="btn small" onclick="reviewDiscardTagChanges()">Discard</button>
+      <button class="btn small primary" onclick="reviewSaveTagChanges()">Save changes</button></span>
+    </div>` : "";
   const rows = tags.map(tag => {
     const inTag = review.runs.filter(r => (r.tag || "(untagged)") === tag);
-    const excluded = review.profile.excluded_tags.includes(tag);
+    const isDirty = review.dirtyTags[tag] !== undefined;
+    const excluded = isDirty ? review.dirtyTags[tag] : review.profile.excluded_tags.includes(tag);
     const included = inTag.filter(r => !r.excluded && !excluded).length;
-    return `<tr><td>${esc(tag)}</td><td>${inTag.length}</td><td>${included}</td>
+    return `<tr${isDirty?' style="background:rgba(255,196,0,.12)"':""}><td>${esc(tag)}</td><td>${inTag.length}</td><td>${included}</td>
       <td><input type="checkbox" ${excluded?"checked":""}
-        onchange="reviewToggleTag('${esc(tag)}',this.checked)"> exclude tag</td></tr>`;
+        onchange="reviewStageToggleTag('${esc(tag)}',this.checked)"> exclude tag</td></tr>`;
   }).join("");
-  return `<div class="candtable" style="max-height:none"><table><thead><tr>
+  return `${saveBar}<div class="candtable" style="max-height:none"><table><thead><tr>
       <th>tag</th><th>runs</th><th>included</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:14px">Excluding a tag does not change individual runs'
       own checkboxes — excluded runs show "tag:&lt;name&gt;" as their reason in the Runs view.
-      Per-tag weighting (beyond on/off) isn't implemented yet.</div>`;
+      Per-tag weighting (beyond on/off) isn't implemented yet. Changes are staged — click
+      "Save changes" to apply them, or "Discard" to revert.</div>`;
 }
 
-async function reviewToggleTag(tag, excluded){
-  const p = await api("set_tag_excluded", review.profileId, tag, excluded);
+function reviewStageToggleTag(tag, checked){
+  const current = review.profile.excluded_tags.includes(tag);
+  if(current === checked) delete review.dirtyTags[tag];
+  else review.dirtyTags[tag] = checked;
+  renderReview();
+}
+
+async function reviewSaveTagChanges(){
+  const tags = Object.keys(review.dirtyTags);
+  let p = review.profile;
+  for(const tag of tags){ p = await api("set_tag_excluded", review.profileId, tag, review.dirtyTags[tag]); }
   review.profile = p;
+  review.dirtyTags = {};
   await reviewRefreshPreview();
+  renderReview();
+}
+
+function reviewDiscardTagChanges(){
+  review.dirtyTags = {};
   renderReview();
 }
 
@@ -1496,7 +1558,7 @@ let sreview = null;
 async function safariReviewData(expId){
   const e = await api("get_expedition", expId);
   const runs = await api("list_runs", e.profile_id, "safari");
-  sreview = { expId, profileId: e.profile_id, runs, tag: "", preview: null };
+  sreview = { expId, profileId: e.profile_id, runs, tag: "", preview: null, dirty: {} };
   await sreviewRefreshPreview();
   renderSafariReview();
 }
@@ -1505,48 +1567,75 @@ async function sreviewRefreshPreview(){
   try{ sreview.preview = await api("preview_calibration", sreview.profileId); }
   catch(err){ sreview.preview = null; }
 }
+function sreviewLeavePage(expId){
+  if(Object.keys(sreview.dirty).length && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
+  openExpeditionHome(expId);
+}
 function renderSafariReview(){
   const tags = [...new Set(sreview.runs.map(r => r.tag).filter(Boolean))].sort();
   const shown = sreview.tag ? sreview.runs.filter(r => r.tag === sreview.tag) : sreview.runs;
   const tagOpts = `<option value="">All tags</option>` +
     tags.map(t => `<option${t===sreview.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = sreview.preview?.reasons || {};
+  const dirtyCount = Object.keys(sreview.dirty).length;
+  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span>${dirtyCount} unsaved exclusion change(s)</span>
+      <span><button class="btn small" onclick="sreviewDiscardChanges()">Discard</button>
+      <button class="btn small primary" onclick="sreviewSaveChanges()">Save changes</button></span>
+    </div>` : "";
   const body = sreview.runs.length === 0
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
         <th>exclude</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
-          return `<tr${reason?' style="opacity:.6"':""}>
+          const isDirty = sreview.dirty[r.id] !== undefined;
+          const staged = isDirty ? sreview.dirty[r.id] : r.excluded;
+          const rowStyle = isDirty ? ' style="background:rgba(255,196,0,.12)"' : (reason ? ' style="opacity:.6"' : "");
+          return `<tr${rowStyle}>
           <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
           <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td>${esc(r.b_seed?.seed_hex || "—")}</td>
-          <td><input type="checkbox" ${r.excluded?"checked":""} onchange="sreviewToggle('${esc(r.id)}',this.checked)"></td>
-          <td>${esc(reason || "—")}</td>
+          <td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>
+          <td>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
-      <button class="btn" onclick="openExpeditionHome('${esc(sreview.expId)}')">← Expedition</button></div>
+      <button class="btn" onclick="sreviewLeavePage('${esc(sreview.expId)}')">← Expedition</button></div>
     <div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
         <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
       <div class="muted">${sreview.runs.length} run(s) for this profile</div>
-    </div>${body}
+    </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Safari runs fit the safari load-path offset
       (against the currently-fitted timer model) — see Metronome Compass → Review Data →
       Calibrate Model to run that fit. Tag exclusion is shared with metronome runs (set from
-      either Review Data page).</div>`);
+      either Review Data page). Checkbox changes are staged — click "Save changes" to apply
+      them, or "Discard" to revert.</div>`);
 }
-async function sreviewToggle(runId, excluded){
-  await api("set_run_excluded", runId, excluded);
-  const r = sreview.runs.find(x => x.id === runId); if(r) r.excluded = excluded;
+function sreviewStageToggle(runId, checked){
+  const r = sreview.runs.find(x => x.id === runId);
+  if(r && r.excluded === checked) delete sreview.dirty[runId];
+  else sreview.dirty[runId] = checked;
+  renderSafariReview();
+}
+async function sreviewSaveChanges(){
+  const ids = Object.keys(sreview.dirty);
+  await Promise.all(ids.map(id => api("set_run_excluded", id, sreview.dirty[id])));
+  for(const id of ids){ const r = sreview.runs.find(x => x.id === id); if(r) r.excluded = sreview.dirty[id]; }
+  sreview.dirty = {};
   await sreviewRefreshPreview();
+  renderSafariReview();
+}
+function sreviewDiscardChanges(){
+  sreview.dirty = {};
   renderSafariReview();
 }
 async function sreviewDelete(runId){
   if(!confirm("Delete this run permanently?")) return;
   await api("delete_run", runId);
   sreview.runs = sreview.runs.filter(x => x.id !== runId);
+  delete sreview.dirty[runId];
   await sreviewRefreshPreview();
   renderSafariReview();
 }
