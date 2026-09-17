@@ -326,38 +326,100 @@ class Facade:
         return self.get_profile(p.id)
 
     # -- export / import --------------------------------------------------
+    #
+    # Every import that can collide (expedition-into-profile by name, bundle-into-a-
+    # same-named-profile) returns {"collision": True, "existing_id", "existing_name"}
+    # instead of importing when `on_collision` isn't given — the UI shows that to the
+    # user and re-calls with an explicit decision. See app/portability.py for the exact
+    # semantics of each `on_collision` value.
 
     def export_expedition(self, expedition_id: str) -> dict:
-        """A versioned export envelope for one expedition."""
+        """A versioned export envelope for one expedition (+ its charts/targets)."""
         from app import portability
         return portability.export_expedition(self._store, expedition_id)
 
-    def export_profile_bundle(self, profile_id: str) -> dict:
-        """A versioned export bundle: a profile + its expeditions + runs."""
+    def import_expedition(self, profile_id: str, envelope: dict, on_collision: str | None = None) -> dict:
+        """Import one expedition (+ its charts/targets) into a profile."""
         from app import portability
-        return portability.export_profile_bundle(self._store, profile_id)
+        self._load_profile(profile_id)
+        return portability.import_expedition(self._store, profile_id, envelope, on_collision)
 
-    def import_profile_bundle(self, envelope: dict) -> dict:
-        """Import a profile bundle as a fresh copy; returns the new id + counts."""
+    def export_profile_bundle(self, profile_id: str, include_excluded: bool = True) -> dict:
+        """A versioned export bundle: a profile + its expeditions/charts/targets/runs/
+        calibration models. `include_excluded=False` drops manually-excluded runs."""
         from app import portability
-        return portability.import_profile_bundle(self._store, envelope)
+        return portability.export_profile_bundle(self._store, profile_id, include_excluded)
 
-    def export_profile_bundle_to_file(self, profile_id: str) -> dict:
+    def import_profile_bundle(self, envelope: dict, on_collision: str | None = None) -> dict:
+        """Import a profile bundle. `on_collision`: "new" (separate profile, default-safe
+        when there's no collision) or "merge" (fold into the existing same-named profile)."""
+        from app import portability
+        return portability.import_profile_bundle(self._store, envelope, on_collision)
+
+    def export_calibration_model(self, model_id: str) -> dict:
+        """A versioned export envelope for one saved calibration model."""
+        from app import portability
+        return portability.export_calibration_model(self._store, model_id)
+
+    def import_calibration_model(self, profile_id: str, envelope: dict) -> dict:
+        """Import one calibration model into a profile, as a new inactive entry."""
+        from app import portability
+        self._load_profile(profile_id)
+        return portability.import_calibration_model(self._store, profile_id, envelope)
+
+    def export_expedition_to_file(self, expedition_id: str) -> dict:
+        """Export one expedition via a native Save dialog."""
+        from app import files
+        env = self.export_expedition(expedition_id)
+        name = (self._store.read(_EXPEDITIONS, expedition_id) or {}).get("name", "expedition")
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "expedition"
+        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        return {"saved": bool(path), "path": path}
+
+    def import_expedition_from_file(self, profile_id: str) -> dict:
+        """Open an expedition export via a native Open dialog. If it collides with an
+        existing expedition (same name in this profile), returns the collision instead of
+        importing — resolve it with import_expedition_resolve."""
+        from app import files
+        env = files.open_json_dialog()
+        if env is None:
+            return {"imported": False}
+        result = self.import_expedition(profile_id, env)
+        if result.get("collision"):
+            return {"imported": False, **result, "envelope": env}
+        return {"imported": True, **result}
+
+    def import_expedition_resolve(self, profile_id: str, envelope: dict, on_collision: str) -> dict:
+        """Finish an import_expedition_from_file that returned a collision, with the
+        user's explicit "copy" or "replace" decision."""
+        return {"imported": True, **self.import_expedition(profile_id, envelope, on_collision)}
+
+    def export_profile_bundle_to_file(self, profile_id: str, include_excluded: bool = True) -> dict:
         """Export a profile bundle via a native Save dialog."""
         from app import files
-        env = self.export_profile_bundle(profile_id)
+        env = self.export_profile_bundle(profile_id, include_excluded)
         name = (self._store.read(_PROFILES, profile_id) or {}).get("name", "profile")
         safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "profile"
         path = files.save_json_dialog(f"clayton-{safe}.json", env)
         return {"saved": bool(path), "path": path}
 
     def import_profile_bundle_from_file(self) -> dict:
-        """Import a profile bundle via a native Open dialog."""
+        """Open a profile bundle via a native Open dialog. If it collides with an existing
+        same-named profile, returns the collision instead of importing — resolve it with
+        import_profile_bundle_resolve."""
         from app import files
         env = files.open_json_dialog()
         if env is None:
             return {"imported": False}
-        return {"imported": True, **self.import_profile_bundle(env)}
+        result = self.import_profile_bundle(env)
+        if result.get("collision"):
+            return {"imported": False, **result, "envelope": env}
+        return {"imported": True, **result}
+
+    def import_profile_bundle_resolve(self, envelope: dict, on_collision: str) -> dict:
+        """Finish an import_profile_bundle_from_file that returned a collision, with the
+        user's explicit "new" or "merge" decision."""
+        return {"imported": True, **self.import_profile_bundle(envelope, on_collision)}
 
     # -- Safari Chart: reference data --------------------------------------
 
