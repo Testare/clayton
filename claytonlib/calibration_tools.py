@@ -458,8 +458,13 @@ def _abort_on_keyword(orig_input):
     return wrapped
 
 
-def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_only=False):
+def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_only=False,
+                      input_fn=None, output_fn=None):
     """Interactively narrow `candidates` to a single seed.
+
+    `input_fn(prompt) -> str` and `output_fn(*args) -> None` override the console I/O
+    (default: builtins input/print), so a non-notebook caller — the app facade — can
+    drive the same turn-by-turn narrowing by answering questions programmatically.
 
     Reuses the metronome_compass battle driver: an InteractiveContext walks the real
     battle turn by turn, asking what actually happened ("Magikarp used? (sp/tk)",
@@ -472,6 +477,7 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     (e.g. the Metronome user Explodes and every path ends).
     """
     install_input_fixup()  # ipykernel resets builtins.input per cell; re-apply here
+    out = output_fn or print  # redirect this driver's own output when run headless
     from claytonlib.metronome_compass import (
         simulate_turn, InteractiveContext, MetronomeBattleState,
         MetronomeMove, _BATTLE_START_ADVANCES,
@@ -501,8 +507,8 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     ctx.advance_unobservable(_BATTLE_START_ADVANCES)  # no-op interactively; parity w/ precompute
 
     def show(remaining, turn_n):
-        print(f"\n{len(remaining)} / {len(candidates)} seeds remain -- next is turn {turn_n}")
-        print(f"  {'Seed':>10}  {'Delay':>6}  {'dD':>4}  predicted turn {turn_n}")
+        out(f"\n{len(remaining)} / {len(candidates)} seeds remain -- next is turn {turn_n}")
+        out(f"  {'Seed':>10}  {'Delay':>6}  {'dD':>4}  predicted turn {turn_n}")
         for c in remaining[:15]:
             path = c["path"]
             turn_str, move_name = "", "?"
@@ -513,51 +519,52 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
                     if isinstance(tok, MetronomeMove):
                         move_name = moves_by_num[tok.move_num].name
                         break
-            print(f"  0x{c['seed']:08X}  {c['delay']:>6}  {c['delay_delta']:>+4}  "
+            out(f"  0x{c['seed']:08X}  {c['delay']:>6}  {c['delay_delta']:>+4}  "
                   f"{turn_str:<18} ({move_name})")
         if len(remaining) > 15:
-            print(f"  ... and {len(remaining) - 15} more")
+            out(f"  ... and {len(remaining) - 15} more")
 
     import builtins
     remaining = list(candidates)
     turn_n = 0
     orig_input = builtins.input
-    builtins.input = _abort_on_keyword(orig_input)  # ABORT at any prompt stops the run
+    base_input = input_fn or orig_input   # injected callback drives InteractiveContext's input()
+    builtins.input = _abort_on_keyword(base_input)  # ABORT at any prompt stops the run
     try:
         while True:
             show(remaining, turn_n + 1)
             if len(remaining) == 1:
                 c = remaining[0]
-                print(f"\nSeed identified: 0x{c['seed']:08X}  "
+                out(f"\nSeed identified: 0x{c['seed']:08X}  "
                       f"time={c['time'].strftime('%Y-%m-%d %H:%M:%S')}  delay={c['delay']}  "
                       f"dD={c['delay_delta']:+d}")
-                print(f"Full path: {c['path_str']}")
+                out(f"Full path: {c['path_str']}")
                 # Metronome moves remaining in the identified seed's path (turns not yet observed).
-                print(f"Remaining Metronome moves (turn {turn_n + 1}+):")
+                out(f"Remaining Metronome moves (turn {turn_n + 1}+):")
                 for turn_idx in range(turn_n, len(c["path"])):
                     for tok in c["path"][turn_idx]:
                         if isinstance(tok, MetronomeMove):
-                            print(f"  Turn {turn_idx + 1}: {moves_by_num[tok.move_num].name} (M{tok.move_num:03d})")
+                            out(f"  Turn {turn_idx + 1}: {moves_by_num[tok.move_num].name} (M{tok.move_num:03d})")
                 return c
             if not remaining:
-                print("\nNo seeds match -- check your answers or widen the window above.")
+                out("\nNo seeds match -- check your answers or widen the window above.")
                 return None
             # No remaining seed has a turn beyond this one -> nothing left to observe (e.g. the
             # Metronome user Exploded and every path ends).  Can't narrow further; abort.
             if not any(len(c["path"]) > turn_n for c in remaining):
-                print(f"\nAll {len(remaining)} remaining seeds' paths end here -- no further turn "
+                out(f"\nAll {len(remaining)} remaining seeds' paths end here -- no further turn "
                       f"to observe. Aborting; seed left unidentified.")
                 return None
 
             turn_n += 1
-            print(f"\n--- Turn {turn_n}: answer what happened in the battle "
+            out(f"\n--- Turn {turn_n}: answer what happened in the battle "
                   f"(or type ABORT to stop) ---")
             simulate_turn(ctx, state, moves_by_num, known, magikarp_level)
             observed = ctx.path[turn_n - 1]
             remaining = [c for c in remaining
                          if len(c["path"]) >= turn_n and c["path"][turn_n - 1] == observed]
     except _AbortRun:
-        print("\nRun aborted -- seed left unidentified (b_seed = None).")
+        out("\nRun aborted -- seed left unidentified (b_seed = None).")
         return None
     finally:
         builtins.input = orig_input

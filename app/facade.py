@@ -23,6 +23,8 @@ _RUNS = "runs"
 class Facade:
     def __init__(self, store: Store | None = None):
         self._store = store or FileStore()
+        from app.metronome_session import SessionRegistry
+        self._sessions = SessionRegistry()
 
     # -- internal loaders -------------------------------------------------
 
@@ -204,6 +206,26 @@ class Facade:
     def metronome_seed_b(params: dict) -> dict:
         """Candidate battle seeds, each with its precomputed Metronome path."""
         return metronome.seed_b(params)
+
+    def _json_session_state(self, state: dict) -> dict:
+        result = state.get("result")
+        if result:  # the identified candidate carries a datetime + path objects
+            state = {**state, "result": metronome._row_b_json(result)}
+        return state
+
+    def metronome_seed_b_start(self, params: dict) -> dict:
+        """Begin the interactive Seed B narrowing; returns the first question (or result)."""
+        runner = metronome.seed_b_runner(params)
+        _sid, state = self._sessions.start(runner)
+        return self._json_session_state(state)
+
+    def metronome_seed_b_answer(self, session_id: str, text: str) -> dict:
+        """Answer the current question; returns the next question (or the identified seed)."""
+        return self._json_session_state(self._sessions.answer(session_id, text))
+
+    def metronome_seed_b_abort(self, session_id: str) -> dict:
+        """Stop the narrowing without identifying a seed."""
+        return self._sessions.abort(session_id)
 
     # -- Runs (profile-scoped) --------------------------------------------
 

@@ -339,7 +339,7 @@ async function metronomeNewRun(expId){
     userId: (profile.metronome_users.find(u => u.is_suitable) || profile.metronome_users[0] || {}).id ?? null,
     initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
     seedAParams: null, seedACandidates: null, seedA: null, keyInfo: null,
-    seedBCandidates: null, seedB: null };
+    seedBSession: null, seedB: null };
   renderNewRun();
 }
 
@@ -469,7 +469,7 @@ function nrPickSeedA(seed){
   nr.seedA = nr.seedACandidates.candidates.find(c => c.seed === seed);
   renderNewRun();
 }
-function nrResetSeedA(){ nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBCandidates = null; renderNewRun(); }
+function nrResetSeedA(){ nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBSession = null; renderNewRun(); }
 
 function renderSeedB(){
   if(!nr.seedA) return `<h3>Seed B — battle seed</h3>
@@ -479,17 +479,21 @@ function renderSeedB(){
       <div class="info-line done">Seed B ${esc(nr.seedB.seed_hex)} · delay ${nr.seedB.delay} · ${esc(nr.seedB.path_str)}</div>
       <button class="btn small" onclick="nrResetSeedB()">Change Seed B</button>`;
   }
-  let list = "";
-  if(nr.seedBCandidates){
-    const rows = nr.seedBCandidates.candidates.map(c => `
-      <tr class="pick" onclick="nrPickSeedB(${c.seed})">
-        <td>${esc(c.seed_hex)}</td><td>${c.delay}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
-        <td>${esc(c.path_str)}</td></tr>`).join("");
-    list = `<div class="status"><b>${nr.seedBCandidates.count}</b> candidate(s) — match the battle you saw, click to pick</div>
-      <div class="candtable"><table><thead><tr><th>seed</th><th>delay</th><th>dD</th><th>Metronome path</th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`;
+  const s = nr.seedBSession;
+  if(s && !s.done){
+    const ctx = (s.output && s.output.length)
+      ? `<div class="candtable"><pre style="margin:0;padding:10px;font-size:11px;white-space:pre">${esc(s.output.join("\n"))}</pre></div>` : "";
+    return `<h3>Seed B — narrowing the battle</h3>${ctx}
+      <div class="info-line" style="color:var(--ink)">${esc(s.prompt || "…")}</div>
+      <form onsubmit="return nrAnswerSeedB(event)">
+        <div class="field"><input id="nr-sbans" placeholder="answer (or ABORT to stop)"></div>
+        <div class="actions"><button class="btn primary" type="submit">Answer</button>
+          <button class="btn" type="button" onclick="nrAbortSeedB()">Abort</button></div>
+      </form>`;
   }
-  return `<h3>Seed B — battle seed</h3>
+  const ended = (s && s.done && !nr.seedB)
+    ? `<div class="notice warn">Narrowing ended without a unique seed${s.error ? ": " + esc(s.error) : ""}. Check your answers and try again.</div>` : "";
+  return `<h3>Seed B — battle seed</h3>${ended}
     <div class="grid2">
       <div class="field"><label>Magikarp level</label><input id="nr-mklevel" type="number" min="1" max="100"></div>
       <div class="field"><label>Magikarp gender</label>
@@ -498,11 +502,11 @@ function renderSeedB(){
           <label class="radio"><input type="radio" name="nr-mkg" value="female"> female</label>
         </div></div>
     </div>
-    <button class="btn primary" onclick="nrGenerateSeedB()">Start</button>
-    ${list}`;
+    <div class="hint muted">Walks the real battle turn by turn — answer what you see; candidates narrow to one seed.</div>
+    <button class="btn primary" onclick="nrStartSeedB()">Start narrowing</button>`;
 }
 
-async function nrGenerateSeedB(){
+async function nrStartSeedB(){
   const level = Number($("nr-mklevel").value);
   if(!level){ toast("Enter Magikarp's level."); return; }
   const mkGender = document.querySelector('input[name="nr-mkg"]:checked').value;
@@ -510,15 +514,32 @@ async function nrGenerateSeedB(){
   const userGender = (u && u.gender) || "female";   // Chansey is female
   const moveset = (u && u.moveset) || [];
   const metronomeOnly = moveset.filter(m => m.toLowerCase() !== "metronome").length === 0;
-  nr.seedBCandidates = await api("metronome_seed_b", {
+  nr.seedBSession = await api("metronome_seed_b_start", {
     target_time: nr.initialTime, target_delay: relLow16(nr.e.key_seed),
     seconds_window: nr.seedAParams.seconds_window, delay_window: nr.seedAParams.delay_window,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
-    metronome_only: metronomeOnly, limit: 15 });
+    metronome_only: metronomeOnly });
+  if(nr.seedBSession.done && nr.seedBSession.result) nr.seedB = nr.seedBSession.result;
   renderNewRun();
 }
-function nrPickSeedB(seed){ nr.seedB = nr.seedBCandidates.candidates.find(c => c.seed === seed); renderNewRun(); }
-function nrResetSeedB(){ nr.seedB = null; nr.seedBCandidates = null; renderNewRun(); }
+
+async function nrAnswerSeedB(ev){
+  ev.preventDefault();
+  const text = $("nr-sbans").value;
+  nr.seedBSession = await api("metronome_seed_b_answer", nr.seedBSession.session_id, text);
+  if(nr.seedBSession.done && nr.seedBSession.result) nr.seedB = nr.seedBSession.result;
+  renderNewRun();
+  return false;
+}
+
+async function nrAbortSeedB(){
+  if(nr.seedBSession && !nr.seedBSession.done)
+    await api("metronome_seed_b_abort", nr.seedBSession.session_id);
+  nr.seedBSession = null;
+  renderNewRun();
+}
+
+function nrResetSeedB(){ nr.seedB = null; nr.seedBSession = null; renderNewRun(); }
 
 function renderSaveRun(){
   if(!(nr.seedA && nr.seedB)) return `<h3>Save run</h3>
@@ -548,7 +569,7 @@ async function nrSave(ev){
 }
 
 function nrReset(){
-  nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBCandidates = null;
+  nr.seedA = null; nr.seedACandidates = null; nr.seedB = null; nr.seedBSession = null;
   nr._startrel = ""; renderNewRun();
 }
 

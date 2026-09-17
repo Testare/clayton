@@ -20,6 +20,7 @@ from claytonlib.calibration_tools import (
     filter_rel,
     generate_candidates_near,
     generate_roamer_candidates_near,
+    narrow_candidates,
     roamer_positions,
 )
 
@@ -120,3 +121,32 @@ def seed_b(params: dict) -> dict:
     )
     limit = int(params.get("limit", 15))
     return {"candidates": [_row_b_json(r) for r in rows[:limit]], "count": len(rows)}
+
+
+def seed_b_runner(params: dict):
+    """Build a ``runner(input_fn, output_fn) -> candidate|None`` for a narrowing session.
+
+    Generates the full candidate set (with precomputed battle paths) once, then hands
+    back a closure the session thread runs: it drives ``narrow_candidates`` with the
+    injected callbacks so the UI can answer the battle questions one at a time.
+    """
+    level = int(params["magikarp_level"])
+    opp = bool(params["opposite_gender"])
+    metronome_only = bool(params.get("metronome_only", False))
+    candidates = generate_candidates_near(
+        _parse_time(params["target_time"]),
+        int(params["target_delay"]),
+        int(params.get("seconds_window", 2)),
+        int(params.get("delay_window", 10)),
+        magikarp_level=level,
+        opposite_gender=opp,
+        metronome_only=metronome_only,
+    )
+
+    def runner(input_fn, output_fn):
+        return narrow_candidates(
+            candidates, level, opp, metronome_only=metronome_only,
+            input_fn=input_fn, output_fn=output_fn,
+        )
+
+    return runner

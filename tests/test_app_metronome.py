@@ -1,8 +1,10 @@
 """Tests for the Metronome Compass facade (seed identification + run persistence)."""
+import datetime as dt
 import tempfile
 import unittest
 
 from app.facade import Facade
+from app.metronome_session import SessionRegistry
 from app.models import Run
 from app.store import FileStore
 
@@ -75,6 +77,64 @@ class TestSeedB(unittest.TestCase):
             "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
         self.assertGreater(res["count"], 0)
         self.assertTrue(all("path_str" in c for c in res["candidates"]))
+
+
+class TestSeedBSession(unittest.TestCase):
+    def test_fake_runner_question_flow(self):
+        reg = SessionRegistry()
+
+        def runner(inp, out):
+            out("battle context")
+            a = inp("Magikarp used? (sp/tk) ")
+            b = inp("Hit or crit? ")
+            if (a, b) == ("sp", "hit"):
+                return {"seed": 42, "time": dt.datetime(2025, 1, 1), "delay": 5,
+                        "sec_delta": 0, "delay_delta": 0, "path_str": "KspM303"}
+            return None
+
+        sid, st = reg.start(runner)
+        self.assertFalse(st["done"])
+        self.assertEqual(st["prompt"], "Magikarp used? (sp/tk) ")
+        self.assertIn("battle context", st["output"])
+        st = reg.answer(sid, "sp")
+        self.assertEqual(st["prompt"], "Hit or crit? ")
+        st = reg.answer(sid, "hit")
+        self.assertTrue(st["done"])
+        self.assertEqual(st["result"]["seed"], 42)
+        # session is forgotten once done
+        with self.assertRaises(ValueError):
+            reg.answer(sid, "x")
+
+    def test_single_candidate_completes_without_questions(self):
+        reg = SessionRegistry()
+        sid, st = reg.start(lambda inp, out: {"seed": 7})
+        self.assertTrue(st["done"])
+        self.assertEqual(st["result"], {"seed": 7})
+
+    def test_abort(self):
+        reg = SessionRegistry()
+
+        def runner(inp, out):
+            inp("q? ")
+            return {"seed": 1}
+
+        sid, st = reg.start(runner)
+        self.assertFalse(st["done"])
+        st = reg.abort(sid)
+        self.assertTrue(st["done"])
+        self.assertTrue(st.get("aborted"))
+
+    def test_real_narrowing_session_starts_then_aborts(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        st = api.metronome_seed_b_start({
+            "target_time": "2025-07-24T14:45:56", "target_delay": 673,
+            "seconds_window": 0, "delay_window": 1,
+            "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
+        self.assertIn("session_id", st)
+        if not st["done"]:
+            self.assertIn("prompt", st)
+            done = api.metronome_seed_b_abort(st["session_id"])
+            self.assertTrue(done["done"])
 
 
 class TestRuns(unittest.TestCase):
