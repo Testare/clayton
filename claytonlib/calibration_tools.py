@@ -1491,11 +1491,14 @@ def update_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL
 
 
 def _safari_run_point(rec, fresh_only=True):
-    """(M, Fa, Fb) for a safari run, or None if it can't feed the offset fit.
+    """(M, Fa, Fb, run_id) for a safari run, or None if it can't feed the offset fit.
 
     Needs a confident single identified seed (trusted battle frame), the Section-A a_seed
     (for F_a), and a commanded countdown M.  With `fresh_only`, battle-contaminated runs
     (prior_battles > 0) are skipped, matching the metronome fit's provenance screen.
+    `run_id` is `rec.get("_run_id")` (None on the plain JSONL path) -- an opaque passthrough
+    so a caller fitting from its own in-memory records (see fit_safari_offset's `runs=`) can
+    map each residual back onto its own run ids.
     """
     if rec.get("seed") is None:                       # ambiguous / unidentified
         return None
@@ -1513,25 +1516,32 @@ def _safari_run_point(rec, fresh_only=True):
         return None
     # M = commanded countdown; calibration defaults to 0 (safari runs no longer record it).
     M = rec["target_timer_delay"] + (rec.get("target_timer_calibration") or 0)
-    return M, a["delay"], Fb
+    return M, a["delay"], Fb, rec.get("_run_id")
 
 
-def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True):
+def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True, runs=None):
     """Fit the safari load-path offset Δα for `model`, holding its slope/shape fixed.
 
     Δα = median over usable safari runs of (actual battle frame − model.frame(M, F_a)): how
     many frames the extra Safari-Zone loading screen lands off this (metronome-fit) model
     (abf.10).  Median so one mis-identified run can't drag it.  Returns
-    ``{"offset", "n", "std", "residuals"}`` or None if there are no usable runs.
+    ``{"offset", "n", "std", "residuals", "residuals_by_run"}`` or None if there are no usable
+    runs.  ``residuals_by_run`` maps ``_run_id -> residual`` for every input record that had
+    one (empty when reading plain JSONL, which carries no ids).
+
+    `runs`, if given, is used INSTEAD of reading `runs_path` -- an in-memory list of run
+    records already curated by a caller's own exclusion pass, exactly like calibrate_timer's
+    `runs=` parameter.
     """
-    pts = [p for p in (_safari_run_point(r, fresh_only)
-                       for r in load_safari_runs(runs_path)) if p]
+    raw = runs if runs is not None else load_safari_runs(runs_path)
+    pts = [p for p in (_safari_run_point(r, fresh_only) for r in raw) if p]
     if not pts:
         return None
-    resid = [Fb - model.frame(M, Fa) for (M, Fa, Fb) in pts]   # metronome-path prediction
+    resid = [Fb - model.frame(M, Fa) for (M, Fa, Fb, _rid) in pts]   # metronome-path prediction
+    by_run = {rid: r for (_M, _Fa, _Fb, rid), r in zip(pts, resid) if rid is not None}
     return {"offset": statistics.median(resid), "n": len(resid),
             "std": statistics.pstdev(resid) if len(resid) > 1 else 0.0,
-            "residuals": resid}
+            "residuals": resid, "residuals_by_run": by_run}
 
 
 def update_safari_offset(model_path=DEFAULT_MODEL_PATH, runs_path=SAFARI_RUNS_PATH,
