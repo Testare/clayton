@@ -1000,7 +1000,11 @@ def _run_metrics(rec):
     m = {"tag": rec.get("tag"), "M": M, "Fa": Fa, "Fb": Fb, "dF": Fb - Fa, "dt": dt_s,
          # Provenance (older records predate these fields -> treated as a clean fresh boot).
          "prior_battles": rec.get("prior_battles", 0),
-         "fresh_boot": rec.get("fresh_boot", True)}
+         "fresh_boot": rec.get("fresh_boot", True),
+         # Opaque passthrough (e.g. an app-side run id) so a caller that fits from an
+         # in-memory `runs` list (see calibrate_timer) can map outlier/contaminated flags
+         # back onto its own records. None (and ignored) for the plain JSONL path.
+         "_run_id": rec.get("_run_id")}
     if dt_s > 0:
         m["rate"] = m["dF"] / dt_s
         m["rate_lo"] = m["dF"] / (dt_s + 1)                       # time really longer
@@ -1169,7 +1173,7 @@ def _poly_model(Ms, Fbs, degree, M_bar, M_scale):
             "resid": [(M, F - f_of_M(M)) for M, F in zip(Ms, Fbs)]}
 
 
-def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
+def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True, runs=None):
     """Fit F_b as a function of the commanded countdown M and return a calibration model.
 
     Builds several candidate models (in `model["models"]`), each carrying predict / solve /
@@ -1194,8 +1198,14 @@ def calibrate_timer(path=COMPASS_RUNS_PATH, verbose=True, fresh_only=True):
 
     Runs that are robust outliers off the F_b-vs-M trend are shown in the report but
     EXCLUDED from the fit, so one mis-identified seed can't poison the model.
+
+    `runs`, if given, is used INSTEAD of reading `path` — a list of run records already in
+    memory (JSONL-record shape: tag/target_timer_delay/target_timer_calibration/a_seed/
+    b_seed/...), e.g. already curated by a caller's own manual/tag exclusion pass. `path` is
+    then unused for reading (only ever relevant to the default file-based call).
     """
-    all_runs = [m for m in (_run_metrics(r) for r in load_compass_runs(path)) if m]
+    raw = runs if runs is not None else load_compass_runs(path)
+    all_runs = [m for m in (_run_metrics(r) for r in raw) if m]
     if not all_runs:
         raise ValueError(f"no usable runs in {path} (need both a_seed and b_seed identified)")
 
