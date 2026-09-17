@@ -1,4 +1,5 @@
 """Tests for app.facade.Facade over an in-temp FileStore."""
+import inspect
 import tempfile
 import unittest
 
@@ -9,6 +10,26 @@ _GOOD_USER = dict(
     species="Chansey", ability="Natural Cure", moveset=["Metronome"],
     lagging_tail=True, gender="female", level=30,
 )
+
+
+class TestFacadePywebviewBridgeCompat(unittest.TestCase):
+    """pywebview's js_api bridge only exposes attributes where inspect.ismethod()
+    is True (webview/util.py get_functions). A @staticmethod, accessed through an
+    instance, is a plain function -- ismethod() is False -- so pywebview silently
+    DROPS it from window.pywebview.api with no error on the Python side; the JS
+    call then fails with "... is not a function". Guard against reintroducing this:
+    every public Facade attribute must be a real bound instance method.
+    """
+
+    def test_all_public_attrs_are_bound_instance_methods(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        offenders = [
+            name for name in dir(api)
+            if not name.startswith("_") and not inspect.ismethod(getattr(api, name))
+        ]
+        self.assertEqual(offenders, [],
+            f"these Facade attributes won't reach window.pywebview.api "
+            f"(likely @staticmethod -- use a plain instance method instead): {offenders}")
 
 
 class TestFacade(unittest.TestCase):

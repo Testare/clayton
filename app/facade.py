@@ -93,8 +93,7 @@ class Facade:
 
     # -- metronome users --------------------------------------------------
 
-    @staticmethod
-    def metronome_user_warnings(fields: dict) -> list[str]:
+    def metronome_user_warnings(self, fields: dict) -> list[str]:
         """Suitability warnings for prospective fields, so the UI can warn pre-save."""
         probe = MetronomeUser(
             id=0,
@@ -184,26 +183,22 @@ class Facade:
 
     # -- reference data ---------------------------------------------------
 
-    @staticmethod
-    def list_safari_areas() -> list[str]:
+    def list_safari_areas(self) -> list[str]:
         """The Safari Zone area names, for the expedition-config dropdown."""
         from claytonlib.safari_encounters import safari_areas
         return safari_areas()
 
     # -- Metronome Compass: seed identification ---------------------------
 
-    @staticmethod
-    def metronome_seed_a(params: dict) -> dict:
+    def metronome_seed_a(self, params: dict) -> dict:
         """Candidate initial seeds, narrowed by observed roamer routes + Elm calls."""
         return metronome.seed_a(params)
 
-    @staticmethod
-    def metronome_key_seed_info(key_seed: int, prev_routes: dict) -> dict:
+    def metronome_key_seed_info(self, key_seed: int, prev_routes: dict) -> dict:
         """The key seed's own roamer routes + Elm (to spot a key-seed hit)."""
         return metronome.key_seed_info(key_seed, prev_routes)
 
-    @staticmethod
-    def metronome_seed_b(params: dict) -> dict:
+    def metronome_seed_b(self, params: dict) -> dict:
         """Candidate battle seeds, each with its precomputed Metronome path."""
         return metronome.seed_b(params)
 
