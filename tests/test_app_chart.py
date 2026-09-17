@@ -128,6 +128,11 @@ class TestPrecomputeRankExamine(unittest.TestCase):
                 self.assertTrue(at_time)
                 self.assertIn("vector_ms", at_time[0])
 
+            # Manage Data: deleting the canon map removes it and un-builds status.
+            self.assertTrue(chart.delete_canon(_EXP, _CHART))
+            self.assertFalse(chart.canon_status(_EXP, _CHART)["built"])
+            self.assertFalse(chart.delete_canon(_EXP, _CHART))  # already gone -> False
+
     def test_rank_and_examine_need_canon_first(self):
         with _isolated_cwd():
             _write_synthetic_model()

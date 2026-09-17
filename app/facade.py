@@ -423,6 +423,11 @@ class Facade:
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
         return chart_lib.canon_status(exp, c)
 
+    def chart_delete_canon(self, expedition_id: str, chart_id: str) -> bool:
+        """Delete a chart's canon map, freeing disk and forcing a full rebuild next time."""
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        return chart_lib.delete_canon(exp, c)
+
     def chart_precompute_start(self, expedition_id: str, chart_id: str) -> dict:
         """Begin building the canon map in the background; returns the first progress snapshot."""
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)

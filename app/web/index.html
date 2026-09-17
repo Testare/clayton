@@ -306,7 +306,7 @@ async function openExpeditionHome(id){
   // [emoji, label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
   const cats = [
     ["👆🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
-    ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data"]]],
+    ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data","chartManageData"]]],
     ["⛺🧭", "Safari Compass", [["New Run","Safari Compass — New Run","safariCompassNewRun"],["Review Data","Safari Compass — Review Data","safariReviewData"]]],
   ];
   const grid = cats.map(([emoji, cat, tools]) => `
@@ -1141,6 +1141,106 @@ async function ctDeleteTarget(id){
   await api("delete_target", id);
   await ctLoadTargets();
   renderChartFindTarget();
+}
+
+// --- Safari Chart: Manage Data ----------------------------------------------
+let cmd = null;
+
+async function chartManageData(expId){
+  const e = await api("get_expedition", expId);
+  const [charts, targets] = await Promise.all([
+    api("list_charts", expId), api("list_targets", expId)]);
+  cmd = { expId, e, charts, targets, canonStatus: {} };
+  await Promise.all(charts.map(async c => {
+    cmd.canonStatus[c.id] = await api("chart_canon_status", expId, c.id);
+  }));
+  renderChartManageData();
+}
+
+function renderChartManageData(){
+  const chartRows = cmd.charts.length === 0
+    ? `<tr><td colspan="6" class="muted">No charts yet — create one from Find Target.</td></tr>`
+    : cmd.charts.map(c => {
+        const cs = cmd.canonStatus[c.id] || {};
+        return `<tr>
+          <td>${esc(c.name)}</td><td>${esc(c.strategy_name)}</td><td>${esc(c.criteria_name)}</td>
+          <td>${c.setup_delay_seconds}–${c.max_target_seconds}s</td>
+          <td>${cs.built
+            ? `${cs.n_mdmsh} mdmsh · ${(cs.n_distinct_seeds||0).toLocaleString()} seeds
+               (${(cs.reuse_factor||0).toFixed(0)}x) · ${(cs.built_models||[]).join(", ")}`
+            : `<span class="muted">not built</span>`}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn small" onclick="cmdOpenFindTarget('${esc(c.id)}')">Open in Find Target</button>
+            ${cs.built ? `<button class="btn small danger" onclick="cmdDeleteCanon('${esc(c.id)}')">Delete canon map</button>` : ""}
+            <button class="btn small danger" onclick="cmdDeleteChart('${esc(c.id)}')">Delete chart</button>
+          </td>
+        </tr>`;
+      }).join("");
+
+  const targetRows = cmd.targets.length === 0
+    ? `<tr><td colspan="6" class="muted">No saved targets yet.</td></tr>`
+    : cmd.targets.map(t => {
+        const chart = cmd.charts.find(c => c.id === t.chart_id);
+        return `<tr>
+          <td>${esc(t.name)}</td><td>${esc(chart?.name || "—")}</td>
+          <td>${esc((t.initial_time||"").replace("T"," "))}</td>
+          <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td>
+          <td style="text-align:right;white-space:nowrap">
+            <button class="btn small" onclick="cmdExamineTarget('${esc(t.id)}')">Examine</button>
+            <button class="btn small danger" onclick="cmdDeleteTarget('${esc(t.id)}')">Delete</button>
+          </td>
+        </tr>`;
+      }).join("");
+
+  mount(`<div class="head"><h2>Safari Chart — Manage Data</h2>
+      <button class="btn" onclick="openExpeditionHome('${esc(cmd.expId)}')">← Expedition</button></div>
+
+    <div class="section-label">Charts &amp; canon maps</div>
+    <div style="overflow-x:auto"><table><thead><tr>
+        <th>name</th><th>strategy</th><th>criteria</th><th>window</th><th>canon map</th><th></th>
+      </tr></thead><tbody>${chartRows}</tbody></table></div>
+
+    <div class="section-label">Saved targets</div>
+    <div style="overflow-x:auto"><table><thead><tr>
+        <th>name</th><th>chart</th><th>boot time</th><th>Vector ms</th><th>P(capture)</th><th></th>
+      </tr></thead><tbody>${targetRows}</tbody></table></div>`);
+}
+
+function cmdOpenFindTarget(chartId){
+  chartFindTarget(cmd.expId).then(() => { ct.chartId = chartId; ctSelectChart(chartId); });
+}
+
+async function cmdDeleteCanon(chartId){
+  if(!confirm("Delete this chart's canon map? It can be rebuilt later, but the next build " +
+    "will be a full one instead of an incremental extend.")) return;
+  await api("chart_delete_canon", cmd.expId, chartId);
+  cmd.canonStatus[chartId] = await api("chart_canon_status", cmd.expId, chartId);
+  renderChartManageData();
+}
+
+async function cmdDeleteChart(chartId){
+  const hasTargets = cmd.targets.some(t => t.chart_id === chartId);
+  const msg = hasTargets
+    ? "Delete this chart? Its canon map on disk is left in place (delete it separately if " +
+      "you also want that gone), but targets saved from it will lose their chart link."
+    : "Delete this chart?";
+  if(!confirm(msg)) return;
+  await api("delete_chart", chartId);
+  cmd.charts = cmd.charts.filter(c => c.id !== chartId);
+  delete cmd.canonStatus[chartId];
+  renderChartManageData();
+}
+
+async function cmdExamineTarget(targetId){
+  const ex = await api("examine_target", targetId, {});
+  ctRenderExamineModal(ex);
+}
+
+async function cmdDeleteTarget(targetId){
+  if(!confirm("Delete this target?")) return;
+  await api("delete_target", targetId);
+  cmd.targets = cmd.targets.filter(t => t.id !== targetId);
+  renderChartManageData();
 }
 
 // --- Safari Compass: New Run ------------------------------------------------

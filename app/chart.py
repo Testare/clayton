@@ -141,6 +141,21 @@ def canon_status(exp: dict, chart: dict) -> dict:
     }
 
 
+def delete_canon(exp: dict, chart: dict) -> bool:
+    """Delete a chart's canon map (the JSONL store + its meta sidecar) — frees disk and
+    forces a full rebuild next time (rather than the usual incremental extend). CanonStore
+    has no delete of its own; its files are plain paths, so this just unlinks them."""
+    import os
+    store = _canon_store(exp, chart)
+    existed = os.path.exists(store.path)
+    for p in (store.path, store.meta_path):
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+    return existed
+
+
 def precompute_runner(exp: dict, chart: dict, models: dict, workers: int = 1):
     """Build a ``runner(progress_cb) -> stats`` closure for a background ProgressSession.
 
