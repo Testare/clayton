@@ -185,7 +185,6 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
 function mount(html){ $("main").innerHTML = html; }
-function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function openModal(html){
   closeModal();
