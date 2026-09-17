@@ -93,14 +93,20 @@ Worked through `notes/clayton_v1_ui_improvements.md`'s "Feedback 2" section. Sti
 eyes — but a couple are worth flagging specifically:
 
 - **Found a real bug behind "Build canon map… isn't working when I click it"**:
-  the precompute progress-poll loop called a `sleep()` helper that was never
-  defined anywhere in the file — a `ReferenceError` that silently killed the
-  polling loop after the very first tick (uncaught, no visible error), leaving
-  the UI frozen mid-build with no further updates. That's almost certainly the
-  actual cause, independent of the progress bar's CSS/markup (which was already
-  fine). Added the missing `sleep()`. Worth specifically re-testing a real
-  (non-trivial) chart compute to confirm the progress bar now animates and the
-  page updates to "Computed" when it finishes.
+  the precompute progress-poll loop called a `sleep()` helper that appeared
+  undefined by a literal grep for `sleep(` — but a `const sleep = (ms) => ...`
+  actually already existed further down the file (my grep missed it: no `(`
+  directly after the name). Adding a second `function sleep(ms){...}` created
+  a duplicate top-level declaration — a `SyntaxError` that broke the ENTIRE
+  script, not just the precompute loop. **This is what you actually hit**: the
+  app stuck on the loading screen at launch, nothing running at all. Fixed by
+  removing my duplicate (commit `f277412`) — verified this time with a real JS
+  parser (`nix shell nixpkgs#nodejs`, previously unavailable to me) rather than
+  grep, confirmed no other top-level name is declared twice, and confirmed
+  top-level script execution completes without a runtime error. Sorry — this
+  one shipped broken between your two messages. Please re-test app launch, and
+  separately, still worth confirming the progress bar behaves during a real
+  (non-trivial) chart compute once the app itself comes up.
 - **Also found (not just guessed) the Safari Compass "no seeds in range" bug**:
   the candidate list only ever fetched on the path input's `oninput` — so it
   stayed empty until your first keystroke, independent of whether a calibration
