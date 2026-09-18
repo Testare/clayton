@@ -392,6 +392,7 @@ async function metronomeNewRun(expId){
     _startrel: lastDefaults.startrel || "",
     secondsWindow: lastDefaults.seconds_window ?? 2, delayWindow: lastDefaults.delay_window ?? 10,
     matchParity: !!lastDefaults.match_parity, lastTag: lastDefaults.tag || "",
+    sbSecondsWindow: lastDefaults.sb_seconds_window ?? 2, sbDelayWindow: lastDefaults.sb_delay_window ?? 10,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     seedBSession: null, seedBLog: [], seedB: null };
   renderNewRun();
@@ -640,6 +641,10 @@ function renderSeedB(){
           <label class="radio"><input type="radio" name="nr-mkg" value="female"> female</label>
         </div></div>
     </div>
+    <div class="grid2">
+      <div class="field"><label>± seconds</label><input id="nr-sb-secwin" type="number" min="0" value="${nr.sbSecondsWindow}"></div>
+      <div class="field"><label>± delays</label><input id="nr-sb-delaywin" type="number" min="0" value="${nr.sbDelayWindow}"></div>
+    </div>
     <div class="hint muted">Walks the real battle turn by turn — answer what you see; candidates narrow to one seed.
       With the level field focused: M/F picks gender, Enter starts.</div>
     <button class="btn primary" onclick="nrStartSeedB()">Start narrowing</button>`;
@@ -670,14 +675,19 @@ async function nrStartSeedB(){
   const userGender = (u && u.gender) || "female";   // Chansey is female
   const moveset = (u && u.moveset) || [];
   const metronomeOnly = moveset.filter(m => m.toLowerCase() !== "metronome").length === 0;
+  nr.sbSecondsWindow = Number($("nr-sb-secwin").value);
+  nr.sbDelayWindow = Number($("nr-sb-delaywin").value);
   nr.seedBLog = [];
   nr.seedBSession = await api("metronome_seed_b_start", {
     target_time: nr.initialTime, key_seed: nr.e.key_seed,
-    seconds_window: nr.seedAParams.seconds_window, delay_window: nr.seedAParams.delay_window,
+    seconds_window: nr.sbSecondsWindow, delay_window: nr.sbDelayWindow,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
     metronome_only: metronomeOnly });
   _appendSeedBLog(nr.seedBSession);
   if(nr.seedBSession.done && nr.seedBSession.result) nr.seedB = nr.seedBSession.result;
+  nr.e = await api("save_expedition", {...nr.e, last_metronome_defaults: {
+    ...nr.e.last_metronome_defaults,
+    sb_seconds_window: nr.sbSecondsWindow, sb_delay_window: nr.sbDelayWindow}});
   renderNewRun();
 }
 

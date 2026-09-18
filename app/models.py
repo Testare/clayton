@@ -262,7 +262,9 @@ class Expedition:
     # Last-used target for the Compass pages: {"initial_time": ..., "vector_ms": ...}
     last_target: dict = field(default_factory=dict)
     # Last-used Metronome Compass New Run defaults, so repeat hunts on the same expedition
-    # don't need retyping: {"startrel", "seconds_window", "delay_window", "match_parity", "tag"}
+    # don't need retyping: {"startrel", "seconds_window", "delay_window", "match_parity", "tag",
+    # "sb_seconds_window", "sb_delay_window"} -- the sb_* pair is Seed B's OWN search window
+    # (independent of Seed A's — the battle-delay guess may need a different range).
     last_metronome_defaults: dict = field(default_factory=dict)
     # Same idea, Safari Compass's own New Run (no "tag" — that field isn't persisted there):
     # {"startrel", "seconds_window", "delay_window", "match_parity"}
