@@ -264,6 +264,9 @@ class Expedition:
     # Last-used Metronome Compass New Run defaults, so repeat hunts on the same expedition
     # don't need retyping: {"startrel", "seconds_window", "delay_window", "match_parity", "tag"}
     last_metronome_defaults: dict = field(default_factory=dict)
+    # Same idea, Safari Compass's own New Run (no "tag" — that field isn't persisted there):
+    # {"startrel", "seconds_window", "delay_window", "match_parity"}
+    last_safari_compass_defaults: dict = field(default_factory=dict)
     preferences: dict = field(default_factory=_default_preferences)
 
     def to_dict(self) -> dict:
@@ -283,6 +286,7 @@ class Expedition:
             key_seed_advances=d.get("key_seed_advances"),
             last_target=dict(d.get("last_target", {})),
             last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
+            last_safari_compass_defaults=dict(d.get("last_safari_compass_defaults", {})),
             preferences={**_default_preferences(), **d.get("preferences", {})},
         )
 

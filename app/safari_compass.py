@@ -142,7 +142,12 @@ def seed_b(exp: dict, model, params: dict) -> dict:
 # from utils/safari_advance.py, the notebook's Section A/ctd.2).
 # ---------------------------------------------------------------------------
 
-DEFAULT_FRAME_LOOKAHEAD = 300  # Elm calls to generate when identifying the current frame
+# Matches app.metronome._ELM_DISPLAY -- the same short Elm sequence already generated (and
+# shown to the user) for Seed A candidate rows. Identification only ever needs a handful of
+# calls to disambiguate (frame_candidates' worked examples resolve within ~4); looking much
+# further out than this just wastes computation and, per notebook convention, isn't how the
+# reference workflow does it.
+from app.metronome import _ELM_DISPLAY as DEFAULT_FRAME_LOOKAHEAD
 
 
 def identify_seed_a_frame(seed: int, prev_routes: dict, observed_elm: str,

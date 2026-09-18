@@ -176,17 +176,17 @@ class TestFacadeFrameIdentificationAndPlanning(unittest.TestCase):
     _SEED = 0x0D0E02BA
 
     def test_identify_frame_ambiguous_then_pinned(self):
+        # Lookahead matches app.metronome._ELM_DISPLAY (15) — a short, near-term window, per
+        # notebook convention (clayton-b42.6.10) — so the true frame must fall within it.
         api = Facade(FileStore(tempfile.mkdtemp()))
         first = api.safari_compass_identify_frame({"seed": self._SEED, "observed_elm": ""})
         self.assertFalse(first["pinned"])
         self.assertGreater(len(first["frames"]), 1)
 
-        # Listening for enough calls to be unique should pin it -- use the real generated
-        # sequence at some known offset so this isn't circular.
         from claytonlib.safari_advance import advance_context
-        rng_calls, elm = advance_context(self._SEED, {}, count=first["rng_calls"] + 200)
-        true_frame = rng_calls + 40
-        heard = elm[max(0, true_frame - rng_calls - 10):true_frame - rng_calls]
+        rng_calls, elm = advance_context(self._SEED, {}, count=15)
+        true_frame = rng_calls + 12
+        heard = elm[max(0, true_frame - rng_calls - 8):true_frame - rng_calls]
         pinned = api.safari_compass_identify_frame({"seed": self._SEED, "observed_elm": heard})
         self.assertTrue(pinned["pinned"])
         self.assertEqual(pinned["frame"], true_frame)

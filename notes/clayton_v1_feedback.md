@@ -1,3 +1,34 @@
+# Feedback 5
+Jane, guide popup should be an actual new window so the user can position it while typing into the thing.
+
+# Feedback 4
+## General
+* For both the find-target-at-time and the configured initial time for the tools (and potentially other places), we should have a better way to pick time. Perhaps a button next to the field that if you click, pops up a little calendar time picker for picking the date, and once that is done it gives you a table with all the valid initial times for your configured key seed on that date.
+* Choose a saved target - The targets table is slightly too narrow, but it just barely hides the "Use" button. In other tables we just have people click on the row, maybe we can just have them click on a row to select it and then have a button for "Use this target" at the bottom (that enables once one is selected). In that case we wouldn't have to widen the table, just remove the use button from each row.
+
+## Metronome Compass
+* I can't believe I haven't mentioned this before, but for Metronome Compass on Seed B, we need to be able to specify a seed search range in terms of delay/seconds. Like with Seed A, these fields should be saved.
+## Safari Chart
+* Find best target at specific time should save the last used input.
+* What does the sigma mean in the ranked targets table?
+* Edit delay window still mentions canon map. I think you can drop that whole phrase actually, the user doesn't need to know about signatures
+* For the individual seed page 
+  * "Individual Seeds" should be captilized
+  * "delta" column should be <delta>F, to make it a little clearer what it is the delta of
+  * Do NOT call it "Cum capture%" (Come on man, that seems like an obvious issue). If anything call it "Sum capture%", or "<sigma>Capture%"
+  * Table is slightly too wide for the viewport, can we make it a bit wider?
+## Safari Compass
+* Roamer starting positions is not saved upon hitting generate. What's more, the +/- seconds, +/- delay, and match parity fields automatically revert to the default values after you hit generate.
+* Advance Frame guide has many issues
+  * Advance frame guide is NOT optional, as it is important information for the calibration.
+  * It should NOT be looking that far in the future for elm calls, it should match the behavior of the notebook, only looking (I think it is about 16 elm calls in the future? Making sure to skip the number of roamers identified)
+  * When calls are input, the "sequence so far" should be displayed above the input, and then the input is cleared. This should not be cleared unless they miss their frame (Part of that future work idea)
+  * The input should automatically populate from the elm call field used to find the seed
+  * "Enter" should be used to input the calls, not requiring the user to take their hands from the keyboard and game to use the mouse.
+  * While having support for using a frame from pokefinder might be good (We should have a toggle for that in the preferences), we should also be able to use the in-house solution we have already built to find a target metang.
+  * What could be optional is (when using the in-house solution, not getting a frame from pokefinder) having a "(Optional) Look for <pokemon> near advance:" field.
+* While I do finally see the seeds in Seed B, the "Observed path" portion loses focus after every keystroke. Like the elm calls, I think observations should only be applied to the path after "Enter" is hit, and the "Path so far" should be displayed above it. Filtering the seeds should be done after enter is hit as well.
+
 # Feedback 3
 # Metronome Compass - New Run
 * Roamer Starting positions should be saved when generate is clicked so that they default to the last used values when the user starts a new run. Same with +/- seconds, +/- delay, and the match key-seed delay parity.

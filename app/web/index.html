@@ -1558,8 +1558,12 @@ let sac = null;
 async function safariCompassNewRun(expId){
   const e = await api("get_expedition", expId);
   const activeModel = await api("get_active_calibration_model", e.profile_id);
+  const lastDefaults = e.last_safari_compass_defaults || {};
   sac = { expId, e, activeModel,
     initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
+    _startrel: lastDefaults.startrel || "",
+    secondsWindow: lastDefaults.seconds_window ?? 2, delayWindow: lastDefaults.delay_window ?? 10,
+    matchParity: !!lastDefaults.match_parity,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
     frameObservedElm: "", frameCandidates: null, pinnedFrame: null, frameGuide: null };
@@ -1638,11 +1642,11 @@ function renderSeedASafari(){
       <div class="field"><label>Roamer starting positions (R E L)</label>
         <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
           oninput="sacValidateStartRel()"></div>
-      <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="2"></div>
-      <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="10"></div>
+      <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="${sac.secondsWindow}"></div>
+      <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="${sac.delayWindow}"></div>
       <button class="btn primary" onclick="sacGenerateSeedA()">Generate</button>
     </div>
-    <div class="field check"><input type="checkbox" id="sac-parity"><label for="sac-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <div class="field check"><input type="checkbox" id="sac-parity" ${sac.matchParity?"checked":""}><label for="sac-parity" style="margin:0">Match key-seed delay parity</label></div>
     <div class="info-line" id="sac-keyinfo">key seed: —</div>
     <div class="grid2">
       <div class="field"><label>Observed roamer routes (R E L)</label>
@@ -1665,7 +1669,9 @@ function renderFrameGuide(){
         ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check your input.</div>`
         : `<div class="status">${sac.frameCandidates.length} possible frame(s): ${sac.frameCandidates.join(", ")} — keep listening.</div>`;
     return `<div class="panel-tight" style="margin-top:10px">
-      <div class="section-label" style="margin:0 0 6px">Advance-frame guide (optional)</div>
+      <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+      <div class="hint muted" style="margin-bottom:8px">Needed for calibration — pin which
+        advance frame Seed A is on right now.</div>
       <div class="field"><label>Elm calls heard since Seed A loaded (P/E/K)</label>
         <input id="sac-frame-elm" value="${esc(sac.frameObservedElm || "")}" placeholder="PEKE…"></div>
       ${candInfo}
@@ -1727,8 +1733,14 @@ async function sacGenerateSeedA(){
     match_parity: $("sac-parity").checked };
   sac.seedACandidates = await api("metronome_seed_a", sac.seedAParams);
   sac.keyInfo = await api("metronome_key_seed_info", sac.e.key_seed, prev);
+  sac.secondsWindow = sac.seedAParams.seconds_window; sac.delayWindow = sac.seedAParams.delay_window;
+  sac.matchParity = sac.seedAParams.match_parity;
+  // Header + Roamer-search values are locked in now (per Seed A completing) — remember them
+  // for next time, so repeat hunts on this expedition don't need retyping.
   sac.e = await api("save_expedition", {...sac.e, last_target: {
-    initial_time: sac.initialTime, vector_ms: sac.vectorMs}});
+    initial_time: sac.initialTime, vector_ms: sac.vectorMs},
+    last_safari_compass_defaults: {...sac.e.last_safari_compass_defaults, startrel: sac._startrel,
+      seconds_window: sac.secondsWindow, delay_window: sac.delayWindow, match_parity: sac.matchParity}});
   renderSafariCompassNewRun();
 }
 
@@ -1751,17 +1763,21 @@ function updateSacKeyInfoLine(){
 function sacPickSeedA(seed){
   const picked = sac.seedACandidates.candidates.find(c => c.seed === seed);
   const changed = sac.seedA && sac.seedA.seed !== picked.seed;
+  // The Elm calls typed to narrow/pick Seed A ARE the calls heard since it loaded — carry
+  // them straight into the frame-identification step instead of asking the user to retype.
+  const elmHeard = $("sac-elm")?.value || "";
   sac.seedA = picked;
   sac.editingSeedA = false;
   if(changed){
     sac.seedB = null; sac.seedBResult = null; sac.path = "";
-    sac.frameObservedElm = ""; sac.frameCandidates = null;
-    sac.pinnedFrame = null; sac.frameGuide = null;
+    sac.frameCandidates = null; sac.pinnedFrame = null; sac.frameGuide = null;
   }
+  sac.frameObservedElm = elmHeard;
   renderSafariCompassNewRun();
   // Show the full "seeds in range" set right away (empty path = no narrowing yet), instead
   // of leaving Seed B blank until the user's first keystroke.
   if(!sac.seedB) sacUpdateSeedB();
+  if(elmHeard && sac.pinnedFrame == null) sacIdentifyFrame();
 }
 function sacChangeSeedA(){ sac.editingSeedA = true; renderSafariCompassNewRun(); }
 function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); }
