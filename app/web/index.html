@@ -1718,7 +1718,7 @@ async function safariCompassNewRun(expId){
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
     frameObservedElm: "", frameElmPrefill: "", frameCandidates: null, pinnedFrame: null,
-    frameGuide: null, inHouseSearch: null };
+    frameGuide: null, inHouseSearch: null, seedBK: undefined, seedBSecondOffsets: undefined };
   renderSafariCompassNewRun();
 }
 
@@ -2076,9 +2076,10 @@ function renderSeedBSafari(){
       extra = `<div class="notice warn">Run ended (${r.terminal}) — ${r.count} seed(s) still match
           ${r.count>1?"(not uniquely identified; check your path or reset).":""}</div>
         ${r.count===1?`<button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>`:""}
+        ${r.count===0?_sacWidenPrompt():""}
         ${renderCandBSafari(r)}`;
     } else {
-      extra = renderCandBSafari(r);
+      extra = `${renderCandBSafari(r)}${r.path_valid && r.count===0 ? _sacWidenPrompt() : ""}`;
     }
   }
   return `<h3 id="sac-seedb-anchor">Seed B — battle seed</h3>
@@ -2125,7 +2126,8 @@ async function sacUpdateSeedB(){
   try{
     sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
       initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path,
-      machete_max_turns: sac.e.preferences?.machete_max_turns ?? 50});
+      machete_max_turns: sac.e.preferences?.machete_max_turns ?? 50,
+      k: sac.seedBK, second_offsets: sac.seedBSecondOffsets});
   }catch(err){
     // api() already toasted this — also keep it visible in the panel itself (a toast is easy
     // to miss, and this spot was previously left silently blank on any failure).
@@ -2171,6 +2173,24 @@ async function sacChangePath(){
   if(el){ el.value = moved; el.focus(); }
 }
 
+// When the observed path eliminates every candidate, the frame/second search window (k
+// sigma / +-1 second) might just be too narrow — offer to widen it and retry the SAME path,
+// mirroring the notebook interactive tool's "w" widen command.
+function _sacWidenPrompt(){
+  return `<div class="notice warn" style="margin-top:8px">No candidates match this path within
+      the current search window (±${(sac.seedBK ?? 3.5).toFixed(1)}σ frames, ${(sac.seedBSecondOffsets ?? [-1,0,1]).length} second offset(s)).
+      <button class="btn small" style="margin-left:8px" onclick="sacWidenSeedB()">Widen search window</button></div>`;
+}
+
+async function sacWidenSeedB(){
+  sac.seedBK = (sac.seedBK ?? 3.5) + 1.5;
+  const offsets = sac.seedBSecondOffsets ?? [-1, 0, 1];
+  const widest = Math.max(...offsets.map(Math.abs)) + 1;
+  sac.seedBSecondOffsets = [];
+  for(let d = -widest; d <= widest; d++) sac.seedBSecondOffsets.push(d);
+  await sacUpdateSeedB();
+}
+
 function sacAcceptSeedB(){
   const r = sac.seedBResult;
   if(!r || !r.count) return;
@@ -2179,7 +2199,11 @@ function sacAcceptSeedB(){
   renderSafariCompassNewRun();
 }
 
-function sacResetSeedB(){ sac.seedB = null; sac.seedBResult = null; sac.path = ""; renderSafariCompassNewRun(); }
+function sacResetSeedB(){
+  sac.seedB = null; sac.seedBResult = null; sac.path = "";
+  sac.seedBK = undefined; sac.seedBSecondOffsets = undefined;
+  renderSafariCompassNewRun();
+}
 
 function openSaveSafariRunModal(){
   if(!(sac.seedA && sac.seedB)) return;
@@ -2220,6 +2244,7 @@ async function sacSaveRun(ev){
 function sacReset(){
   sac.seedA = null; sac.seedACandidates = null; sac.editingSeedA = false;
   sac.seedB = null; sac.seedBResult = null; sac.path = "";
+  sac.seedBK = undefined; sac.seedBSecondOffsets = undefined;
   sac.frameObservedElm = ""; sac.frameElmPrefill = ""; sac.frameCandidates = null;
   sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null;
   sac._startrel = ""; renderSafariCompassNewRun();
