@@ -93,8 +93,18 @@ class Facade:
             console=fields.get("console", ""),
         )
         self._save_profile(p)
-        self._seed_standard_calibration_model(p.id)
+        self._ensure_standard_calibration_model_seeded(p.id)
         return self.get_profile(p.id)
+
+    def _ensure_standard_calibration_model_seeded(self, profile_id: str) -> None:
+        """Seeds the bundled 'Standard' calibration model into `profile_id` if it has no
+        calibration models at all yet — a no-op otherwise. Called both from create_profile
+        (new profiles) AND from _resolve_calibration_models (every profile that predates
+        this feature, so it self-heals on next use rather than staying stuck on the old
+        'no model' error forever)."""
+        if self.list_calibration_models(profile_id):
+            return
+        self._seed_standard_calibration_model(profile_id)
 
     def _seed_standard_calibration_model(self, profile_id: str) -> None:
         """Every fresh profile starts with a bundled 'Standard' calibration model, active
@@ -468,6 +478,7 @@ class Facade:
         """The profile's active saved calibration models, or claytonlib's global model file
         as a fallback (for a profile that hasn't used Calibrate Model yet)."""
         from claytonlib.calibration import CalibrationModel
+        self._ensure_standard_calibration_model_seeded(profile_id)  # self-heal older profiles
         active = self.get_active_calibration_model(profile_id)
         if active is not None:
             return {k: CalibrationModel.from_dict(v) for k, v in active["artifact"]["models"].items()}

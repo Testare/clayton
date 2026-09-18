@@ -105,16 +105,25 @@ class TestFacadeSafariCompass(unittest.TestCase):
             "name": "Metang hunt", "profile_id": self.pid, "pokemon": "metang",
             "key_seed": 0x0D0E02BA})["id"]
 
-    def test_requires_a_calibration_model(self):
-        # create_profile seeds every fresh profile with the bundled "Standard" model (see
-        # Facade._seed_standard_calibration_model), so reaching the "no model" error path
-        # now means deleting it first.
+    def test_deleting_the_only_model_self_heals_rather_than_erroring(self):
+        # _resolve_calibration_models re-seeds the bundled "Standard" model into any profile
+        # that has none (see Facade._ensure_standard_calibration_model_seeded) — covering
+        # profiles that predate the seeding feature just as much as one whose only model was
+        # since deleted. So this no longer raises "no calibration model available": it just
+        # quietly gets Standard back.
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
             standard = self.api.get_active_calibration_model(self.pid)
             self.api.delete_calibration_model(standard["id"])
-            with self.assertRaises(ValueError):
-                self.api.safari_compass_seed_b(self.eid, {**_PARAMS, "path": ""})
+            self.assertEqual(self.api.list_calibration_models(self.pid), [])
+
+            res = self.api.safari_compass_seed_b(self.eid, {**_PARAMS, "path": ""})
+            self.assertTrue(res["path_valid"])
+
+            resurrected = self.api.list_calibration_models(self.pid)
+            self.assertEqual(len(resurrected), 1)
+            self.assertEqual(resurrected[0]["name"], "Standard")
+            self.assertTrue(resurrected[0]["active"])
 
     def test_uses_the_profiles_active_model(self):
         from tests.test_app_chart import _isolated_cwd

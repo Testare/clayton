@@ -254,6 +254,25 @@ class TestStandardCalibrationModelSeed(unittest.TestCase):
         self.assertIn("linear", resolved)
         self.assertGreater(resolved["linear"].n_runs, 0)
 
+    def test_a_profile_that_predates_this_feature_self_heals_on_next_use(self):
+        # Profiles created before the Standard-model seed existed have zero calibration
+        # model docs on disk -- writing one directly to the store (bypassing create_profile)
+        # simulates that. The FIRST call that resolves calibration models for it (not just
+        # create_profile) must seed Standard rather than staying stuck on "no model".
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        p = api.create_profile({"name": "Old profile"})
+        # Simulate "predates this feature": strip the model create_profile just seeded.
+        for m in api.list_calibration_models(p["id"]):
+            api.delete_calibration_model(m["id"])
+        self.assertEqual(api.list_calibration_models(p["id"]), [])
+
+        resolved = api._resolve_calibration_models(p["id"])
+        self.assertIn("linear", resolved)
+        models = api.list_calibration_models(p["id"])
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]["name"], "Standard")
+        self.assertTrue(models[0]["active"])
+
     def test_seeded_model_is_independent_per_profile(self):
         # Two profiles each get their OWN seeded doc (same content, different ids) — deleting
         # one's Standard model must not affect the other's.

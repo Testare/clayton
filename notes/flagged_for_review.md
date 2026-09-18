@@ -139,6 +139,14 @@ eyes — but a couple are worth flagging specifically:
   profile going forward — flag if that's not what you meant by "for now" (e.g.
   if you'd rather this be a placeholder/fixture instead of your actual
   numbers, or opt-in rather than automatic).
+  **Follow-up bug you hit**: this only seeded on `create_profile`, so your
+  existing profile (created before this landed) never got one — Safari Chart
+  kept saying "no calibration model" even after the fix. `_resolve_calibration_
+  models` (the one choke point every model lookup goes through) now self-heals:
+  if a profile has zero calibration model docs at all, it seeds Standard right
+  there before resolving, so any pre-existing profile picks it up the next
+  time you open Find Target / New Run / anything else that needs a model — no
+  need to delete and recreate your profile.
 
 ## Corrected this session
 
