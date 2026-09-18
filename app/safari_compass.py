@@ -122,10 +122,14 @@ def seed_b(exp: dict, model, params: dict) -> dict:
 
     if len(current) == 1 and terminal is None:
         # Provisionally identified but the run isn't over — offer the Machete-predicted
-        # continuation so the UI can bold the next expected action (bead uj7.1).
+        # continuation so the UI can bold the next expected action (bead uj7.1). max_turns
+        # is user-configurable (Preferences: "Safari Compass Machete depth", clayton-b42.7.11)
+        # — higher values search deeper (more likely to find a path) but cost exponentially
+        # more compute. Resolved to a concrete int here (not passed through as None) because
+        # machete_one treats an explicit None as "unlimited", not "use the default".
         ctx, seed, frame = current[0]
         from claytonlib.machete import machete_one
-        mpath = machete_one(ctx)
+        mpath = machete_one(ctx, max_turns=params.get("machete_max_turns", 50))
         result["identified_seed"] = f"0x{seed:08X}"
         result["machete_path"] = mpath
 

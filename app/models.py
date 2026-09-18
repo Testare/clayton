@@ -249,7 +249,11 @@ def _default_preferences() -> dict:
         # "pokefinder" (paste a frame you found yourself) or "in_house" (search block_config
         # via claytonlib.safari_encounters) -- how the advance-frame guide picks a target
         # encounter frame.
-        "target_frame_source": "pokefinder",
+        "target_frame_source": "in_house",
+        # Machete search depth (turns) for Safari Compass Seed B's single-seed capture-path
+        # prediction -- higher finds more paths but costs exponentially more compute. Matches
+        # claytonlib.machete.MacheteOptions.max_turns_one's own default.
+        "machete_max_turns": 50,
     }
 
 

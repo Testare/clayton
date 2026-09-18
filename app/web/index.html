@@ -409,6 +409,11 @@ async function preferencesPage(expId){
           <option value="in_house"${prefs.target_frame_source==="in_house"?" selected":""}>In-house search (uses the Safari block scores from Configure)</option>
         </select>
         <div class="hint">How Safari Compass's advance-frame guide picks a target encounter frame.</div></div>
+      <div class="field"><label>Safari Compass Machete depth</label>
+        <input name="machete_max_turns" type="number" min="1" value="${prefs.machete_max_turns ?? 50}">
+        <div class="hint">How many turns deep Machete searches for a capture path during Seed B
+          (default 50). Higher values find a path more often, but cost exponentially more
+          compute — raise with care.</div></div>
       <div class="actions"><button class="btn primary" type="submit">Save</button></div>
     </form>`);
 }
@@ -419,7 +424,8 @@ async function savePreferences(ev, expId){
   const current = await api("get_expedition", expId);
   const preferences = {...(current.preferences || {}),
     elm_calls_after_flips: Number(f.elm_calls_after_flips.value),
-    target_frame_source: f.target_frame_source.value};
+    target_frame_source: f.target_frame_source.value,
+    machete_max_turns: Number(f.machete_max_turns.value)};
   await api("save_expedition", {...current, preferences});
   openExpeditionHome(expId);
   return false;
@@ -2087,7 +2093,8 @@ async function sacUpdateSeedB(){
   $("sac-seedb").innerHTML = renderSeedBSafari();
   try{
     sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
-      initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path});
+      initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path,
+      machete_max_turns: sac.e.preferences?.machete_max_turns ?? 50});
   }catch(err){
     // api() already toasted this — also keep it visible in the panel itself (a toast is easy
     // to miss, and this spot was previously left silently blank on any failure).
@@ -2421,6 +2428,15 @@ async function saveProfile(ev){
   return false;
 }
 
+async function showUserWarnings(profileId, userId){
+  const p = await api("get_profile", profileId);
+  const u = p.metronome_users.find(x => x.id === userId);
+  if(!u) return;
+  openModal(`<h3>${esc(u.name)} — suitability errors</h3>
+    <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+
 async function openProfile(id){
   const p = await api("get_profile", id);
   const users = p.metronome_users.length === 0
@@ -2430,7 +2446,8 @@ async function openProfile(id){
       <tbody>` + p.metronome_users.map(u => `
         <tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.species)}</td>
           <td>${u.is_suitable ? `<span class="badge ok">suitable</span>`
-            : `<span class="badge warn" title="${esc(u.warnings.join('; '))}">${esc(u.warnings.length)} warning(s)</span>`}</td>
+            : `<span class="badge warn" style="cursor:pointer" title="${esc(u.warnings.join('; '))}"
+                onclick="showUserWarnings('${esc(p.id)}',${u.id})">${esc(u.warnings.length)} error(s)</span>`}</td>
           <td style="text-align:right"><button class="btn small danger"
             onclick="removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`).join("")
       + `</tbody></table>`;

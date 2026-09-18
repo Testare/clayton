@@ -60,6 +60,35 @@ class TestSeedB(unittest.TestCase):
         from claytonlib.machete import machete_one
         machete_one(current[0][0])  # smoke: must not raise
 
+    def _force_single_candidate(self, mock_apply_path):
+        # seed_b only reaches the machete_one branch when exactly one candidate survives and
+        # the run isn't over -- force that deterministically rather than relying on k/jitter
+        # tuning to happen to narrow the real calibrated set down to one.
+        inputs = _build_input(_EXP, _model(0.01), {**_PARAMS})
+        candidates, _meta = calibrated_candidates(inputs)
+        ctx, seed, frame = candidates[0]
+        mock_apply_path.return_value = ([(ctx, seed, frame)], None)
+
+    def test_machete_max_turns_is_threaded_through_from_params(self):
+        # clayton-b42.7.11: the Preferences "Safari Compass Machete depth" setting must reach
+        # machete_one's max_turns, not silently use its own default regardless of the param.
+        from unittest.mock import patch
+        with patch("app.safari_compass._apply_path") as mock_apply, \
+             patch("claytonlib.machete.machete_one", return_value=None) as mocked:
+            self._force_single_candidate(mock_apply)
+            seed_b(_EXP, _model(0.01), {**_PARAMS, "machete_max_turns": 7})
+            mocked.assert_called_once()
+            self.assertEqual(mocked.call_args.kwargs.get("max_turns"), 7)
+
+    def test_machete_max_turns_defaults_to_50_when_absent(self):
+        from unittest.mock import patch
+        with patch("app.safari_compass._apply_path") as mock_apply, \
+             patch("claytonlib.machete.machete_one", return_value=None) as mocked:
+            self._force_single_candidate(mock_apply)
+            seed_b(_EXP, _model(0.01), {**_PARAMS})
+            mocked.assert_called_once()
+            self.assertEqual(mocked.call_args.kwargs.get("max_turns"), 50)
+
 
 class TestApplyPathStateMachine(unittest.TestCase):
     """The pending/cache flee-resolution replay, independent of the calibrated sweep."""
