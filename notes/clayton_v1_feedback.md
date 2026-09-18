@@ -1,5 +1,73 @@
 # Feedback 5
+## General <Refine before giving to R2>
+* It occurs to me that time of day is something I am not properly accounting for. 
+  * For pokemon that matters for (Like Murkrow for example), I should probably verify which times of day work for the key seed - Morning, Day, and Night. This can all be checked by default. As a future task we can be intelligent about the checking - We can use data and our understanding of safari block tables to figure out if morning, day, and night allow the pokemon at all, or would alter their encounter rates. For some pokemon morning/day/night might alter the encounters, so we would still have to prompt if 
+  * By default, initial times that are not within this range should not be considered, and should be filtered from chart report top times, or Seed B times (Will need to track this for our chart report). If the user chooses one of these times specifically, we should warn them.
+  * Times:
+    * Morning: 4am-9:59am
+    * Day: 10am-7:59pm
+    * Night: 8pm-3:59am
+## Profile
+* It occurs to me that we don't actually care about TID/SID - We aren't doing the shiny-checking logic. So instead we should ask for Trainer Name and Version.
+* On Metronme users page, I have a metronome user with a status of "1 warning(s)", but no way to actually see what that warning is. I think it should be rephrased as 1 error(s), and clicking on it should pop up a window with the error message.
+
+## Expedition configuration
+* Drop "Required" from Key seed and Key seed advances. Of course they're required.
+* Drop the note on "hexadecimal only"
+
+## Initial time picker
+I've rethought this a bit:
+* Instead of "Pick valid time...", just do "Pick time" for the button text
+* I think the date field should be renamed "Filter by date"
+* If the user inputs an invalid year (Less than 2000, more than 2099), it should be normalized to 2000 when "Show times" is clicked and the results should be for the year 2000
+* There should also be an input "Filter by second", that accepts a numeric value 0-59, and filters results so that only times with that second value are shown.
+* The date you input, like many inputs, should be saved and re-used by default. Same with the filter by second value.
+* Both fields should be optional - If neither is filled in, show times shows all valid initial times
+* Text should be simplified to "Pick a valid time for the key seed - Year does not matter"
+
+## Metronome compass
+
+Looking pretty good!
+* Seed A: When seed is selected, do not output the delay for that seed (because that value depends on the year), only output the "delay +0", "delay -4", etc.
+* Seed B: The defaults for seed +/- and delay +/- should be 2 and 2000 for this field.
+* Seed B: When you click "narrow results", a spinner should be shown while the list of candidates is generating.
+* Runs: The runs don't have a display for the notes taken on the runs! Since they might be long, we should have a notes column and, if notes are present on the run, have a little note emoji/icon shown there. We should have it so the notes are either displayed as a tooltip if you hover over the note icon (preferred), or have a pop-up with the note come up when you click it (If easier).
+* Runs: When a row is manually excluded, the exclude checkbox looks disabled, implying we are not able to re-enable it. It should not look disabled.
+* Calibrate model: When the standard model is selected, it shows "-" for the current active fields, despite the standard model actually having values for these fields.
+
+## Preferences
+* Using the in-house frame finder should be the default.
+* We should have an option to configure "Safari Compass Machete depth". Default should be 50. There should be a warning that high values increase odds of a match, but also increase compute time exponentially. This preference should be used to determine on the machete runs on a single seed that is done in Seed B of Safari Compass.
+
+## Safari Compass 
+### Seed A
+When seed is selected, do not output the delay for that seed (because that value depends on the year), only output the "delay +0", "delay -4", etc.
+
+### Advance-frame guide
+* Time of day should not be prompted for - Just assume one from the chosen initial time, given the boundaries I mention above.
+* When we hit the seed exactly we do not need to search for a frame - Use the expedition configuration to choose the frame automatically.
+* There should be no "Use this frame" prompt, once a frame is found we should use it.
+* The optional "Aiming" dialogue should be added 
+* The advance frame guide should be its own section "Seed A advances", between Seed A and Seed B. Seed B should not be enabled until the advance frame guide is done.
+* The previous values for "Elm calls" should populate the input field for the advance-frame guide, not the "Elm calls so far" section, in case the user typed something wrong.
 Jane, guide popup should be an actual new window so the user can position it while typing into the thing.
+* If the user accidentally inputs a wrong sequence, we need a way for them to change elm calls so far. Add a small button next to Elm calls so far with "Change" on it. Clicking this takes the elm calls so far, moves them back into the input field, and then clears the Elm calls so far value.
+* Change "Add" to "Apply"
+
+### Seed B
+* The full guide pop-up should actually either be a pane that opens to the right of the UI, or a full window that the user can position on their screen how they like. Having it as a pop-up that covers the usual screen makes it hard to actually keep the guide open while they input the observed path!
+* Also, the full guide mentions Jane, which I'm not planning (immediately) to enable for the app. Please remove its mention. Also in the explanation at the top of the guide, Simplify it to "Type the letter for whichever message you see." Also for uncertain result, add "(You know the action but missed the message)" for the ingame message.
+* The observed path field loses focus on enter, and the page scrolls up, hiding the seed results. We should automatically scroll to the bottom and keep this field in focus.
+* When we run out of candidate seeds, there is no option to expand our serach area.
+* The inputs are not filtered from the path so far, and "undo" is not working.
+* Just like with the observed elm path, we should have a change button next to the path so far that moves the pat hso far to the input field
+### Save run
+* Like metronome compass, don't need timer calibration here, use the configured Vector ms.
+* Remove "(Optional)" from advance recipe, and drop the line about not used by any fit yet.
+
+### Review Data
+* Should have its own tags and tag exclusions
+* Also the notes from the metronome compass review data tab about the exclude checkbox and notes.
 
 # Feedback 4
 ## General

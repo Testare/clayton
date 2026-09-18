@@ -452,7 +452,7 @@ async function metronomeNewRun(expId){
     _startrel: lastDefaults.startrel || "",
     secondsWindow: lastDefaults.seconds_window ?? 2, delayWindow: lastDefaults.delay_window ?? 10,
     matchParity: !!lastDefaults.match_parity, lastTag: lastDefaults.tag || "",
-    sbSecondsWindow: lastDefaults.sb_seconds_window ?? 2, sbDelayWindow: lastDefaults.sb_delay_window ?? 10,
+    sbSecondsWindow: lastDefaults.sb_seconds_window ?? 2, sbDelayWindow: lastDefaults.sb_delay_window ?? 2000,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     seedBSession: null, seedBLog: [], seedB: null };
   renderNewRun();
@@ -1028,7 +1028,10 @@ function renderCalibrateModel(){
   } else {
     const pv = review.preview;
     const s = pv.stats.linear;
-    const activeStats = active?.stats?.linear;
+    // Saved-model docs from a real fit carry `stats` (the fit report snapshot); the seeded
+    // Standard model never went through that flow, so it only has `artifact` — fall back to
+    // the artifact's own model fields, which share the same key names.
+    const activeStats = active?.stats?.linear || active?.artifact?.models?.linear;
     const row = (label, key, fmt) => `<tr><td>${label}</td>
       <td>${activeStats ? fmt(activeStats[key]) : "—"}</td><td>${fmt(s[key])}</td></tr>`;
     const f2 = (v) => v == null ? "—" : Number(v).toFixed(4);
@@ -2006,8 +2009,9 @@ function renderSeedBSafari(){
       extra = renderCandBSafari(r);
     }
   }
-  return `<h3>Seed B — battle seed</h3>
-    ${sac.path ? `<div class="hint muted">Path so far: <code>${esc(sac.path)}</code></div>` : ""}
+  return `<h3 id="sac-seedb-anchor">Seed B — battle seed</h3>
+    ${sac.path ? `<div class="hint muted">Path so far: <code>${esc(sac.path)}</code>
+      <button class="btn small" type="button" onclick="sacChangePath()">Change</button></div>` : ""}
     <div class="field"><label>New observations (m/M/b/B/0-3/F/C, u=undo) — Enter to apply</label>
       <input id="sac-path-new" placeholder="bbbBbb0321" autocomplete="off"
         onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendPath();}"></div>
@@ -2056,12 +2060,38 @@ async function sacUpdateSeedB(){
   $("sac-seedb").innerHTML = renderSeedBSafari();
 }
 
+// Only single-char tokens are meaningful here (Jane/uncertain-result aren't wired up in this
+// stateless flow — see this file's own docstring) — reject anything else BEFORE it's appended,
+// since one bad character anywhere in the accumulated path makes the whole thing unparseable
+// server-side with no way to tell which character did it.
+function _pathCharsValid(s){
+  return /^[mMbBFCu0-3]*$/.test(s);
+}
+
 async function sacAppendPath(){
   const el = $("sac-path-new");
   const add = (el.value || "").trim();
   if(!add) return;
+  if(!_pathCharsValid(add)){
+    toast("Unrecognized character — use m/M/b/B/0-3/F/C/u only.");
+    return;
+  }
   sac.path = (sac.path || "") + add;
   await sacUpdateSeedB();
+  _sacFocusPathInput();
+}
+
+function _sacFocusPathInput(){
+  const el = $("sac-path-new");
+  if(el){ el.focus(); el.scrollIntoView({block: "end", behavior: "smooth"}); }
+}
+
+async function sacChangePath(){
+  const moved = sac.path || "";
+  sac.path = "";
+  await sacUpdateSeedB();
+  const el = $("sac-path-new");
+  if(el){ el.value = moved; el.focus(); }
 }
 
 function sacAcceptSeedB(){
