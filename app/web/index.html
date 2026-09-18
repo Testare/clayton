@@ -576,7 +576,9 @@ function nrValidateStartRel(){
 }
 
 function _seedASummary(a){
-  return `Seed A ${esc(a.seed_hex)} · delay ${a.delay} (${a.delay_delta>=0?"+":""}${a.delay_delta})
+  // The absolute delay depends on the year (see claytonlib.times.calculate_seed); only the
+  // delta from the search center is meaningful across a re-run in a different real year.
+  return `Seed A ${esc(a.seed_hex)} · delay ${a.delay_delta>=0?"+":""}${a.delay_delta}
     · R${a.r_route??"·"} E${a.e_route??"·"} L${a.l_route??"·"} · elm ${esc(a.elm)}`;
 }
 
@@ -1682,8 +1684,8 @@ async function safariCompassNewRun(expId){
     matchParity: !!lastDefaults.match_parity,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
-    frameObservedElm: "", frameCandidates: null, pinnedFrame: null, frameGuide: null,
-    inHouseSearch: null };
+    frameObservedElm: "", frameElmPrefill: "", frameCandidates: null, pinnedFrame: null,
+    frameGuide: null, inHouseSearch: null };
   renderSafariCompassNewRun();
 }
 
@@ -1741,7 +1743,8 @@ function renderSafariCompassNewRun(){
 
     <div class="nr-stack">
       <div class="panel" id="sac-seeda">${renderSeedASafari()}</div>
-      <div class="panel ${sac.seedA?"":"locked"}" id="sac-seedb">${renderSeedBSafari()}</div>
+      <div class="panel ${sac.seedA?"":"locked"}" id="sac-frameguide">${renderFrameGuideSection()}</div>
+      <div class="panel ${(sac.seedA && sac.frameGuide)?"":"locked"}" id="sac-seedb">${renderSeedBSafari()}</div>
     </div>`);
   updateSacKeyInfoLine();
   sacValidateStartRel();
@@ -1755,7 +1758,6 @@ function renderSeedASafari(){
   if(sac.seedA && !sac.editingSeedA){
     return `<h3>Seed A — identified</h3>
       <div class="info-line done">${_seedASummary(sac.seedA)}</div>
-      ${renderFrameGuide()}
       <button class="btn small" onclick="sacChangeSeedA()">Change Seed A</button>`;
   }
   const hasCand = !!sac.seedACandidates;
@@ -1787,44 +1789,57 @@ function renderSeedASafari(){
 // Separate from Seed B (the battle seed) above: this is about Seed A's OWN advance frame —
 // how many Elm calls have been heard since it loaded — so the player can be told exactly how
 // to reach a chosen encounter frame (e.g. one Pokefinder says holds the target Pokemon).
-function renderFrameGuide(){
+// Local hour -> "morning"/"day"/"night", mirroring claytonlib.safari_encounters.time_of_day
+// exactly (morning 4-9:59, day 10-19:59, night 20-3:59) — parsed straight out of the ISO
+// string rather than through a Date object, so there's no timezone-conversion risk.
+function timeOfDay(isoTimeStr){
+  const m = /T(\d{2}):/.exec(isoTimeStr || "");
+  if(!m) return null;
+  const hour = Number(m[1]);
+  if(hour >= 4 && hour < 10) return "morning";
+  if(hour >= 10 && hour < 20) return "day";
+  return "night";
+}
+
+function renderFrameGuideSection(){
+  if(!sac.seedA) return `<h3>Seed A advances</h3><div class="status">Identify Seed A first.</div>`;
   if(sac.pinnedFrame == null){
     const candInfo = !sac.frameCandidates ? ""
       : sac.frameCandidates.length === 0
         ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check your input.</div>`
         : `<div class="status">${sac.frameCandidates.length} possible frame(s): ${sac.frameCandidates.join(", ")} — keep listening.</div>`;
-    return `<div class="panel-tight" style="margin-top:10px">
-      <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+    return `<h3>Seed A advances</h3>
       <div class="hint muted" style="margin-bottom:8px">Needed for calibration — pin which
         advance frame Seed A is on right now.</div>
-      ${sac.frameObservedElm ? `<div class="hint muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code></div>` : ""}
-      <div class="field"><label>New Elm calls heard (P/E/K) — Enter to add</label>
-        <input id="sac-frame-elm-new" placeholder="PEKE…" autocomplete="off"
+      ${sac.frameObservedElm ? `<div class="hint muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code>
+        <button class="btn small" type="button" onclick="sacChangeFrameElm()">Change</button></div>` : ""}
+      <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
+        <input id="sac-frame-elm-new" value="${esc(sac.frameElmPrefill || "")}" placeholder="PEKE…" autocomplete="off"
           onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendFrameElm();}"></div>
       ${candInfo}
-      <button class="btn small" onclick="sacAppendFrameElm()">Add</button>
-    </div>`;
+      <button class="btn small" onclick="sacAppendFrameElm()">Apply</button>`;
   }
   if(!sac.frameGuide){
-    const inHouse = (sac.e.preferences?.target_frame_source === "in_house");
-    return `<div class="panel-tight" style="margin-top:10px">
-      <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+    const pokefinder = (sac.e.preferences?.target_frame_source === "pokefinder");
+    return `<h3>Seed A advances</h3>
       <div class="info-line">Current advance frame: <b>${sac.pinnedFrame}</b></div>
-      ${inHouse ? renderInHouseFrameSearch() : `
+      ${pokefinder ? `
         <div class="field"><label>Target encounter frame (from Pokefinder)</label>
           <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
-        <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`}
-    </div>`;
+        <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`
+        : renderInHouseFrameSearch()}`;
   }
   const g = sac.frameGuide;
-  return `<div class="panel-tight" style="margin-top:10px">
-    <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+  const r = sac.inHouseSearch;
+  return `<h3>Seed A advances</h3>
     <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, Sweet Scent there.</div>
+    ${r && !r.error ? `<div class="hint muted">Found in-house: frame ${r.frame} (L${r.level})
+        ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
+          : r.skipped_ambiguous ? `(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)` : ""}</div>` : ""}
     <div class="status">Guide: <code>${esc(g.guide)}</code> (]! = Sweet Scent here)
       ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
-    <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>
-  </div>`;
+    <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>`;
 }
 
 function renderInHouseFrameSearch(){
@@ -1833,47 +1848,61 @@ function renderInHouseFrameSearch(){
       in-house search (or switch to Pokefinder in Preferences).</div>`;
   }
   const r = sac.inHouseSearch;
-  const result = !r ? "" : r.error
-    ? `<div class="notice warn">${esc(r.error)}</div>`
-    : `<div class="status">Found frame <b>${r.frame}</b> (L${r.level})
-        ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
-          : r.skipped_ambiguous ? `<span class="muted">(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)</span>` : ""}
-        <button class="btn small primary" style="margin-left:8px" onclick="sacPlanFrameRoute(${r.frame})">Use this frame</button></div>`;
+  const errLine = r?.error ? `<div class="notice warn">${esc(r.error)}</div>` : "";
   return `
-    <div class="grid2">
-      <div class="field"><label>Time of day</label>
-        <select id="sac-tod"><option value="morning">Morning</option><option value="day">Day</option><option value="night">Night</option></select></div>
-      <div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
-        <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"></div>
-    </div>
+    <div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
+      <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"></div>
     <button class="btn small" onclick="sacFindTargetFrame()">Find frame</button>
-    ${result}`;
+    ${errLine}`;
+}
+
+// Auto-resolves the target encounter frame once the current frame is pinned: an exact
+// key-seed hit uses the expedition's own configured frame (no search needed — see
+// claytonlib.safari_advance's choose_target_frame in-house branch this mirrors), the
+// in-house search runs automatically otherwise. Pokefinder still needs manual entry (that
+// data can't be derived), so it's left for the user in renderFrameGuideSection above.
+async function sacAutoResolveFrame(){
+  if(sac.e.preferences?.target_frame_source === "pokefinder") return;
+  if(sac.seedA.seed === sac.e.key_seed && sac.e.key_seed_advances != null){
+    await sacPlanFrameRoute(sac.e.key_seed_advances);
+    return;
+  }
+  if(!sac.e.pokemon || !sac.e.safari_area) return;  // renderInHouseFrameSearch shows why
+  await sacFindTargetFrame();
 }
 
 async function sacFindTargetFrame(){
-  const aim = $("sac-aim-advance").value.trim();
+  const aim = $("sac-aim-advance")?.value.trim() || "";
   try{
     sac.inHouseSearch = await api("safari_compass_find_target_frame", {
       seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
-      current_frame: sac.pinnedFrame, area: sac.e.safari_area, tod: $("sac-tod").value,
+      current_frame: sac.pinnedFrame, area: sac.e.safari_area, tod: timeOfDay(sac.initialTime),
       block_config: sac.e.block_config, pokemon: sac.e.pokemon,
       margin: sac.e.preferences?.elm_calls_after_flips ?? 3,
       aim_advance: aim === "" ? null : Number(aim)});
   }catch(err){
     sac.inHouseSearch = { error: String(err && err.message ? err.message : err) };
+    renderSafariCompassNewRun();
+    return;
   }
-  $("sac-seeda").innerHTML = renderSeedASafari();
+  await sacPlanFrameRoute(sac.inHouseSearch.frame);  // no confirm step — use it
 }
 
 // Runs identification against the FULL accumulated sac.frameObservedElm and updates state —
-// shared by the auto-trigger on Seed A pick and the Enter-to-add flow below.
+// shared by the Enter-to-apply flow and its own callers below. Auto-resolves the target frame
+// once pinned (see sacAutoResolveFrame), unless Pokefinder is configured (needs manual entry).
 async function sacIdentifyFrame(){
   const res = await api("safari_compass_identify_frame", {
     seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
     observed_elm: sac.frameObservedElm});
   sac.frameCandidates = res.frames;
-  if(res.pinned) sac.pinnedFrame = res.frame;
-  $("sac-seeda").innerHTML = renderSeedASafari();
+  if(res.pinned){
+    sac.pinnedFrame = res.frame;
+    renderSafariCompassNewRun();
+    await sacAutoResolveFrame();
+    return;
+  }
+  renderSafariCompassNewRun();
 }
 
 async function sacAppendFrameElm(){
@@ -1881,7 +1910,17 @@ async function sacAppendFrameElm(){
   const add = (el.value || "").trim();
   if(!add) return;
   sac.frameObservedElm = (sac.frameObservedElm || "") + add;
+  sac.frameElmPrefill = "";
   await sacIdentifyFrame();
+}
+
+async function sacChangeFrameElm(){
+  const moved = sac.frameObservedElm || "";
+  sac.frameObservedElm = ""; sac.frameCandidates = null;
+  sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null;
+  sac.frameElmPrefill = moved;
+  renderSafariCompassNewRun();
+  $("sac-frame-elm-new")?.focus();
 }
 
 function sacPlanFrameRouteFromInput(){
@@ -1894,13 +1933,13 @@ async function sacPlanFrameRoute(target){
     seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
     current_frame: sac.pinnedFrame, encounter_frame: target,
     margin: sac.e.preferences?.elm_calls_after_flips ?? 3});
-  $("sac-seeda").innerHTML = renderSeedASafari();
+  renderSafariCompassNewRun();
 }
 
 function sacReplanFrame(){
   sac.frameGuide = null;
   sac.inHouseSearch = null;
-  $("sac-seeda").innerHTML = renderSeedASafari();
+  renderSafariCompassNewRun();
 }
 
 async function sacGenerateSeedA(){
@@ -1944,22 +1983,22 @@ function updateSacKeyInfoLine(){
 function sacPickSeedA(seed){
   const picked = sac.seedACandidates.candidates.find(c => c.seed === seed);
   const changed = sac.seedA && sac.seedA.seed !== picked.seed;
-  // The Elm calls typed to narrow/pick Seed A ARE the calls heard since it loaded — carry
-  // them straight into the frame-identification step instead of asking the user to retype.
+  // The Elm calls typed to narrow/pick Seed A ARE the calls heard since it loaded — prefill
+  // the frame-guide's input with them (not auto-commit: the user should get a chance to
+  // review/correct a mistyped call before it's applied — clayton-b42.7.13).
   const elmHeard = $("sac-elm")?.value || "";
   sac.seedA = picked;
   sac.editingSeedA = false;
   if(changed){
     sac.seedB = null; sac.seedBResult = null; sac.path = "";
-    sac.frameCandidates = null; sac.pinnedFrame = null; sac.frameGuide = null;
-    sac.inHouseSearch = null;
+    sac.frameObservedElm = ""; sac.frameCandidates = null; sac.pinnedFrame = null;
+    sac.frameGuide = null; sac.inHouseSearch = null;
   }
-  sac.frameObservedElm = elmHeard;
+  sac.frameElmPrefill = elmHeard;
   renderSafariCompassNewRun();
   // Show the full "seeds in range" set right away (empty path = no narrowing yet), instead
   // of leaving Seed B blank until the user's first keystroke.
   if(!sac.seedB) sacUpdateSeedB();
-  if(elmHeard && sac.pinnedFrame == null) sacIdentifyFrame();
 }
 function sacChangeSeedA(){ sac.editingSeedA = true; renderSafariCompassNewRun(); }
 function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); }
@@ -2147,6 +2186,8 @@ async function sacSaveRun(ev){
 function sacReset(){
   sac.seedA = null; sac.seedACandidates = null; sac.editingSeedA = false;
   sac.seedB = null; sac.seedBResult = null; sac.path = "";
+  sac.frameObservedElm = ""; sac.frameElmPrefill = ""; sac.frameCandidates = null;
+  sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null;
   sac._startrel = ""; renderSafariCompassNewRun();
 }
 

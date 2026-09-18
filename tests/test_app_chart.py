@@ -131,8 +131,10 @@ class TestPrecomputeRankExamine(unittest.TestCase):
 
             if ranked["top"]:
                 row = ranked["top"][0]
-                for key in ("vector_ms", "target_delay", "second", "mdmsh", "p", "sigma", "initial_time"):
+                for key in ("vector_ms", "target_delay", "second", "mdmsh", "p", "sigma",
+                            "initial_time", "tod"):
                     self.assertIn(key, row)
+                self.assertIn(row["tod"], ("morning", "day", "night"))
 
                 ex = chart.examine(_EXP, _CHART, models, row["initial_time"], row["vector_ms"], {})
                 self.assertGreaterEqual(ex["p"], 0.0)

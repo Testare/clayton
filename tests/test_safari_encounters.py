@@ -9,6 +9,7 @@ from pathlib import Path
 
 from claytonlib.safari_encounters import (
     resolve_safari_slots, frame_slot, advance_frame_species, find_encounter_frame, safari_areas,
+    time_of_day,
 )
 
 SEED = 0x0D0E02D0
@@ -17,6 +18,25 @@ MOUNTAIN_MORNING_PEAK56 = [
     ("rattata", 16), ("raticate", 17), ("lickitung", 17), ("magneton", 17), ("larvitar", 17),
 ]
 _SPREAD = Path(__file__).resolve().parent.parent / "notes" / "pokefinder_spread.md"
+
+
+class TestTimeOfDay(unittest.TestCase):
+    """clayton-b42.7.1's boundaries: morning 4:00-9:59, day 10:00-19:59, night 20:00-3:59."""
+
+    def test_boundary_hours(self):
+        cases = {0: "night", 3: "night", 4: "morning", 9: "morning",
+                 10: "day", 19: "day", 20: "night", 23: "night"}
+        for hour, expected in cases.items():
+            self.assertEqual(time_of_day(hour), expected, f"hour {hour}")
+
+    def test_accepts_a_datetime(self):
+        import datetime as dt
+        self.assertEqual(time_of_day(dt.datetime(2025, 1, 1, 14, 30)), "day")
+        self.assertEqual(time_of_day(dt.datetime(2025, 1, 1, 2, 0)), "night")
+
+    def test_covers_all_24_hours_with_no_gaps(self):
+        buckets = {time_of_day(h) for h in range(24)}
+        self.assertEqual(buckets, {"morning", "day", "night"})
 
 
 class TestResolveSlots(unittest.TestCase):

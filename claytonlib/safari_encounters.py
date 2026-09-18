@@ -30,6 +30,26 @@ from claytonlib.safari import advance_rng
 BLOCK_TYPES = {"none": 0, "plains": 1, "forest": 2, "peak": 3, "water": 4}
 _TOD = {"morning": 0, "day": 1, "night": 2}
 
+# In-game clock boundaries for the three time-of-day buckets (user-provided, clayton-b42.7.1):
+# morning 4:00-9:59, day 10:00-19:59, night 20:00-3:59 (wraps past midnight). These three
+# windows tile the full 24 hours with no gaps -- every real-clock hour falls in exactly one.
+
+
+def time_of_day(when) -> str:
+    """The time-of-day bucket ("morning"/"day"/"night") for a real clock hour.
+
+    `when` is a datetime, or a plain hour (0-23) int. Right now every bucket is treated as
+    equally valid by default -- using block-table data to determine which buckets actually
+    carry (or alter the odds of) a given species is deliberately deferred future work, not
+    implemented here (clayton-b42.7.1); this just classifies a clock time, nothing more.
+    """
+    hour = when.hour if hasattr(when, "hour") else int(when)
+    if 4 <= hour < 10:
+        return "morning"
+    if 10 <= hour < 20:
+        return "day"
+    return "night"
+
 @lru_cache(maxsize=1)
 def _zones() -> dict:
     return basedata_json("safari_zones.json")

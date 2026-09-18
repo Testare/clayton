@@ -218,12 +218,17 @@ def precompute_runner(exp: dict, chart: dict, models: dict, workers: int = 1):
 # ---------------------------------------------------------------------------
 
 def _row_json(r: dict, initial_time: dt.datetime | None = None) -> dict:
+    from claytonlib.safari_encounters import time_of_day
     it = r.get("initial_time", initial_time)
     return {
         "vector_ms": round(r["M"]), "target_delay": int(r["F"]),
         "second": int(r["second"]), "mdmsh": list(r["mdmsh"]),
         "p": r["p"], "sigma": r["sigma"],
         "initial_time": it.strftime(_TIME_FMT) if isinstance(it, dt.datetime) else it,
+        # Tracked (not yet filtered on -- clayton-b42.7.1 defers the block-table-aware "which
+        # ToDs actually carry this species" check to future work; every bucket counts as valid
+        # for now) so a future pass has the data without re-deriving it.
+        "tod": time_of_day(it) if isinstance(it, dt.datetime) else None,
     }
 
 
