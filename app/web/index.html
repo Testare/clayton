@@ -2233,8 +2233,10 @@ function sacReset(){
 let sreview = null;
 async function safariReviewData(expId){
   const e = await api("get_expedition", expId);
-  const runs = await api("list_runs", e.profile_id, "safari");
-  sreview = { expId, profileId: e.profile_id, runs, tag: "", preview: null, dirty: {} };
+  const [runs, profile] = await Promise.all([
+    api("list_runs", e.profile_id, "safari"), api("get_profile", e.profile_id)]);
+  sreview = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs",
+    preview: null, dirty: {}, dirtyTags: {} };
   await sreviewRefreshPreview();
   renderSafariReview();
 }
@@ -2243,11 +2245,32 @@ async function sreviewRefreshPreview(){
   try{ sreview.preview = await api("preview_calibration", sreview.profileId); }
   catch(err){ sreview.preview = null; }
 }
+function sreviewHasUnsaved(){
+  return Object.keys(sreview.dirty).length > 0 || Object.keys(sreview.dirtyTags).length > 0;
+}
 function sreviewLeavePage(expId){
-  if(Object.keys(sreview.dirty).length && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
+  if(sreviewHasUnsaved() && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
   openExpeditionHome(expId);
 }
+function sreviewSwitchView(view){
+  if(view !== sreview.view && sreviewHasUnsaved()){
+    if(!confirm("You have unsaved exclusion changes. Switch tabs and discard them?")) return;
+    sreview.dirty = {}; sreview.dirtyTags = {};
+  }
+  sreview.view = view;
+  renderSafariReview();
+}
 function renderSafariReview(){
+  const tabs = `<div class="chip-row">
+      <span class="chip ${sreview.view==="runs"?"active":""}" onclick="sreviewSwitchView('runs')">Runs</span>
+      <span class="chip ${sreview.view==="tags"?"active":""}" onclick="sreviewSwitchView('tags')">Tags</span>
+    </div>`;
+  mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
+      <button class="btn" onclick="sreviewLeavePage('${esc(sreview.expId)}')">← Expedition</button></div>
+    ${tabs}${sreview.view === "tags" ? renderSafariReviewTags() : renderSafariReviewRuns()}`);
+}
+
+function renderSafariReviewRuns(){
   const tags = [...new Set(sreview.runs.map(r => r.tag).filter(Boolean))].sort();
   const shown = sreview.tag ? sreview.runs.filter(r => r.tag === sreview.tag) : sreview.runs;
   const tagOpts = `<option value="">All tags</option>` +
@@ -2278,18 +2301,65 @@ function renderSafariReview(){
           <td${muted}>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
-  mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
-      <button class="btn" onclick="sreviewLeavePage('${esc(sreview.expId)}')">← Expedition</button></div>
-    <div class="head" style="margin-bottom:12px">
+  return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
         <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
       <div class="muted">${sreview.runs.length} run(s) for this profile</div>
     </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Safari runs fit the safari load-path offset
       (against the currently-fitted timer model) — see Metronome Compass → Review Data →
-      Calibrate Model to run that fit. Tag exclusion is shared with metronome runs (set from
-      either Review Data page). Checkbox changes are staged — click "Save changes" to apply
-      them, or "Discard" to revert.</div>`);
+      Calibrate Model to run that fit. Tag exclusion (Tags tab above) is shared with metronome
+      runs — set from either Review Data page. Checkbox changes are staged — click "Save
+      changes" to apply them, or "Discard" to revert.</div>`;
+}
+
+function renderSafariReviewTags(){
+  const tags = [...new Set(sreview.runs.map(r => r.tag || "(untagged)"))].sort();
+  if(!tags.length) return `<div class="empty">No tags yet.</div>`;
+  const dirtyCount = Object.keys(sreview.dirtyTags).length;
+  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span>${dirtyCount} unsaved tag change(s)</span>
+      <span><button class="btn small" onclick="sreviewDiscardTagChanges()">Discard</button>
+      <button class="btn small primary" onclick="sreviewSaveTagChanges()">Save changes</button></span>
+    </div>` : "";
+  const rows = tags.map(tag => {
+    const inTag = sreview.runs.filter(r => (r.tag || "(untagged)") === tag);
+    const isDirty = sreview.dirtyTags[tag] !== undefined;
+    const excluded = isDirty ? sreview.dirtyTags[tag] : sreview.profile.excluded_tags.includes(tag);
+    const included = inTag.filter(r => !r.excluded && !excluded).length;
+    return `<tr${isDirty?' style="background:rgba(255,196,0,.12)"':""}><td>${esc(tag)}</td><td>${inTag.length}</td><td>${included}</td>
+      <td><input type="checkbox" ${excluded?"checked":""}
+        onchange="sreviewStageToggleTag('${esc(tag)}',this.checked)"> exclude tag</td></tr>`;
+  }).join("");
+  return `${saveBar}<div class="candtable" style="max-height:none"><table><thead><tr>
+      <th>tag</th><th>runs</th><th>included</th><th></th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="hint muted" style="margin-top:14px">Excluding a tag does not change individual runs'
+      own checkboxes — excluded runs show "tag:&lt;name&gt;" as their reason in the Runs view.
+      Shared with Metronome Compass's Tags tab (same profile-level exclusion list). Changes are
+      staged — click "Save changes" to apply them, or "Discard" to revert.</div>`;
+}
+
+function sreviewStageToggleTag(tag, checked){
+  const current = sreview.profile.excluded_tags.includes(tag);
+  if(current === checked) delete sreview.dirtyTags[tag];
+  else sreview.dirtyTags[tag] = checked;
+  renderSafariReview();
+}
+
+async function sreviewSaveTagChanges(){
+  const tags = Object.keys(sreview.dirtyTags);
+  let p = sreview.profile;
+  for(const tag of tags){ p = await api("set_tag_excluded", sreview.profileId, tag, sreview.dirtyTags[tag]); }
+  sreview.profile = p;
+  sreview.dirtyTags = {};
+  await sreviewRefreshPreview();
+  renderSafariReview();
+}
+
+function sreviewDiscardTagChanges(){
+  sreview.dirtyTags = {};
+  renderSafariReview();
 }
 function sreviewStageToggle(runId, checked){
   const r = sreview.runs.find(x => x.id === runId);
