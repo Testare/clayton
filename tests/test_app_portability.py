@@ -12,7 +12,7 @@ _GOOD_USER = dict(species="Chansey", ability="Natural Cure", moveset=["Metronome
 class TestPortability(unittest.TestCase):
     def setUp(self):
         self.api = Facade(FileStore(tempfile.mkdtemp()))
-        self.pid = self.api.create_profile({"name": "Silver", "tid": 12345})["id"]
+        self.pid = self.api.create_profile({"name": "Silver", "trainer_name": "Ash"})["id"]
         self.api.add_metronome_user(self.pid, {"name": "Chansey 1", **_GOOD_USER})
         self.eid = self.api.create_expedition(
             {"name": "Metang", "profile_id": self.pid, "pokemon": "metang", "key_seed": 42})["id"]

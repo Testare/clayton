@@ -63,8 +63,8 @@ class Facade:
             out.append({
                 "id": p.id,
                 "name": p.name,
-                "tid": p.tid,
-                "sid": p.sid,
+                "trainer_name": p.trainer_name,
+                "version": p.version,
                 "console": p.console,
                 "metronome_user_count": len(p.metronome_users),
                 "has_valid_metronome_user": p.has_valid_metronome_user,
@@ -88,8 +88,8 @@ class Facade:
             raise ValueError("a profile needs a name")
         p = Profile(
             name=name,
-            tid=fields.get("tid"),
-            sid=fields.get("sid"),
+            trainer_name=fields.get("trainer_name", ""),
+            version=fields.get("version", ""),
             console=fields.get("console", ""),
         )
         self._save_profile(p)

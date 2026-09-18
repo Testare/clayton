@@ -299,10 +299,9 @@ async function expeditionForm(existing){
           ${[0,1,2].map(n => `<option value="${n}"${sel(n, chatots)}>${n}</option>`).join("")}</select></div>
       </div>
       <div class="grid2">
-        <div class="field"><label>Key seed (hex, required)</label>
-          <input name="key_seed" required value="${esc(seedHex)}" placeholder="0x0D0E02BA">
-          <div class="hint">Hexadecimal only — e.g. <code>0D0E02BA</code> or <code>0x0D0E02BA</code>.</div></div>
-        <div class="field"><label>Key-seed advances (required)</label>
+        <div class="field"><label>Key seed</label>
+          <input name="key_seed" required value="${esc(seedHex)}" placeholder="0x0D0E02BA"></div>
+        <div class="field"><label>Key-seed advances</label>
           <input name="key_seed_advances" type="number" min="0" required
             value="${existing?.key_seed_advances ?? ""}"></div>
       </div>
@@ -2292,7 +2291,7 @@ async function renderProfiles(){
     : `<div class="row-list">` + profiles.map(p => `
         <div class="card">
           <div><div class="title">${esc(p.name)}</div>
-            <div class="sub">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")} ·
+            <div class="sub">${esc(p.trainer_name || "—")}${p.version ? " · " + esc(p.version) : ""} ·
               ${p.metronome_user_count} metronome user(s)</div></div>
           <div style="display:flex;gap:10px;align-items:center">
             ${p.has_valid_metronome_user
@@ -2399,8 +2398,9 @@ function profileForm(){
       <div class="field"><label>Name</label><input name="name" required placeholder="SoulSilver — DS Lite">
         <div class="hint">A console + cartridge identity. Models/runs are shared across its expeditions.</div></div>
       <div class="grid2">
-        <div class="field"><label>TID</label><input name="tid" type="number" min="0" max="65535"></div>
-        <div class="field"><label>SID</label><input name="sid" type="number" min="0" max="65535"></div>
+        <div class="field"><label>Trainer name</label><input name="trainer_name" placeholder="Testare"></div>
+        <div class="field"><label>Version</label><select name="version">
+          <option value="">—</option><option>HeartGold</option><option>SoulSilver</option></select></div>
       </div>
       <div class="field"><label>Console note</label><input name="console" placeholder="original DS Lite">
         <div class="hint">Playing this cartridge on a different console may shift timing — use a separate profile then.</div></div>
@@ -2415,8 +2415,8 @@ async function saveProfile(ev){
   ev.preventDefault();
   const f = ev.target;
   const p = await api("create_profile", {
-    name: f.name.value, tid: numOrNull(f.tid.value),
-    sid: numOrNull(f.sid.value), console: f.console.value.trim() });
+    name: f.name.value, trainer_name: f.trainer_name.value.trim(),
+    version: f.version.value, console: f.console.value.trim() });
   openProfile(p.id);
   return false;
 }
@@ -2441,7 +2441,7 @@ async function openProfile(id){
         <button class="btn" onclick="importExpeditionInto('${esc(p.id)}')">Import expedition…</button>
         <button class="btn" onclick="setView('profiles')">← All profiles</button>
       </div></div>
-    <div class="muted">TID ${esc(p.tid ?? "—")} · SID ${esc(p.sid ?? "—")}${p.console ? " · " + esc(p.console) : ""}</div>
+    <div class="muted">${esc(p.trainer_name || "—")}${p.version ? " · " + esc(p.version) : ""}${p.console ? " · " + esc(p.console) : ""}</div>
 
     <div class="section-label">Metronome users</div>
     ${users}

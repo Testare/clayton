@@ -44,12 +44,13 @@ class TestFacade(unittest.TestCase):
 
     def test_create_and_list_profiles(self):
         self.assertEqual(self.api.list_profiles(), [])
-        p = self.api.create_profile({"name": "Silver", "tid": 12345})
+        p = self.api.create_profile({"name": "Silver", "trainer_name": "Ash", "version": "SoulSilver"})
         listed = self.api.list_profiles()
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["name"], "Silver")
         self.assertFalse(listed[0]["has_valid_metronome_user"])
-        self.assertEqual(self.api.get_profile(p["id"])["tid"], 12345)
+        self.assertEqual(self.api.get_profile(p["id"])["trainer_name"], "Ash")
+        self.assertEqual(self.api.get_profile(p["id"])["version"], "SoulSilver")
 
     def test_create_profile_requires_name(self):
         with self.assertRaises(ValueError):

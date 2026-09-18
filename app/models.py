@@ -93,8 +93,9 @@ class Profile:
 
     name: str
     id: str = field(default_factory=_new_id)
-    tid: int | None = None
-    sid: int | None = None
+    # TID/SID aren't tracked -- this app does no shiny-checking logic that would need them.
+    trainer_name: str = ""
+    version: str = ""  # "HeartGold" or "SoulSilver"
     console: str = ""  # free-text note; see the different-console caveat in the doc.
     metronome_users: list[MetronomeUser] = field(default_factory=list)
     # Monotonic; assigns the next metronome-user id and never rewinds, so ids are
@@ -148,8 +149,8 @@ class Profile:
         return {
             "id": self.id,
             "name": self.name,
-            "tid": self.tid,
-            "sid": self.sid,
+            "trainer_name": self.trainer_name,
+            "version": self.version,
             "console": self.console,
             "metronome_users": [u.to_dict() for u in self.metronome_users],
             "next_metronome_user_id": self.next_metronome_user_id,
@@ -161,8 +162,8 @@ class Profile:
         return cls(
             name=d["name"],
             id=d.get("id") or _new_id(),
-            tid=d.get("tid"),
-            sid=d.get("sid"),
+            trainer_name=d.get("trainer_name", ""),
+            version=d.get("version", ""),
             console=d.get("console", ""),
             metronome_users=[MetronomeUser.from_dict(u) for u in d.get("metronome_users", [])],
             excluded_tags=list(d.get("excluded_tags", [])),
