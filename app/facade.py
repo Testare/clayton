@@ -302,6 +302,21 @@ class Facade:
             int(params["current_frame"]), int(params["encounter_frame"]),
             margin=int(params.get("margin", 3)))
 
+    def safari_compass_find_target_frame(self, params: dict) -> dict:
+        """In-house target-encounter-frame search (vs. pasting one from Pokefinder).
+
+        params: seed, prev_routes, current_frame, area, tod (morning/day/night), block_config,
+        pokemon, margin, max_frame, aim_advance (optional)."""
+        from app import safari_compass
+        seed = params["seed"]
+        seed = int(seed, 16) if isinstance(seed, str) else int(seed)
+        aim = params.get("aim_advance")
+        return safari_compass.find_target_frame(
+            seed, params.get("prev_routes") or {}, int(params["current_frame"]),
+            params["area"], params["tod"], params.get("block_config") or {}, params["pokemon"],
+            margin=int(params.get("margin", 3)), max_frame=int(params.get("max_frame", 300)),
+            aim_advance=int(aim) if aim not in (None, "") else None)
+
     # -- Runs (profile-scoped) --------------------------------------------
 
     def save_metronome_run(self, profile_id: str, data: dict) -> dict:

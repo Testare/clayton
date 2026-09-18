@@ -168,11 +168,22 @@ def identify_seed_a_frame(seed: int, prev_routes: dict, observed_elm: str,
     }
 
 
+def find_target_frame(seed: int, prev_routes: dict, current_frame: int, area: str, tod,
+                      block_config: dict, pokemon: str, margin: int = 3,
+                      max_frame: int = 300, aim_advance: int | None = None) -> dict:
+    """In-house target-encounter-frame search (vs. a Pokefinder handoff) — an alternative way
+    to pick `encounter_frame` for plan_frame_route below, using the expedition's own Safari
+    block scores. See claytonlib.safari_advance.find_in_house_frame for the algorithm."""
+    from claytonlib.safari_advance import find_in_house_frame
+    return find_in_house_frame(seed, prev_routes, current_frame, area, tod, block_config,
+                              target=pokemon, search_margin=margin, max_frame=max_frame,
+                              aim_advance=aim_advance)
+
+
 def plan_frame_route(seed: int, prev_routes: dict, current_frame: int, encounter_frame: int,
                      margin: int = 3) -> dict:
-    """A chatot-flip + Elm-call route from `current_frame` to `encounter_frame` (chosen
-    externally, e.g. via Pokefinder — v1 doesn't compute which frame holds a given species
-    in-house, matching the notebook's own documented v1 scope)."""
+    """A chatot-flip + Elm-call route from `current_frame` to `encounter_frame`, however that
+    was chosen (Pokefinder, or the in-house search above)."""
     from claytonlib.safari_advance import (
         advance_context, describe_plan, margin_ambiguous, margin_guide, plan_advances,
     )

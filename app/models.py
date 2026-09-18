@@ -243,7 +243,13 @@ class Run:
 
 
 def _default_preferences() -> dict:
-    return {"elm_calls_after_flips": 3}
+    return {
+        "elm_calls_after_flips": 3,
+        # "pokefinder" (paste a frame you found yourself) or "in_house" (search block_config
+        # via claytonlib.safari_encounters) -- how the advance-frame guide picks a target
+        # encounter frame.
+        "target_frame_source": "pokefinder",
+    }
 
 
 @dataclass

@@ -1,12 +1,11 @@
 """safari_advance.py — Seed A advance-frame identification and route planning.
 
 Ported from utils/safari_advance.py's pure functions (the notebook-interactive pieces —
-input()-driven prompting, the in-house encounter-frame search via safari_encounters, and the
-Pokefinder handoff toggle — stay in utils/ for now; see clayton-b42.5.11 for that follow-up).
-This is the v1 slice the app needs: given Seed A and the Elm calls heard so far, pin its
-current advance frame, then plan a route (chatot flips + a verifiable Elm-call margin) to a
-target encounter frame chosen externally (e.g. via Pokefinder, matching the notebook's own
-documented v1 scope).
+input()-driven prompting and the Pokefinder-handoff prompt itself — stay in utils/, since
+that's UI, not math). Given Seed A and the Elm calls heard so far, this pins its current
+advance frame, then plans a route (chatot flips + a verifiable Elm-call margin) to a target
+encounter frame — chosen either externally (Pokefinder) or in-house via
+find_in_house_frame (claytonlib.safari_encounters' block-config search).
 
 Terminology (see notes/safari_calibration_notebook.md):
   * Seed A is the initial RNG state for the overworld stream (encounters, roamer relocation,
@@ -189,3 +188,49 @@ def describe_plan(plan: AdvancePlan, guide: str | None = None) -> str:
     if guide is not None:
         lines.append(f"  Guide: {guide}   (]! = Sweet Scent here)")
     return "\n".join(lines)
+
+
+def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: str, tod,
+                        blocks, target: str = "metang", search_margin: int = DEFAULT_ELM_MARGIN,
+                        max_frame: int = 300, aim_advance: int | None = None) -> dict:
+    """Pick a target-species encounter frame in-house (claytonlib.safari_encounters), instead
+    of a Pokefinder handoff — mirrors utils/safari_advance.py's choose_target_frame in-house
+    branch (minus its exact-key-seed-hit special case and the Pokefinder prompt itself, which
+    are the caller's own concerns, not this pure function's).
+
+    Frames whose Elm-call approach margin can't be read reliably (margin_ambiguous) are
+    skipped when a strictly-better unambiguous candidate exists. `aim_advance`, when given,
+    picks the candidate CLOSEST to that advance (for calibration data-gathering runs that want
+    a specific advance count, not just "as soon as possible") instead of the nearest one to
+    `current_frame`.
+
+    Returns {"frame", "level", "skipped_ambiguous" (count), "all_ambiguous" (bool — every
+    candidate was ambiguous, so `frame` is just the closest one anyway, use with care)}.
+    Raises ValueError if no candidate frame exists in range at all.
+    """
+    from claytonlib.safari_encounters import iter_encounter_frames
+
+    lo = current_frame + search_margin
+    hi = max_frame if aim_advance is None else max(max_frame, aim_advance + search_margin)
+    candidates = list(iter_encounter_frames(seed, area, tod, blocks, target,
+                                            min_frame=lo, max_frame=hi))
+    if not candidates:
+        raise ValueError(
+            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} blocks={blocks} — "
+            f"check the block scores, area, and time of day.")
+
+    aim = current_frame if aim_advance is None else aim_advance
+    def _distance(frame_level):
+        frame = frame_level[0]
+        return (abs(frame - aim), frame)  # nearest to aim, lower frame breaks ties
+
+    rng_calls, elm = advance_context(seed, prev_routes, count=hi + 20)
+    unambiguous = [fl for fl in candidates
+                   if not margin_ambiguous(rng_calls, elm,
+                                           plan_advances(current_frame, fl[0], margin=search_margin))]
+    skipped = len(candidates) - len(unambiguous)
+    if unambiguous:
+        frame, level = min(unambiguous, key=_distance)
+        return {"frame": frame, "level": level, "skipped_ambiguous": skipped, "all_ambiguous": False}
+    frame, level = min(candidates, key=_distance)
+    return {"frame": frame, "level": level, "skipped_ambiguous": skipped, "all_ambiguous": True}

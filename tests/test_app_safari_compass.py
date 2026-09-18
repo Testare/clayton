@@ -213,6 +213,31 @@ class TestFacadeFrameIdentificationAndPlanning(unittest.TestCase):
             api.safari_compass_plan_frame({
                 "seed": self._SEED, "current_frame": 90, "encounter_frame": 81})
 
+    def test_find_target_frame_in_house(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        res = api.safari_compass_find_target_frame({
+            "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+            "block_config": {"peak": 56}, "pokemon": "metang"})
+        self.assertIn("frame", res)
+        self.assertFalse(res["all_ambiguous"])
+
+    def test_find_target_frame_accepts_aim_advance_as_string_or_int(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        by_str = api.safari_compass_find_target_frame({
+            "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+            "block_config": {"peak": 56}, "pokemon": "metang", "aim_advance": "100"})
+        by_int = api.safari_compass_find_target_frame({
+            "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+            "block_config": {"peak": 56}, "pokemon": "metang", "aim_advance": 100})
+        self.assertEqual(by_str["frame"], by_int["frame"])
+
+    def test_find_target_frame_raises_for_impossible_species(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        with self.assertRaises(ValueError):
+            api.safari_compass_find_target_frame({
+                "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+                "block_config": {}, "pokemon": "not-a-real-species"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -117,5 +117,33 @@ class TestDescribePlan(unittest.TestCase):
         self.assertIn("no chatot flips needed", text)
 
 
+class TestFindInHouseFrame(unittest.TestCase):
+    """clayton-b42.6.13: the in-house target-frame search (vs a Pokefinder handoff)."""
+
+    _SEED = 0x0D0E02BA
+
+    def test_finds_the_nearest_target_frame(self):
+        res = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning",
+                                     {"peak": 56}, target="metang")
+        self.assertGreaterEqual(res["frame"], 3)  # respects the search_margin floor
+        self.assertFalse(res["all_ambiguous"])
+
+    def test_aim_advance_picks_closest_to_that_advance_not_the_nearest_overall(self):
+        nearest = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56})
+        aimed = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56},
+                                       aim_advance=100)
+        self.assertLessEqual(abs(aimed["frame"] - 100), abs(nearest["frame"] - 100))
+
+    def test_raises_when_species_never_occupies_a_slot(self):
+        with self.assertRaises(ValueError):
+            sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {},
+                                   target="not-a-real-species")
+
+    def test_search_margin_is_a_floor_on_the_returned_frame(self):
+        res = sa.find_in_house_frame(self._SEED, {}, 50, "Mountain", "morning",
+                                     {"peak": 56}, search_margin=10)
+        self.assertGreaterEqual(res["frame"], 60)
+
+
 if __name__ == "__main__":
     unittest.main()

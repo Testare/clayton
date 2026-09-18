@@ -306,6 +306,20 @@ async function expeditionForm(existing){
           <input name="key_seed_advances" type="number" min="0" required
             value="${existing?.key_seed_advances ?? ""}"></div>
       </div>
+      <div class="section-label">Safari block scores</div>
+      <div class="hint muted" style="margin-bottom:8px">Day-multiplier-applied block scores
+        (as Pokefinder takes them) — used by the in-house target-frame search in Safari
+        Compass's advance-frame guide, if enabled in Preferences.</div>
+      <div class="grid4">
+        <div class="field"><label>Plains</label>
+          <input name="block_plains" type="number" min="0" value="${existing?.block_config?.plains ?? 0}"></div>
+        <div class="field"><label>Forest</label>
+          <input name="block_forest" type="number" min="0" value="${existing?.block_config?.forest ?? 0}"></div>
+        <div class="field"><label>Peak</label>
+          <input name="block_peak" type="number" min="0" value="${existing?.block_config?.peak ?? 0}"></div>
+        <div class="field"><label>Water</label>
+          <input name="block_water" type="number" min="0" value="${existing?.block_config?.water ?? 0}"></div>
+      </div>
       <div class="actions">
         <button class="btn primary" type="submit">${editing ? "Save" : "Create"}</button>
         <button class="btn" type="button" onclick="${editing
@@ -328,6 +342,8 @@ async function saveExpedition(ev, existingId){
     chatots: Number(f.chatots.value),
     key_seed: parseInt(rawSeed, 16),
     key_seed_advances: Number(f.key_seed_advances.value),
+    block_config: { plains: Number(f.block_plains.value) || 0, forest: Number(f.block_forest.value) || 0,
+      peak: Number(f.block_peak.value) || 0, water: Number(f.block_water.value) || 0 },
   };
   if(existingId){
     const current = await api("get_expedition", existingId);
@@ -388,6 +404,12 @@ async function preferencesPage(expId){
         <input name="elm_calls_after_flips" type="number" min="0"
           value="${prefs.elm_calls_after_flips ?? 3}">
         <div class="hint">How many Elm calls you prefer after the Chatot flips (default 3).</div></div>
+      <div class="field"><label>Advance-frame guide: target frame source</label>
+        <select name="target_frame_source">
+          <option value="pokefinder"${prefs.target_frame_source!=="in_house"?" selected":""}>Pokefinder (paste a frame you found yourself)</option>
+          <option value="in_house"${prefs.target_frame_source==="in_house"?" selected":""}>In-house search (uses the Safari block scores from Configure)</option>
+        </select>
+        <div class="hint">How Safari Compass's advance-frame guide picks a target encounter frame.</div></div>
       <div class="actions"><button class="btn primary" type="submit">Save</button></div>
     </form>`);
 }
@@ -397,7 +419,8 @@ async function savePreferences(ev, expId){
   const f = ev.target;
   const current = await api("get_expedition", expId);
   const preferences = {...(current.preferences || {}),
-    elm_calls_after_flips: Number(f.elm_calls_after_flips.value)};
+    elm_calls_after_flips: Number(f.elm_calls_after_flips.value),
+    target_frame_source: f.target_frame_source.value};
   await api("save_expedition", {...current, preferences});
   openExpeditionHome(expId);
   return false;
@@ -1656,7 +1679,8 @@ async function safariCompassNewRun(expId){
     matchParity: !!lastDefaults.match_parity,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
-    frameObservedElm: "", frameCandidates: null, pinnedFrame: null, frameGuide: null };
+    frameObservedElm: "", frameCandidates: null, pinnedFrame: null, frameGuide: null,
+    inHouseSearch: null };
   renderSafariCompassNewRun();
 }
 
@@ -1779,12 +1803,14 @@ function renderFrameGuide(){
     </div>`;
   }
   if(!sac.frameGuide){
+    const inHouse = (sac.e.preferences?.target_frame_source === "in_house");
     return `<div class="panel-tight" style="margin-top:10px">
       <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
       <div class="info-line">Current advance frame: <b>${sac.pinnedFrame}</b></div>
-      <div class="field"><label>Target encounter frame (from Pokefinder)</label>
-        <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
-      <button class="btn small primary" onclick="sacPlanFrameRoute()">Plan route</button>
+      ${inHouse ? renderInHouseFrameSearch() : `
+        <div class="field"><label>Target encounter frame (from Pokefinder)</label>
+          <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
+        <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`}
     </div>`;
   }
   const g = sac.frameGuide;
@@ -1796,6 +1822,44 @@ function renderFrameGuide(){
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
     <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>
   </div>`;
+}
+
+function renderInHouseFrameSearch(){
+  if(!sac.e.pokemon || !sac.e.safari_area){
+    return `<div class="notice warn">Set Pokémon and Safari area in Configure to use the
+      in-house search (or switch to Pokefinder in Preferences).</div>`;
+  }
+  const r = sac.inHouseSearch;
+  const result = !r ? "" : r.error
+    ? `<div class="notice warn">${esc(r.error)}</div>`
+    : `<div class="status">Found frame <b>${r.frame}</b> (L${r.level})
+        ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
+          : r.skipped_ambiguous ? `<span class="muted">(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)</span>` : ""}
+        <button class="btn small primary" style="margin-left:8px" onclick="sacPlanFrameRoute(${r.frame})">Use this frame</button></div>`;
+  return `
+    <div class="grid2">
+      <div class="field"><label>Time of day</label>
+        <select id="sac-tod"><option value="morning">Morning</option><option value="day">Day</option><option value="night">Night</option></select></div>
+      <div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
+        <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"></div>
+    </div>
+    <button class="btn small" onclick="sacFindTargetFrame()">Find frame</button>
+    ${result}`;
+}
+
+async function sacFindTargetFrame(){
+  const aim = $("sac-aim-advance").value.trim();
+  try{
+    sac.inHouseSearch = await api("safari_compass_find_target_frame", {
+      seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
+      current_frame: sac.pinnedFrame, area: sac.e.safari_area, tod: $("sac-tod").value,
+      block_config: sac.e.block_config, pokemon: sac.e.pokemon,
+      margin: sac.e.preferences?.elm_calls_after_flips ?? 3,
+      aim_advance: aim === "" ? null : Number(aim)});
+  }catch(err){
+    sac.inHouseSearch = { error: String(err && err.message ? err.message : err) };
+  }
+  $("sac-seeda").innerHTML = renderSeedASafari();
 }
 
 // Runs identification against the FULL accumulated sac.frameObservedElm and updates state —
@@ -1817,17 +1881,22 @@ async function sacAppendFrameElm(){
   await sacIdentifyFrame();
 }
 
-async function sacPlanFrameRoute(){
-  const target = Number($("sac-target-frame").value);
+function sacPlanFrameRouteFromInput(){
+  sacPlanFrameRoute(Number($("sac-target-frame").value));
+}
+
+async function sacPlanFrameRoute(target){
   if(!target){ toast("Enter a target encounter frame."); return; }
   sac.frameGuide = await api("safari_compass_plan_frame", {
     seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
-    current_frame: sac.pinnedFrame, encounter_frame: target});
+    current_frame: sac.pinnedFrame, encounter_frame: target,
+    margin: sac.e.preferences?.elm_calls_after_flips ?? 3});
   $("sac-seeda").innerHTML = renderSeedASafari();
 }
 
 function sacReplanFrame(){
   sac.frameGuide = null;
+  sac.inHouseSearch = null;
   $("sac-seeda").innerHTML = renderSeedASafari();
 }
 
@@ -1880,6 +1949,7 @@ function sacPickSeedA(seed){
   if(changed){
     sac.seedB = null; sac.seedBResult = null; sac.path = "";
     sac.frameCandidates = null; sac.pinnedFrame = null; sac.frameGuide = null;
+    sac.inHouseSearch = null;
   }
   sac.frameObservedElm = elmHeard;
   renderSafariCompassNewRun();

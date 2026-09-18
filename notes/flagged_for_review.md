@@ -30,6 +30,10 @@ already; everything since is still unverified:
   confirm, since the bead was specifically about exclusion toggles.
 - The UI-improvements pass (emoji, Save Run modal, Seed A change/keep flow, Seed B
   transcript log) — you said you'd verify this "later."
+- **The calendar/valid-times picker, the click-to-select saved-target picker, and
+  especially the whole advance-frame guide** (Enter-to-commit Elm log, in-house
+  target-frame search, the Preferences toggle, and the new block_config fields in
+  Configure) — all brand new this session, none of it verified in a live window yet.
 
 ## Known incomplete (by design, tracked in beads)
 
@@ -209,6 +213,51 @@ hands" list above — a few things worth flagging specifically:
 - **Deferred, as you asked**: a "missed frame" recovery button + run-flagging stays
   as its own open bead (`clayton-b42.5.12`) — not built, per your "not an immediate
   priority."
+
+## Addressed this session (your "Feedback 4" notes)
+
+Worked through `notes/clayton_v1_feedback.md`'s "Feedback 4" section (tracked as beads
+`clayton-b42.6.1`–`.13`, all closed). Still **written blind** — add all of this to the
+"needs your hands" list above. Highlights and judgment calls:
+
+- **Real bug**: Safari Compass's Roamer positions/±seconds/±delays/parity were never
+  bound to state at all — they silently reverted to hardcoded defaults after every
+  Generate, even though the search itself used whatever you'd typed. Fixed with the
+  same persistence pattern Metronome got in Feedback 3 (new
+  `Expedition.last_safari_compass_defaults`).
+- **Calendar/valid-times picker**: added everywhere Initial-time is typed (both New
+  Run pages, Find-best-target-at-time). Turned out `claytonlib.times.get_times`
+  already had everything needed — the only real subtlety was that it stamps a
+  nominal placeholder year (year never enters the seed math), so matching is by
+  month/day and results are re-stamped with whatever year you actually pick.
+- **Saved-target picker**: click a row to select it, one "Use this target" button
+  at the bottom — no more hidden per-row buttons.
+- **Metronome Seed B** now has its own ± seconds/± delays fields (the backend always
+  accepted them independently of Seed A's; the UI just silently reused Seed A's
+  window before).
+- **Advance-frame guide**: dropped "(optional)"; Elm lookahead now matches the
+  notebook's short window (~15 calls) instead of 300; the calls typed to narrow/pick
+  Seed A auto-carry into frame identification; both the Elm-calls input and Safari
+  Compass's Seed B path input are now Enter-to-commit with a persistent "so far" log
+  instead of running a full query on every keystroke (this should also fix the
+  input-losing-focus complaint from Feedback 1/2, since the element isn't recreated
+  mid-keystroke anymore).
+- **In-house target-frame search, the big one**: ported
+  `choose_target_frame`'s in-house branch from `utils/safari_advance.py` into
+  `claytonlib.safari_advance.find_in_house_frame` (block-config search via
+  `claytonlib.safari_encounters` + the same ambiguous-margin skip logic, `aim_advance`
+  support included). Added a Preferences toggle (Pokefinder vs. in-house) and
+  `Expedition.block_config` fields in Configure (plains/forest/peak/water — this was
+  scaffolded on the model already but had no UI). **Time-of-day is a plain dropdown
+  in the guide itself, not derived from any clock** — I deliberately did not try to
+  guess it from boot time, since HGSS's actual morning/day/night hour boundaries are
+  a game-data fact I'd have been guessing at, not something already in this codebase.
+  Flag if you'd rather it auto-derive from something.
+- **Safari Chart**: sigma explained (tooltip + hint), Edit window's canon-map/
+  signature mention dropped, Individual Seeds modal polished (capitalized heading,
+  "ΔF" column, "Sum capture%" instead of the bad "Cum capture%", wider modal),
+  find-best-target-at-time remembers its last input for the session (not persisted
+  across restarts — a P3 nicety, didn't seem worth a new Expedition field).
 
 ## Corrected this session
 
