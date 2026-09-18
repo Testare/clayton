@@ -142,6 +142,10 @@
     padding:20px;width:440px;max-width:100%;box-shadow:0 16px 48px rgba(0,0,0,.35)}
   .modal h3{margin-bottom:14px}
   .modal.wide{width:760px}
+  .side-pane{position:fixed;top:0;right:0;bottom:0;width:400px;max-width:90vw;z-index:100;
+    background:var(--surface);border-left:1px solid var(--line);
+    box-shadow:-8px 0 24px rgba(0,0,0,.25);padding:20px;overflow-y:auto}
+  .side-pane h3{margin-bottom:14px}
   .progress-wrap{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
     height:10px;overflow:hidden;margin:10px 0}
   .progress-bar{height:100%;background:var(--grass);transition:width .25s ease}
@@ -196,6 +200,19 @@ function openModal(html, wide){
   document.body.appendChild(d);
 }
 function closeModal(){ $("modal-backdrop")?.remove(); }
+
+// A non-blocking reference pane pinned to the right edge — unlike openModal, it has no
+// backdrop, so the rest of the page (an input you're actively typing into) stays fully
+// usable while it's open. Used for reference material you want visible WHILE working, not a
+// one-off decision dialog.
+function openSidePane(html){
+  closeSidePane();
+  const d = document.createElement("div");
+  d.id = "side-pane"; d.className = "side-pane";
+  d.innerHTML = html;
+  document.body.appendChild(d);
+}
+function closeSidePane(){ $("side-pane")?.remove(); }
 
 // --- Reusable calendar/valid-times picker for Initial-time fields ---------
 // `onPick(timeStr)` decides what to do with the chosen time — set page state and re-render
@@ -807,7 +824,7 @@ function openSaveRunModal(){
 // calls there are a Seed A concern already captured in New Run itself, not Save Run).
 function _advanceRecipeFields(prefill){
   prefill = prefill || {};
-  return `<div class="section-label" style="margin-top:14px">Advance recipe (optional)</div>
+  return `<div class="section-label" style="margin-top:14px">Advance recipe</div>
     <div class="grid3">
       <div class="field"><label>Elm calls</label>
         <input name="elm_calls" type="number" min="0" value="${prefill.elm_calls ?? ""}"></div>
@@ -817,8 +834,7 @@ function _advanceRecipeFields(prefill){
         <input name="advance_frame" type="number" min="0" value="${prefill.advance_frame ?? ""}"></div>
     </div>
     <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — prefilled from
-      the advance-frame guide above when you planned a route. Not used by any fit yet, just
-      recorded for later analysis.</div>`;
+      the advance-frame guide above when you planned a route.</div>`;
 }
 function _readAdvanceRecipe(f){
   const n = (el) => (!el || el.value.trim() === "") ? null : Number(el.value);
@@ -2073,17 +2089,20 @@ function renderSeedBSafari(){
 }
 
 async function sacShowCheatsheet(){
-  const rows = await api("safari_compass_cheatsheet", sac.e.pokemon);
-  const trs = rows.map(r => `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.action)}</td>
-    <td>${r.message === "—" ? "—" : `"${esc(r.message)}"`}</td></tr>`).join("");
-  openModal(`<h3>Seed B — full guide</h3>
-    <div class="hint muted" style="margin-bottom:8px">What each letter means, and exactly what
-      ${esc(sac.e.pokemon)} says on screen when it happens — type the letter for whichever
-      message you see.</div>
-    <div class="candtable" style="max-height:400px"><table><thead><tr>
+  const rows = (await api("safari_compass_cheatsheet", sac.e.pokemon))
+    .filter(r => r.key !== "J");  // Jane isn't wired up in the app
+  const trs = rows.map(r => {
+    const message = r.key === "?x"
+      ? "(You know the action but missed the message)"
+      : (r.message === "—" ? "—" : `"${esc(r.message)}"`);
+    return `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.action)}</td><td>${message}</td></tr>`;
+  }).join("");
+  openSidePane(`<h3>Seed B — full guide</h3>
+    <div class="hint muted" style="margin-bottom:8px">Type the letter for whichever message you see.</div>
+    <div class="candtable" style="max-height:none"><table><thead><tr>
         <th>type</th><th>action</th><th>in-game message</th></tr></thead>
       <tbody>${trs}</tbody></table></div>
-    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+    <div class="actions"><button class="btn" onclick="closeSidePane()">Close</button></div>`);
 }
 
 // Runs the query against the FULL accumulated sac.path and updates state — shared by the
@@ -2105,12 +2124,13 @@ async function sacUpdateSeedB(){
   $("sac-seedb").innerHTML = renderSeedBSafari();
 }
 
-// Only single-char tokens are meaningful here (Jane/uncertain-result aren't wired up in this
-// stateless flow — see this file's own docstring) — reject anything else BEFORE it's appended,
-// since one bad character anywhere in the accumulated path makes the whole thing unparseable
-// server-side with no way to tell which character did it.
+// The full recognized grammar (m/M/a=mud, b/B/e=bait, 0-3=ball shakes, F/C=terminal, u=undo,
+// ?<char>=uncertain result) except Jane ('J'), which app.safari_compass.seed_b silently drops
+// rather than acting on. Reject anything else BEFORE it's appended, since one bad character
+// anywhere in the accumulated path makes the whole thing unparseable server-side with no way
+// to tell which character did it.
 function _pathCharsValid(s){
-  return /^[mMbBFCu0-3]*$/.test(s);
+  return /^[mMabBeFCu0-3?]*$/.test(s);
 }
 
 async function sacAppendPath(){
@@ -2154,10 +2174,7 @@ function openSaveSafariRunModal(){
   const g = sac.frameGuide;
   openModal(`<h3>Save run</h3>
     <form onsubmit="return sacSaveRun(event)">
-      <div class="grid2">
-        <div class="field"><label>Tag</label><input name="tag" placeholder="SCT1" autofocus></div>
-        <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
-      </div>
+      <div class="field"><label>Tag</label><input name="tag" placeholder="SCT1" autofocus></div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
       ${_advanceRecipeFields(g ? {elm_calls: g.elm_before_scent, chatot_flips: g.chatot_flips,
                                    advance_frame: g.encounter_frame} : null)}
@@ -2182,7 +2199,6 @@ async function sacSaveRun(ev){
   const f = ev.target;
   await api("save_safari_run", sac.e.profile_id, {
     tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
-    target_timer_calibration: Number(f.calibration.value) || 0,
     notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB,
     frame_guide: sac.frameGuide?.description || "", ..._readAdvanceRecipe(f) });
   sacShowSavedPrompt();
