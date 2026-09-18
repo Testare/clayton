@@ -183,6 +183,18 @@ class TestFacadeChartCRUD(unittest.TestCase):
         self.assertTrue(self.api.delete_chart(c["id"]))
         self.assertEqual(self.api.list_charts(self.eid), [])
 
+    def test_update_chart_window(self):
+        c = self.api.create_chart(self.eid, {
+            "name": "Balls only", "strategy_name": "only-balls", "criteria_name": "capture"})
+        updated = self.api.update_chart_window(c["id"], 60, 400)
+        self.assertEqual(updated["setup_delay_seconds"], 60)
+        self.assertEqual(updated["max_target_seconds"], 400)
+        # persisted, not just returned
+        self.assertEqual(self.api.get_chart(c["id"])["setup_delay_seconds"], 60)
+        # everything else about the chart is untouched
+        self.assertEqual(updated["name"], "Balls only")
+        self.assertEqual(updated["strategy_name"], "only-balls")
+
     def test_chart_requires_a_name(self):
         with self.assertRaises(ValueError):
             self.api.create_chart(self.eid, {"name": "  ", "strategy_name": "only-balls",
@@ -256,6 +268,22 @@ class TestFacadeChartCompute(unittest.TestCase):
                 ex = self.api.examine_target(saved["id"], {})
                 self.assertIn("p", ex)
                 self.assertIn("seconds", ex)
+
+                # Per-second seed drill-down (clayton-b42.5.8): both the raw and the
+                # saved-target convenience wrapper should agree on the same second.
+                second = ex["seconds"][0]["second"]
+                br = self.api.chart_examine_second(eid, c["id"], row["initial_time"],
+                                                   row["vector_ms"], second, {})
+                self.assertEqual(br["second"], second)
+                self.assertTrue(br["rows"])
+                self.assertIn("seed_hex", br["rows"][0])
+                br2 = self.api.examine_target_second(saved["id"], second, {})
+                self.assertEqual(br2["second"], second)
+                self.assertEqual(len(br2["rows"]), len(br["rows"]))
+
+                with self.assertRaises(ValueError):
+                    self.api.chart_examine_second(eid, c["id"], row["initial_time"],
+                                                   row["vector_ms"], second + 999, {})
 
 
 if __name__ == "__main__":

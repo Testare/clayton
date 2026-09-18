@@ -256,6 +256,9 @@ class Expedition:
     key_seed_advances: int | None = None
     # Last-used target for the Compass pages: {"initial_time": ..., "vector_ms": ...}
     last_target: dict = field(default_factory=dict)
+    # Last-used Metronome Compass New Run defaults, so repeat hunts on the same expedition
+    # don't need retyping: {"startrel", "seconds_window", "delay_window", "match_parity", "tag"}
+    last_metronome_defaults: dict = field(default_factory=dict)
     preferences: dict = field(default_factory=_default_preferences)
 
     def to_dict(self) -> dict:
@@ -274,6 +277,7 @@ class Expedition:
             key_seed=d.get("key_seed"),
             key_seed_advances=d.get("key_seed_advances"),
             last_target=dict(d.get("last_target", {})),
+            last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
             preferences={**_default_preferences(), **d.get("preferences", {})},
         )
 

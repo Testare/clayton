@@ -1,3 +1,30 @@
+# Feedback 3
+# Metronome Compass - New Run
+* Roamer Starting positions should be saved when generate is clicked so that they default to the last used values when the user starts a new run. Same with +/- seconds, +/- delay, and the match key-seed delay parity.
+* Roamer starting positions should have the same validations as the observed roamer routes.
+* We should have a button near the Initial time/Vector ms section to choose values from our saved targets
+* Save Run 
+  * Just like roamer starting position, Tag should be saved and re-used by default on future runs.
+  * Also, remove "Samwise" from the default text for Tag.
+  * Remove ALL of the Advance recipe section form, including the elm calls.
+
+# Chart Safari - Find Targets
+* There is no way to find the best target for a specific initial time, you only see the top ranked targets.
+* We should show the name of the model in the "Compute chart" section.
+* We should be able to change the delay window for the chart after creation.
+* The "Examine target" shows the summary by second, which is nice, but doesn't show individual seeds and their probability+success like the notebook does. This is important for our understanding of how wide the net is. Maybe you can click on a specific second to pull up this report?
+* For the Saved targets, is P(Capture) recalculated when we choose a new model? When I examine
+
+# Safari Compass
+
+* We should show the name of the model we're using in the header
+* Unlike Metronome Compass, once we identify the seed we need to identify the frame and then provide a guide for the user on how to get to that frame. 
+  * We'll need to check if the elm calls are enough to identify the current frame on that seed, if not, prompt them for more elm calls until the current frame can be identified
+  * Once the frame is identified, we should save the instructions for how to get to the frame (chatot flips, then elm call path) and show that with the identified seed in the Seed A collapsed blurb
+  * We might want to add a "missed frame" button in the future, so that we can help them find their frame again and choose a different metang frame. We should mark any run where this button is used with a flag. Create a bead for this for now, but it's not an immediate priority
+* While generally I prefer the UI being more compact, we should have the full-text guide from the usual notebook for Seed B - Complete with the generated messages explaining each letter (For example, mud crit should say "Metang is beside itself with anger!", presuming the safari is for metang). We can try some different ways to make this work in the UI - perhaps there is a question mark icon next to our current guide that opens a new window with the guide for the user.
+* Despite having a target AND a model this time, I still see no seeds populated in the Seed B section.
+
 # Feedback 2
 
 ## Metronome Compass - New Run 

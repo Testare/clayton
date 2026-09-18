@@ -14,7 +14,7 @@ for long countdowns.  See notes/refined_chart.md sections 2-3, 6.6.
 import datetime as _dt
 import math
 
-from claytonlib.chart.canon import mdmsh_of
+from claytonlib.chart.canon import mdmsh_of, seed_for_mdmsh
 from claytonlib.chart.evaluation import frames_in_second
 
 
@@ -91,6 +91,58 @@ def marginal_capture(canon_map, model, initial_time: _dt.datetime, M, base_delay
     return {"p": p, "F": model.frame(M, base_delay), "second": modal_s,
             "mdmsh": mdmsh_of(initial_time + _dt.timedelta(seconds=modal_s)),
             "sigma": model.jitter_sigma(M), "M": M, "breakdown": breakdown}
+
+
+def seed_breakdown(canon_map, model, initial_time: _dt.datetime, M, base_delay: int,
+                   second: int, k: float = 3.5, include_calibration: bool = False,
+                   max_rows: int | None = 400) -> dict | None:
+    """Individual (frame, seed) rows for ONE candidate RTC second of a marginal_capture
+    breakdown -- the same per-seed detail the notebook's chart_check_target_landing() prints
+    (frame/delta/seed/hit/weight%/cumulative-capture%), returned as data instead of printed.
+    `second` must be one of marginal_capture's breakdown seconds (its own `second` field, not
+    an arbitrary offset) -- None is returned if it isn't (or if the distribution is empty).
+
+    weight%/cum_capture% are always computed over the FULL window so they stay exact even when
+    `max_rows` culls what's returned -- only the returned `rows` are centered/truncated (the far
+    tails carry little mass anyway), not the underlying sums. `total_frames`/`truncated` tell
+    the caller how much was cut.
+    """
+    mc = marginal_capture(canon_map, model, initial_time, M, base_delay, k, include_calibration)
+    if mc is None:
+        return None
+    b = next((row for row in mc["breakdown"] if row["second"] == second), None)
+    if b is None:
+        return None
+    F, sigma, mdmsh, lo, hi = b["F"], b["sigma"], b["mdmsh"], b["lo"], b["hi"]
+    two_s2 = 2.0 * sigma * sigma
+    weighted = []
+    den = 0.0
+    for frame in range(lo, hi + 1):
+        w = math.exp(-((frame - F) ** 2) / two_s2)
+        den += w
+        weighted.append((frame, w, canon_map.captured(mdmsh, frame)))
+    den = den or 1.0
+    center_frame = round(F)
+    all_rows = []
+    cum = 0.0
+    for frame, w, hit in weighted:
+        if hit:
+            cum += w
+        all_rows.append({
+            "frame": frame, "delta": frame - center_frame,
+            "seed": seed_for_mdmsh(mdmsh, frame), "hit": hit,
+            "weight_pct": w / den * 100.0, "cum_capture_pct": cum / den * 100.0,
+        })
+    total = len(all_rows)
+    if max_rows is not None and total > max_rows:
+        center_idx = min(range(total), key=lambda i: abs(all_rows[i]["delta"]))
+        start = max(0, center_idx - max_rows // 2)
+        rows = all_rows[start:start + max_rows]
+        truncated = True
+    else:
+        rows, truncated = all_rows, False
+    return {"second": second, "p_second": b["p_second"], "cp": b["cp"], "mdmsh": mdmsh,
+            "F": F, "sigma": sigma, "rows": rows, "total_frames": total, "truncated": truncated}
 
 
 def rank_targets(canon_map, model, initial_time: _dt.datetime, base_delay: int,

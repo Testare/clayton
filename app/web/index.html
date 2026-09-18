@@ -383,10 +383,14 @@ function currentUser(){
 async function metronomeNewRun(expId){
   const e = await api("get_expedition", expId);
   const profile = await api("get_profile", e.profile_id);
+  const lastDefaults = e.last_metronome_defaults || {};
   nr = { expId, e, profile,
     userId: (profile.metronome_users.find(u => u.is_suitable) || profile.metronome_users[0] || {}).id ?? null,
     initialTime: e.last_target?.initial_time || "",
     vectorMs: e.last_target?.vector_ms ?? "",
+    _startrel: lastDefaults.startrel || "",
+    secondsWindow: lastDefaults.seconds_window ?? 2, delayWindow: lastDefaults.delay_window ?? 10,
+    matchParity: !!lastDefaults.match_parity, lastTag: lastDefaults.tag || "",
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     seedBSession: null, seedBLog: [], seedB: null };
   renderNewRun();
@@ -396,6 +400,31 @@ function nrCaptureHeader(){
   const u = $("nr-user"); if(u) nr.userId = Number(u.value);
   const t = $("nr-time"); if(t) nr.initialTime = t.value.trim();
   const v = $("nr-vector"); if(v) nr.vectorMs = v.value.trim() === "" ? null : Number(v.value);
+}
+
+function _pickTargetModal(targets, applyFn){
+  if(!targets.length){ toast("No saved targets for this expedition yet."); return; }
+  openModal(`<h3>Choose a saved target</h3>
+    <div class="candtable" style="max-height:340px"><table><thead><tr>
+        <th>name</th><th>boot time</th><th>vector ms</th><th>P(capture)</th><th></th></tr></thead>
+      <tbody>${targets.map(t => `<tr>
+        <td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
+        <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td>
+        <td style="text-align:right"><button class="btn small" onclick="${applyFn}('${esc(t.id)}')">Use</button></td>
+      </tr>`).join("")}</tbody></table></div>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button></div>`);
+}
+
+async function nrPickFromTarget(){
+  nr._targetsCache = await api("list_targets", nr.expId);
+  _pickTargetModal(nr._targetsCache, "nrApplyTarget");
+}
+function nrApplyTarget(targetId){
+  const t = nr._targetsCache.find(x => x.id === targetId);
+  if(!t) return;
+  nr.initialTime = t.initial_time; nr.vectorMs = t.vector_ms;
+  closeModal();
+  renderNewRun();
 }
 
 function renderNewRun(){
@@ -432,6 +461,7 @@ function renderNewRun(){
         <div class="field"><label>Vector ms</label>
           <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"></div>
       </div>
+      <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
     </form>
     <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}</div>
 
@@ -440,8 +470,20 @@ function renderNewRun(){
       <div class="panel ${nr.seedA?"":"locked"}" id="nr-seedb">${renderSeedB()}</div>
     </div>`);
   updateKeyInfoLine();
+  nrValidateStartRel();
   const log = $("sb-log"); if(log) log.scrollTop = log.scrollHeight;
   $("nr-sbans")?.focus();
+}
+
+// A roamer-starting-position token is a run of digits, or "-" (not roaming) — the same
+// leniency claytonlib._clean_prev_routes/parseStartRel already apply, just now surfaced as
+// the same kind of red-outline feedback the observed-routes field gets (rel_valid).
+function _startRelValid(s){
+  return (s || "").trim().split(/\s+/).filter(Boolean).every(t => t === "-" || /^\d+$/.test(t));
+}
+function nrValidateStartRel(){
+  const el = $("nr-startrel");
+  if(el) el.classList.toggle("invalid", !_startRelValid(el.value));
 }
 
 function _seedASummary(a){
@@ -462,12 +504,13 @@ function renderSeedA(){
     ${keepBar}
     <div class="rel-row">
       <div class="field"><label>Roamer starting positions (R E L)</label>
-        <input id="nr-startrel" value="${esc(nr._startrel || "")}" placeholder="31 30 7  (- = not roaming)"></div>
-      <div class="field"><label>± seconds</label><input id="nr-secwin" type="number" min="0" value="2"></div>
-      <div class="field"><label>± delays</label><input id="nr-delaywin" type="number" min="0" value="10"></div>
+        <input id="nr-startrel" value="${esc(nr._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
+          oninput="nrValidateStartRel()"></div>
+      <div class="field"><label>± seconds</label><input id="nr-secwin" type="number" min="0" value="${nr.secondsWindow}"></div>
+      <div class="field"><label>± delays</label><input id="nr-delaywin" type="number" min="0" value="${nr.delayWindow}"></div>
       <button class="btn primary" onclick="nrGenerateSeedA()">Generate</button>
     </div>
-    <div class="field check"><input type="checkbox" id="nr-parity"><label for="nr-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <div class="field check"><input type="checkbox" id="nr-parity" ${nr.matchParity?"checked":""}><label for="nr-parity" style="margin:0">Match key-seed delay parity</label></div>
     <div class="info-line" id="nr-keyinfo">key seed: —</div>
     <div class="grid2">
       <div class="field"><label>Observed roamer routes (R E L)</label>
@@ -504,9 +547,14 @@ async function nrGenerateSeedA(){
     match_parity: $("nr-parity").checked };
   nr.seedACandidates = await api("metronome_seed_a", nr.seedAParams);
   nr.keyInfo = await api("metronome_key_seed_info", nr.e.key_seed, prev);
-  // Header values are locked in now (per Seed A completing) — remember them for next time.
+  nr.secondsWindow = nr.seedAParams.seconds_window; nr.delayWindow = nr.seedAParams.delay_window;
+  nr.matchParity = nr.seedAParams.match_parity;
+  // Header + Roamer-search values are locked in now (per Seed A completing) — remember them
+  // for next time, so repeat hunts on this expedition don't need retyping.
   nr.e = await api("save_expedition", {...nr.e, last_target: {
-    initial_time: nr.initialTime, vector_ms: nr.vectorMs}});
+    initial_time: nr.initialTime, vector_ms: nr.vectorMs},
+    last_metronome_defaults: {...nr.e.last_metronome_defaults, startrel: nr._startrel,
+      seconds_window: nr.secondsWindow, delay_window: nr.delayWindow, match_parity: nr.matchParity}});
   renderNewRun();
 }
 
@@ -638,9 +686,8 @@ function openSaveRunModal(){
   if(!(nr.seedA && nr.seedB)) return;
   openModal(`<h3>Save run</h3>
     <form onsubmit="return nrSave(event)">
-      <div class="field"><label>Tag</label><input name="tag" placeholder="300s Samwise" autofocus></div>
+      <div class="field"><label>Tag</label><input name="tag" value="${esc(nr.lastTag || "")}" placeholder="300s" autofocus></div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
-      ${_advanceRecipeFields(false)}
       <div class="actions">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -648,22 +695,20 @@ function openSaveRunModal(){
     </form>`);
 }
 
-// Optional Seed A advance-recipe fields (elm calls / chatot flips / advance frame), shared by
-// both Save Run modals — captured to test whether they correlate with a safari run's frame
-// miss (unconfirmed hypothesis; nothing fits these yet, see app/calibration.py). Metronome
-// Compass only cares about Elm calls (may be needed to identify the seed) — it doesn't do
-// chatot flips or care which advance frame it lands on, so `full=false` hides those two.
-function _advanceRecipeFields(full = true){
-  const rest = full ? `
-      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
-      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>` : "";
+// Optional Seed A advance-recipe fields (elm calls / chatot flips / advance frame) — captured
+// to test whether they correlate with a safari run's frame miss (unconfirmed hypothesis;
+// nothing fits these yet, see app/calibration.py). Safari Compass only: Metronome Compass
+// doesn't need any of them (no chatot flips, doesn't care which frame it lands on, and Elm
+// calls there are a Seed A concern already captured in New Run itself, not Save Run).
+function _advanceRecipeFields(){
   return `<div class="section-label" style="margin-top:14px">Advance recipe (optional)</div>
     <div class="grid3">
-      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>${rest}
+      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>
+      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
+      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>
     </div>
-    <div class="hint muted" style="margin-bottom:11px">${full
-        ? "How Seed A was reached — not used by any fit yet, just recorded for later analysis."
-        : "Only relevant if you needed extra Elm calls to identify this seed."}</div>`;
+    <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — not used by any
+      fit yet, just recorded for later analysis.</div>`;
 }
 function _readAdvanceRecipe(f){
   const n = (el) => (!el || el.value.trim() === "") ? null : Number(el.value);
@@ -682,10 +727,13 @@ function nrShowSavedPrompt(){
 async function nrSave(ev){
   ev.preventDefault();
   const f = ev.target;
+  const tag = f.tag.value.trim();
   await api("save_metronome_run", nr.e.profile_id, {
-    tag: f.tag.value.trim(), vector_ms: nr.vectorMs,
+    tag, vector_ms: nr.vectorMs,
     notes: f.notes.value.trim(), metronome_user_id: nr.userId,
-    a_seed: nr.seedA, b_seed: nr.seedB, ..._readAdvanceRecipe(f) });
+    a_seed: nr.seedA, b_seed: nr.seedB });
+  nr.e = await api("save_expedition", {...nr.e,
+    last_metronome_defaults: {...nr.e.last_metronome_defaults, tag}});
   nrShowSavedPrompt();
   return false;
 }
@@ -975,12 +1023,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function chartFindTarget(expId){
   const e = await api("get_expedition", expId);
-  const [charts, calSummary, strategies, criteria] = await Promise.all([
+  const [charts, calSummary, activeModel, strategies, criteria] = await Promise.all([
     api("list_charts", expId), api("calibration_model_summary", e.profile_id),
+    api("get_active_calibration_model", e.profile_id),
     api("list_chart_strategies"), api("list_chart_criteria")]);
-  ct = { expId, e, charts, strategies, criteria, calSummary,
+  ct = { expId, e, charts, strategies, criteria, calSummary, activeModel,
     chartId: charts[0]?.id ?? null, canonStatus: null, precompute: null,
-    ranked: null, targets: [] };
+    ranked: null, rankedAtTime: null, targets: [] };
   if(ct.chartId) await ctSelectChart(ct.chartId, false);
   await ctLoadTargets();
   renderChartFindTarget();
@@ -989,6 +1038,7 @@ async function chartFindTarget(expId){
 async function ctSelectChart(chartId, rerender = true){
   ct.chartId = chartId;
   ct.ranked = null;
+  ct.rankedAtTime = null;
   ct.canonStatus = chartId ? await api("chart_canon_status", ct.expId, chartId) : null;
   if(rerender) renderChartFindTarget();
 }
@@ -1014,7 +1064,9 @@ function renderChartFindTarget(){
     canonSection = `<div class="section-label">Computed chart</div>
       <div class="panel">
         <div class="muted">delay window: ${chart.setup_delay_seconds}–${chart.max_target_seconds}s
-          · strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}</div>
+          <button class="btn small" style="margin-left:6px" onclick="ctOpenEditWindow()">Edit window…</button><br>
+          strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}
+          · model: ${ct.activeModel ? `#${ct.activeModel.number} ${esc(ct.activeModel.name || "(unnamed)")}` : "none"}</div>
         ${built ? `<div class="info-line done" style="margin-top:10px">Computed —
             ${cs.n_mdmsh} mdmsh classes, ${cs.n_distinct_seeds?.toLocaleString()} distinct seeds
             (${cs.reuse_factor?.toFixed(0)}x reuse) · models: ${(cs.built_models||[]).join(", ") || "—"}
@@ -1026,9 +1078,11 @@ function renderChartFindTarget(){
           <button class="btn primary" ${noModel?"disabled":""} onclick="ctBuildCanon()">
             ${built ? "Recompute / extend chart" : "Compute chart"}</button>
           ${built ? `<button class="btn" onclick="ctRank()">Rank targets</button>` : ""}
+          ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time…</button>` : ""}
         </div>
       </div>
-      ${ct.ranked ? renderRankedTargets() : ""}`;
+      ${ct.ranked ? renderRankedTargets() : ""}
+      ${ct.rankedAtTime ? renderRankedAtTime() : ""}`;
   }
 
   const savedSection = `<div class="section-label">Saved targets</div>${renderSavedTargets()}`;
@@ -1146,11 +1200,65 @@ async function ctBuildCanon(){
   renderChartFindTarget();
 }
 
+function ctOpenEditWindow(){
+  const chart = ctCurrentChart();
+  openModal(`<h3>Edit delay window</h3>
+    <form onsubmit="return ctSaveWindow(event)">
+      <div class="grid2">
+        <div class="field"><label>Search from (seconds)</label>
+          <input name="setup_delay_seconds" type="number" min="0" value="${chart.setup_delay_seconds}" autofocus></div>
+        <div class="field"><label>Search to (seconds)</label>
+          <input name="max_target_seconds" type="number" min="1" value="${chart.max_target_seconds}"></div>
+      </div>
+      <div class="hint muted">Widening is safe any time — the canon map's signature doesn't
+        include this window, so the next Compute chart just extends into the newly-uncovered
+        range. Narrowing doesn't delete anything already computed.</div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function ctSaveWindow(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  await api("update_chart_window", ct.chartId,
+    Number(f.setup_delay_seconds.value), Number(f.max_target_seconds.value));
+  closeModal();
+  ct.charts = await api("list_charts", ct.expId);
+  renderChartFindTarget();
+  return false;
+}
+
 async function ctRank(){
   try{
     ct.ranked = await api("chart_rank_best_per_time", ct.expId, ct.chartId, {limit: 15, step: 4});
   }catch(err){ ct.ranked = null; }
   renderChartFindTarget();
+}
+
+function ctOpenRankAtTime(){
+  openModal(`<h3>Find best target at a specific time</h3>
+    <form onsubmit="return ctRunRankAtTime(event)">
+      <div class="field"><label>Initial time (ISO)</label>
+        <input name="initial_time" required placeholder="2025-07-24T14:45:56" autofocus></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Find</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function ctRunRankAtTime(ev){
+  ev.preventDefault();
+  const initialTime = ev.target.initial_time.value.trim();
+  closeModal();
+  try{
+    ct.rankedAtTime = await api("chart_rank_at_time", ct.expId, ct.chartId, initialTime, {limit: 10});
+  }catch(err){ ct.rankedAtTime = null; }
+  renderChartFindTarget();
+  return false;
 }
 
 function renderRankedTargets(){
@@ -1171,12 +1279,65 @@ function renderRankedTargets(){
       </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function renderRankedAtTime(){
+  if(!ct.rankedAtTime.length)
+    return `<div class="empty" style="margin-top:14px">No candidates found at that time within this chart's window.</div>`;
+  const rows = ct.rankedAtTime.map((r, i) => `
+    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
+      <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn small" onclick="ctExamineAtTime(${i})">Examine</button>
+        <button class="btn small primary" onclick="ctOpenSaveTargetAtTime(${i})">Save target</button></td>
+    </tr>`).join("");
+  return `<div class="section-label">Best targets at ${esc(ct.rankedAtTime[0].initial_time.replace("T"," "))}</div>
+    <div class="candtable" style="max-height:none"><table><thead><tr>
+        <th>boot time</th><th>Vector ms</th><th>target delay</th><th>P(capture)</th><th>σ</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function ctExamineAtTime(idx){
+  const r = ct.rankedAtTime[idx];
+  ctExamineCtx = { kind: "raw", initialTime: r.initial_time, vectorMs: r.vector_ms };
+  await ctShowExamine(r.initial_time, r.vector_ms);
+}
+
+function ctOpenSaveTargetAtTime(idx){
+  const r = ct.rankedAtTime[idx];
+  openModal(`<h3>Save target</h3>
+    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
+      · P(capture) ${(r.p*100).toFixed(1)}%</div>
+    <form onsubmit="return ctSaveTargetAtTime(event, ${idx})">
+      <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function ctSaveTargetAtTime(ev, idx){
+  ev.preventDefault();
+  const r = ct.rankedAtTime[idx];
+  await api("save_target", ct.expId, ct.chartId, {
+    name: ev.target.name.value.trim(), initial_time: r.initial_time, vector_ms: r.vector_ms,
+    target_delay: r.target_delay, p: r.p, sigma: r.sigma, second: r.second, mdmsh: r.mdmsh });
+  closeModal();
+  await ctLoadTargets();
+  renderChartFindTarget();
+  return false;
+}
+
+let ctExamineCtx = null;   // how to re-fetch: {kind:"target", targetId} | {kind:"raw", initialTime, vectorMs}
+let ctExamineResult = null; // the last seconds-summary result, so "← Back" can re-render it
+
 async function ctExamine(rankIdx){
   const r = ct.ranked.top[rankIdx];
+  ctExamineCtx = { kind: "raw", initialTime: r.initial_time, vectorMs: r.vector_ms };
   await ctShowExamine(r.initial_time, r.vector_ms);
 }
 
 async function ctExamineTarget(targetId){
+  ctExamineCtx = { kind: "target", targetId };
   const ex = await api("examine_target", targetId, {});
   ctRenderExamineModal(ex);
 }
@@ -1187,8 +1348,10 @@ async function ctShowExamine(initialTime, vectorMs){
 }
 
 function ctRenderExamineModal(ex){
+  ctExamineResult = ex;
   const rows = ex.seconds.map(s => `
-    <tr><td>${s.second}</td><td>${(s.p_second*100).toFixed(1)}%</td>
+    <tr class="pick" onclick="ctShowSecondBreakdown(${s.second})">
+      <td>${s.second}</td><td>${(s.p_second*100).toFixed(1)}%</td>
       <td>[${s.mdmsh.join(", ")}]</td><td>${(s.cp*100).toFixed(2)}%</td>
       <td>${(s.p_second*s.cp*100).toFixed(2)}%</td></tr>`).join("");
   openModal(`<h3>Examine target</h3>
@@ -1197,7 +1360,32 @@ function ctRenderExamineModal(ex){
     <div class="candtable" style="max-height:220px"><table><thead><tr>
       <th>second</th><th>P(second)</th><th>mdmsh</th><th>cp</th><th>contributes</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
+    <div class="hint muted" style="margin-top:8px">Click a second to see the individual seeds behind it.</div>
     <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+}
+
+async function ctShowSecondBreakdown(second){
+  const br = ctExamineCtx.kind === "target"
+    ? await api("examine_target_second", ctExamineCtx.targetId, second, {})
+    : await api("chart_examine_second", ct.expId, ct.chartId,
+        ctExamineCtx.initialTime, ctExamineCtx.vectorMs, second, {});
+  const rows = br.rows.map(r => `
+    <tr${r.delta===0?' style="background:rgba(120,180,80,.12)"':""}>
+      <td>${r.frame}</td><td>${r.delta>=0?"+":""}${r.delta}</td><td>${esc(r.seed_hex)}</td>
+      <td>${r.hit?"✓":"✗"}</td><td>${r.weight_pct.toFixed(3)}%</td><td>${r.cum_capture_pct.toFixed(3)}%</td></tr>`).join("");
+  openModal(`<h3>Second ${br.second} — individual seeds</h3>
+    <div class="info-line">P(second)=${(br.p_second*100).toFixed(1)}% · cp=${(br.cp*100).toFixed(2)}%
+      · mdmsh=[${br.mdmsh.join(", ")}] · F=${br.F.toFixed(1)} · σ=${br.sigma.toFixed(1)}</div>
+    ${br.truncated ? `<div class="hint muted">Showing ${br.rows.length} of ${br.total_frames}
+        frames, centered on the mean — weight%/cumulative% are still exact over the full
+        window.</div>` : ""}
+    <div class="candtable" style="max-height:360px"><table><thead><tr>
+      <th>frame</th><th>Δ</th><th>seed</th><th>hit</th><th>weight%</th><th>cum capture%</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+    <div class="actions">
+      <button class="btn" onclick="ctRenderExamineModal(ctExamineResult)">← Back</button>
+      <button class="btn" onclick="closeModal()">Close</button>
+    </div>`);
 }
 
 async function ctOpenSaveTarget(rankIdx){
@@ -1238,8 +1426,12 @@ function renderSavedTargets(){
     </tr>`;
   }).join("");
   return `<div class="candtable" style="max-height:none"><table><thead><tr>
-      <th>name</th><th>boot time</th><th>Vector ms</th><th>P(capture)</th><th>chart</th><th></th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
+      <th>name</th><th>boot time</th><th>Vector ms</th><th>P(capture) at save time</th><th>chart</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="hint muted" style="margin-top:8px">This P(capture) is frozen from when the
+      target was saved. "Examine" always recomputes it live against whichever calibration
+      model is currently active — if you've switched models since saving, examine may show a
+      different number than this table.</div>`;
 }
 
 async function ctDeleteTarget(id){
@@ -1308,8 +1500,10 @@ function renderChartManageData(){
 
     <div class="section-label">Saved targets</div>
     <div style="overflow-x:auto"><table><thead><tr>
-        <th>name</th><th>chart</th><th>boot time</th><th>Vector ms</th><th>P(capture)</th><th></th>
-      </tr></thead><tbody>${targetRows}</tbody></table></div>`);
+        <th>name</th><th>chart</th><th>boot time</th><th>Vector ms</th><th>P(capture) at save time</th><th></th>
+      </tr></thead><tbody>${targetRows}</tbody></table></div>
+    <div class="hint muted" style="margin-top:8px">Frozen from save time — Examine always
+      recomputes live against the currently active model.</div>`);
 }
 
 function cmdOpenFindTarget(chartId){
@@ -1338,6 +1532,7 @@ async function cmdDeleteChart(chartId){
 }
 
 async function cmdExamineTarget(targetId){
+  ctExamineCtx = { kind: "target", targetId };
   const ex = await api("examine_target", targetId, {});
   ctRenderExamineModal(ex);
 }
@@ -1357,16 +1552,29 @@ let sac = null;
 
 async function safariCompassNewRun(expId){
   const e = await api("get_expedition", expId);
-  sac = { expId, e,
+  const activeModel = await api("get_active_calibration_model", e.profile_id);
+  sac = { expId, e, activeModel,
     initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
-    path: "", seedBResult: null, seedB: null };
+    path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null };
   renderSafariCompassNewRun();
 }
 
 function sacCaptureHeader(){
   const t = $("sac-time"); if(t) sac.initialTime = t.value.trim();
   const v = $("sac-vector"); if(v) sac.vectorMs = v.value.trim() === "" ? null : Number(v.value);
+}
+
+async function sacPickFromTarget(){
+  sac._targetsCache = await api("list_targets", sac.expId);
+  _pickTargetModal(sac._targetsCache, "sacApplyTarget");
+}
+function sacApplyTarget(targetId){
+  const t = sac._targetsCache.find(x => x.id === targetId);
+  if(!t) return;
+  sac.initialTime = t.initial_time; sac.vectorMs = t.vector_ms;
+  closeModal();
+  renderSafariCompassNewRun();
 }
 
 function renderSafariCompassNewRun(){
@@ -1391,14 +1599,21 @@ function renderSafariCompassNewRun(){
         <div class="field"><label>Vector ms</label>
           <input id="sac-vector" value="${sac.vectorMs ?? ""}" placeholder="300000"></div>
       </div>
+      <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
     </form>
-    <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${sac.e.key_seed.toString(16).toUpperCase()}</div>
+    <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${sac.e.key_seed.toString(16).toUpperCase()}
+      · model: ${sac.activeModel ? `#${sac.activeModel.number} ${esc(sac.activeModel.name || "(unnamed)")}` : `<span style="color:var(--danger)">none — build one from Calibrate Model</span>`}</div>
 
     <div class="nr-stack">
       <div class="panel" id="sac-seeda">${renderSeedASafari()}</div>
       <div class="panel ${sac.seedA?"":"locked"}" id="sac-seedb">${renderSeedBSafari()}</div>
     </div>`);
   updateSacKeyInfoLine();
+  sacValidateStartRel();
+}
+function sacValidateStartRel(){
+  const el = $("sac-startrel");
+  if(el) el.classList.toggle("invalid", !_startRelValid(el.value));
 }
 
 function renderSeedASafari(){
@@ -1414,7 +1629,8 @@ function renderSeedASafari(){
     ${keepBar}
     <div class="rel-row">
       <div class="field"><label>Roamer starting positions (R E L)</label>
-        <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"></div>
+        <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
+          oninput="sacValidateStartRel()"></div>
       <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="2"></div>
       <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="10"></div>
       <button class="btn primary" onclick="sacGenerateSeedA()">Generate</button>
@@ -1498,7 +1714,11 @@ function renderSeedBSafari(){
   }
   const r = sac.seedBResult;
   let extra = "";
-  if(r){
+  if(sac.seedBError){
+    extra = `<div class="notice warn">Couldn't load candidates: ${esc(sac.seedBError)}</div>`;
+  } else if(sac.seedBLoading){
+    extra = `<div class="muted">Loading candidates…</div>`;
+  } else if(r){
     if(r.path_valid && r.identified_seed){
       const obs = sac.path, mpath = r.machete_path;
       const pathLine = mpath && mpath.length
@@ -1535,8 +1755,18 @@ function renderSeedBSafari(){
 
 async function sacUpdateSeedB(){
   sac.path = $("sac-path").value;
-  sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
-    initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path});
+  sac.seedBLoading = true; sac.seedBError = null;
+  $("sac-seedb").innerHTML = renderSeedBSafari();
+  try{
+    sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
+      initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path});
+  }catch(err){
+    // api() already toasted this — also keep it visible in the panel itself (a toast is easy
+    // to miss, and this spot was previously left silently blank on any failure).
+    sac.seedBResult = null;
+    sac.seedBError = String(err && err.message ? err.message : err);
+  }
+  sac.seedBLoading = false;
   $("sac-seedb").innerHTML = renderSeedBSafari();
 }
 

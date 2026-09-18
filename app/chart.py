@@ -29,7 +29,9 @@ import datetime as dt
 
 from claytonlib.calibration import CalibrationModel
 from claytonlib.chart import CanonStore
-from claytonlib.chart.scorer import best_per_scenario, marginal_capture, rank_boot_marginal, rank_targets
+from claytonlib.chart.scorer import (
+    best_per_scenario, marginal_capture, rank_boot_marginal, rank_targets, seed_breakdown,
+)
 from claytonlib.expedition import Expedition as _CLExpedition
 from claytonlib.expedition._config import _resolve_criteria, _resolve_strategy
 from claytonlib.safari import safari_pokemon_by_name
@@ -292,4 +294,31 @@ def examine(exp: dict, chart: dict, models: dict, initial_time: str, vector_ms: 
              "cp": b["cp"], "lo": b["lo"], "hi": b["hi"]}
             for b in mc["breakdown"]
         ],
+    }
+
+
+def examine_second(exp: dict, chart: dict, models: dict, initial_time: str, vector_ms: int,
+                   second: int, params: dict) -> dict:
+    """Individual (frame, seed) rows for ONE candidate RTC second of an examine() breakdown —
+    the same per-seed detail the notebook's chart_check_target_landing() prints."""
+    store = _canon_store(exp, chart)
+    if store.read_meta() is None:
+        raise ValueError("no canon map yet — run precompute first")
+    cmap = store.load_map()
+    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    base_delay, _ = get_times(exp["key_seed"])
+    it = _parse_time(initial_time)
+
+    result = seed_breakdown(cmap, model, it, vector_ms, base_delay, int(second),
+                            k=float(params.get("k", 3.5)),
+                            include_calibration=bool(params.get("include_calibration", False)))
+    if result is None:
+        raise ValueError("that second isn't part of this target's landing distribution")
+    return {
+        "second": result["second"], "p_second": result["p_second"], "cp": result["cp"],
+        "mdmsh": list(result["mdmsh"]), "F": result["F"], "sigma": result["sigma"],
+        "total_frames": result["total_frames"], "truncated": result["truncated"],
+        "rows": [{"frame": r["frame"], "delta": r["delta"], "seed_hex": f"0x{r['seed']:08X}",
+                  "hit": r["hit"], "weight_pct": r["weight_pct"],
+                  "cum_capture_pct": r["cum_capture_pct"]} for r in result["rows"]],
     }

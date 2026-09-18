@@ -152,6 +152,74 @@ class TestSecondMarginalization(unittest.TestCase):
         self.assertEqual(rows[0]["initial_time"], t_a)  # the boot whose second-20 mdmsh is captured
 
 
+class TestSeedBreakdown(unittest.TestCase):
+    """Individual (frame, seed) rows for one candidate second — the per-seed drill-down
+    behind Examine target, mirroring the notebook's chart_check_target_landing()."""
+
+    def _model(self, sigma_s=0.0):
+        return CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_c=None,
+                                jitter_rms=8.0, rtc_offset_seconds=0.0, rtc_offset_std=sigma_s)
+
+    def test_unknown_second_returns_none(self):
+        from claytonlib.chart.scorer import seed_breakdown
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        mdmsh20 = mdmsh_of(t0 + dt.timedelta(seconds=20))
+        cmap = CanonMap({mdmsh20: [_all_set(1000, 1400)]})
+        result = seed_breakdown(cmap, model, t0, 20000, 1000, second=99, k=3.5)
+        self.assertIsNone(result)
+
+    def test_rows_cover_the_full_window_hit_and_weight_are_consistent(self):
+        from claytonlib.chart.scorer import seed_breakdown
+        from claytonlib.chart.canon import seed_for_mdmsh
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        mdmsh20 = mdmsh_of(t0 + dt.timedelta(seconds=20))
+        cmap = CanonMap({mdmsh20: [_all_set(1000, 1400)]})  # every frame in [1000,1400] captured
+        result = seed_breakdown(cmap, model, t0, 20000, 1000, second=20, k=3.5)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["second"], 20)
+        self.assertFalse(result["truncated"])
+        self.assertEqual(result["total_frames"], len(result["rows"]))
+        F = result["F"]
+        lo, hi = int(F - 3.5 * result["sigma"]), int(F + 3.5 * result["sigma"])
+        for row in result["rows"]:
+            self.assertTrue(lo <= row["frame"] <= hi + 1)
+            self.assertEqual(row["seed"], seed_for_mdmsh(mdmsh20, row["frame"]))
+            # Every frame in [1000, 1400] is captured; rows outside that band are not.
+            self.assertEqual(row["hit"], 1000 <= row["frame"] <= 1400)
+            self.assertEqual(row["delta"], row["frame"] - round(F))
+        # weight%/cum_capture% are monotonic-consistent: cum% never exceeds 100 and is
+        # non-decreasing as frame increases (each step adds a non-negative weighted hit).
+        cums = [row["cum_capture_pct"] for row in result["rows"]]
+        self.assertTrue(all(a <= b + 1e-9 for a, b in zip(cums, cums[1:])))
+        self.assertLessEqual(cums[-1], 100.0 + 1e-6)
+        # the center (delta==0) row exists and carries meaningful weight
+        center_rows = [row for row in result["rows"] if row["delta"] == 0]
+        self.assertEqual(len(center_rows), 1)
+        self.assertGreater(center_rows[0]["weight_pct"], 0)
+
+    def test_max_rows_truncates_but_keeps_exact_totals(self):
+        from claytonlib.chart.scorer import seed_breakdown
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        mdmsh20 = mdmsh_of(t0 + dt.timedelta(seconds=20))
+        cmap = CanonMap({mdmsh20: [_all_set(1000, 1400)]})
+        full = seed_breakdown(cmap, model, t0, 20000, 1000, second=20, k=3.5, max_rows=None)
+        capped = seed_breakdown(cmap, model, t0, 20000, 1000, second=20, k=3.5, max_rows=10)
+        self.assertFalse(full["truncated"])
+        self.assertTrue(capped["truncated"])
+        self.assertEqual(capped["total_frames"], full["total_frames"])
+        self.assertEqual(len(capped["rows"]), 10)
+        # the capped window is centered on delta=0
+        deltas = [row["delta"] for row in capped["rows"]]
+        self.assertIn(0, deltas)
+        # cum_capture_pct for a shared frame matches between full and capped (same denominator)
+        full_by_frame = {row["frame"]: row["cum_capture_pct"] for row in full["rows"]}
+        for row in capped["rows"]:
+            self.assertAlmostEqual(row["cum_capture_pct"], full_by_frame[row["frame"]], places=6)
+
+
 class TestRankOverTimes(unittest.TestCase):
     def test_finds_pair_and_valid_boot_time(self):
         from claytonlib.chart.scorer import rank_over_times, best_per_scenario

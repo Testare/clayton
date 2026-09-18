@@ -504,6 +504,18 @@ class Facade:
         self._store.write(_CHARTS, c.id, c.to_dict())
         return c.to_dict()
 
+    def update_chart_window(self, chart_id: str, setup_delay_seconds: int,
+                            max_target_seconds: int) -> dict:
+        """Change an existing chart's delay window. Safe to widen or narrow after the fact —
+        the canon map's signature doesn't include setup/max (see claytonlib.chart.canon's
+        _config_signature), so this never invalidates a computed chart; a wider window just
+        means the next Compute chart extends into the newly-uncovered range."""
+        doc = self.get_chart(chart_id)
+        doc["setup_delay_seconds"] = int(setup_delay_seconds)
+        doc["max_target_seconds"] = int(max_target_seconds)
+        self._store.write(_CHARTS, chart_id, doc)
+        return doc
+
     def list_charts(self, expedition_id: str) -> list[dict]:
         out = []
         for cid in self._store.list_ids(_CHARTS):
@@ -560,6 +572,14 @@ class Facade:
         models = self._resolve_calibration_models(exp["profile_id"])
         return chart_lib.examine(exp, c, models, initial_time, vector_ms, params)
 
+    def chart_examine_second(self, expedition_id: str, chart_id: str, initial_time: str,
+                             vector_ms: int, second: int, params: dict) -> dict:
+        """Individual (frame, seed) rows for one candidate second of a chart_examine() result —
+        click a second in Examine target to drill into this."""
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        return chart_lib.examine_second(exp, c, models, initial_time, vector_ms, second, params)
+
     # -- Safari Chart: Target CRUD -------------------------------------------
 
     def save_target(self, expedition_id: str, chart_id: str, fields: dict) -> dict:
@@ -604,6 +624,13 @@ class Facade:
         t = self.get_target(target_id)
         return self.chart_examine(t["expedition_id"], t["chart_id"],
                                   t["initial_time"], t["vector_ms"], params)
+
+    def examine_target_second(self, target_id: str, second: int, params: dict) -> dict:
+        """Examine a SAVED target's one candidate second, per-seed (convenience over
+        chart_examine_second)."""
+        t = self.get_target(target_id)
+        return self.chart_examine_second(t["expedition_id"], t["chart_id"],
+                                         t["initial_time"], t["vector_ms"], second, params)
 
     # -- Calibrate Model ----------------------------------------------------
 
