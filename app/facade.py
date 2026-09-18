@@ -228,6 +228,11 @@ class Facade:
         """The key seed's own roamer routes + Elm (to spot a key-seed hit)."""
         return metronome.key_seed_info(key_seed, prev_routes)
 
+    def times_on_date(self, key_seed: int, date_str: str) -> list[str]:
+        """Every valid initial time for `key_seed` on `date_str` (YYYY-MM-DD) — powers the
+        calendar/date-picker flow for Initial-time fields."""
+        return metronome.times_on_date(key_seed, date_str)
+
     def metronome_seed_b(self, params: dict) -> dict:
         """Candidate battle seeds, each with its precomputed Metronome path."""
         return metronome.seed_b(params)

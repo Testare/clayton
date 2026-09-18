@@ -292,5 +292,36 @@ class TestRuns(unittest.TestCase):
         self.assertEqual(len(self.api.list_runs(self.pid)), 0)
 
 
+class TestTimesOnDate(unittest.TestCase):
+    """Powers the calendar/valid-times picker (clayton-b42.6.1)."""
+
+    def test_finds_times_on_the_exact_date_used_to_build_the_key_seed(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            times = api.times_on_date(_KEY_SEED, "2025-07-24")
+            self.assertIn(_TARGET_TIME, times)
+
+    def test_year_is_reinterpreted_not_matched_literally(self):
+        # generate_times() stamps a nominal placeholder year -- month/day/hour/minute/second
+        # are what the RNG actually cares about -- so a DIFFERENT real year with the same
+        # month/day must still find (and re-stamp) the same time.
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            times_2030 = api.times_on_date(_KEY_SEED, "2030-07-24")
+            self.assertIn("2030-07-24T14:45:56", times_2030)
+
+    def test_empty_for_a_date_with_no_matches(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            # January 14 falls outside this key seed's mdms window (verified directly against
+            # get_times() -- the window is wide enough that "just pick any other month" isn't
+            # reliably a non-match, so this specific date is deliberate, not arbitrary).
+            far_off = api.times_on_date(_KEY_SEED, "2025-01-14")
+            self.assertEqual(far_off, [])
+
+
 if __name__ == "__main__":
     unittest.main()

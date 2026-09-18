@@ -162,6 +162,32 @@ def key_seed_info(key_seed: int, prev_routes: dict | None) -> dict:
     }
 
 
+def times_on_date(key_seed: int, date_str: str) -> list[str]:
+    """Every valid initial time for `key_seed` (from claytonlib.times.get_times, which is
+    itself cached per key seed) falling on `date_str` (YYYY-MM-DD). Powers the "pick from a
+    calendar" flow for Initial-time fields — the set of times you could ever load this key
+    seed at is fixed and small enough to just enumerate and let the user click one.
+
+    generate_times() stamps every time with a nominal placeholder year (calculate_seed never
+    reads the year — only month/day/hour/minute/second matter to the RNG), so matching is by
+    month+day only; the results are re-stamped with `date_str`'s own year so what comes back
+    reflects when the user will actually load the game. A Feb 29 match is dropped silently
+    when `date_str`'s year isn't a leap year (not a real date to load on).
+    """
+    from claytonlib.times import get_times
+    target = dt.date.fromisoformat(date_str)
+    _delay, times = get_times(int(key_seed))
+    out = []
+    for t in times:
+        if (t.month, t.day) != (target.month, target.day):
+            continue
+        try:
+            out.append(t.replace(year=target.year).strftime(_TIME_FMT))
+        except ValueError:
+            continue
+    return sorted(out)
+
+
 # --- Seed B (battle seed: Metronome paths) --------------------------------
 
 def _row_b_json(r: dict) -> dict:

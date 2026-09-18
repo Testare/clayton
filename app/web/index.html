@@ -197,6 +197,43 @@ function openModal(html, wide){
 }
 function closeModal(){ $("modal-backdrop")?.remove(); }
 
+// --- Reusable calendar/valid-times picker for Initial-time fields ---------
+// `onPick(timeStr)` decides what to do with the chosen time — set page state and re-render
+// for a plain page field, or re-open the caller's own modal with it prefilled.
+let _timePickerKeySeed = null;
+let _timePickerOnPick = null;
+
+function openTimePicker(keySeed, onPick){
+  if(keySeed == null){ toast("Set a key seed first."); return; }
+  _timePickerKeySeed = keySeed;
+  _timePickerOnPick = onPick;
+  openModal(`<h3>Pick a valid initial time</h3>
+    <div class="hint muted" style="margin-bottom:8px">Only month/day/hour/minute/second
+      matter to the seed — pick any date to see that day's valid times for this key seed.</div>
+    <div class="field"><label>Date</label><input id="tp-date" type="date"></div>
+    <button class="btn small" type="button" onclick="_timePickerLoad()">Show times</button>
+    <div id="tp-results" style="margin-top:12px"></div>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button></div>`);
+}
+
+async function _timePickerLoad(){
+  const date = $("tp-date").value;
+  if(!date){ toast("Pick a date first."); return; }
+  const times = await api("times_on_date", _timePickerKeySeed, date);
+  const box = $("tp-results");
+  box.innerHTML = !times.length
+    ? `<div class="empty">No valid times on this date for this key seed.</div>`
+    : `<div class="candtable" style="max-height:280px"><table><thead><tr><th>time</th></tr></thead>
+        <tbody>${times.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
+          <td>${esc(t.replace("T"," "))}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function _timePickerPick(t){
+  const onPick = _timePickerOnPick;
+  closeModal();
+  onPick(t);
+}
+
 function setView(view){
   state.view = view;
   document.querySelectorAll("#nav button").forEach(b =>
@@ -448,6 +485,11 @@ function nrApplyTarget(targetId){
   renderNewRun();
 }
 
+function nrPickTime(t){
+  nr.initialTime = t;
+  renderNewRun();
+}
+
 function renderNewRun(){
   const p = nr.profile;
   if(!p.has_valid_metronome_user){
@@ -482,7 +524,10 @@ function renderNewRun(){
         <div class="field"><label>Vector ms</label>
           <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"></div>
       </div>
-      <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
+        <button class="btn small" type="button" onclick="openTimePicker(nr.e.key_seed, nrPickTime)">Pick a valid time…</button>
+      </div>
     </form>
     <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}</div>
 
@@ -1277,13 +1322,19 @@ function ctOpenRankAtTime(){
   openModal(`<h3>Find best target at a specific time</h3>
     <form onsubmit="return ctRunRankAtTime(event)">
       <div class="field"><label>Initial time (ISO)</label>
-        <input name="initial_time" value="${esc(ct.lastRankAtTime || "")}"
+        <input name="initial_time" id="ct-rank-at-time" value="${esc(ct.lastRankAtTime || "")}"
           required placeholder="2025-07-24T14:45:56" autofocus></div>
+      <button class="btn small" type="button" onclick="ctPickTimeForRankAtTime()">Pick a valid time…</button>
       <div class="actions">
         <button class="btn primary" type="submit">Find</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
       </div>
     </form>`);
+}
+
+function ctPickTimeForRankAtTime(){
+  ct.lastRankAtTime = $("ct-rank-at-time").value;  // preserve whatever's typed so far
+  openTimePicker(ct.e.key_seed, (t) => { ct.lastRankAtTime = t; ctOpenRankAtTime(); });
 }
 
 async function ctRunRankAtTime(ev){
@@ -1626,6 +1677,11 @@ function sacApplyTarget(targetId){
   renderSafariCompassNewRun();
 }
 
+function sacPickTime(t){
+  sac.initialTime = t;
+  renderSafariCompassNewRun();
+}
+
 function renderSafariCompassNewRun(){
   if(sac.e.key_seed == null){
     mount(`<div class="head"><h2>Safari Compass — New Run</h2>
@@ -1648,7 +1704,10 @@ function renderSafariCompassNewRun(){
         <div class="field"><label>Vector ms</label>
           <input id="sac-vector" value="${sac.vectorMs ?? ""}" placeholder="300000"></div>
       </div>
-      <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
+        <button class="btn small" type="button" onclick="openTimePicker(sac.e.key_seed, sacPickTime)">Pick a valid time…</button>
+      </div>
     </form>
     <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${sac.e.key_seed.toString(16).toUpperCase()}
       · model: ${sac.activeModel ? `#${sac.activeModel.number} ${esc(sac.activeModel.name || "(unnamed)")}` : `<span style="color:var(--danger)">none — build one from Calibrate Model</span>`}</div>
