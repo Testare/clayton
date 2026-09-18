@@ -259,6 +259,48 @@ Worked through `notes/clayton_v1_feedback.md`'s "Feedback 4" section (tracked as
   find-best-target-at-time remembers its last input for the session (not persisted
   across restarts — a P3 nicety, didn't seem worth a new Expedition field).
 
+## Addressed this session (your "Feedback 5" notes)
+
+Worked through `notes/clayton_v1_feedback.md`'s "Feedback 5" section — the biggest batch
+yet (beads `clayton-b42.7.1`–`.21`, all closed; `.22` is the block-table-aware ToD
+filtering you explicitly deferred, left open on purpose). Still **written blind**. A few
+things worth flagging specifically:
+
+- **Real bugs found and fixed**: Seed B's new (Feedback-4) window defaulted to 10 delays
+  instead of 2000; Calibrate Model showed dashes for the Standard model's active-column
+  because it only read a field that a real fit populates, not the seeded model's own
+  data; the exclude checkbox on an excluded run LOOKED disabled because the whole row
+  (including the checkbox) got dimmed via opacity, even though it was always still
+  togglable; and — while fixing the guide text you asked for — I found the path-
+  character validator I added last round rejected `?`/`a`/`e`, which the backend fully
+  supports and the guide itself documents.
+- **Profile TID/SID → Trainer Name/Version**: confirmed via grep these were never read
+  by any RNG/calibration math before removing them.
+- **Time of day**: built the classifier and boundary constants you gave exactly
+  (morning 4-9:59, day 10-19:59, night 20-3:59) and wired it into the advance-frame
+  guide (auto-derives from the initial time, no more prompt). The "verify which ToDs
+  actually work + filter + warn" piece needs block-table intelligence you said is
+  future work — split into `clayton-b42.7.22` rather than build a filter with no real
+  trigger condition yet.
+- **Advance-frame guide got a substantial rework**: its own "Seed A advances" section
+  gating Seed B, no confirm step (auto-plans once the frame resolves), an exact
+  key-seed hit auto-uses your configured `key_seed_advances` with no search, Elm-call
+  prefill instead of auto-commit, "Change" buttons on both the Elm log and Seed B's
+  path log, an in-house target-frame search (ported from `utils/safari_advance.py`'s
+  `choose_target_frame`), and a Machete-depth preference actually wired into Seed B's
+  single-seed search (previously hardcoded to the library default with no way to
+  configure it).
+- **Seed B guide is now a side pane, not a blocking modal** — openSidePane has no
+  backdrop, so the path input stays usable while the guide is open. A true
+  repositionable OS window would need new pywebview multi-window plumbing; flag if you
+  want that instead of the pane.
+- **Widened Seed B's search window** is now available when a path eliminates every
+  candidate — the backend already took `k`/`second_offsets` overrides, just had no UI.
+- Safari Compass Review Data now has its own Tags tab, mirroring Metronome's.
+- This is the least-tested-by-you surface in the app by a wide margin now (New Run's
+  advance-frame section touches almost everything in Safari Compass) — please look
+  closely, especially the auto-pilot frame resolution and the exact-key-seed-hit path.
+
 ## Corrected this session
 
 - **I was wrong that safari runs don't matter for calibration** — you corrected

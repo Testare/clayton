@@ -219,15 +219,24 @@ function closeSidePane(){ $("side-pane")?.remove(); }
 // for a plain page field, or re-open the caller's own modal with it prefilled.
 let _timePickerKeySeed = null;
 let _timePickerOnPick = null;
+// Remembered across uses for the rest of this session (not tied to any one expedition/chart,
+// since this picker is shared across several pages).
+let _timePickerLastDate = "";
+let _timePickerLastSecond = "";
 
 function openTimePicker(keySeed, onPick){
   if(keySeed == null){ toast("Set a key seed first."); return; }
   _timePickerKeySeed = keySeed;
   _timePickerOnPick = onPick;
   openModal(`<h3>Pick a valid initial time</h3>
-    <div class="hint muted" style="margin-bottom:8px">Only month/day/hour/minute/second
-      matter to the seed — pick any date to see that day's valid times for this key seed.</div>
-    <div class="field"><label>Date</label><input id="tp-date" type="date"></div>
+    <div class="hint muted" style="margin-bottom:8px">Pick a valid time for the key seed —
+      year does not matter.</div>
+    <div class="grid2">
+      <div class="field"><label>Filter by date (optional)</label>
+        <input id="tp-date" type="date" value="${esc(_timePickerLastDate)}"></div>
+      <div class="field"><label>Filter by second (optional)</label>
+        <input id="tp-second" type="number" min="0" max="59" placeholder="0-59" value="${esc(_timePickerLastSecond)}"></div>
+    </div>
     <button class="btn small" type="button" onclick="_timePickerLoad()">Show times</button>
     <div id="tp-results" style="margin-top:12px"></div>
     <div class="actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button></div>`);
@@ -235,13 +244,18 @@ function openTimePicker(keySeed, onPick){
 
 async function _timePickerLoad(){
   const date = $("tp-date").value;
-  if(!date){ toast("Pick a date first."); return; }
-  const times = await api("times_on_date", _timePickerKeySeed, date);
+  const secondStr = $("tp-second").value.trim();
+  _timePickerLastDate = date; _timePickerLastSecond = secondStr;
+  const second = secondStr === "" ? null : Number(secondStr);
+  const times = await api("times_on_date", _timePickerKeySeed, date || null, second);
   const box = $("tp-results");
+  const cap = 500;
+  const shown = times.slice(0, cap);
   box.innerHTML = !times.length
-    ? `<div class="empty">No valid times on this date for this key seed.</div>`
-    : `<div class="candtable" style="max-height:280px"><table><thead><tr><th>time</th></tr></thead>
-        <tbody>${times.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
+    ? `<div class="empty">No valid times match those filters for this key seed.</div>`
+    : `${times.length > cap ? `<div class="hint muted" style="margin-bottom:6px">Showing ${cap} of ${times.length} — narrow with a date or second filter to see the rest.</div>` : ""}
+      <div class="candtable" style="max-height:280px"><table><thead><tr><th>time</th></tr></thead>
+        <tbody>${shown.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
           <td>${esc(t.replace("T"," "))}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
@@ -571,7 +585,7 @@ function renderNewRun(){
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
-        <button class="btn small" type="button" onclick="openTimePicker(nr.e.key_seed, nrPickTime)">Pick a valid time…</button>
+        <button class="btn small" type="button" onclick="openTimePicker(nr.e.key_seed, nrPickTime)">Pick time</button>
       </div>
     </form>
     <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${nr.e.key_seed.toString(16).toUpperCase()}</div>
@@ -1385,7 +1399,7 @@ function ctOpenRankAtTime(){
       <div class="field"><label>Initial time (ISO)</label>
         <input name="initial_time" id="ct-rank-at-time" value="${esc(ct.lastRankAtTime || "")}"
           required placeholder="2025-07-24T14:45:56" autofocus></div>
-      <button class="btn small" type="button" onclick="ctPickTimeForRankAtTime()">Pick a valid time…</button>
+      <button class="btn small" type="button" onclick="ctPickTimeForRankAtTime()">Pick time</button>
       <div class="actions">
         <button class="btn primary" type="submit">Find</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -1768,7 +1782,7 @@ function renderSafariCompassNewRun(){
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
-        <button class="btn small" type="button" onclick="openTimePicker(sac.e.key_seed, sacPickTime)">Pick a valid time…</button>
+        <button class="btn small" type="button" onclick="openTimePicker(sac.e.key_seed, sacPickTime)">Pick time</button>
       </div>
     </form>
     <div class="muted" style="font-size:11.5px;margin:4px 0 2px">Key seed 0x${sac.e.key_seed.toString(16).toUpperCase()}

@@ -322,6 +322,40 @@ class TestTimesOnDate(unittest.TestCase):
             far_off = api.times_on_date(_KEY_SEED, "2025-01-14")
             self.assertEqual(far_off, [])
 
+    def test_both_filters_optional_returns_everything(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            everything = api.times_on_date(_KEY_SEED)
+            on_date = api.times_on_date(_KEY_SEED, "2025-07-24")
+            self.assertGreater(len(everything), len(on_date))
+            # Unfiltered results keep generate_times()'s own nominal year (2000).
+            self.assertTrue(all(t.startswith("2000-") for t in everything))
+
+    def test_second_filter_alone(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            times = api.times_on_date(_KEY_SEED, second=56)
+            self.assertTrue(times)
+            self.assertTrue(all(t.endswith(":56") for t in times))
+
+    def test_date_and_second_combine(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            times = api.times_on_date(_KEY_SEED, "2025-07-24", 56)
+            self.assertEqual(times, [_TARGET_TIME])
+
+    def test_year_out_of_range_normalizes_to_2000(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            too_early = api.times_on_date(_KEY_SEED, "1999-07-24")
+            too_late = api.times_on_date(_KEY_SEED, "2150-07-24")
+            self.assertIn("2000-07-24T14:45:56", too_early)
+            self.assertIn("2000-07-24T14:45:56", too_late)
+
 
 if __name__ == "__main__":
     unittest.main()

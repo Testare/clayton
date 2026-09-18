@@ -162,29 +162,42 @@ def key_seed_info(key_seed: int, prev_routes: dict | None) -> dict:
     }
 
 
-def times_on_date(key_seed: int, date_str: str) -> list[str]:
+def times_on_date(key_seed: int, date_str: str | None = None, second: int | None = None) -> list[str]:
     """Every valid initial time for `key_seed` (from claytonlib.times.get_times, which is
-    itself cached per key seed) falling on `date_str` (YYYY-MM-DD). Powers the "pick from a
-    calendar" flow for Initial-time fields — the set of times you could ever load this key
-    seed at is fixed and small enough to just enumerate and let the user click one.
+    itself cached per key seed), optionally filtered to one date (YYYY-MM-DD) and/or one
+    second-of-minute value (0-59). Both filters are optional — with neither, every valid time
+    is returned. Powers the "pick from a calendar" flow for Initial-time fields — the set of
+    times you could ever load this key seed at is fixed and small enough to just enumerate
+    and let the user click one.
 
     generate_times() stamps every time with a nominal placeholder year (calculate_seed never
-    reads the year — only month/day/hour/minute/second matter to the RNG), so matching is by
-    month+day only; the results are re-stamped with `date_str`'s own year so what comes back
-    reflects when the user will actually load the game. A Feb 29 match is dropped silently
-    when `date_str`'s year isn't a leap year (not a real date to load on).
+    reads the year — only month/day/hour/minute/second matter to the RNG), so a date filter
+    matches by month+day only; matches are re-stamped with `date_str`'s own year so what comes
+    back reflects when the user will actually load the game — EXCEPT a year outside
+    [2000, 2099], which is out-of-range nonsense for this game and is normalized to 2000
+    instead (matches generate_times()'s own placeholder). A Feb 29 match is dropped silently
+    when the target year isn't a leap year (not a real date to load on).
     """
     from claytonlib.times import get_times
-    target = dt.date.fromisoformat(date_str)
+    target_md = None
+    target_year = None
+    if date_str:
+        target = dt.date.fromisoformat(date_str)
+        target_md = (target.month, target.day)
+        target_year = target.year if 2000 <= target.year <= 2099 else 2000
     _delay, times = get_times(int(key_seed))
     out = []
     for t in times:
-        if (t.month, t.day) != (target.month, target.day):
+        if second is not None and t.second != second:
             continue
-        try:
-            out.append(t.replace(year=target.year).strftime(_TIME_FMT))
-        except ValueError:
-            continue
+        if target_md is not None:
+            if (t.month, t.day) != target_md:
+                continue
+            try:
+                t = t.replace(year=target_year)
+            except ValueError:
+                continue
+        out.append(t.strftime(_TIME_FMT))
     return sorted(out)
 
 
