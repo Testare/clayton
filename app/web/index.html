@@ -1770,10 +1770,12 @@ function renderFrameGuide(){
       <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
       <div class="hint muted" style="margin-bottom:8px">Needed for calibration — pin which
         advance frame Seed A is on right now.</div>
-      <div class="field"><label>Elm calls heard since Seed A loaded (P/E/K)</label>
-        <input id="sac-frame-elm" value="${esc(sac.frameObservedElm || "")}" placeholder="PEKE…"></div>
+      ${sac.frameObservedElm ? `<div class="hint muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code></div>` : ""}
+      <div class="field"><label>New Elm calls heard (P/E/K) — Enter to add</label>
+        <input id="sac-frame-elm-new" placeholder="PEKE…" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendFrameElm();}"></div>
       ${candInfo}
-      <button class="btn small" onclick="sacIdentifyFrame()">Pin current frame</button>
+      <button class="btn small" onclick="sacAppendFrameElm()">Add</button>
     </div>`;
   }
   if(!sac.frameGuide){
@@ -1796,14 +1798,23 @@ function renderFrameGuide(){
   </div>`;
 }
 
+// Runs identification against the FULL accumulated sac.frameObservedElm and updates state —
+// shared by the auto-trigger on Seed A pick and the Enter-to-add flow below.
 async function sacIdentifyFrame(){
-  sac.frameObservedElm = $("sac-frame-elm").value;
   const res = await api("safari_compass_identify_frame", {
     seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
     observed_elm: sac.frameObservedElm});
   sac.frameCandidates = res.frames;
   if(res.pinned) sac.pinnedFrame = res.frame;
   $("sac-seeda").innerHTML = renderSeedASafari();
+}
+
+async function sacAppendFrameElm(){
+  const el = $("sac-frame-elm-new");
+  const add = (el.value || "").trim();
+  if(!add) return;
+  sac.frameObservedElm = (sac.frameObservedElm || "") + add;
+  await sacIdentifyFrame();
 }
 
 async function sacPlanFrameRoute(){
@@ -1926,8 +1937,10 @@ function renderSeedBSafari(){
     }
   }
   return `<h3>Seed B — battle seed</h3>
-    <div class="field"><label>Observed path (m/M/b/B/0-3/F/C, u=undo)</label>
-      <input id="sac-path" value="${esc(sac.path)}" placeholder="bbbBbb0321" oninput="sacUpdateSeedB()" autocomplete="off"></div>
+    ${sac.path ? `<div class="hint muted">Path so far: <code>${esc(sac.path)}</code></div>` : ""}
+    <div class="field"><label>New observations (m/M/b/B/0-3/F/C, u=undo) — Enter to apply</label>
+      <input id="sac-path-new" placeholder="bbbBbb0321" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendPath();}"></div>
     <div class="hint muted legend">
       <span><b>m</b> mud</span><span><b>M</b> mud, crit</span>
       <span><b>b</b> bait</span><span><b>B</b> bait, crit</span>
@@ -1937,7 +1950,7 @@ function renderSeedBSafari(){
       <span><button class="btn small" type="button" onclick="sacShowCheatsheet()">? full guide</button></span>
     </div>
     <div class="hint muted">Enter what you actually see, turn by turn, one character per turn
-      (a ball throw is its shake count, 0-3). Narrows live as you type.</div>
+      (a ball throw is its shake count, 0-3) — press Enter to apply it and narrow.</div>
     ${extra}`;
 }
 
@@ -1955,8 +1968,9 @@ async function sacShowCheatsheet(){
     <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
 }
 
+// Runs the query against the FULL accumulated sac.path and updates state — shared by the
+// auto-fetch on Seed A pick (empty path) and the Enter-to-apply flow below.
 async function sacUpdateSeedB(){
-  sac.path = $("sac-path").value;
   sac.seedBLoading = true; sac.seedBError = null;
   $("sac-seedb").innerHTML = renderSeedBSafari();
   try{
@@ -1970,6 +1984,14 @@ async function sacUpdateSeedB(){
   }
   sac.seedBLoading = false;
   $("sac-seedb").innerHTML = renderSeedBSafari();
+}
+
+async function sacAppendPath(){
+  const el = $("sac-path-new");
+  const add = (el.value || "").trim();
+  if(!add) return;
+  sac.path = (sac.path || "") + add;
+  await sacUpdateSeedB();
 }
 
 function sacAcceptSeedB(){
