@@ -476,7 +476,7 @@ async function metronomeNewRun(expId){
     matchParity: !!lastDefaults.match_parity, lastTag: lastDefaults.tag || "",
     sbSecondsWindow: lastDefaults.sb_seconds_window ?? 2, sbDelayWindow: lastDefaults.sb_delay_window ?? 2000,
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
-    seedBSession: null, seedBLog: [], seedB: null };
+    seedBSession: null, seedBLog: [], seedB: null, seedBLoading: false };
   renderNewRun();
 }
 
@@ -711,6 +711,11 @@ function renderSeedB(){
       <div class="info-line done">Seed B ${esc(nr.seedB.seed_hex)} · delay ${nr.seedB.delay} · ${esc(nr.seedB.path_str)}</div>
       <button class="btn small" onclick="nrResetSeedB()">Change Seed B</button>`;
   }
+  if(nr.seedBLoading){
+    return `<h3>Seed B — battle seed</h3>
+      <div class="status">Narrowing candidates…</div>
+      <div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`;
+  }
   const s = nr.seedBSession;
   if(s && !s.done){
     return `<h3>Seed B — narrowing the battle</h3>
@@ -770,11 +775,14 @@ async function nrStartSeedB(){
   nr.sbSecondsWindow = Number($("nr-sb-secwin").value);
   nr.sbDelayWindow = Number($("nr-sb-delaywin").value);
   nr.seedBLog = [];
+  nr.seedBLoading = true;
+  renderNewRun();
   nr.seedBSession = await api("metronome_seed_b_start", {
     target_time: nr.initialTime, key_seed: nr.e.key_seed,
     seconds_window: nr.sbSecondsWindow, delay_window: nr.sbDelayWindow,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
     metronome_only: metronomeOnly });
+  nr.seedBLoading = false;
   _appendSeedBLog(nr.seedBSession);
   if(nr.seedBSession.done && nr.seedBSession.result) nr.seedB = nr.seedBSession.result;
   nr.e = await api("save_expedition", {...nr.e, last_metronome_defaults: {
@@ -938,17 +946,21 @@ function renderReviewRuns(){
     ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>exclude</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>exclude</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = review.dirty[r.id] !== undefined;
           const staged = isDirty ? review.dirty[r.id] : r.excluded;
-          const rowStyle = isDirty ? ' style="background:rgba(255,196,0,.12)"' : (reason ? ' style="opacity:.6"' : "");
-          return `<tr${rowStyle}>
-          <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
-          <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
-          <td>${esc(r.b_seed?.seed_hex || "—")}</td>
+          // Only the DATA cells dim when excluded — the checkbox stays at full opacity so it
+          // never reads as "disabled" (it's still fully interactive; re-check it to re-enable).
+          const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
+          const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
+          return `<tr${rowBg}>
+          <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           <td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>
-          <td>${reason.startsWith("outlier")
+          <td${muted}>${reason.startsWith("outlier")
               ? `<span class="badge warn">${esc(reason)}</span>` : esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
@@ -2251,17 +2263,19 @@ function renderSafariReview(){
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>exclude</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>exclude</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = sreview.dirty[r.id] !== undefined;
           const staged = isDirty ? sreview.dirty[r.id] : r.excluded;
-          const rowStyle = isDirty ? ' style="background:rgba(255,196,0,.12)"' : (reason ? ' style="opacity:.6"' : "");
-          return `<tr${rowStyle}>
-          <td>${esc((r.saved_at||"").replace("T"," "))}</td><td>${esc(r.tag||"—")}</td>
-          <td>${r.vector_ms ?? "—"}</td><td>${esc(r.a_seed?.seed_hex || "—")}</td>
-          <td>${esc(r.b_seed?.seed_hex || "—")}</td>
+          const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
+          const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
+          return `<tr${rowBg}>
+          <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           <td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>
-          <td>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
+          <td${muted}>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
