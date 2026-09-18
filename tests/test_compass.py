@@ -1007,5 +1007,28 @@ class TestSafariPokemonName(unittest.TestCase):
         self.assertEqual(p.name, 'testmon')
 
 
+# ---------------------------------------------------------------------------
+# cheatsheet_rows — the (key, action, message) legend, reused by app's Seed B guide
+# ---------------------------------------------------------------------------
+
+class TestCheatsheetRows(unittest.TestCase):
+    def test_species_name_is_interpolated_into_messages(self):
+        from claytonlib.compass import cheatsheet_rows
+        rows = cheatsheet_rows('metang')
+        by_key = {k: (action, msg) for k, action, msg in rows}
+        self.assertEqual(by_key['M / a'][1], 'Metang is beside itself with anger!')
+        self.assertEqual(by_key['C'][1], 'Gotcha! Metang was caught!')
+        # Ball-shake messages are species-independent
+        self.assertEqual(by_key['0'][1], 'Oh, no! The Pokémon broke free!')
+
+    def test_calibrated_adds_the_widen_row(self):
+        from claytonlib.compass import cheatsheet_rows
+        keys = [k for k, _a, _m in cheatsheet_rows('metang', calibrated=False)]
+        keys_cal = [k for k, _a, _m in cheatsheet_rows('metang', calibrated=True)]
+        self.assertNotIn('w', keys)
+        self.assertIn('w', keys_cal)
+        self.assertEqual(keys_cal[:-1], keys)  # only the trailing row differs
+
+
 if __name__ == '__main__':
     unittest.main()

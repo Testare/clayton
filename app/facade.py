@@ -269,6 +269,34 @@ class Facade:
             model = model.with_safari_offset()
         return safari_compass.seed_b(exp, model, params)
 
+    def safari_compass_cheatsheet(self, pokemon_name: str) -> list[dict]:
+        """The (key, action, in-game message) legend for a Safari Compass path — what each
+        letter actually looks like on screen for this species (e.g. a mud-crit's message)."""
+        from claytonlib.compass import cheatsheet_rows
+        return [{"key": k, "action": a, "message": m} for k, a, m in cheatsheet_rows(pokemon_name)]
+
+    def safari_compass_identify_frame(self, params: dict) -> dict:
+        """Pin Seed A's current advance frame from the Elm calls heard since it loaded.
+
+        params: seed (int or hex string), prev_routes ({r,e,l}), observed_elm — re-call with
+        the full string heard so far as more calls come in, like metronome_seed_a."""
+        from app import safari_compass
+        seed = params["seed"]
+        seed = int(seed, 16) if isinstance(seed, str) else int(seed)
+        return safari_compass.identify_seed_a_frame(
+            seed, params.get("prev_routes") or {}, params.get("observed_elm", ""))
+
+    def safari_compass_plan_frame(self, params: dict) -> dict:
+        """A chatot-flip + Elm-call route from the pinned current frame to a chosen target
+        encounter frame. params: seed, prev_routes, current_frame, encounter_frame, margin."""
+        from app import safari_compass
+        seed = params["seed"]
+        seed = int(seed, 16) if isinstance(seed, str) else int(seed)
+        return safari_compass.plan_frame_route(
+            seed, params.get("prev_routes") or {},
+            int(params["current_frame"]), int(params["encounter_frame"]),
+            margin=int(params.get("margin", 3)))
+
     # -- Runs (profile-scoped) --------------------------------------------
 
     def save_metronome_run(self, profile_id: str, data: dict) -> dict:
@@ -307,6 +335,7 @@ class Facade:
             elm_calls=data.get("elm_calls"),
             chatot_flips=data.get("chatot_flips"),
             advance_frame=data.get("advance_frame"),
+            frame_guide=data.get("frame_guide", ""),
         )
         self._store.write(_RUNS, run.id, run.to_dict())
         return run.to_dict()

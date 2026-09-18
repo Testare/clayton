@@ -158,6 +158,61 @@ class TestFacadeSafariCompass(unittest.TestCase):
         # offset instead — see app/calibration.py) — kind="metronome" never lists them.
         self.assertEqual(self.api.list_runs(self.pid, kind="metronome"), [])
 
+    def test_save_safari_run_carries_the_frame_guide(self):
+        run = self.api.save_safari_run(self.pid, {
+            "tag": "sc1", "vector_ms": 300000,
+            "a_seed": {"seed": 1, "seed_hex": "0x1"},
+            "b_seed": {"seed": 2, "seed_hex": "0x2", "frame": 18700},
+            "elm_calls": 3, "chatot_flips": 34.5, "advance_frame": 81,
+            "frame_guide": "On advance frame 9; want an encounter on frame 81..."})
+        self.assertEqual(run["chatot_flips"], 34.5)
+        self.assertIn("advance frame 9", run["frame_guide"])
+
+
+class TestFacadeFrameIdentificationAndPlanning(unittest.TestCase):
+    """clayton-b42.5.11: Seed A's own advance frame (via Elm calls) + a chatot-flip/Elm-call
+    route to a chosen target encounter frame."""
+
+    _SEED = 0x0D0E02BA
+
+    def test_identify_frame_ambiguous_then_pinned(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        first = api.safari_compass_identify_frame({"seed": self._SEED, "observed_elm": ""})
+        self.assertFalse(first["pinned"])
+        self.assertGreater(len(first["frames"]), 1)
+
+        # Listening for enough calls to be unique should pin it -- use the real generated
+        # sequence at some known offset so this isn't circular.
+        from claytonlib.safari_advance import advance_context
+        rng_calls, elm = advance_context(self._SEED, {}, count=first["rng_calls"] + 200)
+        true_frame = rng_calls + 40
+        heard = elm[max(0, true_frame - rng_calls - 10):true_frame - rng_calls]
+        pinned = api.safari_compass_identify_frame({"seed": self._SEED, "observed_elm": heard})
+        self.assertTrue(pinned["pinned"])
+        self.assertEqual(pinned["frame"], true_frame)
+
+    def test_identify_frame_accepts_hex_string_seed(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        by_int = api.safari_compass_identify_frame({"seed": self._SEED, "observed_elm": ""})
+        by_hex = api.safari_compass_identify_frame({
+            "seed": f"0x{self._SEED:08X}", "observed_elm": ""})
+        self.assertEqual(by_int["frames"], by_hex["frames"])
+
+    def test_plan_frame_route(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        plan = api.safari_compass_plan_frame({
+            "seed": self._SEED, "current_frame": 9, "encounter_frame": 81})
+        self.assertEqual(plan["encounter_frame"], 81)
+        self.assertEqual(plan["chatot_flips"], 34.5)
+        self.assertIn("[", plan["guide"])
+        self.assertIn("Guide:", plan["description"])
+
+    def test_plan_frame_route_overshoot_raises(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        with self.assertRaises(ValueError):
+            api.safari_compass_plan_frame({
+                "seed": self._SEED, "current_frame": 90, "encounter_frame": 81})
+
 
 if __name__ == "__main__":
     unittest.main()

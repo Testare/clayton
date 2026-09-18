@@ -130,3 +130,57 @@ def seed_b(exp: dict, model, params: dict) -> dict:
         result["machete_path"] = mpath
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Seed A advance-frame identification + route planning (clayton-b42.5.11)
+#
+# This is a SEPARATE concern from Seed B (the battle seed) above: it's about Seed A's own
+# advance frame -- how many Elm calls have been heard since Seed A was generated -- so the
+# player can be told exactly how to reach a chosen encounter frame (e.g. one Pokefinder says
+# holds the target Pokemon). See claytonlib.safari_advance for the underlying math (ported
+# from utils/safari_advance.py, the notebook's Section A/ctd.2).
+# ---------------------------------------------------------------------------
+
+DEFAULT_FRAME_LOOKAHEAD = 300  # Elm calls to generate when identifying the current frame
+
+
+def identify_seed_a_frame(seed: int, prev_routes: dict, observed_elm: str,
+                          count: int = DEFAULT_FRAME_LOOKAHEAD,
+                          max_offset: int | None = None) -> dict:
+    """Pin Seed A's current advance frame from the Elm calls heard since it was generated.
+
+    Returns {"rng_calls", "frames" (all consistent candidates), "pinned" (bool),
+    "frame" (int, only when pinned)}. Call again with more `observed_elm` (the full string
+    heard so far, not just the new calls) when `frames` has more than one entry.
+    """
+    from claytonlib.safari_advance import advance_context, frame_candidates
+    rng_calls, elm = advance_context(seed, prev_routes, count=count)
+    frames = frame_candidates(rng_calls, elm, observed_elm, max_offset=max_offset)
+    return {
+        "rng_calls": rng_calls, "frames": frames,
+        "pinned": len(frames) == 1, "frame": frames[0] if len(frames) == 1 else None,
+    }
+
+
+def plan_frame_route(seed: int, prev_routes: dict, current_frame: int, encounter_frame: int,
+                     margin: int = 3) -> dict:
+    """A chatot-flip + Elm-call route from `current_frame` to `encounter_frame` (chosen
+    externally, e.g. via Pokefinder — v1 doesn't compute which frame holds a given species
+    in-house, matching the notebook's own documented v1 scope)."""
+    from claytonlib.safari_advance import (
+        advance_context, describe_plan, margin_ambiguous, margin_guide, plan_advances,
+    )
+    plan = plan_advances(current_frame, encounter_frame, margin=margin)
+    # Generous enough to cover the whole approach regardless of REL cost.
+    rng_calls, elm = advance_context(seed, prev_routes, count=encounter_frame + 20)
+    guide, truncated = margin_guide(rng_calls, elm, plan)
+    return {
+        "current_frame": plan.current_frame, "encounter_frame": plan.encounter_frame,
+        "scent_frame": plan.scent_frame, "total_advances": plan.total_advances,
+        "chatot_flips": plan.chatot_flips, "chatot_advances": plan.chatot_advances,
+        "elm_before_scent": plan.elm_before_scent, "land_frame": plan.land_frame,
+        "guide": guide, "truncated": truncated,
+        "ambiguous": margin_ambiguous(rng_calls, elm, plan),
+        "description": describe_plan(plan, guide),
+    }

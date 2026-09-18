@@ -700,15 +700,20 @@ function openSaveRunModal(){
 // nothing fits these yet, see app/calibration.py). Safari Compass only: Metronome Compass
 // doesn't need any of them (no chatot flips, doesn't care which frame it lands on, and Elm
 // calls there are a Seed A concern already captured in New Run itself, not Save Run).
-function _advanceRecipeFields(){
+function _advanceRecipeFields(prefill){
+  prefill = prefill || {};
   return `<div class="section-label" style="margin-top:14px">Advance recipe (optional)</div>
     <div class="grid3">
-      <div class="field"><label>Elm calls</label><input name="elm_calls" type="number" min="0"></div>
-      <div class="field"><label>Chatot flips</label><input name="chatot_flips" type="number" min="0" max="2"></div>
-      <div class="field"><label>Advance frame</label><input name="advance_frame" type="number" min="0"></div>
+      <div class="field"><label>Elm calls</label>
+        <input name="elm_calls" type="number" min="0" value="${prefill.elm_calls ?? ""}"></div>
+      <div class="field"><label>Chatot flips</label>
+        <input name="chatot_flips" type="number" min="0" step="0.5" value="${prefill.chatot_flips ?? ""}"></div>
+      <div class="field"><label>Advance frame</label>
+        <input name="advance_frame" type="number" min="0" value="${prefill.advance_frame ?? ""}"></div>
     </div>
-    <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — not used by any
-      fit yet, just recorded for later analysis.</div>`;
+    <div class="hint muted" style="margin-bottom:11px">How Seed A was reached — prefilled from
+      the advance-frame guide above when you planned a route. Not used by any fit yet, just
+      recorded for later analysis.</div>`;
 }
 function _readAdvanceRecipe(f){
   const n = (el) => (!el || el.value.trim() === "") ? null : Number(el.value);
@@ -1556,7 +1561,8 @@ async function safariCompassNewRun(expId){
   sac = { expId, e, activeModel,
     initialTime: e.last_target?.initial_time || "", vectorMs: e.last_target?.vector_ms ?? "",
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
-    path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null };
+    path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
+    frameObservedElm: "", frameCandidates: null, pinnedFrame: null, frameGuide: null };
   renderSafariCompassNewRun();
 }
 
@@ -1620,6 +1626,7 @@ function renderSeedASafari(){
   if(sac.seedA && !sac.editingSeedA){
     return `<h3>Seed A — identified</h3>
       <div class="info-line done">${_seedASummary(sac.seedA)}</div>
+      ${renderFrameGuide()}
       <button class="btn small" onclick="sacChangeSeedA()">Change Seed A</button>`;
   }
   const hasCand = !!sac.seedACandidates;
@@ -1645,6 +1652,68 @@ function renderSeedASafari(){
     </div>
     <div id="sac-candA">${hasCand ? renderCandA(sac.seedACandidates, "sacPickSeedA")
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
+}
+
+// --- Safari Compass: Seed A advance-frame identification + route planning (clayton-b42.5.11)
+// Separate from Seed B (the battle seed) above: this is about Seed A's OWN advance frame —
+// how many Elm calls have been heard since it loaded — so the player can be told exactly how
+// to reach a chosen encounter frame (e.g. one Pokefinder says holds the target Pokemon).
+function renderFrameGuide(){
+  if(sac.pinnedFrame == null){
+    const candInfo = !sac.frameCandidates ? ""
+      : sac.frameCandidates.length === 0
+        ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check your input.</div>`
+        : `<div class="status">${sac.frameCandidates.length} possible frame(s): ${sac.frameCandidates.join(", ")} — keep listening.</div>`;
+    return `<div class="panel-tight" style="margin-top:10px">
+      <div class="section-label" style="margin:0 0 6px">Advance-frame guide (optional)</div>
+      <div class="field"><label>Elm calls heard since Seed A loaded (P/E/K)</label>
+        <input id="sac-frame-elm" value="${esc(sac.frameObservedElm || "")}" placeholder="PEKE…"></div>
+      ${candInfo}
+      <button class="btn small" onclick="sacIdentifyFrame()">Pin current frame</button>
+    </div>`;
+  }
+  if(!sac.frameGuide){
+    return `<div class="panel-tight" style="margin-top:10px">
+      <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+      <div class="info-line">Current advance frame: <b>${sac.pinnedFrame}</b></div>
+      <div class="field"><label>Target encounter frame (from Pokefinder)</label>
+        <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
+      <button class="btn small primary" onclick="sacPlanFrameRoute()">Plan route</button>
+    </div>`;
+  }
+  const g = sac.frameGuide;
+  return `<div class="panel-tight" style="margin-top:10px">
+    <div class="section-label" style="margin:0 0 6px">Advance-frame guide</div>
+    <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, Sweet Scent there.</div>
+    <div class="status">Guide: <code>${esc(g.guide)}</code> (]! = Sweet Scent here)
+      ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
+      ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
+    <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>
+  </div>`;
+}
+
+async function sacIdentifyFrame(){
+  sac.frameObservedElm = $("sac-frame-elm").value;
+  const res = await api("safari_compass_identify_frame", {
+    seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
+    observed_elm: sac.frameObservedElm});
+  sac.frameCandidates = res.frames;
+  if(res.pinned) sac.pinnedFrame = res.frame;
+  $("sac-seeda").innerHTML = renderSeedASafari();
+}
+
+async function sacPlanFrameRoute(){
+  const target = Number($("sac-target-frame").value);
+  if(!target){ toast("Enter a target encounter frame."); return; }
+  sac.frameGuide = await api("safari_compass_plan_frame", {
+    seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
+    current_frame: sac.pinnedFrame, encounter_frame: target});
+  $("sac-seeda").innerHTML = renderSeedASafari();
+}
+
+function sacReplanFrame(){
+  sac.frameGuide = null;
+  $("sac-seeda").innerHTML = renderSeedASafari();
 }
 
 async function sacGenerateSeedA(){
@@ -1684,7 +1753,11 @@ function sacPickSeedA(seed){
   const changed = sac.seedA && sac.seedA.seed !== picked.seed;
   sac.seedA = picked;
   sac.editingSeedA = false;
-  if(changed){ sac.seedB = null; sac.seedBResult = null; sac.path = ""; }
+  if(changed){
+    sac.seedB = null; sac.seedBResult = null; sac.path = "";
+    sac.frameObservedElm = ""; sac.frameCandidates = null;
+    sac.pinnedFrame = null; sac.frameGuide = null;
+  }
   renderSafariCompassNewRun();
   // Show the full "seeds in range" set right away (empty path = no narrowing yet), instead
   // of leaving Seed B blank until the user's first keystroke.
@@ -1747,10 +1820,25 @@ function renderSeedBSafari(){
       <span><b>0–3</b> ball shake count</span>
       <span><b>F</b> fled</span><span><b>C</b> captured</span>
       <span><b>u</b> undo last</span>
+      <span><button class="btn small" type="button" onclick="sacShowCheatsheet()">? full guide</button></span>
     </div>
     <div class="hint muted">Enter what you actually see, turn by turn, one character per turn
       (a ball throw is its shake count, 0-3). Narrows live as you type.</div>
     ${extra}`;
+}
+
+async function sacShowCheatsheet(){
+  const rows = await api("safari_compass_cheatsheet", sac.e.pokemon);
+  const trs = rows.map(r => `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.action)}</td>
+    <td>${r.message === "—" ? "—" : `"${esc(r.message)}"`}</td></tr>`).join("");
+  openModal(`<h3>Seed B — full guide</h3>
+    <div class="hint muted" style="margin-bottom:8px">What each letter means, and exactly what
+      ${esc(sac.e.pokemon)} says on screen when it happens — type the letter for whichever
+      message you see.</div>
+    <div class="candtable" style="max-height:400px"><table><thead><tr>
+        <th>type</th><th>action</th><th>in-game message</th></tr></thead>
+      <tbody>${trs}</tbody></table></div>
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
 }
 
 async function sacUpdateSeedB(){
@@ -1782,6 +1870,7 @@ function sacResetSeedB(){ sac.seedB = null; sac.seedBResult = null; sac.path = "
 
 function openSaveSafariRunModal(){
   if(!(sac.seedA && sac.seedB)) return;
+  const g = sac.frameGuide;
   openModal(`<h3>Save run</h3>
     <form onsubmit="return sacSaveRun(event)">
       <div class="grid2">
@@ -1789,7 +1878,8 @@ function openSaveSafariRunModal(){
         <div class="field"><label>Timer calibration (signed ms)</label><input name="calibration" type="number" value="0"></div>
       </div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
-      ${_advanceRecipeFields()}
+      ${_advanceRecipeFields(g ? {elm_calls: g.elm_before_scent, chatot_flips: g.chatot_flips,
+                                   advance_frame: g.encounter_frame} : null)}
       <div class="actions">
         <button class="btn primary" type="submit">Save</button>
         <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -1812,7 +1902,8 @@ async function sacSaveRun(ev){
   await api("save_safari_run", sac.e.profile_id, {
     tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
     target_timer_calibration: Number(f.calibration.value) || 0,
-    notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB, ..._readAdvanceRecipe(f) });
+    notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB,
+    frame_guide: sac.frameGuide?.description || "", ..._readAdvanceRecipe(f) });
   sacShowSavedPrompt();
   return false;
 }

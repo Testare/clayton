@@ -59,9 +59,19 @@ already; everything since is still unverified:
   inputs and re-narrow by hand).
 - **The advance-recipe fields (elm calls / chatot flips / advance frame) are
   captured but nothing fits them** — you flagged that these might affect Fb/Seed
-  B's delay and said you're still verifying it. Both Save Run modals now have
-  optional inputs for them and `Run` stores them, but no calibration parameter
-  exists yet; this is purely data capture ahead of your analysis.
+  B's delay and said you're still verifying it. Metronome Compass no longer has
+  these fields at all (Feedback 3: not needed there); Safari Compass's Save Run
+  modal still has them, now auto-filled from the advance-frame guide (see
+  below) when you've planned a route, still editable, and `Run` stores them —
+  but no calibration parameter fits them yet; this is purely data capture ahead
+  of your analysis.
+- **Safari Compass's "in-house" target-frame search isn't built** — the new
+  advance-frame guide (Feedback 3, below) makes you paste in a target encounter
+  frame from Pokefinder by hand; it doesn't compute which frame holds a given
+  species itself the way `utils/safari_advance.py`'s `choose_target_frame` /
+  `claytonlib.safari_encounters.iter_encounter_frames` can. Matches that
+  module's own documented v1 scope, not a shortcut I invented — but flag if you
+  want the in-house search built out.
 
 ## Untested at real scale
 
@@ -123,8 +133,8 @@ eyes — but a couple are worth flagging specifically:
   UI. "Search from" now defaults to 180s.
 - **Metronome Compass Save Run**: dropped the "Timer calibration" field and the
   Chatot-flips/Advance-frame inputs (kept Elm calls, per your note that only
-  that one might matter there). Safari Compass's Save Run modal is untouched —
-  you didn't flag it, and it may genuinely need those fields differently.
+  that one might matter there). Superseded in Feedback 3: Elm calls is gone
+  too now — see below.
 - **Replaced the jarring `confirm()` "Run saved. Start another run?"** with a
   proper modal (Done / Start another run) in **both** Metronome Compass and
   Safari Compass — your note only named Metronome, but it was the exact same
@@ -147,6 +157,58 @@ eyes — but a couple are worth flagging specifically:
   there before resolving, so any pre-existing profile picks it up the next
   time you open Find Target / New Run / anything else that needs a model — no
   need to delete and recreate your profile.
+
+## Addressed this session (your "Feedback 3" notes)
+
+Worked through `notes/clayton_v1_feedback.md`'s "Feedback 3" section (tracked as beads
+`clayton-b42.5.1`–`.14`). Still **written blind** — add all of this to the "needs your
+hands" list above — a few things worth flagging specifically:
+
+- **Metronome New Run now remembers itself**: Roamer starting positions, ± seconds,
+  ± delays, match-parity, and Save Run's Tag all persist per-expedition
+  (`Expedition.last_metronome_defaults`) and prefill next time, instead of resetting
+  every run. Dropped the "Samwise" placeholder and the *whole* Advance recipe section
+  (Elm calls included — full removal this time, per your Feedback 3 note).
+- **Roamer starting positions get the same invalid-input red outline as observed
+  routes** — applied to both Metronome and Safari Compass, since it's the identical
+  field/bug in both.
+- **"Choose from saved target…"** button added to both New Run flows' Initial
+  time/Vector ms section.
+- **Safari Chart**: model name now shown in Compute chart (and Safari Compass's
+  header); a chart's delay window can be edited after creation (safe — the canon
+  map's signature doesn't include it); `chart_rank_at_time` — already fully
+  implemented in the backend but never called from the UI — is now wired to a "Find
+  best target at a specific time" button; Examine target's per-second table is
+  clickable through to individual (frame, seed, hit, weight%) rows, matching the
+  notebook's `chart_check_target_landing` detail (new `claytonlib.chart.scorer.
+  seed_breakdown`, capped/centered at 400 rows so the bridge payload stays sane for
+  a wide sigma).
+- **Saved targets' P(capture) is frozen at save time; Examine always recomputes
+  live** against whichever model is currently active — that was already true, just
+  unlabeled before. Relabeled the column and added a note. No behavior change.
+- **Seed B "no candidates" bug**: still couldn't reproduce it synthetically (wide
+  M/time grid against the Standard model). Made the failure mode visible either way
+  — inline error + loading state in the panel instead of a toast that's easy to miss.
+- **New: Safari Compass advance-frame guide** (the big one) — after Seed A is
+  identified, a new panel lets you (1) pin Seed A's own current advance frame from
+  the Elm calls heard so far (prompts for more if ambiguous, exactly like Seed A's
+  REL narrowing already does), then (2) enter a target encounter frame (from
+  Pokefinder — v1 doesn't compute this in-house, see above) to get a chatot-flip +
+  Elm-call route with a bracketed guide string (`EKPPK[PKE]!PPE`, `]!` = Sweet Scent
+  here), flagging an ambiguous confirmation margin when the notebook's own
+  `margin_ambiguous` check would. This is a **port** of `utils/safari_advance.py`'s
+  pure math into `claytonlib/safari_advance.py` (new module) — I did NOT reinvent
+  this from scratch, it's the same tested algorithm the notebooks already use for
+  this exact purpose. The plan prefills Save Run's advance-recipe fields, and a new
+  `Run.frame_guide` text field saves the full instructions with the run. This is by
+  far the least-tested-by-you piece of this whole session — please look closely.
+- **Full Seed B guide**: a "? full guide" button next to the compact legend opens
+  the complete per-action table with the exact in-game message for each (reuses
+  `claytonlib.compass._display`'s own cheatsheet data, so it can't drift from what
+  the notebook prints).
+- **Deferred, as you asked**: a "missed frame" recovery button + run-flagging stays
+  as its own open bead (`clayton-b42.5.12`) — not built, per your "not an immediate
+  priority."
 
 ## Corrected this session
 

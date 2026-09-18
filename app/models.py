@@ -210,8 +210,12 @@ class Run:
     # historical runs aren't missing the data once it's confirmed). Matches the notebook's
     # save_safari_run(elm_calls=, chatot_flips=, advance_frame=) fields.
     elm_calls: int | None = None
-    chatot_flips: int | None = None
+    chatot_flips: float | None = None
     advance_frame: int | None = None
+    # The human-readable "how to get there" text from Safari Compass's frame-route planner
+    # (app.safari_compass.plan_frame_route / claytonlib.safari_advance), saved alongside the
+    # run so it's still visible after the fact — not just during the live session.
+    frame_guide: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -234,6 +238,7 @@ class Run:
             elm_calls=d.get("elm_calls"),
             chatot_flips=d.get("chatot_flips"),
             advance_frame=d.get("advance_frame"),
+            frame_guide=d.get("frame_guide", ""),
         )
 
 

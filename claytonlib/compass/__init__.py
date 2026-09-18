@@ -53,6 +53,7 @@ from claytonlib.compass._display import (
     _print_status,
     _print_status_calibrated,
     _print_success,
+    cheatsheet_rows,
 )
 
 

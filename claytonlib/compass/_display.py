@@ -8,8 +8,11 @@ from claytonlib.compass._core import _evaluate_context, posteriors
 from claytonlib.compass._types import _action_to_str
 
 
-def _print_cheatsheet(inputs: CompassSafariInput) -> None:
-    pname = inputs.pokemon.name.capitalize()
+def cheatsheet_rows(pokemon_name: str, calibrated: bool = False) -> list[tuple[str, str, str]]:
+    """The (key, action, in-game message) legend rows for a Safari Compass path, e.g. what
+    a mud-crit actually says on screen for this species. Pulled out of _print_cheatsheet so
+    the app can reuse the same data as a guide UI, not just a printed notebook cheatsheet."""
+    pname = pokemon_name.capitalize()
     rows = [
         ('m',     'Mud, no crit',        f'{pname} is angry!'),
         ('M / a', 'Mud, crit (Anger)',   f'{pname} is beside itself with anger!'),
@@ -25,8 +28,13 @@ def _print_cheatsheet(inputs: CompassSafariInput) -> None:
         ('?x',    'Uncertain result',    '—'),
         ('J',     'Switch to Jane',      '—'),
     ]
-    if getattr(inputs, 'calibrated', False):
+    if calibrated:
         rows.append(('w', 'Widen window & re-apply path', '—'))
+    return rows
+
+
+def _print_cheatsheet(inputs: CompassSafariInput) -> None:
+    rows = cheatsheet_rows(inputs.pokemon.name, calibrated=getattr(inputs, 'calibrated', False))
     key_w = max(len(r[0]) for r in rows)
     act_w = max(len(r[1]) for r in rows)
     print("=== Compass: Safari Zone Seed Identifier ===")
