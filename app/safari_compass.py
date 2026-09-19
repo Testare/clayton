@@ -18,6 +18,7 @@ app/metronome.py's seed_a/key_seed_info; nothing Safari-specific is needed there
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 
 from claytonlib.compass import CompassSafariInput, calibrated_candidates, posteriors
 from claytonlib.compass._core import _apply_action
@@ -36,7 +37,7 @@ def _neutral_strategy_criteria():
 def _build_input(exp: dict, model, params: dict) -> CompassSafariInput:
     strategy, criteria = _neutral_strategy_criteria()
     pokemon = safari_pokemon_by_name(exp["pokemon"])
-    return CompassSafariInput.from_expedition_target(
+    inputs = CompassSafariInput.from_expedition_target(
         model=model, M=float(params["vector_ms"]),
         initial_time=dt.datetime.fromisoformat(params["initial_time"]),
         key_seed=int(exp["key_seed"]), max_target_seconds=int(params.get("max_target_seconds", 300)),
@@ -44,6 +45,35 @@ def _build_input(exp: dict, model, params: dict) -> CompassSafariInput:
         second_offsets=tuple(params.get("second_offsets", (-1, 0, 1))),
         k=float(params.get("k", 3.5)), mass_cap=params.get("mass_cap", 0.999),
     )
+    expand_frames = int(params.get("expand_frames") or 0)
+    expand_seconds = int(params.get("expand_seconds") or 0)
+    if expand_frames or expand_seconds:
+        inputs = expand_window(inputs, expand_frames, expand_seconds)
+    return inputs
+
+
+def expand_window(inputs: CompassSafariInput, add_frames: int, add_seconds: int) -> CompassSafariInput:
+    """Widen a calibrated search by a literal frame/second count — the "widen search window"
+    escape hatch for when the observed path has eliminated every candidate.
+
+    Non-interactive port of claytonlib.compass._prompt_expand's math (that function itself
+    drives an input()-based prompt, so it can't be called from here) — converts the frame
+    count to k via sigma and grows the ±K second-offset range by add_seconds, exactly as the
+    notebook's own already-correct fix does.
+
+    CRUCIALLY also drops mass_cap: calibrated_candidates trims to the smallest set covering
+    `mass_cap` (default 0.999) of the k*sigma Gaussian's total mass, but a k=3.5 window
+    already covers ~99.95% of that mass on its own -- so mass_cap, not k, was always the
+    binding constraint, and raising k alone (the app's previous "widen" behavior) barely
+    changed the surviving candidate set at all. Widening exists specifically to reach into
+    the tail mass_cap trimmed away, so it must come off.
+    """
+    sigma = max(float(inputs.sigma or 1.0), 1e-9)
+    new_k = inputs.k + add_frames / sigma
+    cur_maxoff = max((abs(d) for d in inputs.second_offsets), default=0)
+    new_K = cur_maxoff + add_seconds
+    opts = replace(inputs.options, mass_cap=None)
+    return replace(inputs, k=new_k, second_offsets=tuple(range(-new_K, new_K + 1)), options=opts)
 
 
 def _apply_path(candidates: list, actions: list):
@@ -95,7 +125,11 @@ def seed_b(exp: dict, model, params: dict) -> dict:
     """Candidate battle seeds for Safari Compass, narrowed by the observed path so far.
 
     params: initial_time (ISO), vector_ms, path (the full observed-action string, e.g.
-            "bbbBbb0321"), and optionally second_offsets/k/mass_cap/limit.
+            "bbbBbb0321"), and optionally second_offsets/k/mass_cap/limit/expand_frames/
+            expand_seconds. expand_frames/expand_seconds ("widen search window") grow the
+            window by a literal frame/second count AND drop mass_cap (see expand_window) —
+            raising k alone barely changes anything, since mass_cap is the binding constraint
+            well before k=3.5.
     """
     inputs = _build_input(exp, model, params)
     candidates, meta = calibrated_candidates(inputs)
@@ -177,8 +211,23 @@ def find_target_frame(seed: int, prev_routes: dict, current_frame: int, area: st
                       max_frame: int = 300, aim_advance: int | None = None) -> dict:
     """In-house target-encounter-frame search (vs. a Pokefinder handoff) — an alternative way
     to pick `encounter_frame` for plan_frame_route below, using the expedition's own Safari
-    block scores. See claytonlib.safari_advance.find_in_house_frame for the algorithm."""
+    block scores. See claytonlib.safari_advance.find_in_house_frame for the algorithm.
+
+    Checks the block requirement for THIS specific (area, pokemon, tod) combination before
+    searching, and raises a specific, actionable error if it isn't met — the underlying
+    search would otherwise just fail with a generic "no frame in range" (the target simply
+    never occupies a slot), which doesn't tell the user WHY (clayton-b42.10.3).
+    """
     from claytonlib.safari_advance import find_in_house_frame
+    from claytonlib.safari_encounters import block_requirement_for
+    req = block_requirement_for(area, pokemon, tod=tod)
+    if req is not None:
+        have = int(block_config.get(req["block_type"], 0) or 0)
+        if have < req["quantity"]:
+            raise ValueError(
+                f"{pokemon} needs a {req['block_type']} block score of at least "
+                f"{req['quantity']} in {area} — this expedition is configured with {have}. "
+                f"Update the block scores in Configure.")
     return find_in_house_frame(seed, prev_routes, current_frame, area, tod, block_config,
                               target=pokemon, search_margin=margin, max_frame=max_frame,
                               aim_advance=aim_advance)

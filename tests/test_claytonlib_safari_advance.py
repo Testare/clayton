@@ -3,6 +3,7 @@ pure functions (see tests/test_safari_advance.py for the exhaustive original-mod
 this covers the ported subset plus the one behavior change: margin_guide returns
 (guide, truncated) instead of printing a warning)."""
 import unittest
+from unittest.mock import patch
 
 from claytonlib import safari_advance as sa
 
@@ -143,6 +144,66 @@ class TestFindInHouseFrame(unittest.TestCase):
         res = sa.find_in_house_frame(self._SEED, {}, 50, "Mountain", "morning",
                                      {"peak": 56}, search_margin=10)
         self.assertGreaterEqual(res["frame"], 60)
+
+
+class TestSkippedAmbiguousCounting(unittest.TestCase):
+    """clayton-b42.10.6: skipped_ambiguous must count only candidates genuinely NEARER to
+    the aim than the chosen frame — an earlier version counted every ambiguous candidate in
+    the whole search window regardless of distance, so it could report "skipped N nearer
+    frame(s)" even when nothing was actually nearer (e.g. when the chosen frame was already
+    the closest possible candidate), which is exactly what the user reported as confusing."""
+
+    _SEED = 0x0D0E02BA
+
+    def test_only_counts_ambiguous_candidates_nearer_than_the_chosen_one(self):
+        # Frames 10 and 20 are ambiguous, 30 is clean -- aiming from current_frame=0 (so
+        # distance == frame value). 30 is the nearest UNAMBIGUOUS candidate, so it's chosen;
+        # both 10 and 20 are nearer to the aim AND ambiguous -> genuinely skipped in its favor.
+        with patch("claytonlib.safari_encounters.iter_encounter_frames",
+                  return_value=[(10, 5), (20, 5), (30, 5)]):
+            with patch("claytonlib.safari_advance.margin_ambiguous",
+                      side_effect=lambda rng_calls, elm, plan: plan.encounter_frame in (10, 20)):
+                res = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56})
+        self.assertEqual(res["frame"], 30)
+        self.assertEqual(res["skipped_ambiguous"], 2)
+        self.assertFalse(res["all_ambiguous"])
+
+    def test_does_not_count_ambiguous_candidates_farther_than_the_chosen_one(self):
+        # Frame 10 (clean) is already the nearest of ALL candidates -- 20 and 30 being
+        # ambiguous is irrelevant, since neither was ever in contention (both are FARTHER
+        # from the aim than 10, so 10 wins on distance alone regardless of ambiguity).
+        with patch("claytonlib.safari_encounters.iter_encounter_frames",
+                  return_value=[(10, 5), (20, 5), (30, 5)]):
+            with patch("claytonlib.safari_advance.margin_ambiguous",
+                      side_effect=lambda rng_calls, elm, plan: plan.encounter_frame in (20, 30)):
+                res = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56})
+        self.assertEqual(res["frame"], 10)
+        self.assertEqual(res["skipped_ambiguous"], 0)
+
+    def test_all_ambiguous_reports_zero_skipped_for_the_closest_pick(self):
+        # Every candidate is ambiguous, so the closest one is used anyway (all_ambiguous=True)
+        # -- and since it's the closest, nothing was skipped in ITS favor either.
+        with patch("claytonlib.safari_encounters.iter_encounter_frames",
+                  return_value=[(10, 5), (20, 5)]):
+            with patch("claytonlib.safari_advance.margin_ambiguous", return_value=True):
+                res = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56})
+        self.assertTrue(res["all_ambiguous"])
+        self.assertEqual(res["frame"], 10)
+        self.assertEqual(res["skipped_ambiguous"], 0)
+
+    def test_exact_aim_match_always_reports_zero_skipped(self):
+        # aim_advance lands EXACTLY on a candidate frame -- nothing could possibly be
+        # nearer than a zero-distance match, so skipped_ambiguous must be 0 regardless of
+        # how many OTHER, farther candidates happen to be ambiguous (the user's second
+        # reported case: "it landed exactly on target, how could it have skipped frames?").
+        with patch("claytonlib.safari_encounters.iter_encounter_frames",
+                  return_value=[(100, 5), (150, 5), (200, 5)]):
+            with patch("claytonlib.safari_advance.margin_ambiguous",
+                      side_effect=lambda rng_calls, elm, plan: plan.encounter_frame in (150, 200)):
+                res = sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning",
+                                             {"peak": 56}, aim_advance=100)
+        self.assertEqual(res["frame"], 100)
+        self.assertEqual(res["skipped_ambiguous"], 0)
 
 
 if __name__ == "__main__":

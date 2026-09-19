@@ -9,7 +9,7 @@ from pathlib import Path
 
 from claytonlib.safari_encounters import (
     resolve_safari_slots, frame_slot, advance_frame_species, find_encounter_frame, safari_areas,
-    time_of_day,
+    time_of_day, areas_for_species, block_requirement_for,
 )
 
 SEED = 0x0D0E02D0
@@ -66,6 +66,50 @@ class TestResolveSlots(unittest.TestCase):
     def test_all_twelve_areas_present(self):
         self.assertEqual(len(safari_areas()), 12)
         self.assertIn("Mountain", safari_areas())
+
+
+class TestAreasForSpecies(unittest.TestCase):
+    """clayton-b42.10.3: filters the Safari-area picker to areas where the chosen species
+    can actually appear."""
+
+    def test_metang_is_mountain_only(self):
+        self.assertEqual(areas_for_species("metang"), ["Mountain"])
+
+    def test_case_insensitive(self):
+        self.assertEqual(areas_for_species("Metang"), areas_for_species("METANG"))
+
+    def test_unknown_species_returns_no_areas(self):
+        self.assertEqual(areas_for_species("not-a-real-species"), [])
+
+    def test_a_species_present_unconditionally_somewhere_is_included(self):
+        # raticate appears in Mountain's own unconditioned "normal" table (see
+        # MOUNTAIN_MORNING_PEAK56 above) -- no block score needed at all.
+        self.assertIn("Mountain", areas_for_species("raticate"))
+
+
+class TestBlockRequirementFor(unittest.TestCase):
+    """clayton-b42.10.3: the block score actually needed for a species to appear."""
+
+    def test_metang_needs_peak_56_in_mountain(self):
+        self.assertEqual(block_requirement_for("Mountain", "metang"),
+                         {"block_type": "peak", "quantity": 56})
+
+    def test_unreachable_species_in_area_returns_none(self):
+        self.assertIsNone(block_requirement_for("Plains", "metang"))
+
+    def test_unconditionally_present_species_returns_none(self):
+        # raticate needs no block score in Mountain -- it's in the area's own normal table.
+        self.assertIsNone(block_requirement_for("Mountain", "raticate"))
+
+    def test_case_insensitive(self):
+        self.assertEqual(block_requirement_for("mountain", "Metang"),
+                         block_requirement_for("Mountain", "metang"))
+
+    def test_specific_tod_matches_the_all_tods_answer_when_consistent(self):
+        # Metang's condition is the same slot/threshold in every time of day.
+        for tod in ("morning", "day", "night"):
+            self.assertEqual(block_requirement_for("Mountain", "metang", tod=tod),
+                             block_requirement_for("Mountain", "metang"))
 
 
 class TestFrameScan(unittest.TestCase):

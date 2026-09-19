@@ -1,5 +1,37 @@
 # Flagged for your review
 
+## Feedback 7 — species-aware metronome users: real game data, please spot-check
+
+`claytonlib/basedata/metronome_species.json` (the 14 species' gender category, abilities,
+and full HGSS movepool driving the new Species/Gender/Ability/Moveset dropdowns in
+Profile) came from two sources, neither of which I'd call fully independently verified:
+
+- **Gender/ability data**: a research fork used WebFetch to pull each species' own
+  `https://www.serebii.net/pokedex-dp/<dex_no>.shtml` page and report the Gender Ratio
+  and Ability rows. I spot-checked its two flagged findings myself (both Chansey's line
+  AND the Togepi/Togetic/Togekiss line carry Serene Grace; Munchlax→Snorlax and
+  Snubbull→Granbull change their ability pair on evolution) by re-fetching those same
+  pages directly and parsing the exact HTML — confirmed. Not independently re-checked:
+  the other 10 species' gender/ability values, which came only from the fork's summary.
+- **Movepool data**: `one-offs/scrape_metronome_species.py` — a real scraper (not
+  transcription) that fetches each species' Serebii page directly, extracts moves from
+  the Level Up / TM & HM / Move Tutor / Egg Moves / Pre-Evolution Moves sections
+  (explicitly excluding event-exclusive "Special Moves" and transfer-only "<N>rd Gen
+  Only Moves"), and matches every scraped move name against
+  `claytonlib/basedata/moves.json`'s canonical spelling. All 14 species' full movepools
+  (58-163 moves each) resolved cleanly with zero unmatched names — a decent internal
+  consistency signal, but the *section-inclusion logic itself* (which Serebii table
+  headers count as "normal HGSS play") was validated against only 5 of the 14 species'
+  actual page structures before I ran it across all 14. Re-run the script any time to
+  refresh/re-verify (it's idempotent, pure stdlib, ~1 request/species with a 1s
+  courtesy delay).
+- **Design call from you, now implemented**: a species' effective movepool includes its
+  pre-evolutions' moves (Pokemon don't forget moves on evolving) — this is why
+  Togekiss/Snorlax still show Metronome despite not having it on their own direct
+  level-up list (it's inherited from Togetic/Munchlax's own list via Serebii's own
+  "Pre-Evolution Moves" table, which already reflects this).
+
+
 Things I've called out across the app-build sessions that you haven't yet confirmed,
 overridden, or addressed. Organized so you can triage quickly. Nothing here is
 blocking — the app builds and the test suite passes — but each is a real gap or an

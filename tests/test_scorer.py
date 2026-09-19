@@ -152,6 +152,57 @@ class TestSecondMarginalization(unittest.TestCase):
         self.assertEqual(rows[0]["initial_time"], t_a)  # the boot whose second-20 mdmsh is captured
 
 
+class TestRefineNear(unittest.TestCase):
+    """refine_near corrects a coarse-step sweep's reported P to the true local peak — the
+    fix for the 'Ranked Targets says 28.4%, a specific-time search says 28.6%' inconsistency
+    (rank_boot_marginal's coarse step vs rank_targets' default step=1)."""
+
+    def _model(self):
+        return CalibrationModel(kind="line", beta=0.06, alpha=0.0, jitter_c=None, jitter_rms=3.0)
+
+    def test_finds_a_better_frame_than_the_coarse_landing_spot(self):
+        from claytonlib.chart.scorer import refine_near, marginal_capture
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        base_delay = 1000
+        s0 = 20
+        # A narrow capture band whose center a coarse step=4 sweep can plausibly miss.
+        F_peak = round(model.mean(s0 * 1000)) + 3
+        mdmsh0 = mdmsh_of(t0 + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh0: [_all_set(F_peak - 1, F_peak + 1)]})
+
+        F_coarse = F_peak - 3  # what a step=4 sweep might have landed on instead of the peak
+        M_coarse = model.solve_frame(F_coarse, base_delay)
+        baseline = marginal_capture(cmap, model, t0, M_coarse, base_delay, k=3.5)
+
+        refined = refine_near(cmap, model, t0, base_delay, F_coarse, radius=3, k=3.5)
+        self.assertIsNotNone(refined)
+        self.assertGreater(refined["p"], baseline["p"])
+        self.assertLessEqual(abs(refined["F"] - F_peak), 1)
+
+    def test_never_worse_than_the_center_it_started_from(self):
+        from claytonlib.chart.scorer import refine_near, marginal_capture
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        base_delay = 1000
+        s0 = 20
+        F_center = round(model.mean(s0 * 1000))
+        mdmsh0 = mdmsh_of(t0 + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh0: [_all_set(F_center - 40, F_center + 40)]})  # already near-optimal
+        baseline = marginal_capture(cmap, model, t0, model.solve_frame(F_center, base_delay),
+                                    base_delay, k=3.5)
+        refined = refine_near(cmap, model, t0, base_delay, F_center, radius=3, k=3.5)
+        self.assertGreaterEqual(refined["p"], baseline["p"] - 1e-9)
+
+    def test_out_of_range_returns_none(self):
+        from claytonlib.chart.scorer import refine_near
+        model = self._model()
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        # A negative frame this far below base_delay solves to a negative M everywhere in range.
+        refined = refine_near(CanonMap({}), model, t0, 1000, F_center=-5000, radius=2, k=3.5)
+        self.assertIsNone(refined)
+
+
 class TestSeedBreakdown(unittest.TestCase):
     """Individual (frame, seed) rows for one candidate second — the per-seed drill-down
     behind Examine target, mirroring the notebook's chart_check_target_landing()."""

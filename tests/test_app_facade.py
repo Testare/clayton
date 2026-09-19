@@ -78,11 +78,44 @@ class TestFacade(unittest.TestCase):
         # It's still stored (warnings, not a hard block).
         self.assertEqual(len(self.api.get_profile(p["id"])["metronome_users"]), 1)
 
-    def test_duplicate_user_name_raises(self):
+    def test_duplicate_user_name_is_allowed(self):
         p = self.api.create_profile({"name": "Silver"})
-        self.api.add_metronome_user(p["id"], {"name": "Chansey", **_GOOD_USER})
-        with self.assertRaises(ValueError):
-            self.api.add_metronome_user(p["id"], {"name": "chansey", **_GOOD_USER})
+        a = self.api.add_metronome_user(p["id"], {"name": "Chansey", **_GOOD_USER})
+        b = self.api.add_metronome_user(p["id"], {"name": "chansey", **_GOOD_USER})
+        self.assertNotEqual(a["user_id"], b["user_id"])
+
+    def test_hard_error_ability_is_still_creatable_but_flagged(self):
+        # The user must always be able to create whatever metronome user they want -- a
+        # hard_errors() issue blocks SELECTING this user in Metronome Compass, not
+        # creating it (clayton-b42.10.2).
+        p = self.api.create_profile({"name": "Silver"})
+        res = self.api.add_metronome_user(p["id"], {
+            "name": "Bad", **{**_GOOD_USER, "ability": "Cute Charm"}})
+        self.assertTrue(res["hard_errors"])
+        saved = self.api.get_profile(p["id"])["metronome_users"]
+        self.assertEqual(len(saved), 1)
+        self.assertTrue(saved[0]["hard_errors"])
+        self.assertFalse(saved[0]["is_suitable"])
+
+    def test_prospective_hard_errors_helper(self):
+        self.assertEqual(self.api.metronome_user_hard_errors({"name": "x", **_GOOD_USER}), [])
+        errs = self.api.metronome_user_hard_errors(
+            {"name": "x", **{**_GOOD_USER, "ability": "Magic Guard"}})
+        self.assertTrue(errs)
+        self.assertTrue(any("Magic Guard" in e for e in errs))
+
+    def test_list_metronome_species(self):
+        species = self.api.list_metronome_species()
+        self.assertEqual(len(species), 14)
+        by_name = {s["name"]: s for s in species}
+        self.assertIn("Chansey", by_name)
+        chansey = by_name["Chansey"]
+        self.assertIn("Metronome", chansey["moves"])
+        self.assertEqual(chansey["gender"], "female_only")
+        self.assertIn("Serene Grace", chansey["blocking_abilities"])
+        self.assertNotIn("Natural Cure", chansey["blocking_abilities"])
+        granbull = by_name["Granbull"]
+        self.assertEqual(granbull["blocking_abilities"], [])
 
     def test_remove_metronome_user(self):
         p = self.api.create_profile({"name": "Silver"})
@@ -120,10 +153,8 @@ class TestFacade(unittest.TestCase):
     def test_save_expedition_upserts(self):
         p = self.api.create_profile({"name": "P1"})
         e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
-        e["chatots"] = 2
         e["last_target"] = {"initial_time": "2025-07-24T14:45:56", "vector_ms": 327919}
         saved = self.api.save_expedition(e)
-        self.assertEqual(saved["chatots"], 2)
         self.assertEqual(self.api.get_expedition(e["id"])["last_target"]["vector_ms"], 327919)
 
     def test_save_expedition_requires_id(self):
@@ -135,6 +166,14 @@ class TestFacade(unittest.TestCase):
         areas = self.api.list_safari_areas()
         self.assertIn("Peak", areas)
         self.assertGreaterEqual(len(areas), 12)
+
+    def test_list_safari_areas_for_pokemon(self):
+        self.assertEqual(self.api.list_safari_areas_for_pokemon("metang"), ["Mountain"])
+
+    def test_safari_block_requirement(self):
+        self.assertEqual(self.api.safari_block_requirement("Mountain", "metang"),
+                         {"block_type": "peak", "quantity": 56})
+        self.assertIsNone(self.api.safari_block_requirement("Plains", "metang"))
 
 
 if __name__ == "__main__":

@@ -79,6 +79,9 @@ class Facade:
         for user_dict, user in zip(doc["metronome_users"], p.metronome_users):
             user_dict["is_suitable"] = user.is_suitable
             user_dict["warnings"] = user.suitability_warnings()
+            # Reasons this user can't be SELECTED in Metronome Compass specifically (e.g.
+            # New Run's user picker) — distinct from `warnings`, which are advisory only.
+            user_dict["hard_errors"] = user.hard_errors()
         doc["has_valid_metronome_user"] = p.has_valid_metronome_user
         return doc
 
@@ -123,9 +126,8 @@ class Facade:
 
     # -- metronome users --------------------------------------------------
 
-    def metronome_user_warnings(self, fields: dict) -> list[str]:
-        """Suitability warnings for prospective fields, so the UI can warn pre-save."""
-        probe = MetronomeUser(
+    def _probe_metronome_user(self, fields: dict) -> MetronomeUser:
+        return MetronomeUser(
             id=0,
             name=fields.get("name", "?"),
             species=fields.get("species", "Chansey"),
@@ -135,7 +137,30 @@ class Facade:
             ability=fields.get("ability"),
             lagging_tail=bool(fields.get("lagging_tail", False)),
         )
-        return probe.suitability_warnings()
+
+    def metronome_user_warnings(self, fields: dict) -> list[str]:
+        """Suitability warnings for prospective fields, so the UI can warn pre-save. These
+        are advisory only — see metronome_user_hard_errors for what actually blocks saving."""
+        return self._probe_metronome_user(fields).suitability_warnings()
+
+    def metronome_user_hard_errors(self, fields: dict) -> list[str]:
+        """Blocking issues for prospective fields (e.g. a calibration-breaking ability) —
+        add_metronome_user raises if these are non-empty; exposed separately so the UI can
+        disable the submit button pre-save instead of only surfacing the error after."""
+        return self._probe_metronome_user(fields).hard_errors()
+
+    def list_metronome_species(self) -> list[dict]:
+        """Every species offerable in the Metronome-user Species dropdown — gender
+        category, real abilities (flagging which are hard-blocked, see
+        MetronomeUser.hard_errors), and the full HGSS-learnable movepool (level-up/TM-HM/
+        tutor/egg/pre-evolution) for the 4 moveset dropdowns."""
+        from app.models import HARD_ERROR_ABILITIES
+        from claytonlib.metronome_species import list_metronome_species as _list
+        return [{
+            "name": s.name, "dex_no": s.dex_no, "gender": s.gender,
+            "abilities": list(s.abilities), "moves": list(s.moves),
+            "blocking_abilities": [a for a in s.abilities if a in HARD_ERROR_ABILITIES],
+        } for s in _list()]
 
     def add_metronome_user(self, profile_id: str, fields: dict) -> dict:
         """Add a user to the profile; returns the profile plus any warnings."""
@@ -154,6 +179,7 @@ class Facade:
             "profile": self.get_profile(p.id),
             "user_id": user.id,
             "warnings": user.suitability_warnings(),
+            "hard_errors": user.hard_errors(),
         }
 
     def remove_metronome_user(self, profile_id: str, user_id: int) -> dict:
@@ -218,6 +244,19 @@ class Facade:
         from claytonlib.safari_encounters import safari_areas
         return safari_areas()
 
+    def list_safari_areas_for_pokemon(self, pokemon: str) -> list[str]:
+        """Only the areas where `pokemon` can actually appear — narrows the Safari area
+        dropdown once a Pokemon is chosen (clayton-b42.10.3)."""
+        from claytonlib.safari_encounters import areas_for_species
+        return areas_for_species(pokemon)
+
+    def safari_block_requirement(self, area: str, pokemon: str) -> dict | None:
+        """The block score `pokemon` needs to appear in `area`, or None if it's already
+        reachable unconditionally there (or doesn't appear in that area at all) — drives
+        the "(required: N)" label and invalid-styling on the block-score inputs."""
+        from claytonlib.safari_encounters import block_requirement_for
+        return block_requirement_for(area, pokemon)
+
     # -- Metronome Compass: seed identification ---------------------------
 
     def metronome_seed_a(self, params: dict) -> dict:
@@ -228,13 +267,13 @@ class Facade:
         """The key seed's own roamer routes + Elm (to spot a key-seed hit)."""
         return metronome.key_seed_info(key_seed, prev_routes)
 
-    def times_on_date(self, key_seed: int, date_str: str | None = None,
+    def times_on_date(self, key_seed: int, month: int | None = None, day: int | None = None,
                       second: int | None = None) -> list[str]:
-        """Every valid initial time for `key_seed`, optionally filtered to one date (YYYY-MM-DD)
-        and/or one second-of-minute value — powers the calendar/date-picker flow for
-        Initial-time fields. Both filters are optional; with neither, every valid time comes
-        back."""
-        return metronome.times_on_date(key_seed, date_str, second)
+        """Every valid initial time for `key_seed`, optionally filtered to a month (1-12),
+        a day-of-month (1-31), and/or a second-of-minute value — powers the calendar/
+        date-picker flow for Initial-time fields. All filters are optional and independent
+        (a month alone, or month+day, etc.); with none, every valid time comes back."""
+        return metronome.times_on_date(key_seed, month, day, second)
 
     def metronome_seed_b(self, params: dict) -> dict:
         """Candidate battle seeds, each with its precomputed Metronome path."""
@@ -407,6 +446,27 @@ class Facade:
     # instead of importing when `on_collision` isn't given — the UI shows that to the
     # user and re-calls with an explicit decision. See app/portability.py for the exact
     # semantics of each `on_collision` value.
+
+    def export_runs_to_file(self, run_ids: list[str]) -> dict:
+        """Export the given runs as jsonl (one run per line — no envelope) via a native
+        Save dialog. `run_ids` decides both which runs and the export scope entirely —
+        the UI resolves "all" / "all except excluded" / a manual selection into this list
+        before calling here."""
+        from app import files, portability
+        rows = portability.export_runs_jsonl(self._store, run_ids)
+        path = files.save_jsonl_dialog("clayton-runs.jsonl", rows)
+        return {"saved": bool(path), "path": path, "count": len(rows)}
+
+    def import_runs_from_file(self, profile_id: str) -> dict:
+        """Import runs from a jsonl file via a native Open dialog — always a copy (fresh
+        ids), never a collision/overwrite. Each row's own "kind" field ("metronome"/
+        "safari") decides which compass it belongs to; no scope selection needed here."""
+        from app import files, portability
+        rows = files.open_jsonl_dialog()
+        if rows is None:
+            return {"imported": False}
+        docs = portability.import_runs_jsonl(self._store, profile_id, rows)
+        return {"imported": True, "count": len(docs)}
 
     def export_expedition(self, expedition_id: str) -> dict:
         """A versioned export envelope for one expedition (+ its charts/targets)."""
@@ -687,13 +747,42 @@ class Facade:
     # -- Calibrate Model ----------------------------------------------------
 
     def preview_calibration(self, profile_id: str, params: dict | None = None) -> dict:
-        """Fit a calibration model from the profile's runs (after exclusions) without saving
-        anything — the Calibrate Model view's live preview. Metronome runs fit the F_b-vs-M
-        trend; safari runs fit the safari load-path offset against it (see app/calibration.py)."""
+        """Fit a calibration model from the profile's metronome runs (after exclusions)
+        without saving anything — Metronome Compass's Calibrate Model live preview. Never
+        looks at safari runs or produces a safari_offset; see preview_safari_calibration for
+        Safari Compass's own flow (app/calibration.py)."""
         p = self._load_profile(profile_id)
         metronome_runs = self.list_runs(profile_id, kind="metronome")
+        return calibration_lib.preview_fit(metronome_runs, p.excluded_tags)
+
+    def preview_safari_calibration(self, profile_id: str, base_model_id: str) -> dict:
+        """Safari Compass's own Calibrate Model live preview: fit `safari_offset` from the
+        profile's safari runs (after exclusions) against `base_model_id`'s own trend, held
+        fixed. `base_model_id` may be ANY saved model for this profile, including the
+        bundled "Standard" one — not just the currently-active model. Touches no persisted
+        state; save the result with save_calibration_model like any other preview."""
+        p = self._load_profile(profile_id)
+        base_doc = self._store.read(_CALIBRATION_MODELS, base_model_id)
+        if base_doc is None or base_doc.get("profile_id") != profile_id:
+            raise ValueError(f"no calibration model {base_model_id!r} for this profile")
+        from claytonlib.calibration import CalibrationModel
+        base_models = {k: CalibrationModel.from_dict(v)
+                       for k, v in base_doc["artifact"]["models"].items()}
         safari_runs = self.list_runs(profile_id, kind="safari")
-        return calibration_lib.preview_fit(metronome_runs, safari_runs, p.excluded_tags)
+        report = calibration_lib.preview_safari_offset(base_models, safari_runs, p.excluded_tags)
+        report["base_model_id"] = base_doc["id"]
+        report["base_model_name"] = base_doc.get("name") or f"#{base_doc['number']}"
+        return report
+
+    def safari_run_exclude_reasons(self, profile_id: str) -> dict:
+        """Manual/tag/incomplete exclude reasons for the profile's safari runs — Safari
+        Compass Review Data's Runs-tab preview, independent of any calibration fit (seeing
+        why a run wouldn't currently be included doesn't need a base model chosen)."""
+        p = self._load_profile(profile_id)
+        safari_runs = self.list_runs(profile_id, kind="safari")
+        _records, pre_excluded = calibration_lib.effective_included(
+            safari_runs, set(p.excluded_tags), record_fn=calibration_lib._record_for_safari_run)
+        return {"reasons": dict(pre_excluded)}
 
     def save_calibration_model(self, profile_id: str, fields: dict) -> dict:
         """Persist a previewed fit as a new, numbered model; makes it the active one

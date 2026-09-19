@@ -151,6 +151,41 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
 
 
 # ---------------------------------------------------------------------------
+# Runs (jsonl) — a lighter-weight sibling of the profile bundle's own runs export: just
+# the runs themselves, as plain jsonl (one run dict per line, no envelope/versioning —
+# matches the raw-jsonl convention claytonlib itself already uses for compass_runs.jsonl/
+# safari_runs.jsonl). Each run dict's own "kind" field ("metronome"/"safari") already
+# disambiguates the two compasses, so nothing else needs to travel alongside it.
+# ---------------------------------------------------------------------------
+
+def export_runs_jsonl(store, run_ids: list[str]) -> list[dict]:
+    """The stored run docs for `run_ids`, in the given order — ready to write one per
+    line. Silently skips any id that no longer resolves (e.g. deleted since selection)."""
+    out = []
+    for rid in run_ids:
+        doc = store.read("runs", rid)
+        if doc is not None:
+            out.append(doc)
+    return out
+
+
+def import_runs_jsonl(store, profile_id: str, rows: list[dict]) -> list[dict]:
+    """Import a list of run dicts (from a jsonl export) into `profile_id` as fresh copies
+    — new ids, re-pointed profile_id, everything else (tag/notes/excluded/seeds/...)
+    carried through verbatim. Always a copy, never overwrites an existing run."""
+    if store.read("profiles", profile_id) is None:
+        raise ValueError(f"no profile with id {profile_id!r}")
+    out = []
+    for row in rows:
+        doc = dict(row)
+        doc["id"] = _new_id()
+        doc["profile_id"] = profile_id
+        store.write("runs", doc["id"], doc)
+        out.append(doc)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Profile bundle (+ its expeditions/charts/targets/runs/calibration models)
 # ---------------------------------------------------------------------------
 

@@ -150,6 +150,68 @@ class TestPortability(unittest.TestCase):
                                             "kind": "profile_bundle", "data": {"profile": {}}})
 
 
+class TestRunsJsonlPortability(unittest.TestCase):
+    """clayton-b42.10.4: jsonl export/import for compass/safari runs — no envelope, just
+    a list of run dicts (one per line when actually written to disk by app.files); the
+    pure logic here is what export_runs_to_file/import_runs_from_file wrap around a
+    native file dialog (untestable headless, so not covered directly — see app/files.py)."""
+
+    def setUp(self):
+        self.api = Facade(FileStore(tempfile.mkdtemp()))
+        self.pid = self.api.create_profile({"name": "Silver"})["id"]
+        self.run_a = self.api.save_metronome_run(self.pid, {
+            "tag": "300s", "vector_ms": 300000,
+            "a_seed": {"seed": 1, "seed_hex": "0x1"}, "b_seed": {"seed": 2}})
+        self.run_b = self.api.save_safari_run(self.pid, {
+            "tag": "sc1", "vector_ms": 300000,
+            "a_seed": {"seed": 1, "seed_hex": "0x1"},
+            "b_seed": {"seed": 2, "seed_hex": "0x2", "frame": 18700}})
+
+    def test_export_returns_the_requested_runs_in_order(self):
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_b["id"], self.run_a["id"]])
+        self.assertEqual([r["id"] for r in rows], [self.run_b["id"], self.run_a["id"]])
+        self.assertEqual(rows[0]["kind"], "safari")
+        self.assertEqual(rows[1]["kind"], "metronome")
+
+    def test_export_skips_ids_that_no_longer_resolve(self):
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"], "ghost"])
+        self.assertEqual([r["id"] for r in rows], [self.run_a["id"]])
+
+    def test_import_creates_fresh_copies_with_new_ids(self):
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"], self.run_b["id"]])
+        pid2 = self.api.create_profile({"name": "SoulSilver"})["id"]
+        imported = portability.import_runs_jsonl(self.api._store, pid2, rows)
+        self.assertEqual(len(imported), 2)
+        self.assertNotIn(imported[0]["id"], (self.run_a["id"], self.run_b["id"]))
+        self.assertTrue(all(r["profile_id"] == pid2 for r in imported))
+        # Original runs untouched, and every other field carried through verbatim.
+        self.assertEqual(len(self.api.list_runs(self.pid)), 2)
+        by_kind = {r["kind"]: r for r in imported}
+        self.assertEqual(by_kind["metronome"]["tag"], "300s")
+        self.assertEqual(by_kind["safari"]["b_seed"]["frame"], 18700)
+
+    def test_import_requires_an_existing_profile(self):
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"]])
+        with self.assertRaises(ValueError):
+            portability.import_runs_jsonl(self.api._store, "ghost-profile", rows)
+
+    def test_round_trip_via_jsonl_text(self):
+        # Simulate the actual on-disk format app.files writes/reads (one JSON object per
+        # line) end to end, without touching a real file dialog.
+        import json
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"]])
+        text = "\n".join(json.dumps(r) for r in rows) + "\n"
+        parsed = [json.loads(line) for line in text.splitlines() if line.strip()]
+        pid2 = self.api.create_profile({"name": "New machine"})["id"]
+        imported = portability.import_runs_jsonl(self.api._store, pid2, parsed)
+        self.assertEqual(imported[0]["tag"], "300s")
+
+
 class TestExpeditionPortability(unittest.TestCase):
     def setUp(self):
         self.api = Facade(FileStore(tempfile.mkdtemp()))

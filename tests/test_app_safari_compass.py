@@ -90,6 +90,51 @@ class TestSeedB(unittest.TestCase):
             self.assertEqual(mocked.call_args.kwargs.get("max_turns"), 50)
 
 
+class TestWidenSearchWindow(unittest.TestCase):
+    """clayton-b42.9.2: raising k alone barely changes the candidate set, because mass_cap
+    (default 0.999) is already the binding constraint well before k=3.5 -- a k=3.5sigma
+    window already covers ~99.95% of the Gaussian's mass. expand_frames/expand_seconds
+    (the actual "widen search window" fix) must drop mass_cap to have a real effect."""
+
+    def test_raising_k_alone_barely_moves_the_candidate_count(self):
+        base = seed_b(_EXP, _model(), {**_PARAMS, "path": ""})
+        bumped = seed_b(_EXP, _model(), {**_PARAMS, "path": "", "k": 3.5 + 1.5})
+        # Not literally zero movement (the tail beyond the OLD k=3.5 is now inside the sweep,
+        # but mass_cap still trims it down) -- the point is it's nowhere near proportional to
+        # how much wider the raw k window became.
+        self.assertLess(bumped["total"], base["total"] * 1.2)
+
+    def test_expand_frames_and_seconds_meaningfully_grows_the_candidate_set(self):
+        base = seed_b(_EXP, _model(), {**_PARAMS, "path": ""})
+        widened = seed_b(_EXP, _model(), {
+            **_PARAMS, "path": "", "expand_frames": 200, "expand_seconds": 2})
+        self.assertGreater(widened["total"], base["total"] * 2)
+
+    def test_expand_window_drops_mass_cap_and_grows_k_and_seconds(self):
+        from app.safari_compass import expand_window
+        inputs = _build_input(_EXP, _model(), {**_PARAMS})
+        self.assertEqual(inputs.options.mass_cap, 0.999)
+        sigma = inputs.sigma
+        cur_maxoff = max(abs(d) for d in inputs.second_offsets)
+
+        widened = expand_window(inputs, add_frames=100, add_seconds=3)
+        self.assertIsNone(widened.options.mass_cap)
+        self.assertAlmostEqual(widened.k, inputs.k + 100 / sigma)
+        self.assertEqual(max(abs(d) for d in widened.second_offsets), cur_maxoff + 3)
+        # Original input is untouched.
+        self.assertEqual(inputs.options.mass_cap, 0.999)
+
+    def test_expand_window_with_zero_frames_and_seconds_still_drops_mass_cap(self):
+        # A no-op expand amount shouldn't change k/second_offsets, but mass_cap dropping is
+        # the whole point of calling this at all -- zero args still needs to do that much.
+        from app.safari_compass import expand_window
+        inputs = _build_input(_EXP, _model(), {**_PARAMS})
+        widened = expand_window(inputs, add_frames=0, add_seconds=0)
+        self.assertIsNone(widened.options.mass_cap)
+        self.assertEqual(widened.k, inputs.k)
+        self.assertEqual(widened.second_offsets, inputs.second_offsets)
+
+
 class TestApplyPathStateMachine(unittest.TestCase):
     """The pending/cache flee-resolution replay, independent of the calibrated sweep."""
 
@@ -266,6 +311,20 @@ class TestFacadeFrameIdentificationAndPlanning(unittest.TestCase):
             api.safari_compass_find_target_frame({
                 "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
                 "block_config": {}, "pokemon": "not-a-real-species"})
+
+    def test_find_target_frame_raises_a_specific_error_when_block_requirement_unmet(self):
+        # clayton-b42.10.3: an insufficient block score should error with a specific,
+        # actionable message (what's needed vs what's configured) rather than the generic
+        # "no frame in range" the underlying search would otherwise raise.
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        with self.assertRaises(ValueError) as ctx:
+            api.safari_compass_find_target_frame({
+                "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+                "block_config": {"peak": 40}, "pokemon": "metang"})
+        msg = str(ctx.exception)
+        self.assertIn("peak", msg)
+        self.assertIn("56", msg)
+        self.assertIn("40", msg)
 
 
 if __name__ == "__main__":

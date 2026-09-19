@@ -7,13 +7,15 @@ calibrate_timer's/fit_safari_offset's `runs=` and their `_run_id` passthroughs �
 specifically so this module could call the real, tested fits rather than reimplementing
 them).
 
-Both metronome AND safari runs feed calibration — a run's `kind` decides which fit it can
-join, not whether it's used at all:
-
-* Metronome runs fit the F_b-vs-M trend (calibrate_timer): slope, intercept, jitter.
-* Safari runs fit `safari_offset` — the extra Safari-Zone loading screen's fixed frame
-  offset off that trend (fit_safari_offset) — holding the trend itself fixed. A safari run
-  alone can't determine the trend; it only matters relative to an already-fitted model.
+Metronome and safari runs feed TWO SEPARATE fits, mirroring the D/E split in
+"Metronome Compass Calibration.ipynb" and "Safari Compass Calibration.ipynb": Metronome
+Compass's Calibrate Model (`preview_fit`) never looks at safari runs and never produces a
+`safari_offset` — it only fits the F_b-vs-M trend (slope, intercept, jitter). Safari
+Compass has its OWN Calibrate Model flow (`preview_safari_offset`) that takes a
+user-chosen BASE model (any saved model, including the bundled "Standard" one) and fits
+`safari_offset` — the extra Safari-Zone loading screen's fixed frame offset — against it,
+holding that base model's trend fixed (fit_safari_offset). A safari run alone can't
+determine the trend; it only matters relative to an already-fitted model.
 
 EXCLUSION SEMANTICS (see notes/clayton_v1_draft2.md / bead clayton-dxq): a run's
 effective-included status is NOT manually-excluded AND NOT excluded-by-tag AND NOT an
@@ -102,14 +104,21 @@ def effective_included(runs: list[dict], excluded_tags: set[str], record_fn=_rec
     return records, excluded
 
 
-def preview_fit(metronome_runs: list[dict], safari_runs: list[dict],
-                excluded_tags: list[str]) -> dict:
-    """Fit a calibration model from `metronome_runs` (after exclusions), then fit the safari
-    load-path offset from `safari_runs` (after the SAME exclusion pass) against each
-    resulting model. Returns a JSON-friendly report — per-run exclude reasons for both kinds
-    (manual/tag/incomplete/outlier/contaminated, combinable), fit stats, and the saveable
-    modelset artifact (safari_offset folded in when there were usable safari runs). Touches
-    no persisted state.
+def _stats_for(cm) -> dict:
+    return {"kind": cm.kind, "n_runs": cm.n_runs, "n_fit": cm.n_fit,
+            "beta": cm.beta, "alpha": cm.alpha, "jitter_c": cm.jitter_c,
+            "rtc_offset_seconds": cm.rtc_offset_seconds, "rtc_offset_std": cm.rtc_offset_std,
+            "safari_offset": cm.safari_offset, "safari_offset_n": cm.safari_offset_n,
+            "safari_offset_std": cm.safari_offset_std}
+
+
+def preview_fit(metronome_runs: list[dict], excluded_tags: list[str]) -> dict:
+    """Fit a calibration model from `metronome_runs` (after exclusions) — Metronome
+    Compass's own Calibrate Model preview. Never looks at safari runs and never produces a
+    `safari_offset`; see `preview_safari_offset` for Safari Compass's separate flow. Returns
+    a JSON-friendly report — per-run exclude reasons (manual/tag/incomplete/outlier/
+    contaminated, combinable), fit stats, and the saveable modelset artifact. Touches no
+    persisted state.
     """
     records, pre_excluded = effective_included(metronome_runs, set(excluded_tags))
     if not records:
@@ -140,46 +149,59 @@ def preview_fit(metronome_runs: list[dict], safari_runs: list[dict],
     if not artifact_models and m.get("recommended"):
         artifact_models["linear"] = models[m["recommended"]]["model"]
 
-    # Safari load-path offset: fit against each candidate model, folding the result INTO
-    # that model (holding its slope/alpha fixed — see fit_safari_offset). A safari run that
-    # can't feed the fit (ambiguous seed, no Seed A frame, ...) is "incomplete", same as an
-    # incomplete metronome run; one that's genuinely used is never itself flagged.
-    safari_records, safari_pre_excluded = effective_included(
-        safari_runs, set(excluded_tags), record_fn=_record_for_safari_run)
-    for rid, reason in safari_pre_excluded.items():
-        reasons.setdefault(rid, []).append(reason)
-
-    safari_fits: dict[str, dict] = {}
-    if safari_records:
-        for key, cm in artifact_models.items():
-            fit = fit_safari_offset(cm, runs=safari_records)
-            if fit is None:
-                continue
-            cm.safari_offset = fit["offset"]
-            cm.safari_offset_n = fit["n"]
-            cm.safari_offset_std = fit["std"]
-            safari_fits[key] = fit
-
     return {
         "n_input": len(metronome_runs), "n_pre_excluded": len(pre_excluded),
         "n_runs": m["n_runs"], "n_fit": m["n_fit"],
         "n_outliers": m["n_outliers"], "n_contaminated": m["n_contaminated"],
         "recommended": m["recommended"],
-        "n_safari_input": len(safari_runs), "n_safari_pre_excluded": len(safari_pre_excluded),
-        "n_safari_fit": len(safari_records),
-        "safari_offset": {k: {"offset": f["offset"], "n": f["n"], "std": f["std"]}
-                          for k, f in safari_fits.items()},
         "reasons": {rid: "+".join(tags) for rid, tags in reasons.items()},
         "artifact": {
             "format": "modelset", "default": "linear",
             "models": {k: cm.to_dict() for k, cm in artifact_models.items()},
         },
-        "stats": {
-            k: {"kind": cm.kind, "n_runs": cm.n_runs, "n_fit": cm.n_fit,
-                "beta": cm.beta, "alpha": cm.alpha, "jitter_c": cm.jitter_c,
-                "rtc_offset_seconds": cm.rtc_offset_seconds, "rtc_offset_std": cm.rtc_offset_std,
-                "safari_offset": cm.safari_offset, "safari_offset_n": cm.safari_offset_n,
-                "safari_offset_std": cm.safari_offset_std}
-            for k, cm in artifact_models.items()
+        "stats": {k: _stats_for(cm) for k, cm in artifact_models.items()},
+    }
+
+
+def preview_safari_offset(base_models: dict, safari_runs: list[dict],
+                          excluded_tags: list[str]) -> dict:
+    """Safari Compass's own Calibrate Model preview: fit `safari_offset` from `safari_runs`
+    (after exclusions) against each model in `base_models` (a chosen base model's own
+    artifact, e.g. from CalibrationModel.from_dict on a saved CalibrationModelDoc) —
+    holding that base model's trend (alpha/beta/coeffs) fixed. Never refits the trend
+    itself and never touches metronome runs; see `preview_fit` for that separate flow.
+
+    `changed` is True iff the newly-fit safari_offset differs from what `base_models`
+    already had for at least one model kind — the UI uses it to disable "Save new model"
+    when the base model was already calibrated to the same value (nothing to save).
+    """
+    records, pre_excluded = effective_included(
+        safari_runs, set(excluded_tags), record_fn=_record_for_safari_run)
+
+    fits: dict[str, dict] = {}
+    changed = False
+    for key, cm in base_models.items():
+        old_offset = cm.safari_offset
+        fit = fit_safari_offset(cm, runs=records) if records else None
+        if fit is None:
+            continue
+        cm.safari_offset = fit["offset"]
+        cm.safari_offset_n = fit["n"]
+        cm.safari_offset_std = fit["std"]
+        fits[key] = fit
+        if old_offset is None or abs(old_offset - fit["offset"]) > 1e-9:
+            changed = True
+
+    return {
+        "n_safari_input": len(safari_runs), "n_safari_pre_excluded": len(pre_excluded),
+        "n_safari_fit": len(records),
+        "changed": changed,
+        "safari_offset": {k: {"offset": f["offset"], "n": f["n"], "std": f["std"]}
+                          for k, f in fits.items()},
+        "reasons": dict(pre_excluded),
+        "artifact": {
+            "format": "modelset", "default": "linear",
+            "models": {k: cm.to_dict() for k, cm in base_models.items()},
         },
+        "stats": {k: _stats_for(cm) for k, cm in base_models.items()},
     }

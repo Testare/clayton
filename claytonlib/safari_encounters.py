@@ -181,3 +181,79 @@ def find_encounter_frame(seed: int, area: str, tod, blocks, target: str = "metan
     lower-cased name.
     """
     return next(iter_encounter_frames(seed, area, tod, blocks, target, min_frame, max_frame), None)
+
+
+def _block_type_name(idx: int) -> str:
+    for name, i in BLOCK_TYPES.items():
+        if i == idx:
+            return name
+    raise ValueError(f"unknown block type index {idx!r}")
+
+
+def areas_for_species(target: str) -> list[str]:
+    """Every Safari-Zone area where `target` can appear at all — unconditioned in some
+    time of day's normal table, or reachable via a block-conditional slot in some time of
+    day (whether or not that block score is currently met). Canonical area-name spelling,
+    in safari_areas()'s own order."""
+    target_l = str(target).lower()
+    out = []
+    for area in safari_areas():
+        grass = _zones()[_area_key(area)]["grass"]
+        found = False
+        for tod_name in _TOD:
+            if any(sp.lower() == target_l for sp, _ in grass["normal"][tod_name]):
+                found = True
+                break
+            if any(sp.lower() == target_l for sp, _ in grass["block"][tod_name]):
+                found = True
+                break
+        if found:
+            out.append(area)
+    return out
+
+
+def block_requirement_for(area: str, target: str, tod=None) -> dict | None:
+    """The block score needed for `target` to become reachable via a block-conditional
+    slot in `area`, or None if it's either unreachable in this area at all, or already
+    reachable without any block condition (appears in the area's own "normal" table for
+    the checked time(s) of day — some areas carry a species unconditionally in one time of
+    day and only conditionally in another; an unconditional route means no real
+    requirement exists there).
+
+    `tod=None` (the default) checks every time of day and returns the requirement with the
+    LOWEST quantity — meeting the easiest condition's threshold is what a UI label showing
+    "what do I need overall" wants. Pass a specific `tod` (as find_target_frame's own
+    pre-flight check does) to get the requirement for exactly that time of day instead —
+    the conditions LIST is shared across every time of day, but which species a given
+    condition unlocks can differ per time of day, so the "easiest overall" answer isn't
+    always the right one for one specific search.
+
+    Returns {"block_type": "peak", "quantity": 56} (the same string key
+    resolve_safari_slots's `blocks` dict accepts) using the game's real second-condition
+    slot too when a condition actually has two non-sentinel requirements (none of this
+    app's known target species do, but this doesn't assume that stays true forever):
+    {"block_type": ..., "quantity": ..., "block_type_2": ..., "quantity_2": ...}.
+    """
+    grass = _zones()[_area_key(area)]["grass"]
+    conds = grass["conditions"]
+    target_l = str(target).lower()
+    tods = [_tod_name(tod)] if tod is not None else list(_TOD)
+
+    for tod_name in tods:
+        if any(sp.lower() == target_l for sp, _ in grass["normal"][tod_name]):
+            return None
+
+    best = None
+    for tod_name in tods:
+        block = grass["block"][tod_name]
+        for i, (sp, _lvl) in enumerate(block):
+            if sp.lower() != target_l:
+                continue
+            t1, q1, t2, q2 = conds[i]
+            req = {"block_type": _block_type_name(t1), "quantity": q1}
+            if t2 != 0:
+                req["block_type_2"] = _block_type_name(t2)
+                req["quantity_2"] = q2
+            if best is None or q1 < best["quantity"]:
+                best = req
+    return best

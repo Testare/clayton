@@ -190,6 +190,41 @@ class TestSeedB(unittest.TestCase):
         self.assertGreater(res["count"], 0)
         self.assertTrue(all("path_str" in c for c in res["candidates"]))
 
+    def test_candidates_carry_a_metronome_moves_summary(self):
+        # New Run's "Seed B identified" summary shows the whole move sequence (not just
+        # path_str's compact token string) so the user can visually confirm they hit the
+        # expected seed -- clayton-b42.8.4.
+        res = self.api.metronome_seed_b({
+            "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
+            "seconds_window": 0, "delay_window": 1,
+            "magikarp_level": 15, "opposite_gender": True, "metronome_only": False})
+        self.assertGreater(res["count"], 0)
+        moves = res["candidates"][0]["metronome_moves"]
+        self.assertIsInstance(moves, list)
+        for m in moves:
+            self.assertIn("turn", m); self.assertIn("move_name", m); self.assertIn("move_num", m)
+
+
+class TestMetronomeMoves(unittest.TestCase):
+    """app.metronome._metronome_moves — the full move-by-turn summary for an identified
+    seed's precomputed path (clayton-b42.8.4)."""
+
+    def test_extracts_one_entry_per_metronome_turn_with_real_names(self):
+        from app.metronome import _metronome_moves
+        from claytonlib.metronome_compass import precompute_path
+        from claytonlib.moves import resolve_move
+        path = precompute_path(_KEY_SEED, magikarp_level=15, opposite_gender=True,
+                               moveset=(), n_turns=10)  # metronome-only moveset
+        moves = _metronome_moves(path)
+        self.assertTrue(moves)  # a metronome-only user calls Metronome nearly every turn
+        for m in moves:
+            self.assertGreaterEqual(m["turn"], 1)
+            self.assertEqual(resolve_move(m["move_name"]).number, m["move_num"])
+        # Turns are non-decreasing and within the path's own length.
+        turns = [m["turn"] for m in moves]
+        self.assertEqual(turns, sorted(turns))
+        self.assertLessEqual(max(turns), len(path))
+
 
 class TestSeedBSession(unittest.TestCase):
     def test_fake_runner_question_flow(self):
@@ -293,24 +328,40 @@ class TestRuns(unittest.TestCase):
 
 
 class TestTimesOnDate(unittest.TestCase):
-    """Powers the calendar/valid-times picker (clayton-b42.6.1)."""
+    """Powers the calendar/valid-times picker (clayton-b42.6.1). Month/day/second filters
+    are independent and optional (clayton-b42.8.3 replaced the single full-date string with
+    separate month/day fields so "month only" and "month+day" are both expressible)."""
 
-    def test_finds_times_on_the_exact_date_used_to_build_the_key_seed(self):
+    def _this_year(self):
+        return dt.date.today().year
+
+    def test_finds_times_on_the_exact_month_and_day_used_to_build_the_key_seed(self):
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
             api = Facade(FileStore(tempfile.mkdtemp()))
-            times = api.times_on_date(_KEY_SEED, "2025-07-24")
-            self.assertIn(_TARGET_TIME, times)
+            times = api.times_on_date(_KEY_SEED, month=7, day=24)
+            self.assertIn(f"{self._this_year()}-07-24T14:45:56", times)
 
-    def test_year_is_reinterpreted_not_matched_literally(self):
+    def test_month_only_filter(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            times = api.times_on_date(_KEY_SEED, month=7)
+            self.assertTrue(times)
+            self.assertTrue(all(t[5:7] == "07" for t in times))
+            # Narrower than unfiltered, but not narrowed all the way to one day.
+            everything = api.times_on_date(_KEY_SEED)
+            self.assertLess(len(times), len(everything))
+
+    def test_restamps_to_the_current_real_year_when_narrowed(self):
         # generate_times() stamps a nominal placeholder year -- month/day/hour/minute/second
-        # are what the RNG actually cares about -- so a DIFFERENT real year with the same
-        # month/day must still find (and re-stamp) the same time.
+        # are what the RNG actually cares about -- so narrowing by month/day re-stamps the
+        # match with today's real year (the game doesn't care what year you load it).
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
             api = Facade(FileStore(tempfile.mkdtemp()))
-            times_2030 = api.times_on_date(_KEY_SEED, "2030-07-24")
-            self.assertIn("2030-07-24T14:45:56", times_2030)
+            times = api.times_on_date(_KEY_SEED, month=7, day=24)
+            self.assertTrue(all(t.startswith(f"{self._this_year()}-") for t in times))
 
     def test_empty_for_a_date_with_no_matches(self):
         from tests.test_app_chart import _isolated_cwd
@@ -319,17 +370,18 @@ class TestTimesOnDate(unittest.TestCase):
             # January 14 falls outside this key seed's mdms window (verified directly against
             # get_times() -- the window is wide enough that "just pick any other month" isn't
             # reliably a non-match, so this specific date is deliberate, not arbitrary).
-            far_off = api.times_on_date(_KEY_SEED, "2025-01-14")
+            far_off = api.times_on_date(_KEY_SEED, month=1, day=14)
             self.assertEqual(far_off, [])
 
-    def test_both_filters_optional_returns_everything(self):
+    def test_all_filters_optional_returns_everything(self):
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
             api = Facade(FileStore(tempfile.mkdtemp()))
             everything = api.times_on_date(_KEY_SEED)
-            on_date = api.times_on_date(_KEY_SEED, "2025-07-24")
+            on_date = api.times_on_date(_KEY_SEED, month=7, day=24)
             self.assertGreater(len(everything), len(on_date))
-            # Unfiltered results keep generate_times()'s own nominal year (2000).
+            # Unfiltered results keep generate_times()'s own nominal year (2000) -- no
+            # narrowing happened, so there's nothing to restamp for display.
             self.assertTrue(all(t.startswith("2000-") for t in everything))
 
     def test_second_filter_alone(self):
@@ -344,17 +396,8 @@ class TestTimesOnDate(unittest.TestCase):
         from tests.test_app_chart import _isolated_cwd
         with _isolated_cwd():
             api = Facade(FileStore(tempfile.mkdtemp()))
-            times = api.times_on_date(_KEY_SEED, "2025-07-24", 56)
-            self.assertEqual(times, [_TARGET_TIME])
-
-    def test_year_out_of_range_normalizes_to_2000(self):
-        from tests.test_app_chart import _isolated_cwd
-        with _isolated_cwd():
-            api = Facade(FileStore(tempfile.mkdtemp()))
-            too_early = api.times_on_date(_KEY_SEED, "1999-07-24")
-            too_late = api.times_on_date(_KEY_SEED, "2150-07-24")
-            self.assertIn("2000-07-24T14:45:56", too_early)
-            self.assertIn("2000-07-24T14:45:56", too_late)
+            times = api.times_on_date(_KEY_SEED, month=7, day=24, second=56)
+            self.assertEqual(times, [f"{self._this_year()}-07-24T14:45:56"])
 
 
 if __name__ == "__main__":

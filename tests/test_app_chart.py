@@ -8,6 +8,7 @@ use a small synthetic calibration model + a tiny setup/max range so the (real,
 unmocked) precompute stays fast and deterministic.
 """
 import contextlib
+import datetime as dt
 import os
 import tempfile
 import time
@@ -53,9 +54,17 @@ class TestReferenceData(unittest.TestCase):
         for row in chart.list_strategies():
             self.assertIn("name", row)
             self.assertTrue(row["description"])
+            self.assertTrue(row["label"])
         for row in chart.list_criteria():
             self.assertIn("name", row)
             self.assertTrue(row["description"])
+            self.assertTrue(row["label"])
+
+    def test_machete_criteria_defaults_to_5_balls(self):
+        row = next(c for c in chart.list_criteria() if c["name"] == "machete-turns-after-balls")
+        n_balls = next(p for p in row["params"] if p["key"] == "n_balls")
+        self.assertEqual(n_balls["default"], 5)
+        self.assertNotIn("e.g.", row["description"])
 
     def test_parameterized_criteria_templates_resolve_for_real(self):
         """Every parameterized criteria's `template`, filled with its `params`' defaults,
@@ -158,6 +167,123 @@ class TestPrecomputeRankExamine(unittest.TestCase):
                 chart.rank_best_per_time(_EXP, _CHART, models, {})
             with self.assertRaises(ValueError):
                 chart.examine(_EXP, _CHART, models, "2000-01-01T00:00:00", 1000, {})
+
+
+class TestRankAtTimeDeclustering(unittest.TestCase):
+    """clayton-b42.9.4: rank_at_time declusters by default (distinct_targets) so the top-N
+    are genuinely different targets, not a cluster of near-identical frames around one peak."""
+
+    def _hand_built_canon(self, chart_cfg):
+        from claytonlib.chart.canon import mdmsh_of
+        from claytonlib.chart.grid import pack_row
+        model = CalibrationModel(kind="line", target="Fb", beta=0.06, alpha=0.0,
+                                 jitter_c=None, jitter_rms=3.0, rtc_offset_seconds=0.0,
+                                 rtc_offset_std=0.0, n_runs=10)
+        t0 = dt.datetime(2000, 6, 1, 21, 0, 0)
+        # Two widely-separated commanded countdowns -> two different modal RTC seconds -> two
+        # different mdmsh -> genuinely distinct targets (not two frames of the SAME spike).
+        M_a, M_b = 2000.0, 10000.0
+        F_a, F_b = round(model.mean(M_a)), round(model.mean(M_b))
+        mdmsh_a = mdmsh_of(t0 + dt.timedelta(seconds=round(M_a / 1000)))
+        mdmsh_b = mdmsh_of(t0 + dt.timedelta(seconds=round(M_b / 1000)))
+
+        store = chart._canon_store(_EXP, chart_cfg)
+        store.append_range(mdmsh_a, F_a - 3, F_a + 3, pack_row(7, range(7)))
+        store.append_range(mdmsh_b, F_b - 3, F_b + 3, pack_row(7, range(7)))
+        store.write_meta({"built": True})
+        return t0, F_a, F_b, {"linear": model}
+
+    def test_default_min_separation_surfaces_both_clusters(self):
+        with _isolated_cwd():
+            wide_chart = {**_CHART, "setup_delay_seconds": 0, "max_target_seconds": 15}
+            t0, F_a, F_b, models = self._hand_built_canon(wide_chart)
+
+            rows = chart.rank_at_time(_EXP, wide_chart, models, t0.isoformat(), {"limit": 5})
+            fs = [r["target_delay"] for r in rows]
+            self.assertTrue(any(abs(f - F_a) <= 3 for f in fs), fs)
+            self.assertTrue(any(abs(f - F_b) <= 3 for f in fs), fs)
+            # And they're not just every frame in one region repeated -- each pick is
+            # genuinely min_separation apart from every other pick.
+            for i, f1 in enumerate(fs):
+                for f2 in fs[i + 1:]:
+                    self.assertGreaterEqual(abs(f1 - f2), 30)
+
+    def test_min_separation_zero_returns_the_raw_clustered_ranking(self):
+        with _isolated_cwd():
+            wide_chart = {**_CHART, "setup_delay_seconds": 0, "max_target_seconds": 15}
+            t0, F_a, F_b, models = self._hand_built_canon(wide_chart)
+
+            rows = chart.rank_at_time(_EXP, wide_chart, models, t0.isoformat(),
+                                      {"limit": 5, "min_separation": 0})
+            fs = [r["target_delay"] for r in rows]
+            # Without declustering, at least two of the top picks sit right next to each
+            # other inside the SAME 7-frame captured spike (unlike the declustered version,
+            # where every pick is forced >= 30 frames from every other).
+            self.assertTrue(any(abs(f1 - f2) < 7 for i, f1 in enumerate(fs) for f2 in fs[i+1:]), fs)
+
+
+class TestRankBestPerTimeRefinesBeforeCutting(unittest.TestCase):
+    """clayton-b42 feedback 8: refining only the already-cut top-K (an earlier version of
+    rank_best_per_time did this) isn't enough -- a boot time whose COARSE score ranks
+    outside the top-K never gets refined at all, even if its TRUE (refined) score would be
+    the best of everything. Every candidate boot time must be refined BEFORE the cut."""
+
+    def _hand_built_canon(self, chart_cfg):
+        from claytonlib.chart.canon import mdmsh_of
+        from claytonlib.chart.grid import pack_row
+        model = CalibrationModel(kind="line", target="Fb", beta=0.06, alpha=0.0,
+                                 jitter_c=None, jitter_rms=1.5, rtc_offset_seconds=0.0,
+                                 rtc_offset_std=0.0, n_runs=10)
+        s0 = 2
+        F_a = round(model.mean(2000.0))          # a step=4-aligned frame (120 % 4 == 0)
+        F_target = F_a + 2                        # exactly between two step=4 grid points
+
+        # 6 "filler" boot times, each with a narrow (+/-1) capture band centered EXACTLY on
+        # the step=4-aligned F_a -- the coarse sweep finds their true peak directly, no
+        # refinement needed/possible, so each scores ~0.69.
+        filler_times = [dt.datetime(2000, 6, 1, 21, 0, s) for s in range(6)]
+        # 1 "target" boot time, with a WIDER (+/-2) capture band centered on the off-grid
+        # F_target -- the coarse sweep only ever samples 2 frames away from its true peak
+        # (both step=4 neighbors are equidistant), scoring it the WORST of all 7 (~0.63);
+        # refine_near (radius=step-1=3) finds the true peak, raising it to ~0.91 -- the BEST
+        # of all 7, and higher than any filler.
+        target_time = dt.datetime(2000, 6, 1, 21, 0, 6)
+
+        cmap_data = {}
+        for t in filler_times:
+            m = mdmsh_of(t + dt.timedelta(seconds=s0))
+            cmap_data[m] = [(F_a - 1, F_a + 1, pack_row(3, range(3)))]
+        m_target = mdmsh_of(target_time + dt.timedelta(seconds=s0))
+        cmap_data[m_target] = [(F_target - 2, F_target + 2, pack_row(5, range(5)))]
+
+        store = chart._canon_store(_EXP, chart_cfg)
+        for mdmsh, ranges in cmap_data.items():
+            for lo, hi, bm in ranges:
+                store.append_range(mdmsh, lo, hi, bm)
+        store.write_meta({"built": True})
+        return filler_times, target_time, {"linear": model}
+
+    def test_the_off_grid_boot_time_still_surfaces_as_best_within_a_small_limit(self):
+        from unittest.mock import patch
+        with _isolated_cwd():
+            wide_chart = {**_CHART, "setup_delay_seconds": 0, "max_target_seconds": 15}
+            filler_times, target_time, models = self._hand_built_canon(wide_chart)
+            candidate_times = filler_times + [target_time]
+
+            # rank_best_per_time sources its candidate boot times from get_times(key_seed) --
+            # stub it to exactly the 7 phases this test controls, rather than the key seed's
+            # real (much larger) set of valid times.
+            with patch("app.chart.get_times", return_value=(0, candidate_times)):
+                # limit=3: under the old refine-after-cut behavior, the target's coarse score
+                # (worst of all 7) would place it outside this top-3 BEFORE any refinement
+                # ever ran, so it could never be reported here at all.
+                ranked = chart.rank_best_per_time(_EXP, wide_chart, models, {"limit": 3, "step": 4})
+            self.assertEqual(ranked["per_time_count"], 7)  # all 7 boot times still counted
+            top_times = [r["initial_time"] for r in ranked["top"]]
+            self.assertIn(target_time.strftime(chart._TIME_FMT), top_times)
+            best = ranked["top"][0]
+            self.assertEqual(best["initial_time"], target_time.strftime(chart._TIME_FMT))
+            self.assertGreater(best["p"], 0.85)  # the refined value, not the coarse ~0.63
 
 
 class TestFacadeChartCRUD(unittest.TestCase):

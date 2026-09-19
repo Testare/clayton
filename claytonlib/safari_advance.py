@@ -206,6 +206,12 @@ def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: 
 
     Returns {"frame", "level", "skipped_ambiguous" (count), "all_ambiguous" (bool — every
     candidate was ambiguous, so `frame` is just the closest one anyway, use with care)}.
+    `skipped_ambiguous` counts ONLY candidates that were both (a) genuinely NEARER to the aim
+    than the chosen `frame` and (b) ambiguous — i.e. candidates actually passed over in favor
+    of `frame` (clayton-b42.10.6: an earlier version counted every ambiguous candidate in the
+    whole search window regardless of distance, so it could report frames "skipped" that were
+    farther from the aim than the one chosen, or even report a nonzero count when `frame` was
+    already the closest possible candidate — neither makes sense under the word "skipped").
     Raises ValueError if no candidate frame exists in range at all.
     """
     from claytonlib.safari_encounters import iter_encounter_frames
@@ -225,12 +231,23 @@ def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: 
         return (abs(frame - aim), frame)  # nearest to aim, lower frame breaks ties
 
     rng_calls, elm = advance_context(seed, prev_routes, count=hi + 20)
-    unambiguous = [fl for fl in candidates
-                   if not margin_ambiguous(rng_calls, elm,
-                                           plan_advances(current_frame, fl[0], margin=search_margin))]
-    skipped = len(candidates) - len(unambiguous)
+
+    def _ambiguous(frame_level):
+        return margin_ambiguous(rng_calls, elm,
+                                plan_advances(current_frame, frame_level[0], margin=search_margin))
+
+    scored = [(fl, _ambiguous(fl)) for fl in candidates]
+    unambiguous = [fl for fl, amb in scored if not amb]
     if unambiguous:
-        frame, level = min(unambiguous, key=_distance)
-        return {"frame": frame, "level": level, "skipped_ambiguous": skipped, "all_ambiguous": False}
-    frame, level = min(candidates, key=_distance)
-    return {"frame": frame, "level": level, "skipped_ambiguous": skipped, "all_ambiguous": True}
+        chosen = min(unambiguous, key=_distance)
+        all_ambiguous = False
+    else:
+        chosen = min(candidates, key=_distance)
+        all_ambiguous = True
+
+    chosen_dist = _distance(chosen)
+    skipped = sum(1 for fl, amb in scored
+                  if amb and fl != chosen and _distance(fl) < chosen_dist)
+    frame, level = chosen
+    return {"frame": frame, "level": level, "skipped_ambiguous": skipped,
+            "all_ambiguous": all_ambiguous}

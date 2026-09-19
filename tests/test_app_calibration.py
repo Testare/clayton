@@ -81,7 +81,7 @@ def _safari_run_dict(tag, vector_ms, seed, frame, a_delay=700, excluded=False):
 class TestPreviewFit(unittest.TestCase):
     def test_no_fittable_runs_raises(self):
         with self.assertRaises(ValueError):
-            calibration.preview_fit([], [], [])
+            calibration.preview_fit([], [])
 
     def test_fit_report_shape_and_reasons(self):
         runs = [{"id": f"clean-{i}", **_run_dict("session1", M, Fb)}
@@ -89,7 +89,7 @@ class TestPreviewFit(unittest.TestCase):
         runs.append({"id": "outlier-1", **_run_dict("session1", _OUTLIER_M, _OUTLIER_FB)})
         runs.append({"id": "excluded-1", **_run_dict("standard", 400000, 25000, excluded=True)})
 
-        report = calibration.preview_fit(runs, [], excluded_tags=[])
+        report = calibration.preview_fit(runs, excluded_tags=[])
 
         self.assertEqual(report["n_input"], len(runs))
         self.assertEqual(report["n_pre_excluded"], 1)          # the manually-excluded one
@@ -97,8 +97,7 @@ class TestPreviewFit(unittest.TestCase):
         self.assertIn("linear", report["artifact"]["models"])
         self.assertEqual(report["artifact"]["format"], "modelset")
         self.assertIn("linear", report["stats"])
-        self.assertEqual(report["n_safari_input"], 0)
-        self.assertEqual(report["safari_offset"], {})
+        self.assertNotIn("n_safari_input", report)  # metronome-only: no safari fields at all
 
         # The outlier is off-trend enough to be flagged by calibrate_timer's own screening.
         self.assertEqual(report["reasons"].get("outlier-1"), "outlier")
@@ -110,58 +109,94 @@ class TestPreviewFit(unittest.TestCase):
                 for i, (M, Fb) in enumerate(_CLEAN)]
         runs.append({"id": "std-1", **_run_dict("Standard", 400000, 25000)})
 
-        report = calibration.preview_fit(runs, [], excluded_tags=["Standard"])
+        report = calibration.preview_fit(runs, excluded_tags=["Standard"])
         self.assertEqual(report["reasons"].get("std-1"), "tag:Standard")
         self.assertEqual(report["n_pre_excluded"], 1)
 
-    def test_safari_runs_fit_the_offset_against_the_new_model(self):
+    def test_never_produces_a_safari_offset(self):
+        # Metronome Compass calibration must not touch safari runs or safari_offset at all
+        # -- that's Safari Compass's own separate flow (preview_safari_offset).
         metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
                           for i, (M, Fb) in enumerate(_CLEAN)]
-        # Fabricate safari runs whose (seed, frame) sit exactly `offset` frames above what
-        # the FITTED linear model predicts for their M -- can't know that model's beta/alpha
-        # up front, so fit metronome-only first, then build safari points relative to it.
-        pre = calibration.preview_fit(metronome_runs, [], [])
+        report = calibration.preview_fit(metronome_runs, [])
+        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset"])
+        self.assertNotIn("safari_offset", report)
+
+
+class TestPreviewSafariOffset(unittest.TestCase):
+    def _base_model(self):
+        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
+                          for i, (M, Fb) in enumerate(_CLEAN)]
+        pre = calibration.preview_fit(metronome_runs, [])
         from claytonlib.calibration import CalibrationModel
-        linear = CalibrationModel.from_dict(pre["artifact"]["models"]["linear"])
+        return {"linear": CalibrationModel.from_dict(pre["artifact"]["models"]["linear"])}
+
+    def test_fits_offset_against_the_base_model_and_flags_changed(self):
+        base = self._base_model()
+        linear = base["linear"]
         offset = 12.0
         safari_runs = []
         for i, M in enumerate([200000, 260000, 320000]):
             frame = round(linear.frame(M, 700) + offset)
             safari_runs.append({"id": f"sf-{i}", **_safari_run_dict("s", M, 100 + i, frame)})
 
-        report = calibration.preview_fit(metronome_runs, safari_runs, [])
+        report = calibration.preview_safari_offset(base, safari_runs, [])
         self.assertEqual(report["n_safari_input"], 3)
         self.assertEqual(report["n_safari_fit"], 3)
         self.assertEqual(report["n_safari_pre_excluded"], 0)
+        self.assertTrue(report["changed"])
         self.assertIn("linear", report["safari_offset"])
         self.assertAlmostEqual(report["safari_offset"]["linear"]["offset"], offset, delta=0.5)
         self.assertEqual(report["safari_offset"]["linear"]["n"], 3)
-        # Folded into the artifact model itself, not just reported separately.
         self.assertAlmostEqual(report["artifact"]["models"]["linear"]["safari_offset"],
                                offset, delta=0.5)
+        # The trend itself (beta/alpha) is untouched -- only the offset differs.
+        self.assertEqual(report["artifact"]["models"]["linear"]["beta"], linear.beta)
+        self.assertEqual(report["artifact"]["models"]["linear"]["alpha"], linear.alpha)
+
+    def test_not_changed_when_refit_matches_the_bases_existing_offset(self):
+        base = self._base_model()
+        linear = base["linear"]
+        offset = 12.0
+        safari_runs = []
+        for i, M in enumerate([200000, 260000, 320000]):
+            frame = round(linear.frame(M, 700) + offset)
+            safari_runs.append({"id": f"sf-{i}", **_safari_run_dict("s", M, 100 + i, frame)})
+
+        first = calibration.preview_safari_offset(base, safari_runs, [])
+        self.assertTrue(first["changed"])
+
+        # Re-run against a base that already carries that same fitted offset (as if it had
+        # been saved and picked again as the base) -- nothing should have moved.
+        from claytonlib.calibration import CalibrationModel
+        already_calibrated = {"linear": CalibrationModel.from_dict(
+            first["artifact"]["models"]["linear"])}
+        second = calibration.preview_safari_offset(already_calibrated, safari_runs, [])
+        self.assertFalse(second["changed"])
+
+    def test_no_usable_safari_runs_means_not_changed(self):
+        base = self._base_model()
+        report = calibration.preview_safari_offset(base, [], [])
+        self.assertEqual(report["n_safari_fit"], 0)
+        self.assertFalse(report["changed"])
+        self.assertEqual(report["safari_offset"], {})
+        # Unfit-able base model is returned unchanged, not stripped.
+        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset"])
 
     def test_safari_run_exclusion_reasons(self):
-        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
-                          for i, (M, Fb) in enumerate(_CLEAN)]
+        base = self._base_model()
         safari_runs = [
             {"id": "sf-manual", **_safari_run_dict("s", 200000, 1, 12000, excluded=True)},
             {"id": "sf-tagged", **_safari_run_dict("bad", 200000, 2, 12000)},
             {"id": "sf-incomplete", "kind": "safari", "vector_ms": None,
              "a_seed": {}, "b_seed": {}},
         ]
-        report = calibration.preview_fit(metronome_runs, safari_runs, excluded_tags=["bad"])
+        report = calibration.preview_safari_offset(base, safari_runs, excluded_tags=["bad"])
         self.assertEqual(report["reasons"].get("sf-manual"), "manual")
         self.assertEqual(report["reasons"].get("sf-tagged"), "tag:bad")
         self.assertEqual(report["reasons"].get("sf-incomplete"), "incomplete")
         self.assertEqual(report["n_safari_fit"], 0)
-        self.assertEqual(report["safari_offset"], {})
-
-    def test_safari_offset_absent_when_no_usable_safari_runs(self):
-        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
-                          for i, (M, Fb) in enumerate(_CLEAN)]
-        report = calibration.preview_fit(metronome_runs, [], [])
-        self.assertEqual(report["safari_offset"], {})
-        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset"])
+        self.assertFalse(report["changed"])
 
 
 class TestFacadeCalibration(unittest.TestCase):
@@ -285,6 +320,74 @@ class TestStandardCalibrationModelSeed(unittest.TestCase):
         api.delete_calibration_model(m1["id"])
         self.assertEqual(api.list_calibration_models(p1), [])
         self.assertEqual(len(api.list_calibration_models(p2)), 1)
+
+
+class TestFacadeSafariCalibration(unittest.TestCase):
+    """Safari Compass's own Calibrate Model flow — separate from Metronome's, choosing any
+    saved model (Standard included) as the base and fitting only safari_offset against it."""
+
+    def setUp(self):
+        self.api = Facade(FileStore(tempfile.mkdtemp()))
+        self.pid = self.api.create_profile({"name": "P1"})["id"]
+        for i, (M, Fb) in enumerate(_CLEAN):
+            self.api.save_metronome_run(self.pid, {
+                "tag": "session1", "vector_ms": M, "a_seed": _seed(_BASE, 700),
+                "b_seed": _seed(_BASE + dt.timedelta(seconds=5), Fb)})
+        self.fitted = self.api.save_calibration_model(
+            self.pid, {"name": "fitted", "preview": self.api.preview_calibration(self.pid),
+                       "make_active": False})
+
+    def test_metronome_preview_never_carries_safari_fields(self):
+        report = self.api.preview_calibration(self.pid)
+        self.assertNotIn("n_safari_input", report)
+        self.assertNotIn("safari_offset", report)
+
+    def test_can_calibrate_against_the_standard_model(self):
+        standard = next(m for m in self.api.list_calibration_models(self.pid)
+                        if m["name"] == "Standard")
+        report = self.api.preview_safari_calibration(self.pid, standard["id"])
+        self.assertEqual(report["base_model_id"], standard["id"])
+        self.assertEqual(report["base_model_name"], "Standard")
+        self.assertFalse(report["changed"])  # no safari runs saved yet
+
+    def test_can_calibrate_against_a_user_fitted_model(self):
+        report = self.api.preview_safari_calibration(self.pid, self.fitted["id"])
+        self.assertEqual(report["base_model_id"], self.fitted["id"])
+
+    def test_unknown_base_model_raises(self):
+        with self.assertRaises(ValueError):
+            self.api.preview_safari_calibration(self.pid, "no-such-model")
+
+    def test_saving_a_safari_preview_creates_a_new_numbered_model(self):
+        standard = next(m for m in self.api.list_calibration_models(self.pid)
+                        if m["name"] == "Standard")
+        from claytonlib.calibration import CalibrationModel
+        base_linear = CalibrationModel.from_dict(standard["artifact"]["models"]["linear"])
+        self.api.save_safari_run(self.pid, {
+            "tag": "s", "vector_ms": 300000,
+            "a_seed": {"delay": 700},
+            "b_seed": {"seed": 1, "seed_hex": "0x1",
+                       "frame": round(base_linear.frame(300000, 700) + 9)}})
+
+        report = self.api.preview_safari_calibration(self.pid, standard["id"])
+        self.assertTrue(report["changed"])
+        before = len(self.api.list_calibration_models(self.pid))
+        saved = self.api.save_calibration_model(self.pid, {"name": "safari v1", "preview": report})
+        after = self.api.list_calibration_models(self.pid)
+        self.assertEqual(len(after), before + 1)
+        self.assertAlmostEqual(saved["artifact"]["models"]["linear"]["safari_offset"], 9, delta=0.5)
+        # The base model's own trend is carried through untouched.
+        self.assertEqual(saved["artifact"]["models"]["linear"]["beta"], base_linear.beta)
+
+    def test_safari_run_exclude_reasons(self):
+        run = self.api.save_safari_run(self.pid, {
+            "tag": "s", "vector_ms": 300000,
+            "a_seed": {"delay": 700}, "b_seed": {"seed": 1, "seed_hex": "0x1", "frame": 12000}})
+        self.api.set_run_excluded(run["id"], True)
+        out = self.api.safari_run_exclude_reasons(self.pid)
+        reasons = out["reasons"]
+        self.assertEqual(len(reasons), 1)
+        self.assertEqual(list(reasons.values())[0], "manual")
 
 
 class TestFacadeUsesSavedModelOverGlobalFallback(unittest.TestCase):

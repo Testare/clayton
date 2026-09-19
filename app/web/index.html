@@ -61,6 +61,7 @@
   .badge{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
   .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
   .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
+  .badge.danger{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
   form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
   .panel-tight{padding:12px 16px}
   .panel-tight .field{margin-bottom:0}
@@ -103,6 +104,8 @@
   .notice{border-radius:8px;padding:11px 14px;font-size:13px;margin-bottom:14px}
   .notice.warn{background:var(--warn-bg);color:var(--warn-ink)}
   .notice.warn ul{margin:6px 0 0;padding-left:18px}
+  .notice.danger{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--danger)}
+  .notice.danger ul{margin:6px 0 0;padding-left:18px}
   .section-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
     color:var(--ink-soft);margin:18px 0 10px}
   .tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
@@ -142,10 +145,13 @@
     padding:20px;width:440px;max-width:100%;box-shadow:0 16px 48px rgba(0,0,0,.35)}
   .modal h3{margin-bottom:14px}
   .modal.wide{width:760px}
-  .side-pane{position:fixed;top:0;right:0;bottom:0;width:400px;max-width:90vw;z-index:100;
+  .side-pane{position:fixed;top:0;right:0;bottom:0;width:340px;max-width:88vw;z-index:100;
     background:var(--surface);border-left:1px solid var(--line);
     box-shadow:-8px 0 24px rgba(0,0,0,.25);padding:20px;overflow-y:auto}
   .side-pane h3{margin-bottom:14px}
+  /* Reflow the main content away from the pane instead of letting it sit on top and cover
+     whatever's underneath (the pane is position:fixed, so it never affects layout on its own). */
+  body.side-pane-open main{padding-right:360px}
   .progress-wrap{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
     height:10px;overflow:hidden;margin:10px 0}
   .progress-bar{height:100%;background:var(--grass);transition:width .25s ease}
@@ -189,7 +195,19 @@ function toast(msg){
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
-function mount(html){ $("main").innerHTML = html; }
+function fmtDuration(ms){
+  const s = Math.round(ms / 1000);
+  if(s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), rs = s % 60;
+  if(m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return `${h}h ${rm}m`;
+}
+// Bumped on every full-page render so a background poll loop (chart precompute) can tell
+// whether the page it was rendering into is still the one on screen, without hardcoding a
+// "current page" concept — see ctBuildCanon/ctClaimPrecomputeWatch.
+let mountGen = 0;
+function mount(html){ mountGen++; $("main").innerHTML = html; }
 
 function openModal(html, wide){
   closeModal();
@@ -211,8 +229,12 @@ function openSidePane(html){
   d.id = "side-pane"; d.className = "side-pane";
   d.innerHTML = html;
   document.body.appendChild(d);
+  document.body.classList.add("side-pane-open");
 }
-function closeSidePane(){ $("side-pane")?.remove(); }
+function closeSidePane(){
+  $("side-pane")?.remove();
+  document.body.classList.remove("side-pane-open");
+}
 
 // --- Reusable calendar/valid-times picker for Initial-time fields ---------
 // `onPick(timeStr)` decides what to do with the chosen time — set page state and re-render
@@ -221,41 +243,52 @@ let _timePickerKeySeed = null;
 let _timePickerOnPick = null;
 // Remembered across uses for the rest of this session (not tied to any one expedition/chart,
 // since this picker is shared across several pages).
-let _timePickerLastDate = "";
+let _timePickerLastMonth = "";
+let _timePickerLastDay = "";
 let _timePickerLastSecond = "";
+const _MONTH_NAMES = ["January","February","March","April","May","June","July","August",
+  "September","October","November","December"];
 
 function openTimePicker(keySeed, onPick){
   if(keySeed == null){ toast("Set a key seed first."); return; }
   _timePickerKeySeed = keySeed;
   _timePickerOnPick = onPick;
-  openModal(`<h3>Pick a valid initial time</h3>
+  // Month/day are plain number fields, not a native <input type=date> — that requires a
+  // full date and its browser calendar popup steals focus from the field you just clicked.
+  // Separate fields also let you filter by month alone, which a single date input can't do.
+  const monthOpts = `<option value="">Any</option>` + _MONTH_NAMES.map((m, i) =>
+    `<option value="${i+1}"${String(i+1)===_timePickerLastMonth?" selected":""}>${m}</option>`).join("");
+  openModal(`<h3>Pick initial time for key seed</h3>
     <div class="hint muted" style="margin-bottom:8px">Pick a valid time for the key seed —
       year does not matter.</div>
-    <div class="grid2">
-      <div class="field"><label>Filter by date (optional)</label>
-        <input id="tp-date" type="date" value="${esc(_timePickerLastDate)}"></div>
-      <div class="field"><label>Filter by second (optional)</label>
+    <div class="grid3">
+      <div class="field"><label>Month (optional)</label>
+        <select id="tp-month">${monthOpts}</select></div>
+      <div class="field"><label>Day (optional)</label>
+        <input id="tp-day" type="number" min="1" max="31" placeholder="1-31" value="${esc(_timePickerLastDay)}"></div>
+      <div class="field"><label>Second (optional)</label>
         <input id="tp-second" type="number" min="0" max="59" placeholder="0-59" value="${esc(_timePickerLastSecond)}"></div>
     </div>
     <button class="btn small" type="button" onclick="_timePickerLoad()">Show times</button>
     <div id="tp-results" style="margin-top:12px"></div>
-    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button></div>`);
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Cancel</button></div>`, true);
 }
 
 async function _timePickerLoad(){
-  const date = $("tp-date").value;
+  const monthStr = $("tp-month").value;
+  const dayStr = $("tp-day").value.trim();
   const secondStr = $("tp-second").value.trim();
-  _timePickerLastDate = date; _timePickerLastSecond = secondStr;
+  _timePickerLastMonth = monthStr; _timePickerLastDay = dayStr; _timePickerLastSecond = secondStr;
+  const month = monthStr === "" ? null : Number(monthStr);
+  const day = dayStr === "" ? null : Number(dayStr);
   const second = secondStr === "" ? null : Number(secondStr);
-  const times = await api("times_on_date", _timePickerKeySeed, date || null, second);
+  const times = await api("times_on_date", _timePickerKeySeed, month, day, second);
   const box = $("tp-results");
-  const cap = 500;
-  const shown = times.slice(0, cap);
   box.innerHTML = !times.length
     ? `<div class="empty">No valid times match those filters for this key seed.</div>`
-    : `${times.length > cap ? `<div class="hint muted" style="margin-bottom:6px">Showing ${cap} of ${times.length} — narrow with a date or second filter to see the rest.</div>` : ""}
+    : `<div class="hint muted" style="margin-bottom:6px">${times.length} matching time(s)</div>
       <div class="candtable" style="max-height:280px"><table><thead><tr><th>time</th></tr></thead>
-        <tbody>${shown.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
+        <tbody>${times.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
           <td>${esc(t.replace("T"," "))}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
@@ -302,32 +335,36 @@ async function renderExpeditions(){
 }
 
 // existing: an expedition doc when editing, else null (create).
+let _allSafariAreas = [];
+
 async function expeditionForm(existing){
   const [profiles, areas, pokemonList] = await Promise.all(
     [api("list_profiles"), api("list_safari_areas"), api("list_safari_pokemon")]);
   state.profiles = profiles;
+  _allSafariAreas = areas;
   const sel = (val, cur) => val === cur ? " selected" : "";
   const cap = (s) => s.replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
   const profileOpts = profiles.map(p =>
     `<option value="${esc(p.id)}"${sel(p.id, existing?.profile_id)}>${esc(p.name)}</option>`).join("");
-  const areaOpts = `<option value="">—</option>` + areas.map(a =>
+  // Narrowed to the chosen Pokemon's own areas once one is picked (onPokemonChange); starts
+  // as every area when creating fresh, or when editing with no Pokemon chosen yet.
+  const initialAreas = existing?.pokemon
+    ? await api("list_safari_areas_for_pokemon", existing.pokemon) : areas;
+  const areaOpts = `<option value="">—</option>` + initialAreas.map(a =>
     `<option value="${esc(a)}"${sel(a, existing?.safari_area)}>${esc(a)}</option>`).join("");
   const pokemonOpts = `<option value="">—</option>` + pokemonList.map(n =>
     `<option value="${esc(n)}"${sel(n, existing?.pokemon)}>${esc(cap(n))}</option>`).join("");
-  const chatots = existing ? existing.chatots : 2;   // default 2
   const seedHex = existing?.key_seed != null
     ? "0x" + existing.key_seed.toString(16).toUpperCase() : "";
   const editing = !!existing;
   mount(`<div class="head"><h2>${editing ? "Configure expedition" : "New expedition"}</h2></div>
-    <form class="panel" onsubmit="return saveExpedition(event, ${editing ? `'${esc(existing.id)}'` : "null"})">
+    <form class="panel" id="expedition-form" onsubmit="return saveExpedition(event, ${editing ? `'${esc(existing.id)}'` : "null"})">
       <div class="grid2">
         <div class="field"><label>Name</label>
           <input name="name" required value="${esc(existing?.name || "")}" placeholder="Shiny Metang"></div>
         <div class="field"><label>Profile</label><select name="profile_id" required>${profileOpts}</select></div>
-        <div class="field"><label>Pokémon</label><select name="pokemon">${pokemonOpts}</select></div>
-        <div class="field"><label>Safari area</label><select name="safari_area">${areaOpts}</select></div>
-        <div class="field"><label>Chatots</label><select name="chatots">
-          ${[0,1,2].map(n => `<option value="${n}"${sel(n, chatots)}>${n}</option>`).join("")}</select></div>
+        <div class="field"><label>Pokémon</label><select name="pokemon" onchange="onExpeditionPokemonChange()">${pokemonOpts}</select></div>
+        <div class="field"><label>Safari area</label><select name="safari_area" onchange="updateBlockRequirement()">${areaOpts}</select></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Key seed</label>
@@ -341,14 +378,18 @@ async function expeditionForm(existing){
         (as Pokefinder takes them) — used by the in-house target-frame search in Safari
         Compass's advance-frame guide, if enabled in Preferences.</div>
       <div class="grid4">
-        <div class="field"><label>Plains</label>
-          <input name="block_plains" type="number" min="0" value="${existing?.block_config?.plains ?? 0}"></div>
-        <div class="field"><label>Forest</label>
-          <input name="block_forest" type="number" min="0" value="${existing?.block_config?.forest ?? 0}"></div>
-        <div class="field"><label>Peak</label>
-          <input name="block_peak" type="number" min="0" value="${existing?.block_config?.peak ?? 0}"></div>
-        <div class="field"><label>Water</label>
-          <input name="block_water" type="number" min="0" value="${existing?.block_config?.water ?? 0}"></div>
+        <div class="field"><label id="block-label-plains">Plains</label>
+          <input name="block_plains" type="number" min="0" oninput="updateBlockRequirement()"
+            value="${existing?.block_config?.plains ?? 0}"></div>
+        <div class="field"><label id="block-label-forest">Forest</label>
+          <input name="block_forest" type="number" min="0" oninput="updateBlockRequirement()"
+            value="${existing?.block_config?.forest ?? 0}"></div>
+        <div class="field"><label id="block-label-peak">Peak</label>
+          <input name="block_peak" type="number" min="0" oninput="updateBlockRequirement()"
+            value="${existing?.block_config?.peak ?? 0}"></div>
+        <div class="field"><label id="block-label-water">Water</label>
+          <input name="block_water" type="number" min="0" oninput="updateBlockRequirement()"
+            value="${existing?.block_config?.water ?? 0}"></div>
       </div>
       <div class="actions">
         <button class="btn primary" type="submit">${editing ? "Save" : "Create"}</button>
@@ -356,6 +397,49 @@ async function expeditionForm(existing){
           ? `openExpeditionHome('${esc(existing.id)}')` : `setView('expeditions')`}">Cancel</button>
       </div>
     </form>`);
+  updateBlockRequirement();
+}
+
+// Once a Pokemon is chosen, narrow the Safari area dropdown to areas it can actually
+// appear in (clayton-b42.10.3) — re-fetches on every change since it depends on the
+// current pokemon value.
+async function onExpeditionPokemonChange(){
+  const f = $("expedition-form");
+  const pokemon = f.pokemon.value.trim();
+  const areaSel = f.safari_area;
+  const prevArea = areaSel.value;
+  const areas = pokemon ? await api("list_safari_areas_for_pokemon", pokemon) : _allSafariAreas;
+  areaSel.innerHTML = `<option value="">—</option>` + areas.map(a =>
+    `<option value="${esc(a)}"${a===prevArea?" selected":""}>${esc(a)}</option>`).join("");
+  if(!areas.includes(prevArea)) areaSel.value = "";
+  await updateBlockRequirement();
+}
+
+// Shows "(required: N)" on whichever block-score field the chosen Pokemon actually needs
+// in the chosen area, and marks it invalid (red) when the entered value falls short.
+async function updateBlockRequirement(){
+  const f = $("expedition-form");
+  if(!f) return;
+  const pokemon = f.pokemon.value.trim();
+  const area = f.safari_area.value;
+  const names = {plains: "Plains", forest: "Forest", peak: "Peak", water: "Water"};
+  const labels = {}, inputs = {};
+  for(const k in names){
+    labels[k] = $(`block-label-${k}`);
+    inputs[k] = f[`block_${k}`];
+    labels[k].textContent = names[k];
+    inputs[k].classList.remove("invalid");
+  }
+  if(!pokemon || !area) return;
+  const req = await api("safari_block_requirement", area, pokemon);
+  if(!req) return;
+  const apply = (type, qty) => {
+    if(!labels[type]) return;
+    labels[type].textContent = `${names[type]} (required: ${qty})`;
+    if(Number(inputs[type].value || 0) < qty) inputs[type].classList.add("invalid");
+  };
+  apply(req.block_type, req.quantity);
+  if(req.block_type_2) apply(req.block_type_2, req.quantity_2);
 }
 
 async function saveExpedition(ev, existingId){
@@ -369,7 +453,6 @@ async function saveExpedition(ev, existingId){
   const fields = {
     name: f.name.value, profile_id: f.profile_id.value,
     pokemon: f.pokemon.value.trim(), safari_area: f.safari_area.value,
-    chatots: Number(f.chatots.value),
     key_seed: parseInt(rawSeed, 16),
     key_seed_advances: Number(f.key_seed_advances.value),
     block_config: { plains: Number(f.block_plains.value) || 0, forest: Number(f.block_forest.value) || 0,
@@ -409,7 +492,7 @@ async function openExpeditionHome(id){
         <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
       </div></div>
     <div class="muted">${esc(e.pokemon || "—")}${e.safari_area ? " · " + esc(e.safari_area) : ""}
-      · key seed 0x${(e.key_seed ?? 0).toString(16).toUpperCase()} · ${e.chatots} chatot(s)</div>
+      · key seed 0x${(e.key_seed ?? 0).toString(16).toUpperCase()}</div>
     <div class="section-label">Tools</div>
     <div class="tools">${grid}</div>`);
 }
@@ -492,6 +575,16 @@ async function metronomeNewRun(expId){
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     seedBSession: null, seedBLog: [], seedB: null, seedBLoading: false };
   renderNewRun();
+  nrFocusEntryField();
+}
+
+// On first entering the page: focus the first empty header field (user/time/vector ms),
+// or Roamer starting positions if the header is already complete.
+function nrFocusEntryField(){
+  if(!nr.userId){ $("nr-user")?.focus(); return; }
+  if(!nr.initialTime){ $("nr-time")?.focus(); return; }
+  if(nr.vectorMs == null || nr.vectorMs === ""){ $("nr-vector")?.focus(); return; }
+  $("nr-startrel")?.focus();
 }
 
 function nrCaptureHeader(){
@@ -501,35 +594,27 @@ function nrCaptureHeader(){
 }
 
 let _pickTargetApplyFn = null;
-let _pickTargetSelectedId = null;
 
 function _pickTargetModal(targets, applyFn){
   if(!targets.length){ toast("No saved targets for this expedition yet."); return; }
   _pickTargetApplyFn = applyFn;
-  _pickTargetSelectedId = null;
+  // Wide modal (not the default 440px) so the table fits without a horizontal scrollbar —
+  // that scrollbar used to sit right where the bottom row was, making it hard to click.
   openModal(`<h3>Choose a saved target</h3>
+    <div class="hint muted" style="margin-bottom:8px">Click a row to use that target.</div>
     <div class="candtable" style="max-height:340px"><table><thead><tr>
-        <th>name</th><th>boot time</th><th>vector ms</th><th>P(capture)</th></tr></thead>
-      <tbody id="pick-target-rows">${targets.map(t => `<tr class="pick" data-id="${esc(t.id)}" onclick="_pickTargetSelectRow('${esc(t.id)}')">
+        <th>name</th><th>initial time</th><th>vector ms</th><th>P(success)</th></tr></thead>
+      <tbody>${targets.map(t => `<tr class="pick" onclick="_pickTargetUse('${esc(t.id)}')">
         <td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
         <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td>
       </tr>`).join("")}</tbody></table></div>
     <div class="actions">
       <button class="btn" type="button" onclick="closeModal()">Cancel</button>
-      <button class="btn primary" type="button" id="pick-target-use" disabled onclick="_pickTargetUse()">Use this target</button>
-    </div>`);
+    </div>`, true);
 }
 
-function _pickTargetSelectRow(id){
-  _pickTargetSelectedId = id;
-  document.querySelectorAll("#pick-target-rows tr").forEach(tr =>
-    tr.classList.toggle("selected", tr.dataset.id === id));
-  const btn = $("pick-target-use"); if(btn) btn.disabled = false;
-}
-
-function _pickTargetUse(){
-  if(!_pickTargetSelectedId) return;
-  _pickTargetApplyFn(_pickTargetSelectedId);
+function _pickTargetUse(id){
+  _pickTargetApplyFn(id);
 }
 
 async function nrPickFromTarget(){
@@ -564,8 +649,16 @@ function renderNewRun(){
       <div class="notice warn">Set a key seed in <b>Configure</b> first — Seed A search needs it.</div>`);
     return;
   }
-  const userOpts = p.metronome_users.map(u =>
-    `<option value="${u.id}"${u.id===nr.userId?" selected":""}>${esc(u.name)}${u.is_suitable?"":" (unsuitable)"}</option>`).join("");
+  // A hard_errors() user (e.g. an ability that breaks calibration) can't be SELECTED here
+  // at all — still fully visible/removable on the Profile page, just not usable in a run.
+  // A merely soft-unsuitable user stays selectable (labeled, not blocked) — "you might
+  // experience more errors in metronome compass", not "you can't use this".
+  const userOpts = p.metronome_users.map(u => {
+    const blocked = u.hard_errors && u.hard_errors.length > 0;
+    const label = _mUserLabel(u, p.metronome_users)
+      + (blocked ? " (cannot be used)" : u.is_suitable ? "" : " (unsuitable)");
+    return `<option value="${u.id}"${u.id===nr.userId?" selected":""}${blocked?" disabled":""}>${esc(label)}</option>`;
+  }).join("");
 
   const canSave = nr.seedA && nr.seedB;
   mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
@@ -632,18 +725,20 @@ function renderSeedA(){
     <div class="rel-row">
       <div class="field"><label>Roamer starting positions (R E L)</label>
         <input id="nr-startrel" value="${esc(nr._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
-          oninput="nrValidateStartRel()"></div>
-      <div class="field"><label>± seconds</label><input id="nr-secwin" type="number" min="0" value="${nr.secondsWindow}"></div>
-      <div class="field"><label>± delays</label><input id="nr-delaywin" type="number" min="0" value="${nr.delayWindow}"></div>
+          oninput="nrValidateStartRel()" onkeydown="nrSeedAKey(event)"></div>
+      <div class="field"><label>± seconds</label><input id="nr-secwin" type="number" min="0" value="${nr.secondsWindow}" onkeydown="nrSeedAKey(event)"></div>
+      <div class="field"><label>± delays</label><input id="nr-delaywin" type="number" min="0" value="${nr.delayWindow}" onkeydown="nrSeedAKey(event)"></div>
       <button class="btn primary" onclick="nrGenerateSeedA()">Generate</button>
     </div>
     <div class="field check"><input type="checkbox" id="nr-parity" ${nr.matchParity?"checked":""}><label for="nr-parity" style="margin:0">Match key-seed delay parity</label></div>
     <div class="info-line" id="nr-keyinfo">key seed: —</div>
     <div class="grid2">
       <div class="field"><label>Observed roamer routes (R E L)</label>
-        <input id="nr-obsrel" placeholder="38 42 11  (. = any)" oninput="nrNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+        <input id="nr-obsrel" placeholder="38 42 11  (. = any)" oninput="nrNarrowSeedA()"
+          onkeydown="nrObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
-        <input id="nr-elm" placeholder="EKP…" oninput="nrNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+        <input id="nr-elm" placeholder="EKP…" oninput="nrNarrowSeedA()"
+          onkeydown="nrElmKey(event)" ${hasCand?"":"disabled"}></div>
     </div>
     <div id="nr-candA">${hasCand ? renderCandA(nr.seedACandidates)
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
@@ -661,6 +756,22 @@ function renderCandA(res, pickFn){
   return `<div class="status"><b>${res.count}</b> candidate(s) — click one to identify Seed A</div>
     <div class="candtable"><table><thead><tr><th>seed</th><th>Δdelay</th><th>Δsecond</th><th>R</th><th>E</th><th>L</th><th>elm</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
+}
+
+// Enter in any of the three Seed A search fields acts like clicking Generate.
+function nrSeedAKey(ev){
+  if(ev.key === "Enter"){ ev.preventDefault(); nrGenerateSeedA(); }
+}
+// Enter on observed roamer routes moves to Elm calls; Enter on Elm calls confirms Seed A
+// if narrowing has already reached exactly one candidate.
+function nrObsRelKey(ev){
+  if(ev.key === "Enter"){ ev.preventDefault(); $("nr-elm")?.focus(); }
+}
+function nrElmKey(ev){
+  if(ev.key !== "Enter") return;
+  ev.preventDefault();
+  const cands = nr.seedACandidates?.candidates;
+  if(cands && cands.length === 1) nrPickSeedA(cands[0].seed);
 }
 
 async function nrGenerateSeedA(){
@@ -683,6 +794,7 @@ async function nrGenerateSeedA(){
     last_metronome_defaults: {...nr.e.last_metronome_defaults, startrel: nr._startrel,
       seconds_window: nr.secondsWindow, delay_window: nr.delayWindow, match_parity: nr.matchParity}});
   renderNewRun();
+  $("nr-obsrel")?.focus();
 }
 
 async function nrNarrowSeedA(){
@@ -708,6 +820,7 @@ function nrPickSeedA(seed){
   nr.editingSeedA = false;
   if(changed){ nr.seedB = null; nr.seedBSession = null; nr.seedBLog = []; }  // a real change invalidates Seed B
   renderNewRun();
+  $("nr-mklevel")?.focus();
 }
 function nrChangeSeedA(){ nr.editingSeedA = true; renderNewRun(); }
 function nrKeepSeedA(){ nr.editingSeedA = false; renderNewRun(); }
@@ -721,8 +834,22 @@ function renderSeedB(){
   if(!nr.seedA) return `<h3>Seed B — battle seed</h3>
     <div class="status">Identify Seed A first.</div>`;
   if(nr.seedB){
+    const b = nr.seedB;
+    const moves = b.metronome_moves || [];
+    // The absolute delay depends on the year (see claytonlib.times.calculate_seed) — only the
+    // delta from the search center is meaningful across a re-run in a different real year,
+    // same reasoning as Seed A's summary.
+    const movesTable = moves.length
+      ? `<div class="candtable" style="max-height:220px;margin-top:8px"><table><thead><tr>
+            <th>turn</th><th>Metronome call</th></tr></thead>
+          <tbody>${moves.map(m => `<tr><td>${m.turn}</td><td>${esc(m.move_name)}</td></tr>`).join("")}</tbody></table></div>`
+      : "";
     return `<h3>Seed B — identified</h3>
-      <div class="info-line done">Seed B ${esc(nr.seedB.seed_hex)} · delay ${nr.seedB.delay} · ${esc(nr.seedB.path_str)}</div>
+      <div class="info-line done">Seed B ${esc(b.seed_hex)} · delay ${b.delay_delta>=0?"+":""}${b.delay_delta}
+        · ${esc(b.path_str)}</div>
+      ${movesTable ? `<div class="muted" style="margin-top:8px;font-size:11.5px">Metronome moves for
+          this seed, turn by turn (including ones already observed) — compare against what you
+          actually saw to confirm you hit the expected seed:</div>${movesTable}` : ""}
       <button class="btn small" onclick="nrResetSeedB()">Change Seed B</button>`;
   }
   if(nr.seedBLoading){
@@ -900,7 +1027,7 @@ async function metronomeReviewData(expId){
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "metronome"), api("get_profile", e.profile_id)]);
   review = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs", preview: null,
-    dirty: {}, dirtyTags: {} };
+    dirty: {}, dirtyTags: {}, exportMode: false, exportSelected: {} };
   await reviewRefreshPreview();
   renderReview();
 }
@@ -951,7 +1078,15 @@ function renderReviewRuns(){
     tags.map(t => `<option${t===review.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = review.preview?.reasons || {};
   const dirtyCount = Object.keys(review.dirty).length;
-  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+  const exportMode = !!review.exportMode;
+  const exportCount = Object.keys(review.exportSelected || {}).length;
+  const saveBar = exportMode
+    ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span>${exportCount} run(s) selected for export</span>
+        <span><button class="btn small" onclick="_runsExportCancel('review')">Cancel</button>
+        <button class="btn small primary" onclick="_runsExportSelected('review')">Export selected</button></span>
+      </div>`
+    : dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span>${dirtyCount} unsaved exclusion change(s)</span>
       <span><button class="btn small" onclick="reviewDiscardRunChanges()">Discard</button>
       <button class="btn small primary" onclick="reviewSaveRunChanges()">Save changes</button></span>
@@ -960,7 +1095,7 @@ function renderReviewRuns(){
     ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>exclude</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>${exportMode ? "export" : "exclude"}</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = review.dirty[r.id] !== undefined;
           const staged = isDirty ? review.dirty[r.id] : r.excluded;
@@ -968,20 +1103,29 @@ function renderReviewRuns(){
           // never reads as "disabled" (it's still fully interactive; re-check it to re-enable).
           const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
           const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
+          const checkboxCell = exportMode
+            ? `<td><input type="checkbox" ${review.exportSelected?.[r.id]?"checked":""}
+                onchange="_runsExportToggle('review','${esc(r.id)}',this.checked)"></td>`
+            : `<td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
           return `<tr${rowBg}>
           <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
-          <td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>
+          ${checkboxCell}
           <td${muted}>${reason.startsWith("outlier")
               ? `<span class="badge warn">${esc(reason)}</span>` : esc(isDirty ? "unsaved" : (reason || "—"))}</td>
-          <td style="text-align:right"><button class="btn small danger" onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
+          <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
+              onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
         <select onchange="review.tag=this.value;renderReview()">${tagOpts}</select></div>
-      <div class="muted">${review.runs.length} run(s) for this profile</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="muted">${review.runs.length} run(s) for this profile</div>
+        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('review')">Export runs…</button>
+          <button class="btn small" onclick="_importRuns('review')">Import runs…</button>` : ""}
+      </div>
     </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Outliers (flagged automatically) are always left
       out of the fit regardless of this checkbox. "reason" reflects the last-loaded preview —
@@ -1017,6 +1161,76 @@ async function reviewDelete(runId){
   delete review.dirty[runId];
   await reviewRefreshPreview();
   renderReview();
+}
+
+// --- Runs export/import — shared by Metronome and Safari Compass's Review Data pages ---
+// Both pages' Runs tab gets the same three export scopes (all / all-except-excluded /
+// manual selection via a temporary "export" checkbox column + banner, mirroring the
+// existing exclusion save/discard bar) and an import button. `panelKey` ("review" or
+// "sreview") looks up the right page's state object + render function + run kind by name
+// (can't pass live object references through an onclick="..." string).
+const _RUNS_PANELS = {
+  review: () => ({state: review, render: renderReview, kind: "metronome"}),
+  sreview: () => ({state: sreview, render: renderSafariReview, kind: "safari"}),
+};
+
+function _openExportRunsModal(panelKey){
+  openModal(`<h3>Export runs</h3>
+    <div class="hint muted" style="margin-bottom:8px">Choose which runs to include.</div>
+    <div class="actions" style="flex-direction:column;align-items:stretch;gap:8px">
+      <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','all')">All runs</button>
+      <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','not-excluded')">All except excluded</button>
+      <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','manual')">Choose manually…</button>
+      <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+async function _exportRunsScope(panelKey, scope){
+  closeModal();
+  const {state, render} = _RUNS_PANELS[panelKey]();
+  if(scope === "manual"){
+    state.exportMode = true;
+    state.exportSelected = {};
+    render();
+    return;
+  }
+  const ids = (scope === "all" ? state.runs : state.runs.filter(r => !r.excluded)).map(r => r.id);
+  if(!ids.length){ toast("No runs to export."); return; }
+  const res = await api("export_runs_to_file", ids);
+  if(res.saved) toast(`Exported ${res.count} run(s) to ${res.path}`);
+}
+
+function _runsExportToggle(panelKey, runId, checked){
+  const {state, render} = _RUNS_PANELS[panelKey]();
+  if(checked) state.exportSelected[runId] = true;
+  else delete state.exportSelected[runId];
+  render();
+}
+
+async function _runsExportSelected(panelKey){
+  const {state, render} = _RUNS_PANELS[panelKey]();
+  const ids = Object.keys(state.exportSelected || {});
+  if(!ids.length){ toast("No runs selected."); return; }
+  const res = await api("export_runs_to_file", ids);
+  if(res.saved) toast(`Exported ${res.count} run(s) to ${res.path}`);
+  state.exportMode = false; state.exportSelected = {};
+  render();
+}
+
+function _runsExportCancel(panelKey){
+  const {state, render} = _RUNS_PANELS[panelKey]();
+  state.exportMode = false; state.exportSelected = {};
+  render();
+}
+
+async function _importRuns(panelKey){
+  const {state, render, kind} = _RUNS_PANELS[panelKey]();
+  const res = await api("import_runs_from_file", state.profileId);
+  if(res.imported){
+    toast(`Imported ${res.count} run(s).`);
+    state.runs = await api("list_runs", state.profileId, kind);
+    render();
+  }
 }
 
 function renderReviewTags(){
@@ -1088,9 +1302,8 @@ function renderCalibrateModel(){
       <div class="info-line">metronome: fit from ${pv.n_runs} run(s) (${pv.n_pre_excluded} excluded
         before fitting) · ${pv.n_fit} used in the fit · ${pv.n_outliers} outlier(s) ·
         ${pv.n_contaminated} contaminated</div>
-      <div class="info-line">safari (load-path offset): ${pv.n_safari_input} run(s)
-        (${pv.n_safari_pre_excluded} excluded before fitting) · ${pv.n_safari_fit} used
-        ${pv.n_safari_fit===0 ? "— save some from Safari Compass to fit this" : ""}</div>
+      <div class="hint muted">Safari Compass runs aren't used here — see Safari Compass →
+        Review Data → Calibrate Model to fit the safari load-path offset.</div>
       <div class="candtable" style="max-height:none"><table><thead><tr>
           <th>parameter</th><th>current active</th><th>new preview</th></tr></thead>
         <tbody>
@@ -1100,9 +1313,6 @@ function renderCalibrateModel(){
           ${row("jitter_c", "jitter_c", f2)}
           ${row("rtc_offset_seconds", "rtc_offset_seconds", f2)}
           ${row("rtc_offset_std", "rtc_offset_std", f2)}
-          ${row("safari_offset (frames)", "safari_offset", f2)}
-          ${row("safari_offset_n", "safari_offset_n", (v)=>v??"—")}
-          ${row("safari_offset_std", "safari_offset_std", f2)}
         </tbody></table></div>
       <form class="panel" style="margin-top:14px" onsubmit="return reviewSaveModel(event)">
         <div class="grid2">
@@ -1176,6 +1386,19 @@ async function reviewDeleteModel(modelId){
 let ct = null;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Chart precompute keeps running on a background thread server-side (app/progress_session.py)
+// no matter what the UI does — this registry just tracks which charts have a session in
+// flight, keyed by chartId, so the page can survive navigating away and back. `watchGen`
+// is the mountGen the entry last rendered into; ctBuildCanon only touches the DOM again if
+// mountGen still matches it, i.e. nothing else has been mounted (navigated to) since —
+// see ctClaimPrecomputeWatch.
+let activePrecomputes = {};
+
+function ctClaimPrecomputeWatch(){
+  const entry = ct?.chartId ? activePrecomputes[ct.chartId] : null;
+  if(entry && entry.expId === ct.expId) entry.watchGen = mountGen;
+}
+
 async function chartFindTarget(expId){
   const e = await api("get_expedition", expId);
   const [charts, calSummary, activeModel, strategies, criteria] = await Promise.all([
@@ -1183,11 +1406,12 @@ async function chartFindTarget(expId){
     api("get_active_calibration_model", e.profile_id),
     api("list_chart_strategies"), api("list_chart_criteria")]);
   ct = { expId, e, charts, strategies, criteria, calSummary, activeModel,
-    chartId: charts[0]?.id ?? null, canonStatus: null, precompute: null,
+    chartId: charts[0]?.id ?? null, canonStatus: null, precompute: null, precomputeStartedAt: null,
     ranked: null, rankedAtTime: null, targets: [] };
   if(ct.chartId) await ctSelectChart(ct.chartId, false);
   await ctLoadTargets();
   renderChartFindTarget();
+  ctClaimPrecomputeWatch();
 }
 
 async function ctSelectChart(chartId, rerender = true){
@@ -1195,7 +1419,11 @@ async function ctSelectChart(chartId, rerender = true){
   ct.ranked = null;
   ct.rankedAtTime = null;
   ct.canonStatus = chartId ? await api("chart_canon_status", ct.expId, chartId) : null;
-  if(rerender) renderChartFindTarget();
+  const entry = chartId ? activePrecomputes[chartId] : null;
+  const live = entry && entry.expId === ct.expId;
+  ct.precompute = live ? entry.precompute : null;
+  ct.precomputeStartedAt = live ? entry.startedAt : null;
+  if(rerender){ renderChartFindTarget(); ctClaimPrecomputeWatch(); }
 }
 
 async function ctLoadTargets(){
@@ -1208,6 +1436,7 @@ function ctCurrentChart(){
 
 function renderChartFindTarget(){
   const noModel = !ct.calSummary;
+  const computing = !!(ct.precompute && !ct.precompute.done);
   const chartOpts = ct.charts.map(c =>
     `<option value="${esc(c.id)}"${c.id===ct.chartId?" selected":""}>${esc(c.name)}</option>`).join("");
   const chart = ctCurrentChart();
@@ -1219,7 +1448,7 @@ function renderChartFindTarget(){
     canonSection = `<div class="section-label">Computed chart</div>
       <div class="panel">
         <div class="muted">delay window: ${chart.setup_delay_seconds}–${chart.max_target_seconds}s
-          <button class="btn small" style="margin-left:6px" onclick="ctOpenEditWindow()">Edit window…</button><br>
+          <button class="btn small" ${computing?"disabled":""} style="margin-left:6px" onclick="ctOpenEditWindow()">Edit window…</button><br>
           strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}
           · model: ${ct.activeModel ? `#${ct.activeModel.number} ${esc(ct.activeModel.name || "(unnamed)")}` : "none"}</div>
         ${built ? `<div class="info-line done" style="margin-top:10px">Computed —
@@ -1229,8 +1458,11 @@ function renderChartFindTarget(){
           : `<div class="notice warn" style="margin-top:10px">Not computed yet — click Compute chart
               (safe to re-run any time: it resumes/extends rather than starting over).</div>`}
         ${renderPrecomputeProgress()}
+        ${computing ? `<div class="hint muted" style="margin-top:6px">You can navigate away
+            while this computes — it keeps running in the background and you'll get a
+            notification here when it's done.</div>` : ""}
         <div class="actions">
-          <button class="btn primary" ${noModel?"disabled":""} onclick="ctBuildCanon()">
+          <button class="btn primary" ${(noModel||computing)?"disabled":""} onclick="ctBuildCanon()">
             ${built ? "Recompute / extend chart" : "Compute chart"}</button>
           ${built ? `<button class="btn" onclick="ctRank()">Rank targets</button>` : ""}
           ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time…</button>` : ""}
@@ -1252,10 +1484,10 @@ function renderChartFindTarget(){
       <div class="grid2">
         <div class="field"><label>Chart</label>
           ${ct.charts.length
-            ? `<select onchange="ctSelectChart(this.value)">${chartOpts}</select>`
+            ? `<select ${computing?"disabled":""} onchange="ctSelectChart(this.value)">${chartOpts}</select>`
             : `<div class="muted" style="padding:9px 0">No charts yet</div>`}</div>
         <div class="field" style="display:flex;align-items:end">
-          <button class="btn" onclick="ctOpenCreateChart()">+ New chart</button></div>
+          <button class="btn" ${computing?"disabled":""} onclick="ctOpenCreateChart()">+ New chart</button></div>
       </div>
     </div>
 
@@ -1268,9 +1500,17 @@ function renderPrecomputeProgress(){
   if(!s || s.done) return "";
   const p = s.progress || {};
   const pct = p.total ? Math.round((p.done / p.total) * 100) : null;
+  // Wait for at least 2 finished classes before showing an ETA -- the rate from just the
+  // first one (which can include one-time warmup work) is too noisy to be worth showing.
+  let eta = "";
+  if(p.done >= 2 && p.total && ct.precomputeStartedAt){
+    const remaining = p.total - p.done;
+    const etaMs = ((Date.now() - ct.precomputeStartedAt) / p.done) * remaining;
+    eta = ` · ETA ${fmtDuration(etaMs)}`;
+  }
   return `<div style="margin-top:10px">
       <div class="status">Computing… ${p.done ?? "?"} / ${p.total ?? "?"} mdmsh classes
-        ${p.n_distinct_seeds ? `· ${p.n_distinct_seeds.toLocaleString()} seeds so far` : ""}</div>
+        ${p.n_distinct_seeds ? `· ${p.n_distinct_seeds.toLocaleString()} seeds so far` : ""}${eta}</div>
       <div class="progress-wrap">
         <div class="progress-bar ${pct==null?"indeterminate":""}" style="${pct!=null?`width:${pct}%`:""}"></div>
       </div>
@@ -1303,8 +1543,8 @@ function _criteriaNameFromForm(f){
 }
 
 async function ctOpenCreateChart(){
-  const stratOpts = ct.strategies.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join("");
-  const critOpts = ct.criteria.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  const stratOpts = ct.strategies.map(s => `<option value="${esc(s.name)}">${esc(s.label || s.name)}</option>`).join("");
+  const critOpts = ct.criteria.map(c => `<option value="${esc(c.name)}">${esc(c.label || c.name)}</option>`).join("");
   openModal(`<h3>New chart</h3>
     <form onsubmit="return ctSaveChart(event)">
       <div class="field"><label>Name</label><input name="name" required placeholder="Balls only" autofocus></div>
@@ -1343,16 +1583,48 @@ async function ctSaveChart(ev){
 }
 
 async function ctBuildCanon(){
-  ct.precompute = await api("chart_precompute_start", ct.expId, ct.chartId);
-  renderChartFindTarget();
-  while(!ct.precompute.done){
-    await sleep(500);
-    ct.precompute = await api("chart_precompute_poll", ct.precompute.session_id);
+  const expId = ct.expId, chartId = ct.chartId;
+  const chartName = ctCurrentChart()?.name || "Chart";
+  const initial = await api("chart_precompute_start", expId, chartId);
+  const entry = { expId, chartName, precompute: initial, watchGen: -1, startedAt: Date.now() };
+  activePrecomputes[chartId] = entry;
+  if(ct.chartId === chartId && ct.expId === expId){
+    ct.precompute = initial;
+    ct.precomputeStartedAt = entry.startedAt;
     renderChartFindTarget();
+    ctClaimPrecomputeWatch();
   }
-  if(ct.precompute.error){ toast("Build failed: " + ct.precompute.error); return; }
-  ct.canonStatus = await api("chart_canon_status", ct.expId, ct.chartId);
-  renderChartFindTarget();
+
+  let precompute = initial;
+  while(!precompute.done){
+    await sleep(500);
+    precompute = await api("chart_precompute_poll", precompute.session_id);
+    entry.precompute = precompute;
+    // Only touch the DOM if nothing has been mounted (navigated to) since our last render —
+    // the fetch above keeps happening either way, so the build itself never stalls just
+    // because the user left this page; see the registry comment above.
+    if(ct && ct.chartId === chartId && ct.expId === expId && mountGen === entry.watchGen){
+      ct.precompute = precompute;
+      renderChartFindTarget();
+      ctClaimPrecomputeWatch();
+    }
+  }
+  delete activePrecomputes[chartId];
+
+  const stillWatching = ct && ct.chartId === chartId && ct.expId === expId && mountGen === entry.watchGen;
+  if(precompute.error){
+    if(stillWatching){ ct.precompute = precompute; renderChartFindTarget(); }
+    toast(stillWatching ? ("Build failed: " + precompute.error)
+      : `"${chartName}" failed to compute: ${precompute.error}`);
+    return;
+  }
+  if(stillWatching){
+    ct.canonStatus = await api("chart_canon_status", expId, chartId);
+    ct.precompute = null;
+    renderChartFindTarget();
+  } else {
+    toast(`"${chartName}" finished computing.`);
+  }
 }
 
 function ctOpenEditWindow(){
@@ -1424,9 +1696,22 @@ async function ctRunRankAtTime(ev){
   return false;
 }
 
+// P(capture)/Sum capture% are only accurate wording when the chart's own success criteria
+// IS "captured" — a chart built around a different criteria (survived-turns-without-fleeing,
+// balls-no-flee, ...) is scoring something else entirely, so the generic "success" wording
+// applies instead. Falls back to "capture" phrasing if the chart can't be resolved (better
+// than showing nothing).
+function _chartIsCapture(chartId){
+  const chart = ct.charts.find(c => c.id === chartId);
+  return !chart || chart.criteria_name === "capture";
+}
+function _pLabel(chartId){ return _chartIsCapture(chartId) ? "P(capture)" : "P(success)"; }
+function _sumLabel(chartId){ return _chartIsCapture(chartId) ? "Sum capture%" : "Sum success%"; }
+
 function renderRankedTargets(){
   if(!ct.ranked || !ct.ranked.top.length)
     return `<div class="empty" style="margin-top:14px">No targets ranked — click Rank targets.</div>`;
+  const pLabel = _pLabel(ct.chartId);
   const rows = ct.ranked.top.map((r, i) => `
     <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
       <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
@@ -1436,9 +1721,9 @@ function renderRankedTargets(){
     </tr>`).join("");
   return `<div class="section-label">Ranked targets
       <span class="muted" style="text-transform:none;font-weight:400">
-        (best per boot time, of ${ct.ranked.per_time_count} candidates)</span></div>
+        (best per initial time, of ${ct.ranked.per_time_count} candidates)</span></div>
     <div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>boot time</th><th>Vector ms</th><th>target delay</th><th>P(capture)</th><th title="${_SIGMA_TITLE}">σ</th><th></th>
+        <th>initial time</th><th>Vector ms</th><th>target delay</th><th>${esc(pLabel)}</th><th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
       </tr></thead><tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:8px">${_SIGMA_TITLE}</div>`;
 }
@@ -1450,6 +1735,7 @@ const _SIGMA_TITLE = "σ (sigma) is the landing frame's spread — how wide the 
 function renderRankedAtTime(){
   if(!ct.rankedAtTime.length)
     return `<div class="empty" style="margin-top:14px">No candidates found at that time within this chart's window.</div>`;
+  const pLabel = _pLabel(ct.chartId);
   const rows = ct.rankedAtTime.map((r, i) => `
     <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
       <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
@@ -1459,9 +1745,11 @@ function renderRankedAtTime(){
     </tr>`).join("");
   return `<div class="section-label">Best targets at ${esc(ct.rankedAtTime[0].initial_time.replace("T"," "))}</div>
     <div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>boot time</th><th>Vector ms</th><th>target delay</th><th>P(capture)</th><th title="${_SIGMA_TITLE}">σ</th><th></th>
+        <th>initial time</th><th>Vector ms</th><th>target delay</th><th>${esc(pLabel)}</th><th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
       </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="hint muted" style="margin-top:8px">${_SIGMA_TITLE}</div>`;
+    <div class="hint muted" style="margin-top:8px">Spread out to genuinely different targets
+      (each at least ~0.5s apart) rather than a cluster of near-identical frames around the
+      single best one. ${_SIGMA_TITLE}</div>`;
 }
 
 async function ctExamineAtTime(idx){
@@ -1474,7 +1762,7 @@ function ctOpenSaveTargetAtTime(idx){
   const r = ct.rankedAtTime[idx];
   openModal(`<h3>Save target</h3>
     <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
-      · P(capture) ${(r.p*100).toFixed(1)}%</div>
+      · ${esc(_pLabel(ct.chartId))} ${(r.p*100).toFixed(1)}%</div>
     <form onsubmit="return ctSaveTargetAtTime(event, ${idx})">
       <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
       <div class="actions">
@@ -1496,17 +1784,21 @@ async function ctSaveTargetAtTime(ev, idx){
   return false;
 }
 
-let ctExamineCtx = null;   // how to re-fetch: {kind:"target", targetId} | {kind:"raw", initialTime, vectorMs}
+let ctExamineCtx = null;   // how to re-fetch: {kind, chartId, targetId?, initialTime?, vectorMs?}
 let ctExamineResult = null; // the last seconds-summary result, so "← Back" can re-render it
 
 async function ctExamine(rankIdx){
   const r = ct.ranked.top[rankIdx];
-  ctExamineCtx = { kind: "raw", initialTime: r.initial_time, vectorMs: r.vector_ms };
+  ctExamineCtx = { kind: "raw", chartId: ct.chartId, initialTime: r.initial_time, vectorMs: r.vector_ms };
   await ctShowExamine(r.initial_time, r.vector_ms);
 }
 
 async function ctExamineTarget(targetId){
-  ctExamineCtx = { kind: "target", targetId };
+  // A saved target may belong to a DIFFERENT chart than the one currently selected on this
+  // page (Saved targets lists every target for the expedition) — resolve ITS chart for the
+  // P(capture)/P(success) wording, not whatever's currently selected in the dropdown.
+  const t = ct.targets.find(x => x.id === targetId);
+  ctExamineCtx = { kind: "target", targetId, chartId: t ? t.chart_id : ct.chartId };
   const ex = await api("examine_target", targetId, {});
   ctRenderExamineModal(ex);
 }
@@ -1525,7 +1817,7 @@ function ctRenderExamineModal(ex){
       <td>${(s.p_second*s.cp*100).toFixed(2)}%</td></tr>`).join("");
   openModal(`<h3>Examine target</h3>
     <div class="info-line">mean frame F=${ex.F.toFixed(1)} · σ=${ex.sigma.toFixed(1)}
-      · marginal P(capture) = <b>${(ex.p*100).toFixed(2)}%</b></div>
+      · marginal ${esc(_pLabel(ctExamineCtx?.chartId))} = <b>${(ex.p*100).toFixed(2)}%</b></div>
     <div class="candtable" style="max-height:220px"><table><thead><tr>
       <th>second</th><th>P(second)</th><th>mdmsh</th><th>cp</th><th>contributes</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
@@ -1550,7 +1842,7 @@ async function ctShowSecondBreakdown(second){
         window.</div>` : ""}
     <div class="candtable" style="max-height:360px"><table><thead><tr>
       <th>frame</th><th title="Frame minus the mean frame F">ΔF</th><th>seed</th><th>hit</th>
-      <th>weight%</th><th title="Running total of capture-weighted probability up to this frame">Sum capture%</th></tr></thead>
+      <th>weight%</th><th title="Running total of success-weighted probability up to this frame">${esc(_sumLabel(ctExamineCtx?.chartId))}</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="actions">
       <button class="btn" onclick="ctRenderExamineModal(ctExamineResult)">← Back</button>
@@ -1562,7 +1854,7 @@ async function ctOpenSaveTarget(rankIdx){
   const r = ct.ranked.top[rankIdx];
   openModal(`<h3>Save target</h3>
     <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
-      · P(capture) ${(r.p*100).toFixed(1)}%</div>
+      · ${esc(_pLabel(ct.chartId))} ${(r.p*100).toFixed(1)}%</div>
     <form onsubmit="return ctSaveTarget(event, ${rankIdx})">
       <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
       <div class="actions">
@@ -1596,10 +1888,12 @@ function renderSavedTargets(){
     </tr>`;
   }).join("");
   return `<div class="candtable" style="max-height:none"><table><thead><tr>
-      <th>name</th><th>boot time</th><th>Vector ms</th><th>P(capture) at save time</th><th>chart</th><th></th>
+      <th>name</th><th>initial time</th><th>Vector ms</th><th>P(success) at save time</th><th>chart</th><th></th>
     </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="hint muted" style="margin-top:8px">This P(capture) is frozen from when the
-      target was saved. "Examine" always recomputes it live against whichever calibration
+    <div class="hint muted" style="margin-top:8px">This P(success) is frozen from when the
+      target was saved (P(capture) if that chart's criteria is literally "captured" — targets
+      here can come from different charts with different criteria, so this list uses the
+      generic wording). "Examine" always recomputes it live against whichever calibration
       model is currently active — if you've switched models since saving, examine may show a
       different number than this table.</div>`;
 }
@@ -1670,7 +1964,7 @@ function renderChartManageData(){
 
     <div class="section-label">Saved targets</div>
     <div style="overflow-x:auto"><table><thead><tr>
-        <th>name</th><th>chart</th><th>boot time</th><th>Vector ms</th><th>P(capture) at save time</th><th></th>
+        <th>name</th><th>chart</th><th>initial time</th><th>Vector ms</th><th>P(success) at save time</th><th></th>
       </tr></thead><tbody>${targetRows}</tbody></table></div>
     <div class="hint muted" style="margin-top:8px">Frozen from save time — Examine always
       recomputes live against the currently active model.</div>`);
@@ -1732,8 +2026,19 @@ async function safariCompassNewRun(expId){
     seedAParams: null, seedACandidates: null, seedA: null, editingSeedA: false, keyInfo: null,
     path: "", seedBResult: null, seedB: null, seedBLoading: false, seedBError: null,
     frameObservedElm: "", frameElmPrefill: "", frameCandidates: null, pinnedFrame: null,
-    frameGuide: null, inHouseSearch: null, seedBK: undefined, seedBSecondOffsets: undefined };
+    frameGuide: null, inHouseSearch: null, aimAdvance: "", seedBExpandFrames: 0, seedBExpandSeconds: 0,
+    lastTag: lastDefaults.tag || "" };
   renderSafariCompassNewRun();
+  sacFocusEntryField();
+}
+
+// On first entering the page: focus the first empty header field (initial time / vector ms),
+// or Roamer starting positions if the header is already complete — same flow as Metronome
+// Compass New Run (no metronome-user field here, so there are only two to check).
+function sacFocusEntryField(){
+  if(!sac.initialTime){ $("sac-time")?.focus(); return; }
+  if(sac.vectorMs == null || sac.vectorMs === ""){ $("sac-vector")?.focus(); return; }
+  $("sac-startrel")?.focus();
 }
 
 function sacCaptureHeader(){
@@ -1815,18 +2120,20 @@ function renderSeedASafari(){
     <div class="rel-row">
       <div class="field"><label>Roamer starting positions (R E L)</label>
         <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
-          oninput="sacValidateStartRel()"></div>
-      <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="${sac.secondsWindow}"></div>
-      <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="${sac.delayWindow}"></div>
+          oninput="sacValidateStartRel()" onkeydown="sacSeedAKey(event)"></div>
+      <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="${sac.secondsWindow}" onkeydown="sacSeedAKey(event)"></div>
+      <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="${sac.delayWindow}" onkeydown="sacSeedAKey(event)"></div>
       <button class="btn primary" onclick="sacGenerateSeedA()">Generate</button>
     </div>
     <div class="field check"><input type="checkbox" id="sac-parity" ${sac.matchParity?"checked":""}><label for="sac-parity" style="margin:0">Match key-seed delay parity</label></div>
     <div class="info-line" id="sac-keyinfo">key seed: —</div>
     <div class="grid2">
       <div class="field"><label>Observed roamer routes (R E L)</label>
-        <input id="sac-obsrel" placeholder="38 42 11  (. = any)" oninput="sacNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+        <input id="sac-obsrel" placeholder="38 42 11  (. = any)" oninput="sacNarrowSeedA()"
+          onkeydown="sacObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
-        <input id="sac-elm" placeholder="EKP…" oninput="sacNarrowSeedA()" ${hasCand?"":"disabled"}></div>
+        <input id="sac-elm" placeholder="EKP…" oninput="sacNarrowSeedA()"
+          onkeydown="sacElmKey(event)" ${hasCand?"":"disabled"}></div>
     </div>
     <div id="sac-candA">${hasCand ? renderCandA(sac.seedACandidates, "sacPickSeedA")
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
@@ -1848,6 +2155,19 @@ function timeOfDay(isoTimeStr){
   return "night";
 }
 
+// Shown both before the current frame is pinned (so it's ready by the time auto-resolve
+// runs right after pinning) and after, on the "change target frame" retry screen — one piece
+// of state (sac.aimAdvance) backs both, kept in sync via oninput regardless of which is on
+// screen. Not shown for Pokefinder mode (that's a manual target-frame entry instead) or
+// before Pokemon/Safari area are configured (renderInHouseFrameSearch explains why then).
+function _sacAimAdvanceField(){
+  if(sac.e.preferences?.target_frame_source === "pokefinder") return "";
+  if(!sac.e.pokemon || !sac.e.safari_area) return "";
+  return `<div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
+    <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"
+      value="${esc(sac.aimAdvance ?? "")}" oninput="sac.aimAdvance = this.value"></div>`;
+}
+
 function renderFrameGuideSection(){
   if(!sac.seedA) return `<h3>Seed A advances</h3><div class="status">Identify Seed A first.</div>`;
   if(sac.pinnedFrame == null){
@@ -1858,6 +2178,7 @@ function renderFrameGuideSection(){
     return `<h3>Seed A advances</h3>
       <div class="hint muted" style="margin-bottom:8px">Needed for calibration — pin which
         advance frame Seed A is on right now.</div>
+      ${_sacAimAdvanceField()}
       ${sac.frameObservedElm ? `<div class="hint muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code>
         <button class="btn small" type="button" onclick="sacChangeFrameElm()">Change</button></div>` : ""}
       <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
@@ -1879,6 +2200,7 @@ function renderFrameGuideSection(){
   const g = sac.frameGuide;
   const r = sac.inHouseSearch;
   return `<h3>Seed A advances</h3>
+    <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
     <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, Sweet Scent there.</div>
     ${r && !r.error ? `<div class="hint muted">Found in-house: frame ${r.frame} (L${r.level})
         ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
@@ -1897,8 +2219,7 @@ function renderInHouseFrameSearch(){
   const r = sac.inHouseSearch;
   const errLine = r?.error ? `<div class="notice warn">${esc(r.error)}</div>` : "";
   return `
-    <div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
-      <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"></div>
+    ${_sacAimAdvanceField()}
     <button class="btn small" onclick="sacFindTargetFrame()">Find frame</button>
     ${errLine}`;
 }
@@ -1919,7 +2240,10 @@ async function sacAutoResolveFrame(){
 }
 
 async function sacFindTargetFrame(){
-  const aim = $("sac-aim-advance")?.value.trim() || "";
+  // Read from state, not the DOM element -- auto-resolve calls this right after pinning,
+  // before the field has necessarily ever been rendered (it's shown BEFORE pinning too, per
+  // clayton-b42.9.6, specifically so a value typed there is already available here).
+  const aim = (sac.aimAdvance ?? "").toString().trim();
   try{
     sac.inHouseSearch = await api("safari_compass_find_target_frame", {
       seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
@@ -1950,6 +2274,9 @@ async function sacIdentifyFrame(){
     return;
   }
   renderSafariCompassNewRun();
+  // The re-render above replaces #sac-frame-elm-new with a fresh DOM node — nothing carries
+  // focus over automatically, so Enter-to-apply here would otherwise drop focus every time.
+  $("sac-frame-elm-new")?.focus();
 }
 
 async function sacAppendFrameElm(){
@@ -1981,12 +2308,30 @@ async function sacPlanFrameRoute(target){
     current_frame: sac.pinnedFrame, encounter_frame: target,
     margin: sac.e.preferences?.elm_calls_after_flips ?? 3});
   renderSafariCompassNewRun();
+  // Seed A advances is done -- Seed B's path input just unlocked, so move straight there.
+  $("sac-path-new")?.focus();
 }
 
 function sacReplanFrame(){
   sac.frameGuide = null;
   sac.inHouseSearch = null;
   renderSafariCompassNewRun();
+}
+
+// Enter in any of the three Seed A search fields acts like clicking Generate; Enter on
+// observed roamer routes moves to Elm calls; Enter on Elm calls confirms Seed A once
+// narrowing has reached exactly one candidate — same flow as Metronome Compass New Run.
+function sacSeedAKey(ev){
+  if(ev.key === "Enter"){ ev.preventDefault(); sacGenerateSeedA(); }
+}
+function sacObsRelKey(ev){
+  if(ev.key === "Enter"){ ev.preventDefault(); $("sac-elm")?.focus(); }
+}
+function sacElmKey(ev){
+  if(ev.key !== "Enter") return;
+  ev.preventDefault();
+  const cands = sac.seedACandidates?.candidates;
+  if(cands && cands.length === 1) sacPickSeedA(cands[0].seed);
 }
 
 async function sacGenerateSeedA(){
@@ -2009,6 +2354,7 @@ async function sacGenerateSeedA(){
     last_safari_compass_defaults: {...sac.e.last_safari_compass_defaults, startrel: sac._startrel,
       seconds_window: sac.secondsWindow, delay_window: sac.delayWindow, match_parity: sac.matchParity}});
   renderSafariCompassNewRun();
+  $("sac-obsrel")?.focus();
 }
 
 async function sacNarrowSeedA(){
@@ -2039,13 +2385,17 @@ function sacPickSeedA(seed){
   if(changed){
     sac.seedB = null; sac.seedBResult = null; sac.path = "";
     sac.frameObservedElm = ""; sac.frameCandidates = null; sac.pinnedFrame = null;
-    sac.frameGuide = null; sac.inHouseSearch = null;
+    sac.frameGuide = null; sac.inHouseSearch = null; sac.aimAdvance = "";
   }
   sac.frameElmPrefill = elmHeard;
   renderSafariCompassNewRun();
   // Show the full "seeds in range" set right away (empty path = no narrowing yet), instead
   // of leaving Seed B blank until the user's first keystroke.
   if(!sac.seedB) sacUpdateSeedB();
+  // Seed A advances is the very next step once Seed A is identified — skip straight to its
+  // Elm-calls input (the near-target-advance option above it stays reachable, just not
+  // auto-focused; see renderFrameGuideSection).
+  $("sac-frame-elm-new")?.focus();
 }
 function sacChangeSeedA(){ sac.editingSeedA = true; renderSafariCompassNewRun(); }
 function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); }
@@ -2141,7 +2491,7 @@ async function sacUpdateSeedB(){
     sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
       initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path,
       machete_max_turns: sac.e.preferences?.machete_max_turns ?? 50,
-      k: sac.seedBK, second_offsets: sac.seedBSecondOffsets});
+      expand_frames: sac.seedBExpandFrames, expand_seconds: sac.seedBExpandSeconds});
   }catch(err){
     // api() already toasted this — also keep it visible in the panel itself (a toast is easy
     // to miss, and this spot was previously left silently blank on any failure).
@@ -2176,7 +2526,16 @@ async function sacAppendPath(){
 
 function _sacFocusPathInput(){
   const el = $("sac-path-new");
-  if(el){ el.focus(); el.scrollIntoView({block: "end", behavior: "smooth"}); }
+  if(!el) return;
+  // preventScroll so the browser's own "scroll the newly-focused element into view" doesn't
+  // fight with the explicit scroll below (which targets the whole section, not just the
+  // input -- see that scroll's own comment for why).
+  el.focus({preventScroll: true});
+  // Scroll the WHOLE Seed B section (input + candidate table below it) into view, not just
+  // the input -- scrolling the input alone with block:"end" put it at the very bottom of
+  // the viewport, pushing the table (which comes after it in the DOM) off-screen below,
+  // which is exactly what required the extra manual scroll the user reported.
+  $("sac-seedb")?.scrollIntoView({block: "end", behavior: "smooth"});
 }
 
 async function sacChangePath(){
@@ -2187,22 +2546,47 @@ async function sacChangePath(){
   if(el){ el.value = moved; el.focus(); }
 }
 
-// When the observed path eliminates every candidate, the frame/second search window (k
-// sigma / +-1 second) might just be too narrow — offer to widen it and retry the SAME path,
-// mirroring the notebook interactive tool's "w" widen command.
+// When the observed path eliminates every candidate, the calibrated (probability-weighted)
+// search window might just be too narrow — offer a literal frame/second expansion and retry
+// the SAME path, mirroring the notebook interactive tool's "expand" command (claytonlib.
+// compass._prompt_expand) — see app.safari_compass.expand_window for why this must be a
+// literal range rather than just raising k (mass_cap was always the real binding constraint).
 function _sacWidenPrompt(){
+  const already = (sac.seedBExpandFrames || sac.seedBExpandSeconds)
+    ? ` (already widened by ±${sac.seedBExpandFrames||0} frames, ±${sac.seedBExpandSeconds||0}s)`
+    : "";
   return `<div class="notice warn" style="margin-top:8px">No candidates match this path within
-      the current search window (±${(sac.seedBK ?? 3.5).toFixed(1)}σ frames, ${(sac.seedBSecondOffsets ?? [-1,0,1]).length} second offset(s)).
-      <button class="btn small" style="margin-left:8px" onclick="sacWidenSeedB()">Widen search window</button></div>`;
+      the current search window${esc(already)}.
+      <button class="btn small" style="margin-left:8px" onclick="sacOpenWidenModal()">Widen search window</button></div>`;
 }
 
-async function sacWidenSeedB(){
-  sac.seedBK = (sac.seedBK ?? 3.5) + 1.5;
-  const offsets = sac.seedBSecondOffsets ?? [-1, 0, 1];
-  const widest = Math.max(...offsets.map(Math.abs)) + 1;
-  sac.seedBSecondOffsets = [];
-  for(let d = -widest; d <= widest; d++) sac.seedBSecondOffsets.push(d);
+function sacOpenWidenModal(){
+  openModal(`<h3>Widen search window</h3>
+    <div class="hint muted" style="margin-bottom:8px">Expand the search by a literal frame/
+      second range around the calibrated target — for when the real landing missed further
+      than the model expects.</div>
+    <form onsubmit="return sacApplyWiden(event)">
+      <div class="grid2">
+        <div class="field"><label>Expand frames by (each side)</label>
+          <input name="frames" type="number" min="0" value="200" autofocus></div>
+        <div class="field"><label>Expand seconds by (each side)</label>
+          <input name="seconds" type="number" min="0" value="1"></div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Search</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function sacApplyWiden(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  sac.seedBExpandFrames = (sac.seedBExpandFrames || 0) + Number(f.frames.value);
+  sac.seedBExpandSeconds = (sac.seedBExpandSeconds || 0) + Number(f.seconds.value);
+  closeModal();
   await sacUpdateSeedB();
+  return false;
 }
 
 function sacAcceptSeedB(){
@@ -2215,7 +2599,7 @@ function sacAcceptSeedB(){
 
 function sacResetSeedB(){
   sac.seedB = null; sac.seedBResult = null; sac.path = "";
-  sac.seedBK = undefined; sac.seedBSecondOffsets = undefined;
+  sac.seedBExpandFrames = 0; sac.seedBExpandSeconds = 0;
   renderSafariCompassNewRun();
 }
 
@@ -2224,7 +2608,7 @@ function openSaveSafariRunModal(){
   const g = sac.frameGuide;
   openModal(`<h3>Save run</h3>
     <form onsubmit="return sacSaveRun(event)">
-      <div class="field"><label>Tag</label><input name="tag" placeholder="SCT1" autofocus></div>
+      <div class="field"><label>Tag</label><input name="tag" value="${esc(sac.lastTag || "")}" placeholder="SCT1" autofocus></div>
       <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
       ${_advanceRecipeFields(g ? {elm_calls: g.elm_before_scent, chatot_flips: g.chatot_flips,
                                    advance_frame: g.encounter_frame} : null)}
@@ -2247,10 +2631,13 @@ function sacShowSavedPrompt(){
 async function sacSaveRun(ev){
   ev.preventDefault();
   const f = ev.target;
+  const tag = f.tag.value.trim();
   await api("save_safari_run", sac.e.profile_id, {
-    tag: f.tag.value.trim(), vector_ms: sac.vectorMs,
+    tag, vector_ms: sac.vectorMs,
     notes: f.notes.value.trim(), a_seed: sac.seedA, b_seed: sac.seedB,
     frame_guide: sac.frameGuide?.description || "", ..._readAdvanceRecipe(f) });
+  sac.e = await api("save_expedition", {...sac.e,
+    last_safari_compass_defaults: {...sac.e.last_safari_compass_defaults, tag}});
   sacShowSavedPrompt();
   return false;
 }
@@ -2258,30 +2645,31 @@ async function sacSaveRun(ev){
 function sacReset(){
   sac.seedA = null; sac.seedACandidates = null; sac.editingSeedA = false;
   sac.seedB = null; sac.seedBResult = null; sac.path = "";
-  sac.seedBK = undefined; sac.seedBSecondOffsets = undefined;
+  sac.seedBExpandFrames = 0; sac.seedBExpandSeconds = 0;
   sac.frameObservedElm = ""; sac.frameElmPrefill = ""; sac.frameCandidates = null;
-  sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null;
+  sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null; sac.aimAdvance = "";
   sac._startrel = ""; renderSafariCompassNewRun();
 }
 
 // --- Safari Compass: Review Data --------------------------------------------
-// Safari runs feed the safari load-path offset fit (against whatever metronome-fitted
-// model exists) — see app/calibration.py. Excluding here affects that fit the next time
-// Calibrate Model (Metronome Compass → Review Data) is run, same as metronome runs do for
-// the trend fit; the two live on separate pages because each run kind is created there.
+// Safari runs feed the safari load-path offset fit (this page's own Calibrate Model tab
+// — a chosen base model held fixed while the offset is refit, see app/calibration.py's
+// preview_safari_offset). This is deliberately separate from Metronome Compass's own
+// Calibrate Model, which never looks at safari runs or produces a safari_offset.
 let sreview = null;
 async function safariReviewData(expId){
   const e = await api("get_expedition", expId);
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "safari"), api("get_profile", e.profile_id)]);
   sreview = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs",
-    preview: null, dirty: {}, dirtyTags: {} };
+    preview: null, dirty: {}, dirtyTags: {}, savedModels: null, calBaseId: null, calPreview: null,
+    exportMode: false, exportSelected: {} };
   await sreviewRefreshPreview();
   renderSafariReview();
 }
 async function sreviewRefreshPreview(){
   if(sreview.runs.length === 0){ sreview.preview = null; return; }
-  try{ sreview.preview = await api("preview_calibration", sreview.profileId); }
+  try{ sreview.preview = await api("safari_run_exclude_reasons", sreview.profileId); }
   catch(err){ sreview.preview = null; }
 }
 function sreviewHasUnsaved(){
@@ -2291,22 +2679,30 @@ function sreviewLeavePage(expId){
   if(sreviewHasUnsaved() && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
   openExpeditionHome(expId);
 }
-function sreviewSwitchView(view){
+async function sreviewSwitchView(view){
   if(view !== sreview.view && sreviewHasUnsaved()){
     if(!confirm("You have unsaved exclusion changes. Switch tabs and discard them?")) return;
     sreview.dirty = {}; sreview.dirtyTags = {};
   }
   sreview.view = view;
+  if(view === "calibrate" && !sreview.savedModels){
+    await sreviewLoadSavedModels();
+    await sreviewCalibrateRefresh();
+  }
   renderSafariReview();
 }
 function renderSafariReview(){
   const tabs = `<div class="chip-row">
       <span class="chip ${sreview.view==="runs"?"active":""}" onclick="sreviewSwitchView('runs')">Runs</span>
       <span class="chip ${sreview.view==="tags"?"active":""}" onclick="sreviewSwitchView('tags')">Tags</span>
+      <span class="chip ${sreview.view==="calibrate"?"active":""}" onclick="sreviewSwitchView('calibrate')">Calibrate Model</span>
     </div>`;
+  const body = sreview.view === "tags" ? renderSafariReviewTags()
+    : sreview.view === "calibrate" ? renderSafariCalibrateModel()
+    : renderSafariReviewRuns();
   mount(`<div class="head"><h2>Safari Compass — Review Data</h2>
       <button class="btn" onclick="sreviewLeavePage('${esc(sreview.expId)}')">← Expedition</button></div>
-    ${tabs}${sreview.view === "tags" ? renderSafariReviewTags() : renderSafariReviewRuns()}`);
+    ${tabs}${body}`);
 }
 
 function renderSafariReviewRuns(){
@@ -2316,7 +2712,15 @@ function renderSafariReviewRuns(){
     tags.map(t => `<option${t===sreview.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = sreview.preview?.reasons || {};
   const dirtyCount = Object.keys(sreview.dirty).length;
-  const saveBar = dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+  const exportMode = !!sreview.exportMode;
+  const exportCount = Object.keys(sreview.exportSelected || {}).length;
+  const saveBar = exportMode
+    ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span>${exportCount} run(s) selected for export</span>
+        <span><button class="btn small" onclick="_runsExportCancel('sreview')">Cancel</button>
+        <button class="btn small primary" onclick="_runsExportSelected('sreview')">Export selected</button></span>
+      </div>`
+    : dirtyCount ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span>${dirtyCount} unsaved exclusion change(s)</span>
       <span><button class="btn small" onclick="sreviewDiscardChanges()">Discard</button>
       <button class="btn small primary" onclick="sreviewSaveChanges()">Save changes</button></span>
@@ -2325,31 +2729,40 @@ function renderSafariReviewRuns(){
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>exclude</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>${exportMode ? "export" : "exclude"}</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = sreview.dirty[r.id] !== undefined;
           const staged = isDirty ? sreview.dirty[r.id] : r.excluded;
           const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
           const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
+          const checkboxCell = exportMode
+            ? `<td><input type="checkbox" ${sreview.exportSelected?.[r.id]?"checked":""}
+                onchange="_runsExportToggle('sreview','${esc(r.id)}',this.checked)"></td>`
+            : `<td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
           return `<tr${rowBg}>
           <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
-          <td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>
+          ${checkboxCell}
           <td${muted}>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
-          <td style="text-align:right"><button class="btn small danger" onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
+          <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
+              onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
         <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
-      <div class="muted">${sreview.runs.length} run(s) for this profile</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div class="muted">${sreview.runs.length} run(s) for this profile</div>
+        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('sreview')">Export runs…</button>
+          <button class="btn small" onclick="_importRuns('sreview')">Import runs…</button>` : ""}
+      </div>
     </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Safari runs fit the safari load-path offset
-      (against the currently-fitted timer model) — see Metronome Compass → Review Data →
-      Calibrate Model to run that fit. Tag exclusion (Tags tab above) is shared with metronome
-      runs — set from either Review Data page. Checkbox changes are staged — click "Save
-      changes" to apply them, or "Discard" to revert.</div>`;
+      against a base model you choose — see this page's own Calibrate Model tab above.
+      Tag exclusion (Tags tab above) is shared with metronome runs — set from either Review
+      Data page. Checkbox changes are staged — click "Save changes" to apply them, or
+      "Discard" to revert.</div>`;
 }
 
 function renderSafariReviewTags(){
@@ -2425,6 +2838,130 @@ async function sreviewDelete(runId){
   delete sreview.dirty[runId];
   await sreviewRefreshPreview();
   renderSafariReview();
+}
+
+// Safari Compass's own Calibrate Model tab: pick ANY saved model (Standard included) as
+// the base, fit safari_offset against it from this profile's safari runs, and save the
+// result as a new model — never touching the base model's own trend (alpha/beta/coeffs).
+async function sreviewLoadSavedModels(){
+  sreview.savedModels = await api("list_calibration_models", sreview.profileId);
+  if(!sreview.calBaseId){
+    const active = sreview.savedModels.find(m => m.active);
+    sreview.calBaseId = active ? active.id : (sreview.savedModels[0]?.id || null);
+  }
+}
+
+async function sreviewCalibrateRefresh(){
+  if(!sreview.calBaseId){ sreview.calPreview = null; return; }
+  try{ sreview.calPreview = await api("preview_safari_calibration", sreview.profileId, sreview.calBaseId); }
+  catch(err){ sreview.calPreview = null; }
+}
+
+async function sreviewSelectBaseModel(modelId){
+  sreview.calBaseId = modelId;
+  await sreviewCalibrateRefresh();
+  renderSafariReview();
+}
+
+async function sreviewSaveSafariModel(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  await api("save_calibration_model", sreview.profileId, {
+    name: f.name.value.trim(), make_active: f.make_active.checked, preview: sreview.calPreview});
+  toast("Model saved.");
+  await sreviewLoadSavedModels();
+  await sreviewCalibrateRefresh();
+  renderSafariReview();
+  return false;
+}
+
+async function sreviewActivateModel(modelId){
+  await api("set_active_calibration_model", sreview.profileId, modelId);
+  await sreviewLoadSavedModels();
+  renderSafariReview();
+}
+
+async function sreviewDeleteCalModel(modelId){
+  if(!confirm("Delete this saved model?")) return;
+  await api("delete_calibration_model", modelId);
+  await sreviewLoadSavedModels();
+  if(sreview.calBaseId === modelId){
+    sreview.calBaseId = sreview.savedModels[0]?.id || null;
+    await sreviewCalibrateRefresh();
+  }
+  renderSafariReview();
+}
+
+async function sreviewImportCalibrationModel(){
+  const res = await api("import_calibration_model_from_file", sreview.profileId);
+  if(res.imported){
+    toast(`Imported as model #${res.number} (inactive — review and Make active if you want it).`);
+    await sreviewLoadSavedModels();
+    renderSafariReview();
+  }
+}
+
+function renderSafariCalibrateModel(){
+  const models = sreview.savedModels || [];
+  if(!models.length) return `<div class="notice warn">No calibration models yet.</div>`;
+
+  const baseOpts = models.map(m =>
+    `<option value="${esc(m.id)}"${m.id===sreview.calBaseId?" selected":""}>
+      #${m.number} ${esc(m.name || "—")}${m.active ? " (active)" : ""}</option>`).join("");
+  let content = `<div class="field" style="max-width:360px"><label>Base model</label>
+      <select onchange="sreviewSelectBaseModel(this.value)">${baseOpts}</select></div>
+    <div class="hint muted">The base model's own trend (beta/alpha) is held fixed — only
+      safari_offset is fit here. Metronome Compass's Calibrate Model never sees this value.</div>`;
+
+  const pv = sreview.calPreview;
+  if(!pv){
+    content += `<div class="notice warn" style="margin-top:12px">No fittable safari runs yet —
+        need runs with a confident Seed B and Seed A frame identified, after exclusions.</div>`;
+  } else {
+    const base = models.find(m => m.id === sreview.calBaseId);
+    const baseStats = base?.stats?.linear || base?.artifact?.models?.linear;
+    const s = pv.stats.linear;
+    const f2 = (v) => v == null ? "—" : Number(v).toFixed(4);
+    const row = (label, key, fmt) => `<tr><td>${label}</td>
+      <td>${baseStats ? fmt(baseStats[key]) : "—"}</td><td>${fmt(s[key])}</td></tr>`;
+    content += `
+      <div class="info-line" style="margin-top:12px">safari: ${pv.n_safari_input} run(s)
+        (${pv.n_safari_pre_excluded} excluded before fitting) · ${pv.n_safari_fit} used in the fit
+        ${pv.n_safari_fit===0 ? "— save some from New Run to fit this" : ""}</div>
+      <div class="candtable" style="max-height:none"><table><thead><tr>
+          <th>parameter</th><th>base model</th><th>new preview</th></tr></thead>
+        <tbody>
+          ${row("safari_offset (frames)", "safari_offset", f2)}
+          ${row("safari_offset_n", "safari_offset_n", (v)=>v??"—")}
+          ${row("safari_offset_std", "safari_offset_std", f2)}
+        </tbody></table></div>
+      ${!pv.changed ? `<div class="notice" style="margin-top:12px">No parameters would change
+          from the base model — nothing to save.</div>` : ""}
+      <form class="panel" style="margin-top:14px" onsubmit="return sreviewSaveSafariModel(event)">
+        <div class="grid2">
+          <div class="field"><label>Name (optional)</label><input name="name" placeholder="e.g. safari offset v2"></div>
+          <div class="field check" style="align-items:end"><input type="checkbox" name="make_active" id="sr-cal-active" checked>
+            <label for="sr-cal-active" style="margin:0">Make this the active model</label></div>
+        </div>
+        <div class="actions"><button class="btn primary" type="submit" ${pv.changed ? "" : "disabled"}>Save new model</button></div>
+      </form>`;
+  }
+
+  const savedHeader = `<div class="head" style="margin-top:20px;margin-bottom:12px">
+      <div class="section-label" style="margin:0">Saved models</div>
+      <button class="btn small" onclick="sreviewImportCalibrationModel()">Import model…</button></div>`;
+  const savedList = `<div class="candtable" style="max-height:none"><table><thead><tr>
+        <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
+      <tbody>${models.map(m => `<tr>
+        <td>${m.number}</td><td>${esc(m.name || "—")}</td>
+        <td>${esc((m.created_at||"").replace("T"," "))}</td>
+        <td>${m.active ? `<span class="badge ok">active</span>` : ""}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${!m.active ? `<button class="btn small" onclick="sreviewActivateModel('${esc(m.id)}')">Make active</button>` : ""}
+          <button class="btn small" onclick="exportCalibrationModel('${esc(m.id)}')">Export</button>
+          <button class="btn small danger" onclick="sreviewDeleteCalModel('${esc(m.id)}')">Delete</button>
+        </td></tr>`).join("")}</tbody></table></div>`;
+  return content + savedHeader + savedList;
 }
 
 // --- Profiles -------------------------------------------------------------
@@ -2571,25 +3108,52 @@ async function showUserWarnings(profileId, userId){
   const p = await api("get_profile", profileId);
   const u = p.metronome_users.find(x => x.id === userId);
   if(!u) return;
-  openModal(`<h3>${esc(u.name)} — suitability errors</h3>
-    <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>
+  const hardErrors = u.hard_errors || [];
+  openModal(`<h3>${esc(u.name)}</h3>
+    ${hardErrors.length ? `<div class="notice danger">Cannot be used in Metronome Compass yet:
+        <ul>${hardErrors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
+    ${u.warnings.length ? `<div class="notice warn">You might experience more errors in
+        metronome compass: <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
     <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
 }
 
+// Names don't need to be unique (clayton-b42.9.7) -- the id is the real key everywhere
+// (runs reference metronome_user_id) -- but a same-named pair reads ambiguously in a list
+// or dropdown, so disambiguate FOR DISPLAY ONLY by appending "#<id>" when a collision
+// actually exists among the given users.
+function _mUserLabel(user, allUsers){
+  const collides = allUsers.filter(u => u.name === user.name).length > 1;
+  return collides ? `${user.name}#${user.id}` : user.name;
+}
+
+let _mUsersSpecies = [];
+
 async function openProfile(id){
-  const p = await api("get_profile", id);
+  const [p, species] = await Promise.all([
+    api("get_profile", id), api("list_metronome_species")]);
+  _mUsersSpecies = species;
   const users = p.metronome_users.length === 0
     ? `<div class="empty">No metronome users yet. Add the Pokémon you calibrate with
         (P0: Chansey w/ Natural Cure, holding a Lagging Tail, knowing Metronome).</div>`
     : `<table><thead><tr><th>id</th><th>Name</th><th>Species</th><th>Status</th><th></th></tr></thead>
-      <tbody>` + p.metronome_users.map(u => `
-        <tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.species)}</td>
-          <td>${u.is_suitable ? `<span class="badge ok">suitable</span>`
-            : `<span class="badge warn" style="cursor:pointer" title="${esc(u.warnings.join('; '))}"
-                onclick="showUserWarnings('${esc(p.id)}',${u.id})">${esc(u.warnings.length)} error(s)</span>`}</td>
+      <tbody>` + p.metronome_users.map(u => {
+        const blocked = u.hard_errors && u.hard_errors.length > 0;
+        const allIssues = [...(u.hard_errors||[]), ...(u.warnings||[])];
+        const badge = u.is_suitable ? `<span class="badge ok">suitable</span>`
+          : blocked
+            ? `<span class="badge danger" style="cursor:pointer" title="${esc(allIssues.join('; '))}"
+                onclick="showUserWarnings('${esc(p.id)}',${u.id})">cannot be used in Metronome Compass</span>`
+            : `<span class="badge warn" style="cursor:pointer" title="${esc(allIssues.join('; '))}"
+                onclick="showUserWarnings('${esc(p.id)}',${u.id})">${esc(u.warnings.length)} warning(s)</span>`;
+        return `<tr><td>${u.id}</td><td>${esc(_mUserLabel(u, p.metronome_users))}</td><td>${esc(u.species)}</td>
+          <td>${badge}</td>
           <td style="text-align:right"><button class="btn small danger"
-            onclick="removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`).join("")
+            onclick="removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`;
+      }).join("")
       + `</tbody></table>`;
+
+  const speciesOpts = species.map(s =>
+    `<option value="${esc(s.name)}"${s.name==="Chansey"?" selected":""}>${esc(s.name)}</option>`).join("");
 
   mount(`<div class="head"><h2>${esc(p.name)}</h2>
       <div style="display:flex;gap:10px">
@@ -2606,57 +3170,132 @@ async function openProfile(id){
     <form class="panel" id="add-user-form" oninput="updateUserWarnings()"
         onsubmit="return addUser(event,'${esc(p.id)}')">
       <div class="grid2">
-        <div class="field"><label>Name (unique in profile)</label><input name="name" required placeholder="Chansey 1"></div>
-        <div class="field"><label>Species</label><input name="species" value="Chansey"></div>
-        <div class="field"><label>Ability</label><input name="ability" value="Natural Cure"></div>
+        <div class="field"><label>Name</label><input name="name" required placeholder="Chansey 1"></div>
+        <div class="field"><label>Species</label>
+          <select name="species" id="uf-species" onchange="onSpeciesChange()">${speciesOpts}</select></div>
+        <div class="field"><label>Ability</label><select name="ability" id="uf-ability"></select></div>
         <div class="field"><label>Level</label><input name="level" type="number" min="1" max="100"></div>
         <div class="field"><label>Gender</label>
           <div class="radios">
-            <label class="radio"><input type="radio" name="gender" value="female" checked> female</label>
-            <label class="radio"><input type="radio" name="gender" value="male"> male</label>
-            <label class="radio"><input type="radio" name="gender" value=""> —</label>
+            <label class="radio"><input type="radio" name="gender" value="female" id="uf-gender-f"> female</label>
+            <label class="radio"><input type="radio" name="gender" value="male" id="uf-gender-m"> male</label>
+            <label class="radio"><input type="radio" name="gender" value="" id="uf-gender-n" checked> —</label>
           </div></div>
-        <div class="field"><label>Moveset (comma-separated)</label><input name="moveset" value="Metronome"></div>
+      </div>
+      <div class="section-label" style="margin-top:14px">Moveset
+        <span class="muted" style="text-transform:none;font-weight:400">— order matters,
+          enter moves in the same slot order (1-4) as the real Pokémon actually has them</span></div>
+      <div class="grid4">
+        <div class="field"><label>Move 1</label><select name="move1" class="uf-move"></select></div>
+        <div class="field"><label>Move 2</label><select name="move2" class="uf-move"></select></div>
+        <div class="field"><label>Move 3</label><select name="move3" class="uf-move"></select></div>
+        <div class="field"><label>Move 4</label><select name="move4" class="uf-move"></select></div>
       </div>
       <div class="field check"><input type="checkbox" name="lagging_tail" id="lt" checked>
         <label for="lt" style="margin:0">Holding a Lagging Tail</label></div>
+      <div class="notice danger" id="mw-errors" hidden></div>
       <div class="notice warn" id="mw-warnings" hidden></div>
-      <div class="actions"><button class="btn primary" type="submit">Add user</button></div>
+      <div class="actions"><button class="btn primary" type="submit" id="uf-submit">Add user</button></div>
       <div class="hint muted">Metronome users can't be edited after adding — to change one, add a new user and remove the old.</div>
     </form>`);
+  onSpeciesChange();
+}
+
+function _speciesData(name){
+  return _mUsersSpecies.find(s => s.name === name) || null;
+}
+
+// Cascades everything the chosen species determines: which abilities/moves are offered,
+// and which gender options are even possible (clayton-b42.9.7's worked example: Mew
+// auto-selects genderless and disables male/female; Chansey disables male/genderless;
+// a "both" species like Togepi just disables genderless and leaves male/female open).
+function onSpeciesChange(){
+  const s = _speciesData($("uf-species").value) || {abilities: ["Natural Cure"], moves: ["Metronome"], gender: "both"};
+
+  const abilitySel = $("uf-ability");
+  const prevAbility = abilitySel.value;
+  abilitySel.innerHTML = s.abilities.map(a => `<option${a===prevAbility?" selected":""}>${esc(a)}</option>`).join("");
+
+  document.querySelectorAll(".uf-move").forEach(sel => {
+    const prev = sel.value;
+    const opts = `<option value="">—</option>` + s.moves.map(m =>
+      `<option${m===prev?" selected":""}>${esc(m)}</option>`).join("");
+    sel.innerHTML = opts;
+    if(!s.moves.includes(prev)) sel.value = "";
+  });
+  // Default the moveset to Metronome in slot 1 the first time a species is chosen with
+  // nothing picked yet (every offered species can learn it — see claytonlib.metronome_species).
+  const move1 = document.querySelector('select[name="move1"]');
+  if(move1 && !move1.value && s.moves.includes("Metronome")) move1.value = "Metronome";
+
+  const female = $("uf-gender-f"), male = $("uf-gender-m"), none = $("uf-gender-n");
+  female.disabled = male.disabled = none.disabled = false;
+  if(s.gender === "female_only"){
+    male.disabled = none.disabled = true;
+    female.checked = true;
+  } else if(s.gender === "male_only"){
+    female.disabled = none.disabled = true;
+    male.checked = true;
+  } else if(s.gender === "genderless"){
+    female.disabled = male.disabled = true;
+    none.checked = true;
+  } else {
+    none.disabled = true;
+    if(none.checked) female.checked = true;  // was on "—" from a previous genderless pick
+  }
+
   updateUserWarnings();
 }
 
 function _readUserForm(){
   const f = $("add-user-form");
+  const moveset = ["move1", "move2", "move3", "move4"]
+    .map(n => f[n].value.trim()).filter(Boolean);
   return {
     name: f.name.value,
-    species: f.species.value.trim() || "Chansey",
-    ability: f.ability.value.trim() || null,
+    species: f.species.value,
+    ability: f.ability.value || null,
     level: numOrNull(f.level.value),
     gender: f.gender.value || null,
-    moveset: f.moveset.value.split(",").map(s => s.trim()).filter(Boolean),
+    moveset,
     lagging_tail: f.lagging_tail.checked,
   };
 }
 
 async function updateUserWarnings(){
-  const box = $("mw-warnings");
-  if(!box) return;
-  const warnings = await api("metronome_user_warnings", _readUserForm());
-  if(warnings.length){
-    box.innerHTML = `This metronome user won't be suitable for calibration:
-      <ul>${warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
-    box.hidden = false;
+  const errBox = $("mw-errors"), warnBox = $("mw-warnings");
+  if(!errBox) return;
+  const fields = _readUserForm();
+  const [errors, warnings] = await Promise.all([
+    api("metronome_user_hard_errors", fields), api("metronome_user_warnings", fields)]);
+
+  // Creating a user is NEVER blocked here (clayton-b42.10.2) — these are both just
+  // heads-up notices; hard_errors specifically means "won't be selectable in Metronome
+  // Compass yet", not "can't be saved".
+  if(errors.length){
+    errBox.innerHTML = `This metronome user cannot be used in Metronome Compass yet:
+      <ul>${errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>`;
+    errBox.hidden = false;
   } else {
-    box.hidden = true;
+    errBox.hidden = true;
+  }
+
+  if(warnings.length){
+    warnBox.innerHTML = `You might experience more errors in metronome compass:
+      <ul>${warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>`;
+    warnBox.hidden = false;
+  } else {
+    warnBox.hidden = true;
   }
 }
 
 async function addUser(ev, profileId){
   ev.preventDefault();
   const res = await api("add_metronome_user", profileId, _readUserForm());
-  if(res.warnings && res.warnings.length) toast("Added, but: " + res.warnings.join("; "));
+  if(res.hard_errors && res.hard_errors.length)
+    toast("Added, but cannot be used in Metronome Compass yet: " + res.hard_errors.join("; "));
+  else if(res.warnings && res.warnings.length)
+    toast("Added, but: " + res.warnings.join("; "));
   openProfile(profileId);
   return false;
 }

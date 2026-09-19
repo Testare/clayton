@@ -30,7 +30,8 @@ import datetime as dt
 from claytonlib.calibration import CalibrationModel
 from claytonlib.chart import CanonStore
 from claytonlib.chart.scorer import (
-    best_per_scenario, marginal_capture, rank_boot_marginal, rank_targets, seed_breakdown,
+    best_per_scenario, distinct_targets, marginal_capture, rank_boot_marginal, rank_targets,
+    refine_near, seed_breakdown,
 )
 from claytonlib.expedition import Expedition as _CLExpedition
 from claytonlib.expedition._config import _resolve_criteria, _resolve_strategy
@@ -51,16 +52,30 @@ _CRITERIA_DESCRIPTIONS = {
     "capture": "Success = captured. The straightforward goal for an actual catch attempt.",
 }
 
+# name -> a friendlier display label for the Create Chart form's dropdowns — `name` itself
+# stays the wire value (what gets sent to create_chart / matched against templates below).
+_STRATEGY_LABELS = {
+    "only-balls": "Balls only",
+    "one-mud-then-balls": "One mud, then balls",
+    "six-bait-then-balls": "Six bait, then balls",
+}
+_CRITERIA_LABELS = {
+    "capture": "Captured",
+    "machete-turns-after-balls": "Machete path after N balls",
+    "survived-turns-without-fleeing": "Lasted N turns",
+    "balls-no-flee": "Lasted N balls",
+}
+
 # Criteria whose name embeds one or more numbers (claytonlib.expedition._config._resolve_criteria
 # parses these back out via regex — see its docstring-less match block). Each entry's `template`
 # is filled with `params` (in order) to build the actual criteria_name string sent to create_chart.
 _PARAMETERIZED_CRITERIA = [
     {"name": "machete-turns-after-balls",
      "description": "Success = captured via a Machete-solved path, checked after N balls "
-        "thrown, searching up to T turns deep. e.g. \"machete-50-turns-after-3-balls\".",
+        "thrown, searching up to T turns deep.",
      "template": "machete-{turns}-turns-after-{n_balls}-balls",
      "params": [{"key": "turns", "label": "Max Machete turns", "default": 50},
-                {"key": "n_balls", "label": "Balls thrown first", "default": 3}]},
+                {"key": "n_balls", "label": "Balls thrown first", "default": 5}]},
     {"name": "survived-turns-without-fleeing",
      "description": "Success = still on screen (not fled) after N turns, not necessarily "
         "captured. Useful for calibration paths that need a long observation window.",
@@ -82,7 +97,8 @@ def _parse_time(s: str) -> dt.datetime:
 def list_strategies() -> list[dict]:
     from claytonlib.chart import STRATEGY_ONE_MUD, STRATEGY_ONLY_BALLS, STRATEGY_SIX_BAIT
     strategies = [STRATEGY_ONLY_BALLS, STRATEGY_ONE_MUD, STRATEGY_SIX_BAIT]
-    return [{"name": s.name, "description": _STRATEGY_DESCRIPTIONS.get(s.name, "")} for s in strategies]
+    return [{"name": s.name, "label": _STRATEGY_LABELS.get(s.name, s.name),
+             "description": _STRATEGY_DESCRIPTIONS.get(s.name, "")} for s in strategies]
 
 
 def list_criteria() -> list[dict]:
@@ -90,9 +106,12 @@ def list_criteria() -> list[dict]:
     parameterized entry carries `template`/`params` so the Create Chart form can render
     number inputs for it and build the actual `criteria_name` string client-side."""
     from claytonlib.chart import CRITERIA_CAPTURE
-    fixed = [{"name": c.name, "description": _CRITERIA_DESCRIPTIONS.get(c.name, ""), "params": []}
+    fixed = [{"name": c.name, "label": _CRITERIA_LABELS.get(c.name, c.name),
+              "description": _CRITERIA_DESCRIPTIONS.get(c.name, ""), "params": []}
               for c in [CRITERIA_CAPTURE]]
-    return fixed + [dict(c) for c in _PARAMETERIZED_CRITERIA]
+    parameterized = [dict(c, label=_CRITERIA_LABELS.get(c["name"], c["name"]))
+                     for c in _PARAMETERIZED_CRITERIA]
+    return fixed + parameterized
 
 
 def list_safari_pokemon() -> list[str]:
@@ -233,7 +252,22 @@ def _row_json(r: dict, initial_time: dt.datetime | None = None) -> dict:
 
 
 def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> dict:
-    """Mode A: the best target for each candidate boot time, collapsed to distinct scenarios."""
+    """Mode A: the best target for each candidate boot time, collapsed to distinct scenarios.
+
+    Uses a coarse step (default 4 frames) across the whole window for performance — scoring
+    every candidate boot time at step=1 would be far more expensive than rank_at_time's
+    single-boot-time search. That coarseness means a boot time's reported best frame can sit
+    up to `step - 1` frames from ITS OWN true local peak, which rank_at_time's own step=1
+    search on that same boot time can then appear to "beat" — a confusing inconsistency, not
+    a real one.
+
+    EVERY candidate boot time's own row is refined with a small step=1 local search
+    (refine_near) BEFORE collapsing to distinct scenarios and cutting to the requested limit
+    — refining only the already-cut top-K (an earlier version of this function did that) is
+    not enough: the coarse sweep's ranking order isn't guaranteed to match the TRUE order, so
+    a boot time whose coarse score placed it outside the top-K could still have the highest
+    TRUE score and needs to be in contention before the cut, not after.
+    """
     store = _canon_store(exp, chart)
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
@@ -241,21 +275,46 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
     model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
     base_delay, times = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
+    step = int(params.get("step", 4))
+    k = float(params.get("k", 3.5))
+    include_calibration = bool(params.get("include_calibration", False))
 
     per_time = rank_boot_marginal(
         cmap, model, times, base_delay, setup, maxt,
-        step=int(params.get("step", 4)), k=float(params.get("k", 3.5)),
-        include_calibration=bool(params.get("include_calibration", False)))
+        step=step, k=k, include_calibration=include_calibration)
+
+    radius = max(step - 1, 0)
+    if radius:
+        refined_per_time = []
+        for r in per_time:
+            better = refine_near(cmap, model, r["initial_time"], base_delay, r["F"], radius,
+                                 k=k, include_calibration=include_calibration)
+            if better and better["p"] > r["p"]:
+                better["initial_time"] = r["initial_time"]
+                refined_per_time.append(better)
+            else:
+                refined_per_time.append(r)
+        per_time = refined_per_time
+
     overall = best_per_scenario(per_time)
     limit = int(params.get("limit", 10))
+    top = overall[:limit]
+
     return {
-        "top": [_row_json(r) for r in overall[:limit]],
+        "top": [_row_json(r) for r in top],
         "per_time_count": len(per_time),
     }
 
 
 def rank_at_time(exp: dict, chart: dict, models: dict, initial_time: str, params: dict) -> list[dict]:
-    """Mode B: rank commanded countdowns for one fixed boot time."""
+    """Mode B: rank commanded countdowns for one fixed boot time.
+
+    Adjacent target frames score almost identically (the landing kernel overlaps), so the raw
+    top-N is mostly a single cluster around one peak, not meaningfully different alternatives —
+    declusters by default (distinct_targets) to at least `min_separation` frames apart (~0.5s
+    of real time by default) so what's returned are genuinely different options. Pass
+    min_separation=0 to get the raw (possibly clustered) ranking instead.
+    """
     store = _canon_store(exp, chart)
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
@@ -264,12 +323,16 @@ def rank_at_time(exp: dict, chart: dict, models: dict, initial_time: str, params
     base_delay, _ = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
     it = _parse_time(initial_time)
+    limit = int(params.get("limit", 10))
+    min_separation = int(params.get("min_separation", 30))
 
     rows = rank_targets(
         cmap, model, it, base_delay, setup, maxt,
         step=int(params.get("step", 1)), k=float(params.get("k", 3.5)),
         include_calibration=bool(params.get("include_calibration", False)),
-        limit=int(params.get("limit", 10)))
+        limit=None if min_separation else limit)
+    if min_separation:
+        rows = distinct_targets(rows, min_separation, limit)
     return [_row_json(r, initial_time=it) for r in rows]
 
 

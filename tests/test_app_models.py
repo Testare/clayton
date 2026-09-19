@@ -30,11 +30,25 @@ class TestMetronomeUsers(unittest.TestCase):
         c = p.add_metronome_user("C", **_GOOD_USER)
         self.assertEqual(c.id, 3)  # not 1 — the counter never rewinds
 
-    def test_duplicate_name_rejected_case_insensitively(self):
+    def test_duplicate_names_are_allowed(self):
+        # Names are display-only now -- the id (not the name) is the real unique key runs
+        # reference, so a same-named second user is fine (the UI disambiguates for display
+        # by appending "#<id>" only when a collision actually exists).
         p = Profile(name="Silver")
-        p.add_metronome_user("Chansey", **_GOOD_USER)
-        with self.assertRaises(ValueError):
-            p.add_metronome_user("chansey", **_GOOD_USER)
+        a = p.add_metronome_user("Chansey", **_GOOD_USER)
+        b = p.add_metronome_user("chansey", **_GOOD_USER)
+        self.assertNotEqual(a.id, b.id)
+        self.assertEqual(len(p.metronome_users), 2)
+
+    def test_hard_error_ability_is_still_creatable(self):
+        # The user must always be able to create whatever metronome user they want -- a
+        # hard_errors() issue (e.g. Serene Grace) blocks SELECTING this user in Metronome
+        # Compass, not creating it (clayton-b42.10.2).
+        p = Profile(name="Silver")
+        u = p.add_metronome_user("Bad", **{**_GOOD_USER, "ability": "Serene Grace"})
+        self.assertEqual(len(p.metronome_users), 1)
+        self.assertTrue(u.hard_errors())
+        self.assertFalse(u.is_suitable)
 
     def test_blank_name_rejected(self):
         p = Profile(name="Silver")
@@ -62,6 +76,23 @@ class TestMetronomeUsers(unittest.TestCase):
         self.assertTrue(any("Chansey" in m for m in w))
         self.assertTrue(any("Metronome" in m for m in w))
         self.assertTrue(any("Lagging Tail" in m for m in w))
+        self.assertEqual(bad.hard_errors(), [])  # unsuitable, but not a hard error
+
+    def test_hard_errors(self):
+        clean = MetronomeUser(id=1, name="ok", **_GOOD_USER)
+        self.assertEqual(clean.hard_errors(), [])
+
+        for ability in ("Serene Grace", "Cute Charm", "Magic Guard"):
+            blocked = MetronomeUser(id=2, name="bad", **{**_GOOD_USER, "ability": ability})
+            errs = blocked.hard_errors()
+            self.assertTrue(errs, ability)
+            self.assertTrue(any(ability in e for e in errs))
+            # A hard-error ability doesn't ALSO show up as a redundant soft warning...
+            self.assertFalse(any("ability should be" in w for w in blocked.suitability_warnings()))
+            # ...but it DOES count toward is_suitable (which governs Metronome Compass
+            # selectability), even though suitability_warnings() itself is empty here.
+            self.assertEqual(blocked.suitability_warnings(), [])
+            self.assertFalse(blocked.is_suitable)
 
     def test_profile_has_valid_user(self):
         p = Profile(name="Silver")
@@ -85,7 +116,7 @@ class TestSerialization(unittest.TestCase):
         self.assertEqual([u.id for u in restored.metronome_users], [2])
 
     def test_expedition_round_trip_and_defaults(self):
-        e = Expedition(name="Metang hunt", profile_id="p1", pokemon="metang", chatots=2)
+        e = Expedition(name="Metang hunt", profile_id="p1", pokemon="metang")
         self.assertEqual(e.preferences["elm_calls_after_flips"], 3)
         restored = Expedition.from_dict(e.to_dict())
         self.assertEqual(restored.to_dict(), e.to_dict())

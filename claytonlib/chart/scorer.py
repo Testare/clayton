@@ -328,6 +328,36 @@ def print_pairs_rows(rows: list[dict], k: float = 3.5, include_calibration: bool
               f"{r['F']:>10}  {r['second']:>6}  {r['p'] * 100:>9.1f}%  {r['sigma']:>6.1f}")
 
 
+def refine_near(canon_map, model, initial_time: _dt.datetime, base_delay: int, F_center: int,
+                radius: int, k: float = 3.5, include_calibration: bool = False) -> dict | None:
+    """The best (M, F) within `radius` frames either side of `F_center`, scanned one frame at
+    a time and scored the same way as rank_targets (second-marginalized capture probability)
+    for one FIXED `initial_time`.
+
+    A coarse global sweep (rank_boot_marginal's default step=4, used for Ranked Targets'
+    performance since it scores every candidate boot time) can land its best-found frame up
+    to `step - 1` frames from the true local peak — rank_at_time's own default step=1 search
+    for the same target can then find a strictly better nearby frame, which reads as an
+    unexplained inconsistency ("my ranked #1 says 28.4%, but this specific time says 28.6%
+    for basically the same thing"). Calling this with radius >= step - 1 around each reported
+    top result corrects the reported number to the true local optimum without paying for a
+    step=1 sweep across the WHOLE window. Returns None if nothing in range is a valid M.
+    """
+    best = None
+    for F in range(F_center - radius, F_center + radius + 1):
+        M = model.solve_frame(F, base_delay)
+        if M <= 0:
+            continue
+        mc = marginal_capture(canon_map, model, initial_time, M, base_delay, k, include_calibration)
+        if mc is None:
+            continue
+        row = {"M": M, "F": F, "second": mc["second"], "mdmsh": mc["mdmsh"],
+               "p": mc["p"], "sigma": mc["sigma"]}
+        if best is None or row["p"] > best["p"]:
+            best = row
+    return best
+
+
 def best_per_scenario(ranked: list[dict]) -> list[dict]:
     """Keep the best-scoring row per (second, mdmsh) scenario (ranked must be p-desc sorted)."""
     seen: dict = {}

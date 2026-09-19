@@ -162,39 +162,37 @@ def key_seed_info(key_seed: int, prev_routes: dict | None) -> dict:
     }
 
 
-def times_on_date(key_seed: int, date_str: str | None = None, second: int | None = None) -> list[str]:
+def times_on_date(key_seed: int, month: int | None = None, day: int | None = None,
+                  second: int | None = None) -> list[str]:
     """Every valid initial time for `key_seed` (from claytonlib.times.get_times, which is
-    itself cached per key seed), optionally filtered to one date (YYYY-MM-DD) and/or one
-    second-of-minute value (0-59). Both filters are optional — with neither, every valid time
-    is returned. Powers the "pick from a calendar" flow for Initial-time fields — the set of
-    times you could ever load this key seed at is fixed and small enough to just enumerate
-    and let the user click one.
+    itself cached per key seed), optionally filtered to a month (1-12), a day-of-month
+    (1-31), and/or a second-of-minute (0-59) — any combination, all independent and
+    optional. With none set, every valid time is returned. Powers the "pick from a
+    calendar" flow for Initial-time fields — the set of times you could ever load this key
+    seed at is fixed and small enough to just enumerate and let the user click one.
 
-    generate_times() stamps every time with a nominal placeholder year (calculate_seed never
-    reads the year — only month/day/hour/minute/second matter to the RNG), so a date filter
-    matches by month+day only; matches are re-stamped with `date_str`'s own year so what comes
-    back reflects when the user will actually load the game — EXCEPT a year outside
-    [2000, 2099], which is out-of-range nonsense for this game and is normalized to 2000
-    instead (matches generate_times()'s own placeholder). A Feb 29 match is dropped silently
-    when the target year isn't a leap year (not a real date to load on).
+    generate_times() stamps every time with a nominal placeholder year (calculate_seed
+    never reads the year — only month/day/hour/minute/second matter to the RNG). When
+    month and/or day narrows the result, matches are re-stamped with the CURRENT real
+    year purely for a friendlier display (the game itself doesn't care what year you load
+    it — the picker says so) — a Feb 29 match is dropped silently if the current year
+    isn't a leap year (not a real date to load on this year). With neither set, the
+    placeholder year is left as-is.
     """
     from claytonlib.times import get_times
-    target_md = None
-    target_year = None
-    if date_str:
-        target = dt.date.fromisoformat(date_str)
-        target_md = (target.month, target.day)
-        target_year = target.year if 2000 <= target.year <= 2099 else 2000
+    restamp_year = dt.date.today().year if (month is not None or day is not None) else None
     _delay, times = get_times(int(key_seed))
     out = []
     for t in times:
         if second is not None and t.second != second:
             continue
-        if target_md is not None:
-            if (t.month, t.day) != target_md:
-                continue
+        if month is not None and t.month != month:
+            continue
+        if day is not None and t.day != day:
+            continue
+        if restamp_year is not None:
             try:
-                t = t.replace(year=target_year)
+                t = t.replace(year=restamp_year)
             except ValueError:
                 continue
         out.append(t.strftime(_TIME_FMT))
@@ -203,12 +201,32 @@ def times_on_date(key_seed: int, date_str: str | None = None, second: int | None
 
 # --- Seed B (battle seed: Metronome paths) --------------------------------
 
+def _metronome_moves(path) -> list[dict]:
+    """The Metronome moves in a precomputed battle path, one entry per turn that used one
+    (matches the notebook's narrow_candidates() readout) — lets the New Run summary show
+    the whole move sequence for the identified seed, not just the raw path_str token
+    string, so the user can visually confirm they hit the seed they expected."""
+    from claytonlib.metronome_compass.path import MetronomeMove
+    from claytonlib.moves import _moves_by_number
+    moves_by_num = _moves_by_number()
+    out = []
+    for turn_idx, turn in enumerate(path):
+        for tok in turn:
+            if isinstance(tok, MetronomeMove):
+                m = moves_by_num.get(tok.move_num)
+                out.append({"turn": turn_idx + 1, "move_num": tok.move_num,
+                            "move_name": m.name if m else f"M{tok.move_num:03d}"})
+                break
+    return out
+
+
 def _row_b_json(r: dict) -> dict:
     return {
         "seed": r["seed"], "seed_hex": f"0x{r['seed']:08X}",
         "time": r["time"].strftime(_TIME_FMT), "delay": r["delay"],
         "sec_delta": r["sec_delta"], "delay_delta": r["delay_delta"],
         "path_str": r["path_str"],
+        "metronome_moves": _metronome_moves(r["path"]),
     }
 
 

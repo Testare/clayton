@@ -23,6 +23,11 @@ from dataclasses import asdict, dataclass, field
 _REQUIRED_SPECIES = "Chansey"
 _REQUIRED_ABILITY = "Natural Cure"
 _REQUIRED_MOVE = "Metronome"
+# Abilities that change move-effect RNG behavior this toolkit models for calibration
+# (Serene Grace doubles secondary-effect chance; Cute Charm/Magic Guard interact with battle
+# RNG in ways Metronome Compass doesn't account for) -- a hard block at creation, unlike an
+# off-species/off-ability choice, which is only a soft suitability warning (clayton-b42.9.7).
+HARD_ERROR_ABILITIES = frozenset({"Serene Grace", "Cute Charm", "Magic Guard"})
 
 
 def _new_id() -> str:
@@ -48,13 +53,19 @@ class MetronomeUser:
     lagging_tail: bool = False
 
     def suitability_warnings(self) -> list[str]:
-        """Human-readable reasons this user may be unsuitable (empty == suitable)."""
+        """Human-readable reasons this user may be unreliable for calibration (empty ==
+        no concerns). Advisory only — the user is still fully creatable and selectable in
+        Metronome Compass; the UI frames these as "you might experience more errors in
+        metronome compass", not a block. See hard_errors for the (much narrower) set of
+        issues that DO block selection in Metronome Compass specifically."""
         warnings: list[str] = []
         if self.species != _REQUIRED_SPECIES:
             warnings.append(
-                f"only {_REQUIRED_SPECIES} is supported right now (this is {self.species})"
+                f"Metronome Compass is built and verified specifically for Natural Cure "
+                f"{_REQUIRED_SPECIES} — using {self.species} may produce errors"
             )
-        if self.ability and self.ability != _REQUIRED_ABILITY:
+        if (self.ability and self.ability != _REQUIRED_ABILITY
+                and self.ability not in HARD_ERROR_ABILITIES):
             warnings.append(f"ability should be {_REQUIRED_ABILITY} (this is {self.ability})")
         if not any(m.lower() == _REQUIRED_MOVE.lower() for m in self.moveset):
             warnings.append("does not know Metronome")
@@ -62,9 +73,22 @@ class MetronomeUser:
             warnings.append("is not holding a Lagging Tail")
         return warnings
 
+    def hard_errors(self) -> list[str]:
+        """Reasons this user can't be SELECTED in Metronome Compass (e.g. New Run's user
+        picker) — but a user can still always be created, viewed, and removed on the
+        Profile page with these present; nothing here blocks add_metronome_user. The UI
+        frames these as "cannot be used in metronome compass yet"."""
+        errors: list[str] = []
+        if self.ability in HARD_ERROR_ABILITIES:
+            errors.append(
+                f"{self.ability} changes move-effect RNG behavior this toolkit models for "
+                f"calibration — a metronome user with this ability can't be used"
+            )
+        return errors
+
     @property
     def is_suitable(self) -> bool:
-        return not self.suitability_warnings()
+        return not (self.suitability_warnings() or self.hard_errors())
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -110,12 +134,19 @@ class Profile:
         return next((u for u in self.metronome_users if u.id == user_id), None)
 
     def add_metronome_user(self, name: str, **fields) -> MetronomeUser:
-        """Create a metronome user with the next id. Raises on a duplicate name."""
+        """Create a metronome user with the next id. The user can create whatever
+        metronome user they want here — even one with a hard_errors() issue (e.g. a
+        calibration-breaking ability) — creation only ever requires a non-blank name; a
+        hard_errors() issue instead blocks SELECTING that user in Metronome Compass (see
+        MetronomeUser.hard_errors).
+
+        Names need NOT be unique within a profile — the UI disambiguates same-named users
+        for display by appending "#<id>" only when a collision actually exists (the id
+        itself is always the real unique key runs reference).
+        """
         name = name.strip()
         if not name:
             raise ValueError("metronome user needs a name")
-        if any(u.name.lower() == name.lower() for u in self.metronome_users):
-            raise ValueError(f"a metronome user named {name!r} already exists in this profile")
         user = MetronomeUser(id=self.next_metronome_user_id, name=name, **fields)
         self.next_metronome_user_id += 1
         self.metronome_users.append(user)
@@ -267,7 +298,6 @@ class Expedition:
     pokemon: str = ""
     safari_area: str = ""
     block_config: dict = field(default_factory=dict)
-    chatots: int = 0
     key_seed: int | None = None
     key_seed_advances: int | None = None
     # Last-used target for the Compass pages: {"initial_time": ..., "vector_ms": ...}
@@ -277,8 +307,8 @@ class Expedition:
     # "sb_seconds_window", "sb_delay_window"} -- the sb_* pair is Seed B's OWN search window
     # (independent of Seed A's — the battle-delay guess may need a different range).
     last_metronome_defaults: dict = field(default_factory=dict)
-    # Same idea, Safari Compass's own New Run (no "tag" — that field isn't persisted there):
-    # {"startrel", "seconds_window", "delay_window", "match_parity"}
+    # Same idea, Safari Compass's own New Run:
+    # {"startrel", "seconds_window", "delay_window", "match_parity", "tag"}
     last_safari_compass_defaults: dict = field(default_factory=dict)
     preferences: dict = field(default_factory=_default_preferences)
 
@@ -294,7 +324,6 @@ class Expedition:
             pokemon=d.get("pokemon", ""),
             safari_area=d.get("safari_area", ""),
             block_config=dict(d.get("block_config", {})),
-            chatots=d.get("chatots", 0),
             key_seed=d.get("key_seed"),
             key_seed_advances=d.get("key_seed_advances"),
             last_target=dict(d.get("last_target", {})),
