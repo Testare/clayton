@@ -447,14 +447,20 @@ class Facade:
     # user and re-calls with an explicit decision. See app/portability.py for the exact
     # semantics of each `on_collision` value.
 
-    def export_runs_to_file(self, run_ids: list[str]) -> dict:
+    def export_runs_to_file(self, run_ids: list[str], default_name: str | None = None) -> dict:
         """Export the given runs as jsonl (one run per line — no envelope) via a native
         Save dialog. `run_ids` decides both which runs and the export scope entirely —
         the UI resolves "all" / "all except excluded" / a manual selection into this list
-        before calling here."""
+        before calling here. `default_name` lets the caller suggest a more specific
+        filename (e.g. including the profile/expedition it was exported from); falls back
+        to a kind-based name (clayton-runs-metronome.jsonl / clayton-runs-safari.jsonl,
+        or the generic clayton-runs.jsonl for a mixed-kind selection) when not given."""
         from app import files, portability
         rows = portability.export_runs_jsonl(self._store, run_ids)
-        path = files.save_jsonl_dialog("clayton-runs.jsonl", rows)
+        if default_name is None:
+            kinds = {r.get("kind") for r in rows}
+            default_name = f"clayton-runs-{kinds.pop()}.jsonl" if len(kinds) == 1 else "clayton-runs.jsonl"
+        path = files.save_jsonl_dialog(default_name, rows, store=self._store)
         return {"saved": bool(path), "path": path, "count": len(rows)}
 
     def import_runs_from_file(self, profile_id: str) -> dict:
@@ -462,7 +468,7 @@ class Facade:
         ids), never a collision/overwrite. Each row's own "kind" field ("metronome"/
         "safari") decides which compass it belongs to; no scope selection needed here."""
         from app import files, portability
-        rows = files.open_jsonl_dialog()
+        rows = files.open_jsonl_dialog(store=self._store)
         if rows is None:
             return {"imported": False}
         docs = portability.import_runs_jsonl(self._store, profile_id, rows)
@@ -509,14 +515,14 @@ class Facade:
         m = env["data"]["model"]
         name = m.get("name") or f"model-{m.get('number', '')}"
         safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "model"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_calibration_model_from_file(self, profile_id: str) -> dict:
         """Import a calibration model via a native Open dialog. No collision handling —
         models always land as a new, inactive, freshly-numbered entry (see portability)."""
         from app import files
-        env = files.open_json_dialog()
+        env = files.open_json_dialog(store=self._store)
         if env is None:
             return {"imported": False}
         return {"imported": True, **self.import_calibration_model(profile_id, env)}
@@ -527,7 +533,7 @@ class Facade:
         env = self.export_expedition(expedition_id)
         name = (self._store.read(_EXPEDITIONS, expedition_id) or {}).get("name", "expedition")
         safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "expedition"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_expedition_from_file(self, profile_id: str) -> dict:
@@ -535,7 +541,7 @@ class Facade:
         existing expedition (same name in this profile), returns the collision instead of
         importing — resolve it with import_expedition_resolve."""
         from app import files
-        env = files.open_json_dialog()
+        env = files.open_json_dialog(store=self._store)
         if env is None:
             return {"imported": False}
         result = self.import_expedition(profile_id, env)
@@ -554,7 +560,7 @@ class Facade:
         env = self.export_profile_bundle(profile_id, include_excluded)
         name = (self._store.read(_PROFILES, profile_id) or {}).get("name", "profile")
         safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "profile"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env)
+        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_profile_bundle_from_file(self) -> dict:
@@ -562,7 +568,7 @@ class Facade:
         same-named profile, returns the collision instead of importing — resolve it with
         import_profile_bundle_resolve."""
         from app import files
-        env = files.open_json_dialog()
+        env = files.open_json_dialog(store=self._store)
         if env is None:
             return {"imported": False}
         result = self.import_profile_bundle(env)

@@ -217,7 +217,8 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
 
 def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_seconds: int,
                        max_target_seconds: int, step: int = 1, k: float = 3.5,
-                       include_calibration: bool = False, limit: int | None = None) -> list[dict]:
+                       include_calibration: bool = False, limit: int | None = None,
+                       keep_top_k: int = 1) -> list[dict]:
     """Best target M for EACH candidate boot time, scored by SECOND-MARGINALIZED capture prob.
 
     For each boot phase and target frame F, P(capture) = Σ_s P(S=s|M(F)) · cp(mdmsh(boot+s), F),
@@ -228,6 +229,12 @@ def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_sec
 
     cp(F, mdmsh) is memoized and each phase's mdmsh(boot+s) is pretabulated, so the cost stays
     close to the single-second sweep despite the per-boot marginalization.
+
+    `keep_top_k` > 1 additionally tracks, per phase, the F values of the next-best (keep_top_k-1)
+    COARSE-sampled points (not just the single winner) as each row's "_coarse_alt_F" list — see
+    rank_best_per_time's refine step, which uses these as extra local-search starting points.
+    Free at scan time (just extra bookkeeping on scores already computed); doesn't change which
+    row wins overall, only what a caller can refine_near() around afterward.
     """
     parsed = [t if isinstance(t, _dt.datetime) else _dt.datetime.fromisoformat(t) for t in times]
     phases = list({(t.month, t.day, t.hour, t.minute, t.second): t for t in parsed}.values())
@@ -268,11 +275,22 @@ def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_sec
                     cp_memo[key] = cp
                 pmarg += ps * cp
             tkey = (t.month, t.day, t.hour, t.minute, t.second)
-            prev = best.get(tkey)
-            if prev is None or pmarg > prev["p"]:
-                best[tkey] = {"M": M, "F": F_target, "second": modal_s, "mdmsh": tab[modal_s],
-                              "initial_time": t, "p": pmarg, "sigma": sigma}
-    rows = sorted(best.values(), key=lambda r: (-r["p"], r["M"]))
+            entry = {"M": M, "F": F_target, "second": modal_s, "mdmsh": tab[modal_s],
+                     "initial_time": t, "p": pmarg, "sigma": sigma}
+            lst = best.setdefault(tkey, [])
+            if len(lst) < keep_top_k:
+                lst.append(entry)
+                lst.sort(key=lambda r: -r["p"])
+            elif pmarg > lst[-1]["p"]:
+                lst[-1] = entry
+                lst.sort(key=lambda r: -r["p"])
+    rows = []
+    for lst in best.values():
+        top = lst[0]
+        if keep_top_k > 1 and len(lst) > 1:
+            top = {**top, "_coarse_alt_F": [e["F"] for e in lst[1:]]}
+        rows.append(top)
+    rows.sort(key=lambda r: (-r["p"], r["M"]))
     return rows[:limit] if limit else rows
 
 

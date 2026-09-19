@@ -279,19 +279,36 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
     k = float(params.get("k", 3.5))
     include_calibration = bool(params.get("include_calibration", False))
 
+    # keep_top_k tracks, per boot phase, the F values of the next-best few COARSE-sampled
+    # points too -- not just the single winner. A coarse sweep can land its #1 pick nowhere
+    # near a boot time's TRUE local peak (a real, reproduced issue: a jagged/narrow capture
+    # landscape -- e.g. machete-based criteria, where nearby frames' outcomes are essentially
+    # uncorrelated -- can put the true peak more than `step` frames from wherever the coarse
+    # sweep's single best point happened to land, which a narrow single-point refine_near can
+    # then never reach). Refining around EACH of the top-K coarse points instead of just #1
+    # costs only a few extra cheap refine_near calls per phase (negligible next to the main
+    # sweep), and catches far more real-world cases -- though it still can't mathematically
+    # guarantee finding an arbitrarily narrow peak that happens to fall in the gap between
+    # every one of the top-K coarse samples. See tests/test_scorer.py's
+    # TestRankBestPerTimeRefinesBeforeCutting for the reproduced failure this widens against.
     per_time = rank_boot_marginal(
         cmap, model, times, base_delay, setup, maxt,
-        step=step, k=k, include_calibration=include_calibration)
+        step=step, k=k, include_calibration=include_calibration, keep_top_k=5)
 
     radius = max(step - 1, 0)
     if radius:
         refined_per_time = []
         for r in per_time:
-            better = refine_near(cmap, model, r["initial_time"], base_delay, r["F"], radius,
-                                 k=k, include_calibration=include_calibration)
-            if better and better["p"] > r["p"]:
-                better["initial_time"] = r["initial_time"]
-                refined_per_time.append(better)
+            candidates = [r["F"]] + r.get("_coarse_alt_F", [])
+            best_refined = None
+            for F_c in candidates:
+                better = refine_near(cmap, model, r["initial_time"], base_delay, F_c, radius,
+                                     k=k, include_calibration=include_calibration)
+                if better and (best_refined is None or better["p"] > best_refined["p"]):
+                    best_refined = better
+            if best_refined and best_refined["p"] > r["p"]:
+                best_refined["initial_time"] = r["initial_time"]
+                refined_per_time.append(best_refined)
             else:
                 refined_per_time.append(r)
         per_time = refined_per_time

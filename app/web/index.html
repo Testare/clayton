@@ -347,8 +347,27 @@ async function renderExpeditions(){
       </div>`).join("") + `</div>`;
   }
   mount(`<div class="head"><h2>Expeditions</h2>
-      <button class="btn primary" ${profiles.length?"":"disabled"} onclick="expeditionForm()">New expedition</button>
+      <div style="display:flex;gap:10px">
+        <button class="btn primary" ${profiles.length?"":"disabled"} onclick="expeditionForm()">New expedition</button>
+        <button class="btn" ${profiles.length?"":"disabled"} onclick="importExpeditionFromList()">Import expedition…</button>
+      </div>
     </div>${body}`);
+}
+
+// "Export…" lives on each expedition's own home page, but the matching "Import…" was only
+// reachable from a Profile page (which profile to import into is unambiguous there) --
+// readers looking for it right next to Export couldn't find it (round 11 feedback). This adds
+// the same import flow here, picking the profile first when there's more than one.
+function importExpeditionFromList(){
+  if(state.profiles.length === 1){ importExpeditionInto(state.profiles[0].id); return; }
+  openModal(`<h3>Import expedition into…</h3>
+    <div class="field"><label>Profile</label>
+      <select id="import-exp-profile">${state.profiles.map(p =>
+        `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></div>
+    <div class="actions">
+      <button class="btn primary" onclick="closeModal();importExpeditionInto($('import-exp-profile').value)">Import…</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
 }
 
 // existing: an expedition doc when editing, else null (create).
@@ -1199,6 +1218,22 @@ const _RUNS_PANELS = {
   sreview: () => ({state: sreview, render: renderSafariReview, kind: "safari"}),
 };
 
+const _slugForFilename = (s) => String(s || "").trim().toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+// clayton-runs-<kind>-<profile>[-<expedition>].jsonl -- differentiates exports from
+// different profiles/expeditions (round 11 feedback: the flat "clayton-runs.jsonl" default
+// made it easy to mix up which export was which once you had more than one).
+async function _runsDefaultExportName(panelKey){
+  const {state, kind} = _RUNS_PANELS[panelKey]();
+  const parts = ["clayton-runs", kind, _slugForFilename(state.profile?.name) || "profile"];
+  try{
+    const e = await api("get_expedition", state.expId);
+    if(e?.name) parts.push(_slugForFilename(e.name));
+  }catch(err){ /* fall back to profile-only naming */ }
+  return parts.join("-") + ".jsonl";
+}
+
 function _openExportRunsModal(panelKey){
   openModal(`<h3>Export runs</h3>
     <div class="hint muted" style="margin-bottom:8px">Choose which runs to include.</div>
@@ -1232,7 +1267,7 @@ async function _exportRunsScope(panelKey, scope){
   }
   const ids = (scope === "all" ? state.runs : state.runs.filter(r => !r.excluded)).map(r => r.id);
   if(!ids.length){ toast("No runs to export."); return; }
-  const res = await api("export_runs_to_file", ids);
+  const res = await api("export_runs_to_file", ids, await _runsDefaultExportName(panelKey));
   if(res.saved) toast(`Exported ${res.count} run(s) to ${res.path}`);
 }
 
@@ -1252,7 +1287,7 @@ async function _runsExportSelected(panelKey){
   const {state, render} = _RUNS_PANELS[panelKey]();
   const ids = Object.keys(state.exportSelected || {});
   if(!ids.length){ toast("No runs selected."); return; }
-  const res = await api("export_runs_to_file", ids);
+  const res = await api("export_runs_to_file", ids, await _runsDefaultExportName(panelKey));
   if(res.saved) toast(`Exported ${res.count} run(s) to ${res.path}`);
   state.exportMode = false; state.exportSelected = {};
   render();
@@ -2242,13 +2277,12 @@ function renderFrameGuideSection(){
     const keySeedHit = sac.seedA.seed === sac.e.key_seed && sac.e.key_seed_advances != null;
     return `<h3>Seed A advances</h3>
       <div class="info-line">Current advance frame: <b>${sac.pinnedFrame}</b></div>
-      ${pokefinder ? `
-        <div class="field"><label>Target encounter frame (from Pokefinder)</label>
-          <input id="sac-target-frame" type="number" min="0" placeholder="81"
-            ${keySeedHit ? `value="${sac.e.key_seed_advances}" disabled` : ""}></div>
-        ${keySeedHit ? `<div class="hint muted" style="margin-bottom:8px">Seed A matches the
-            key seed, so this advances to key seed advances — no need to look it up.</div>` : ""}
-        <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`
+      ${keySeedHit ? `<div class="hint muted" style="margin-bottom:8px">Seed A matches the
+          key seed, so this advances to key seed advances — resolving automatically…</div>`
+        : pokefinder ? `
+          <div class="field"><label>Target encounter frame (from Pokefinder)</label>
+            <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
+          <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`
         : renderInHouseFrameSearch()}`;
   }
   const g = sac.frameGuide;
@@ -2259,7 +2293,7 @@ function renderFrameGuideSection(){
     ${r && !r.error ? `<div class="hint muted">Found in-house: frame ${r.frame} (L${r.level})
         ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
           : r.skipped_ambiguous ? `(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)` : ""}</div>` : ""}
-    <div class="status">Guide: <code>${esc(g.guide)}</code> (]! = Sweet Scent here)
+    <div class="status">Guide: <code>${esc(g.guide)}</code> (Sweet scent at the "!")
       ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
     <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>`;
@@ -2280,15 +2314,16 @@ function renderInHouseFrameSearch(){
 
 // Auto-resolves the target encounter frame once the current frame is pinned: an exact
 // key-seed hit uses the expedition's own configured frame (no search needed — see
-// claytonlib.safari_advance's choose_target_frame in-house branch this mirrors), the
-// in-house search runs automatically otherwise. Pokefinder still needs manual entry (that
-// data can't be derived), so it's left for the user in renderFrameGuideSection above.
+// claytonlib.safari_advance's choose_target_frame in-house branch this mirrors) regardless
+// of target_frame_source, since that's known without looking anything up in EITHER mode.
+// Otherwise, Pokefinder still needs manual entry (that data can't be derived) and is left
+// for the user in renderFrameGuideSection above; the in-house search runs automatically.
 async function sacAutoResolveFrame(){
-  if(sac.e.preferences?.target_frame_source === "pokefinder") return;
   if(sac.seedA.seed === sac.e.key_seed && sac.e.key_seed_advances != null){
     await sacPlanFrameRoute(sac.e.key_seed_advances);
     return;
   }
+  if(sac.e.preferences?.target_frame_source === "pokefinder") return;
   if(!sac.e.pokemon || !sac.e.safari_area) return;  // renderInHouseFrameSearch shows why
   await sacFindTargetFrame();
 }
@@ -2702,10 +2737,12 @@ function sacAcceptSeedB(){
 }
 
 // "Change Seed B" retains the observed path rather than clearing it (round 10 feedback) --
-// re-queries against that same path so the candidate table isn't left stale/empty.
+// re-queries against that same path so the candidate table isn't left stale/empty. Also
+// keeps any widened search window as-is (round 11 feedback) -- it's cheap to keep applying
+// and re-widening from scratch every time you change your mind about Seed B would be
+// annoying; only a full sacReset() (a genuinely new run) clears it back to 0.
 async function sacResetSeedB(){
   sac.seedB = null;
-  sac.seedBExpandFrames = 0; sac.seedBExpandSeconds = 0;
   await sacUpdateSeedB();
 }
 

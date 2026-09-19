@@ -285,6 +285,42 @@ class TestRankBestPerTimeRefinesBeforeCutting(unittest.TestCase):
             self.assertEqual(best["initial_time"], target_time.strftime(chart._TIME_FMT))
             self.assertGreater(best["p"], 0.85)  # the refined value, not the coarse ~0.63
 
+    def test_a_true_peak_far_from_the_single_best_coarse_point_still_surfaces(self):
+        """Round 11 feedback: refine_near's radius around only the SINGLE best coarse-sampled
+        point per boot time still isn't enough -- if a decoy sits exactly on a step=4 grid
+        point (so the coarse sweep locks onto it) and the TRUE, higher peak sits more than
+        `radius` frames away, a single-point refine never reaches it. Reproduced directly
+        against claytonlib.chart.scorer before this fix (0 out of 392 tested gap/width
+        combinations passed with keep_top_k=1; all passed with keep_top_k=5) -- this exercises
+        the same failure mode through the real app.chart.rank_best_per_time entry point."""
+        from unittest.mock import patch
+        from claytonlib.chart.canon import mdmsh_of
+        from claytonlib.chart.grid import pack_row
+        with _isolated_cwd():
+            wide_chart = {**_CHART, "setup_delay_seconds": 0, "max_target_seconds": 15}
+            model = CalibrationModel(kind="line", target="Fb", beta=0.06, alpha=0.0,
+                                     jitter_c=None, jitter_rms=1.0, rtc_offset_seconds=0.0,
+                                     rtc_offset_std=0.0, n_runs=10)
+            s0 = 2
+            F_decoy = round(model.mean(2000.0))
+            F_decoy -= F_decoy % 4  # land exactly on a step=4 grid point
+            F_true = F_decoy + 22   # far enough that no coarse point within radius=3 reaches it
+
+            t = dt.datetime(2000, 6, 1, 21, 0, s0)
+            m = mdmsh_of(t + dt.timedelta(seconds=s0))
+            store = chart._canon_store(_EXP, wide_chart)
+            store.append_range(m, F_decoy - 1, F_decoy + 1, pack_row(3, range(3)))    # decoy
+            store.append_range(m, F_true - 2, F_true + 2, pack_row(5, range(5)))       # true peak (wider)
+            store.write_meta({"built": True})
+
+            with patch("app.chart.get_times", return_value=(0, [t])):
+                ranked = chart.rank_best_per_time(_EXP, wide_chart, {"linear": model},
+                                                  {"limit": 3, "step": 4})
+            self.assertEqual(ranked["per_time_count"], 1)
+            best = ranked["top"][0]
+            self.assertLessEqual(abs(best["target_delay"] - F_true), 2)  # found the true peak, not the decoy
+            self.assertGreater(best["p"], 0.9)                # the true peak's real height
+
 
 class TestFacadeChartCRUD(unittest.TestCase):
     """Pure CRUD needs no calibration model or canon map — an in-temp FileStore is enough."""

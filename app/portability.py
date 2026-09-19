@@ -158,6 +158,14 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
 # disambiguates the two compasses, so nothing else needs to travel alongside it.
 # ---------------------------------------------------------------------------
 
+# Dropped from the exported jsonl (round 11 feedback) -- target_timer_calibration and
+# frame_guide are both app-local convenience data (a fit-time offset and a rendered "how to
+# get there" route guide) rather than anything a fit or another profile needs; leaving them
+# out keeps the export focused on the run's actual observations. A run re-imported without
+# them just falls back to Run.from_dict's own defaults (0 and "").
+_RUN_EXPORT_DROP_FIELDS = ("target_timer_calibration", "frame_guide")
+
+
 def export_runs_jsonl(store, run_ids: list[str]) -> list[dict]:
     """The stored run docs for `run_ids`, in the given order — ready to write one per
     line. Silently skips any id that no longer resolves (e.g. deleted since selection)."""
@@ -165,7 +173,7 @@ def export_runs_jsonl(store, run_ids: list[str]) -> list[dict]:
     for rid in run_ids:
         doc = store.read("runs", rid)
         if doc is not None:
-            out.append(doc)
+            out.append({k: v for k, v in doc.items() if k not in _RUN_EXPORT_DROP_FIELDS})
     return out
 
 

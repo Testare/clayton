@@ -151,6 +151,36 @@ class TestSecondMarginalization(unittest.TestCase):
         self.assertEqual(len(rows), 2)                 # one row per boot phase
         self.assertEqual(rows[0]["initial_time"], t_a)  # the boot whose second-20 mdmsh is captured
 
+    def test_keep_top_k_attaches_alt_f_candidates_without_changing_the_winner(self):
+        from claytonlib.chart.scorer import rank_boot_marginal
+        model = self._model(0.3)
+        s0 = 20
+        F0 = round(model.mean(s0 * 1000))
+        t0 = dt.datetime(2000, 6, 1, 14, 0, 0)
+        mdmsh0 = mdmsh_of(t0 + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh0: [_all_set(F0 - 60, F0 + 60)]})
+
+        plain = rank_boot_marginal(cmap, model, [t0], 1000, 5, 40, step=4, k=3.0)
+        topk = rank_boot_marginal(cmap, model, [t0], 1000, 5, 40, step=4, k=3.0, keep_top_k=5)
+        # Same winner either way -- keep_top_k only adds bookkeeping, doesn't change ranking.
+        self.assertEqual(plain[0]["F"], topk[0]["F"])
+        self.assertEqual(plain[0]["p"], topk[0]["p"])
+        self.assertNotIn("_coarse_alt_F", plain[0])
+        self.assertIn("_coarse_alt_F", topk[0])
+        self.assertLessEqual(len(topk[0]["_coarse_alt_F"]), 4)  # up to keep_top_k - 1 alternates
+        self.assertNotIn(topk[0]["F"], topk[0]["_coarse_alt_F"])  # alternates exclude the winner
+
+    def test_keep_top_k_one_is_a_no_op_matching_default_behavior(self):
+        from claytonlib.chart.scorer import rank_boot_marginal
+        model = self._model(0.3)
+        s0 = 20
+        F0 = round(model.mean(s0 * 1000))
+        t0 = dt.datetime(2000, 6, 1, 14, 0, 0)
+        mdmsh0 = mdmsh_of(t0 + dt.timedelta(seconds=s0))
+        cmap = CanonMap({mdmsh0: [_all_set(F0 - 60, F0 + 60)]})
+        rows = rank_boot_marginal(cmap, model, [t0], 1000, 5, 40, step=4, k=3.0, keep_top_k=1)
+        self.assertNotIn("_coarse_alt_F", rows[0])
+
 
 class TestRefineNear(unittest.TestCase):
     """refine_near corrects a coarse-step sweep's reported P to the true local peak — the

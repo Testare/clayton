@@ -199,6 +199,18 @@ class TestRunsJsonlPortability(unittest.TestCase):
         with self.assertRaises(ValueError):
             portability.import_runs_jsonl(self.api._store, "ghost-profile", rows)
 
+    def test_export_drops_target_timer_calibration_and_frame_guide(self):
+        # Round 11 feedback: these are app-local convenience data (a fit-time offset and a
+        # rendered route guide), not anything a fit or another profile needs.
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"]])
+        self.assertNotIn("target_timer_calibration", rows[0])
+        self.assertNotIn("frame_guide", rows[0])
+        # Still present on the stored doc itself -- only the EXPORT strips them.
+        stored = self.api._store.read("runs", self.run_a["id"])
+        self.assertIn("target_timer_calibration", stored)
+        self.assertIn("frame_guide", stored)
+
     def test_round_trip_via_jsonl_text(self):
         # Simulate the actual on-disk format app.files writes/reads (one JSON object per
         # line) end to end, without touching a real file dialog.
