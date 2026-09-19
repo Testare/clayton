@@ -113,12 +113,25 @@ def _apply_path(candidates: list, actions: list):
     return current, terminal
 
 
-def _row_json(seed: int, frame: int, meta: dict, post: dict) -> dict:
+def _cap_pokemon_name(name: str) -> str:
+    """Display capitalization matching the frontend's own `cap()` helper (e.g. "mr-mime"
+    -> "Mr-Mime") — used only for flee-flag tooltip text below."""
+    return "-".join(part[:1].upper() + part[1:] for part in name.split("-")) if name else name
+
+
+def _row_json(ctx, seed: int, frame: int, meta: dict, post: dict,
+              pokemon_name: str | None = None, compute_flee: bool = False) -> dict:
     m = meta.get(seed, {}) if meta else {}
-    return {
+    row = {
         "seed": seed, "seed_hex": f"0x{seed:08X}", "frame": frame,
         "delta": m.get("delta"), "posterior": post.get(seed, 0.0),
     }
+    if compute_flee:
+        from claytonlib.flee_flags import compute_flee_flags
+        display_name = _cap_pokemon_name(pokemon_name) if pokemon_name else None
+        row["flee_flags"] = [{"code": f.code, "tooltip": f.tooltip}
+                             for f in compute_flee_flags(ctx, pokemon_name=display_name)]
+    return row
 
 
 def seed_b(exp: dict, model, params: dict) -> dict:
@@ -149,9 +162,15 @@ def seed_b(exp: dict, model, params: dict) -> dict:
     ranked = sorted(current, key=lambda x: (-post.get(x[1], 0.0), x[2]))
     limit = int(params.get("limit", 15))
 
+    # Flee flags (clayton-b42.10.8): once narrowed to a small handful of candidates, each
+    # row gets a per-candidate 3-turn flee lookahead. Skipped above that count (it's an
+    # extra simulation pass per candidate, not worth the compute against hundreds of
+    # candidates) and once the run has already ended (terminal — nothing left to warn about).
+    show_flee = terminal is None and len(current) <= 5
     result = {
         "path_valid": True, "count": len(current), "total": total, "terminal": terminal,
-        "candidates": [_row_json(seed, frame, meta, post) for _ctx, seed, frame in ranked[:limit]],
+        "candidates": [_row_json(ctx, seed, frame, meta, post, exp.get("pokemon"), show_flee)
+                       for ctx, seed, frame in ranked[:limit]],
     }
 
     if len(current) == 1 and terminal is None:

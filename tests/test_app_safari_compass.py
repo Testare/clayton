@@ -89,6 +89,42 @@ class TestSeedB(unittest.TestCase):
             mocked.assert_called_once()
             self.assertEqual(mocked.call_args.kwargs.get("max_turns"), 50)
 
+    def test_flee_flags_present_when_five_or_fewer_candidates_remain(self):
+        # clayton-b42.10.8: force exactly 5 surviving candidates (deterministically, rather
+        # than relying on k/jitter tuning) and confirm every row carries its own
+        # (possibly-empty) flee_flags list.
+        from unittest.mock import patch
+        with patch("app.safari_compass._apply_path") as mock_apply:
+            inputs = _build_input(_EXP, _model(0.01), {**_PARAMS})
+            candidates, _meta = calibrated_candidates(inputs)
+            five = candidates[:5]
+            mock_apply.return_value = (five, None)
+            res = seed_b(_EXP, _model(0.01), {**_PARAMS})
+        self.assertEqual(len(res["candidates"]), 5)
+        for row in res["candidates"]:
+            self.assertIn("flee_flags", row)
+            self.assertIsInstance(row["flee_flags"], list)
+            for flag in row["flee_flags"]:
+                self.assertIn("code", flag); self.assertIn("tooltip", flag)
+
+    def test_flee_flags_absent_when_more_than_five_candidates_remain(self):
+        from unittest.mock import patch
+        with patch("app.safari_compass._apply_path") as mock_apply:
+            inputs = _build_input(_EXP, _model(0.01), {**_PARAMS})
+            candidates, _meta = calibrated_candidates(inputs)
+            six = candidates[:6]
+            mock_apply.return_value = (six, None)
+            res = seed_b(_EXP, _model(0.01), {**_PARAMS, "limit": 6})
+        self.assertEqual(len(res["candidates"]), 6)
+        for row in res["candidates"]:
+            self.assertNotIn("flee_flags", row)
+
+    def test_flee_flags_absent_on_a_terminal_result(self):
+        cap = seed_b(_EXP, _model(), {**_PARAMS, "path": "bC"})
+        self.assertEqual(cap["terminal"], "captured")
+        for row in cap["candidates"]:
+            self.assertNotIn("flee_flags", row)
+
 
 class TestWidenSearchWindow(unittest.TestCase):
     """clayton-b42.9.2: raising k alone barely changes the candidate set, because mass_cap

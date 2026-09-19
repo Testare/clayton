@@ -62,6 +62,10 @@
   .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
   .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
   .badge.danger{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
+  /* A muted blend toward --ink rather than the full --ember warning-orange -- full-strength
+     --ember (used for warn badges elsewhere) read as "something's wrong with this number"
+     rather than just "these are the last 3 digits" (round 10 feedback). */
+  .ms-tail{color:color-mix(in srgb,var(--ember) 55%,var(--ink) 45%)}
   form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
   .panel-tight{padding:12px 16px}
   .panel-tight .field{margin-bottom:0}
@@ -145,13 +149,13 @@
     padding:20px;width:440px;max-width:100%;box-shadow:0 16px 48px rgba(0,0,0,.35)}
   .modal h3{margin-bottom:14px}
   .modal.wide{width:760px}
-  .side-pane{position:fixed;top:0;right:0;bottom:0;width:340px;max-width:88vw;z-index:100;
+  .side-pane{position:fixed;top:0;right:0;bottom:0;width:480px;max-width:88vw;z-index:100;
     background:var(--surface);border-left:1px solid var(--line);
     box-shadow:-8px 0 24px rgba(0,0,0,.25);padding:20px;overflow-y:auto}
   .side-pane h3{margin-bottom:14px}
   /* Reflow the main content away from the pane instead of letting it sit on top and cover
      whatever's underneath (the pane is position:fixed, so it never affects layout on its own). */
-  body.side-pane-open main{padding-right:360px}
+  body.side-pane-open main{padding-right:500px}
   .progress-wrap{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
     height:10px;overflow:hidden;margin:10px 0}
   .progress-bar{height:100%;background:var(--grass);transition:width .25s ease}
@@ -194,6 +198,19 @@ function toast(msg){
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+// Species names are stored lowercase (they're the raw claytonlib/basedata key, e.g.
+// "nidoran-f") -- this capitalizes each hyphen-separated part for display.
+const capName = (s) => String(s ?? "").replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
+// Vector ms values are long, mostly-zero numbers (e.g. 300000) where it's easy to lose count
+// of trailing zeroes at a glance -- this tints the last 3 digits so they read as a distinct
+// group. Returns markup (an <span>), not plain text, so callers must interpolate it directly
+// rather than passing it through esc().
+function fmtVectorMs(ms){
+  if(ms == null || ms === "") return "—";
+  const s = String(ms);
+  if(s.length <= 3) return `<span class="ms-tail">${esc(s)}</span>`;
+  return `${esc(s.slice(0, -3))}<span class="ms-tail">${esc(s.slice(-3))}</span>`;
+}
 const numOrNull = (v) => { v = String(v).trim(); return v === "" ? null : Number(v); };
 function fmtDuration(ms){
   const s = Math.round(ms / 1000);
@@ -343,7 +360,6 @@ async function expeditionForm(existing){
   state.profiles = profiles;
   _allSafariAreas = areas;
   const sel = (val, cur) => val === cur ? " selected" : "";
-  const cap = (s) => s.replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
   const profileOpts = profiles.map(p =>
     `<option value="${esc(p.id)}"${sel(p.id, existing?.profile_id)}>${esc(p.name)}</option>`).join("");
   // Narrowed to the chosen Pokemon's own areas once one is picked (onPokemonChange); starts
@@ -353,7 +369,7 @@ async function expeditionForm(existing){
   const areaOpts = `<option value="">—</option>` + initialAreas.map(a =>
     `<option value="${esc(a)}"${sel(a, existing?.safari_area)}>${esc(a)}</option>`).join("");
   const pokemonOpts = `<option value="">—</option>` + pokemonList.map(n =>
-    `<option value="${esc(n)}"${sel(n, existing?.pokemon)}>${esc(cap(n))}</option>`).join("");
+    `<option value="${esc(n)}"${sel(n, existing?.pokemon)}>${esc(capName(n))}</option>`).join("");
   const seedHex = existing?.key_seed != null
     ? "0x" + existing.key_seed.toString(16).toUpperCase() : "";
   const editing = !!existing;
@@ -491,8 +507,8 @@ async function openExpeditionHome(id){
         <button class="btn" onclick="exportExpedition('${esc(id)}')">Export…</button>
         <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
       </div></div>
-    <div class="muted">${esc(e.pokemon || "—")}${e.safari_area ? " · " + esc(e.safari_area) : ""}
-      · key seed 0x${(e.key_seed ?? 0).toString(16).toUpperCase()}</div>
+    <div class="muted">${e.pokemon ? esc(capName(e.pokemon)) : "—"}${e.safari_area ? " · " + esc(e.safari_area) : ""}
+      · Key seed: 0x${(e.key_seed ?? 0).toString(16).toUpperCase()}</div>
     <div class="section-label">Tools</div>
     <div class="tools">${grid}</div>`);
 }
@@ -606,7 +622,7 @@ function _pickTargetModal(targets, applyFn){
         <th>name</th><th>initial time</th><th>vector ms</th><th>P(success)</th></tr></thead>
       <tbody>${targets.map(t => `<tr class="pick" onclick="_pickTargetUse('${esc(t.id)}')">
         <td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
-        <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td>
+        <td>${fmtVectorMs(t.vector_ms)}</td><td>${(t.p*100).toFixed(1)}%</td>
       </tr>`).join("")}</tbody></table></div>
     <div class="actions">
       <button class="btn" type="button" onclick="closeModal()">Cancel</button>
@@ -674,7 +690,9 @@ function renderNewRun(){
         <div class="field"><label>Initial time (ISO)</label>
           <input id="nr-time" value="${esc(nr.initialTime)}" placeholder="2025-07-24T14:45:56"></div>
         <div class="field"><label>Vector ms</label>
-          <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"></div>
+          <input id="nr-vector" value="${nr.vectorMs ?? ""}" placeholder="300000"
+            oninput="$('nr-vector-preview').innerHTML = fmtVectorMs(this.value)">
+          <div id="nr-vector-preview" class="hint" style="font-family:ui-monospace,monospace">${fmtVectorMs(nr.vectorMs)}</div></div>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
@@ -868,7 +886,8 @@ function renderSeedB(){
       </form>`;
   }
   const ended = (s && s.done && !nr.seedB)
-    ? `<div class="notice warn">Narrowing ended without a unique seed${s.error ? ": " + esc(s.error) : ""}. Check your answers and try again.</div>` : "";
+    ? `<div class="notice warn">Path ended prematurely, no unique seed identified. We recommend
+        you reset your run and try again.${s.error ? ` (${esc(s.error)})` : ""}</div>` : "";
   return `<h3>Seed B — battle seed</h3>${ended}
     <div class="grid2">
       <div class="field"><label>Magikarp level</label>
@@ -1081,8 +1100,8 @@ function renderReviewRuns(){
   const exportMode = !!review.exportMode;
   const exportCount = Object.keys(review.exportSelected || {}).length;
   const saveBar = exportMode
-    ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <span>${exportCount} run(s) selected for export</span>
+    ? `<div id="runs-export-bar" class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span>${exportCount} run(s) selected for export — check the rows below to include them</span>
         <span><button class="btn small" onclick="_runsExportCancel('review')">Cancel</button>
         <button class="btn small primary" onclick="_runsExportSelected('review')">Export selected</button></span>
       </div>`
@@ -1094,8 +1113,9 @@ function renderReviewRuns(){
   const body = review.runs.length === 0
     ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
+        ${exportMode ? `<th>export</th>` : ""}
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>${exportMode ? "export" : "exclude"}</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>${exportMode ? "" : "exclude"}</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = review.dirty[r.id] !== undefined;
           const staged = isDirty ? review.dirty[r.id] : r.excluded;
@@ -1103,16 +1123,21 @@ function renderReviewRuns(){
           // never reads as "disabled" (it's still fully interactive; re-check it to re-enable).
           const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
           const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
-          const checkboxCell = exportMode
-            ? `<td><input type="checkbox" ${review.exportSelected?.[r.id]?"checked":""}
-                onchange="_runsExportToggle('review','${esc(r.id)}',this.checked)"></td>`
-            : `<td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
-          return `<tr${rowBg}>
+          const selected = !!review.exportSelected?.[r.id];
+          // In export mode the WHOLE ROW is the selection control (round 9 feedback: the
+          // trailing checkbox column wasn't visible without scrolling the wide table
+          // horizontally) -- a leading checkbox column mirrors the selection state, but has
+          // no handler of its own; the <tr> click is the single source of truth, so there's
+          // no double-toggle risk from clicking directly on the checkbox.
+          const excludeCell = exportMode ? "" :
+            `<td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
+          return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('review','${esc(r.id)}')"` : ""}>
+          ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
           <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
-          <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
-          ${checkboxCell}
+          ${excludeCell}
           <td${muted}>${reason.startsWith("outlier")
               ? `<span class="badge warn">${esc(reason)}</span>` : esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
@@ -1191,7 +1216,18 @@ async function _exportRunsScope(panelKey, scope){
   if(scope === "manual"){
     state.exportMode = true;
     state.exportSelected = {};
-    render();
+    try{
+      render();
+      // The selection banner + checkbox column render at the top of the runs table, but if
+      // the page was scrolled down (e.g. the user had scrolled to reach a row's Delete
+      // button before opening this modal), the re-render doesn't reset scroll position on
+      // its own -- the new UI can end up rendered off-screen above the viewport, which reads
+      // as "nothing happened" even though the selection UI is there. Bring it into view.
+      $("runs-export-bar")?.scrollIntoView({block: "nearest"});
+    }catch(err){
+      toast("Couldn't switch to manual export selection: " + String(err && err.message ? err.message : err));
+      state.exportMode = false;
+    }
     return;
   }
   const ids = (scope === "all" ? state.runs : state.runs.filter(r => !r.excluded)).map(r => r.id);
@@ -1200,10 +1236,15 @@ async function _exportRunsScope(panelKey, scope){
   if(res.saved) toast(`Exported ${res.count} run(s) to ${res.path}`);
 }
 
-function _runsExportToggle(panelKey, runId, checked){
+// The whole row is the selection control in export mode (round 10 feedback -- the checkbox
+// alone wasn't visible without horizontally scrolling the wide runs table, and moving it to
+// the leading column plus making the row clickable fixes both at once). The checkbox itself
+// carries no handler of its own, so there's a single source of truth here -- no risk of a
+// click on the checkbox and the row's own onclick double-toggling each other.
+function _runsExportToggleRow(panelKey, runId){
   const {state, render} = _RUNS_PANELS[panelKey]();
-  if(checked) state.exportSelected[runId] = true;
-  else delete state.exportSelected[runId];
+  if(state.exportSelected[runId]) delete state.exportSelected[runId];
+  else state.exportSelected[runId] = true;
   render();
 }
 
@@ -1464,11 +1505,12 @@ function renderChartFindTarget(){
         <div class="actions">
           <button class="btn primary" ${(noModel||computing)?"disabled":""} onclick="ctBuildCanon()">
             ${built ? "Recompute / extend chart" : "Compute chart"}</button>
-          ${built ? `<button class="btn" onclick="ctRank()">Rank targets</button>` : ""}
+          ${built ? `<button class="btn" ${ct.ranking?"disabled":""} onclick="ctRank()">${ct.ranking ? "Ranking…" : "Rank targets"}</button>` : ""}
           ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time…</button>` : ""}
         </div>
+        ${ct.ranking ? `<div class="progress-wrap" style="margin-top:8px"><div class="progress-bar indeterminate"></div></div>` : ""}
       </div>
-      ${ct.ranked ? renderRankedTargets() : ""}
+      ${ct.ranked && !ct.ranking ? renderRankedTargets() : ""}
       ${ct.rankedAtTime ? renderRankedAtTime() : ""}`;
   }
 
@@ -1659,9 +1701,12 @@ async function ctSaveWindow(ev){
 }
 
 async function ctRank(){
+  ct.ranking = true;
+  renderChartFindTarget();
   try{
     ct.ranked = await api("chart_rank_best_per_time", ct.expId, ct.chartId, {limit: 15, step: 4});
   }catch(err){ ct.ranked = null; }
+  ct.ranking = false;
   renderChartFindTarget();
 }
 
@@ -1713,7 +1758,7 @@ function renderRankedTargets(){
     return `<div class="empty" style="margin-top:14px">No targets ranked — click Rank targets.</div>`;
   const pLabel = _pLabel(ct.chartId);
   const rows = ct.ranked.top.map((r, i) => `
-    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
+    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${fmtVectorMs(r.vector_ms)}</td>
       <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn small" onclick="ctExamine(${i})">Examine</button>
@@ -1737,7 +1782,7 @@ function renderRankedAtTime(){
     return `<div class="empty" style="margin-top:14px">No candidates found at that time within this chart's window.</div>`;
   const pLabel = _pLabel(ct.chartId);
   const rows = ct.rankedAtTime.map((r, i) => `
-    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${r.vector_ms}</td>
+    <tr><td>${esc(r.initial_time.replace("T"," "))}</td><td>${fmtVectorMs(r.vector_ms)}</td>
       <td>${r.target_delay}</td><td>${(r.p*100).toFixed(1)}%</td><td>${r.sigma.toFixed(1)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn small" onclick="ctExamineAtTime(${i})">Examine</button>
@@ -1761,7 +1806,7 @@ async function ctExamineAtTime(idx){
 function ctOpenSaveTargetAtTime(idx){
   const r = ct.rankedAtTime[idx];
   openModal(`<h3>Save target</h3>
-    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
+    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${fmtVectorMs(r.vector_ms)}
       · ${esc(_pLabel(ct.chartId))} ${(r.p*100).toFixed(1)}%</div>
     <form onsubmit="return ctSaveTargetAtTime(event, ${idx})">
       <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
@@ -1853,7 +1898,7 @@ async function ctShowSecondBreakdown(second){
 async function ctOpenSaveTarget(rankIdx){
   const r = ct.ranked.top[rankIdx];
   openModal(`<h3>Save target</h3>
-    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${r.vector_ms}
+    <div class="info-line">${esc(r.initial_time.replace("T"," "))} · Vector ms ${fmtVectorMs(r.vector_ms)}
       · ${esc(_pLabel(ct.chartId))} ${(r.p*100).toFixed(1)}%</div>
     <form onsubmit="return ctSaveTarget(event, ${rankIdx})">
       <div class="field"><label>Name</label><input name="name" required placeholder="Best shot" autofocus></div>
@@ -1881,7 +1926,7 @@ function renderSavedTargets(){
   const rows = ct.targets.map(t => {
     const chart = ct.charts.find(c => c.id === t.chart_id);
     return `<tr><td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
-      <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td><td>${esc(chart?.name || "—")}</td>
+      <td>${fmtVectorMs(t.vector_ms)}</td><td>${(t.p*100).toFixed(1)}%</td><td>${esc(chart?.name || "—")}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn small" onclick="ctExamineTarget('${esc(t.id)}')">Examine</button>
         <button class="btn small danger" onclick="ctDeleteTarget('${esc(t.id)}')">Delete</button></td>
@@ -1946,7 +1991,7 @@ function renderChartManageData(){
         return `<tr>
           <td>${esc(t.name)}</td><td>${esc(chart?.name || "—")}</td>
           <td>${esc((t.initial_time||"").replace("T"," "))}</td>
-          <td>${t.vector_ms}</td><td>${(t.p*100).toFixed(1)}%</td>
+          <td>${fmtVectorMs(t.vector_ms)}</td><td>${(t.p*100).toFixed(1)}%</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn small" onclick="cmdExamineTarget('${esc(t.id)}')">Examine</button>
             <button class="btn small danger" onclick="cmdDeleteTarget('${esc(t.id)}')">Delete</button>
@@ -2083,7 +2128,9 @@ function renderSafariCompassNewRun(){
         <div class="field"><label>Initial time (ISO)</label>
           <input id="sac-time" value="${esc(sac.initialTime)}" placeholder="2025-07-24T14:45:56"></div>
         <div class="field"><label>Vector ms</label>
-          <input id="sac-vector" value="${sac.vectorMs ?? ""}" placeholder="300000"></div>
+          <input id="sac-vector" value="${sac.vectorMs ?? ""}" placeholder="300000"
+            oninput="$('sac-vector-preview').innerHTML = fmtVectorMs(this.value)">
+          <div id="sac-vector-preview" class="hint" style="font-family:ui-monospace,monospace">${fmtVectorMs(sac.vectorMs)}</div></div>
       </div>
       <div style="display:flex;gap:10px">
         <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
@@ -2189,11 +2236,18 @@ function renderFrameGuideSection(){
   }
   if(!sac.frameGuide){
     const pokefinder = (sac.e.preferences?.target_frame_source === "pokefinder");
+    // An exact key-seed hit already has a known encounter frame (the expedition's configured
+    // key_seed_advances) -- no need to look it up in Pokefinder, so the field is shown
+    // disabled with an explanation instead of asking for a value that's already known.
+    const keySeedHit = sac.seedA.seed === sac.e.key_seed && sac.e.key_seed_advances != null;
     return `<h3>Seed A advances</h3>
       <div class="info-line">Current advance frame: <b>${sac.pinnedFrame}</b></div>
       ${pokefinder ? `
         <div class="field"><label>Target encounter frame (from Pokefinder)</label>
-          <input id="sac-target-frame" type="number" min="0" placeholder="81"></div>
+          <input id="sac-target-frame" type="number" min="0" placeholder="81"
+            ${keySeedHit ? `value="${sac.e.key_seed_advances}" disabled` : ""}></div>
+        ${keySeedHit ? `<div class="hint muted" style="margin-bottom:8px">Seed A matches the
+            key seed, so this advances to key seed advances — no need to look it up.</div>` : ""}
         <button class="btn small primary" onclick="sacPlanFrameRouteFromInput()">Plan route</button>`
         : renderInHouseFrameSearch()}`;
   }
@@ -2403,11 +2457,21 @@ function sacKeepSeedA(){ sac.editingSeedA = false; renderSafariCompassNewRun(); 
 function renderCandBSafari(res){
   if(!res.path_valid)
     return `<div class="status" style="color:var(--danger)">Unrecognized character in the path.</div>`;
+  // Flee flags only exist on each row once the app has narrowed to <=5 candidates (see
+  // app/safari_compass.py's seed_b) — the column itself only appears then, not as an
+  // always-present empty column while candidates are still numerous.
+  const showFlee = res.candidates.some(c => c.flee_flags);
   const rows = res.candidates.slice(0, 60).map(c => `
     <tr><td>${esc(c.seed_hex)}</td><td>${c.frame}</td>
-      <td>${c.delta>=0?"+":""}${c.delta ?? "·"}</td><td>${(c.posterior*100).toFixed(2)}%</td></tr>`).join("");
+      <td>${c.delta>=0?"+":""}${c.delta ?? "·"}</td><td>${(c.posterior*100).toFixed(2)}%</td>
+      ${showFlee ? `<td>${(c.flee_flags && c.flee_flags.length)
+          ? c.flee_flags.map(f => `<span title="${esc(f.tooltip)}" style="cursor:help;color:var(--grass);border-bottom:1px dotted var(--grass)">${esc(f.code)}</span>`).join(", ")
+          : "—"}</td>` : ""}
+    </tr>`).join("");
   return `<div class="status"><b>${res.count}</b> / ${res.total} candidate(s) match</div>
-    <div class="candtable"><table><thead><tr><th>seed</th><th>frame</th><th>δ</th><th>P</th></tr></thead>
+    <div class="candtable"><table><thead><tr><th>seed</th><th>frame</th><th>δ</th><th>P</th>
+      ${showFlee ? `<th title="Guaranteed flee outcomes if you repeat that action from here, looking ahead up to 3 turns">flee flags <span class="hint" style="font-weight:normal">(hover)</span></th>` : ""}
+      </tr></thead>
       <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -2420,38 +2484,44 @@ function renderSeedBSafari(){
       <button class="btn small" onclick="sacResetSeedB()">Change Seed B</button>`;
   }
   const r = sac.seedBResult;
-  let extra = "";
+  // `table` (candidates), `message` (unique-seed/terminal status + the "Use this seed" button)
+  // and `macheteLine` (just Machete's predicted continuation, separate from the observed
+  // path) are kept apart so they can be laid out in the order round 10 feedback asked for:
+  // table first (already visible without scrolling right after an observation), then the
+  // status message, then "Path so far", then the machete prediction, then the input.
+  let table = "", message = "", macheteLine = "";
   if(sac.seedBError){
-    extra = `<div class="notice warn">Couldn't load candidates: ${esc(sac.seedBError)}</div>`;
+    table = `<div class="notice warn">Couldn't load candidates: ${esc(sac.seedBError)}</div>`;
   } else if(sac.seedBLoading){
-    extra = `<div class="muted">Loading candidates…</div>`;
+    table = `<div class="muted">Loading candidates…</div>`;
   } else if(r){
+    table = renderCandBSafari(r);
     if(r.path_valid && r.identified_seed){
-      const obs = sac.path, mpath = r.machete_path;
-      const pathLine = mpath && mpath.length
-        ? `${esc(obs)}<b style="color:var(--grass)">${esc(mpath[0])}</b>${esc(mpath.slice(1))}`
-        : esc(obs);
-      extra = `<div class="info-line">${pathLine}</div>
-        ${mpath ? `<div class="hint muted">Machete predicts a capture path — the bold action is next.</div>`
+      const mpath = r.machete_path;
+      message = `${mpath ? `<div class="hint muted">Machete predicts a capture path — the bold action is next.</div>`
           : `<div class="notice warn">Seed identified, but Machete found no capture path from here.</div>`}
-        <button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>
-        ${renderCandBSafari(r)}`;
+        <button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>`;
+      // overflow-wrap/word-break so a long path wraps instead of overflowing the panel.
+      macheteLine = mpath && mpath.length
+        ? `<div class="hint muted" style="margin-top:6px"><b>Machete path:</b>
+            <code style="overflow-wrap:anywhere;word-break:break-all"><b style="color:var(--grass)">${esc(mpath[0])}</b>${esc(mpath.slice(1))}</code></div>`
+        : "";
     } else if(r.path_valid && r.terminal){
-      extra = `<div class="notice warn">Run ended (${r.terminal}) — ${r.count} seed(s) still match
+      message = `<div class="notice warn">Run ended (${r.terminal}) — ${r.count} seed(s) still match
           ${r.count>1?"(not uniquely identified; check your path or reset).":""}</div>
         ${r.count===1?`<button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>`:""}
-        ${r.count===0?_sacWidenPrompt():""}
-        ${renderCandBSafari(r)}`;
-    } else {
-      extra = `${renderCandBSafari(r)}${r.path_valid && r.count===0 ? _sacWidenPrompt() : ""}`;
+        ${r.count===0?_sacWidenPrompt():""}`;
+    } else if(r.path_valid && r.count===0){
+      message = _sacWidenPrompt();
     }
   }
   return `<h3 id="sac-seedb-anchor">Seed B — battle seed</h3>
+    ${table}
+    ${message}
     ${sac.path ? `<div class="hint muted">Path so far: <code>${esc(sac.path)}</code>
       <button class="btn small" type="button" onclick="sacChangePath()">Change</button></div>` : ""}
-    <div class="field"><label>New observations (m/M/b/B/0-3/F/C, u=undo) — Enter to apply</label>
-      <input id="sac-path-new" placeholder="bbbBbb0321" autocomplete="off"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendPath();}"></div>
+    ${macheteLine}
+    <div class="hint muted" style="margin-top:14px"><b>New observations</b> — Enter to apply</div>
     <div class="hint muted legend">
       <span><b>m</b> mud</span><span><b>M</b> mud, crit</span>
       <span><b>b</b> bait</span><span><b>B</b> bait, crit</span>
@@ -2460,19 +2530,29 @@ function renderSeedBSafari(){
       <span><b>u</b> undo last</span>
       <span><button class="btn small" type="button" onclick="sacShowCheatsheet()">? full guide</button></span>
     </div>
+    <div class="field">
+      <input id="sac-path-new" placeholder="bbbBbb0321" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendPath();}"></div>
     <div class="hint muted">Enter what you actually see, turn by turn, one character per turn
-      (a ball throw is its shake count, 0-3) — press Enter to apply it and narrow.</div>
-    ${extra}`;
+      (a ball throw is its shake count, 0-3) — press Enter to apply it and narrow.</div>`;
 }
 
 async function sacShowCheatsheet(){
+  // Toggle: clicking "? full guide" again while it's already open closes it instead of
+  // re-fetching and reopening the same pane (round 10 feedback).
+  if($("side-pane")){ closeSidePane(); return; }
   const rows = (await api("safari_compass_cheatsheet", sac.e.pokemon))
     .filter(r => r.key !== "J");  // Jane isn't wired up in the app
+  // No quote marks and explicit wrapping on the message column -- .candtable's default
+  // white-space:nowrap is right for the short type/action columns but was cutting off the
+  // longer in-game messages, forcing horizontal scroll to read the letter alongside the
+  // message it corresponds to (round 9 feedback).
   const trs = rows.map(r => {
     const message = r.key === "?x"
       ? "(You know the action but missed the message)"
-      : (r.message === "—" ? "—" : `"${esc(r.message)}"`);
-    return `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.action)}</td><td>${message}</td></tr>`;
+      : (r.message === "—" ? "—" : esc(r.message));
+    return `<tr><td><code>${esc(r.key)}</code></td><td>${esc(r.action)}</td>
+      <td style="white-space:normal">${message}</td></tr>`;
   }).join("");
   openSidePane(`<h3>Seed B — full guide</h3>
     <div class="hint muted" style="margin-bottom:8px">Type the letter for whichever message you see.</div>
@@ -2519,7 +2599,16 @@ async function sacAppendPath(){
     toast("Unrecognized character — use m/M/b/B/0-3/F/C/u only.");
     return;
   }
-  sac.path = (sac.path || "") + add;
+  // 'u' undoes the last observation rather than being appended as a literal character --
+  // the backend's own parser already treats 'u' as an undo action against the candidate
+  // state, but "Path so far" was still showing the raw typed 'u' verbatim (round 10
+  // feedback), so this keeps the displayed path in sync with what actually happened.
+  const chars = (sac.path || "").split("");
+  for(const ch of add){
+    if(ch === "u") chars.pop();
+    else chars.push(ch);
+  }
+  sac.path = chars.join("");
   await sacUpdateSeedB();
   _sacFocusPathInput();
 }
@@ -2528,14 +2617,19 @@ function _sacFocusPathInput(){
   const el = $("sac-path-new");
   if(!el) return;
   // preventScroll so the browser's own "scroll the newly-focused element into view" doesn't
-  // fight with the explicit scroll below (which targets the whole section, not just the
-  // input -- see that scroll's own comment for why).
+  // fight with the explicit scroll below -- the input keeps keyboard focus either way, so it
+  // doesn't need to be the visible part; the candidate table does (see below).
   el.focus({preventScroll: true});
-  // Scroll the WHOLE Seed B section (input + candidate table below it) into view, not just
-  // the input -- scrolling the input alone with block:"end" put it at the very bottom of
-  // the viewport, pushing the table (which comes after it in the DOM) off-screen below,
-  // which is exactly what required the extra manual scroll the user reported.
-  $("sac-seedb")?.scrollIntoView({block: "end", behavior: "smooth"});
+  // The candidate table now renders ABOVE the input (see renderSeedBSafari), specifically so
+  // it's already visible right after submitting an observation. Scroll to the TOP of the Seed
+  // B section (the table's end) rather than the input's own position -- an end-of-container
+  // scroll (tried in round 8) still left the newly-updated table off-screen whenever the
+  // section was taller than the viewport, since it anchored to whatever was at the DOM bottom,
+  // which was the input, not the table. Anchoring to the section's start instead means the
+  // table is the first thing in view, with no scroll needed to read the result of what you
+  // just typed -- the input is still focused, just not necessarily visible, which is fine
+  // since typing doesn't require seeing the caret in this flow.
+  $("sac-seedb-anchor")?.scrollIntoView({block: "start", behavior: "smooth"});
 }
 
 async function sacChangePath(){
@@ -2592,15 +2686,27 @@ async function sacApplyWiden(ev){
 function sacAcceptSeedB(){
   const r = sac.seedBResult;
   if(!r || !r.count) return;
+  // identified_seed implies terminal is null (see app.safari_compass.seed_b) -- i.e. this
+  // candidate hasn't fled or been captured yet -- so a machete_path here means there's still
+  // a live capture opportunity in progress. Committing to Seed B now stops the interactive
+  // narrowing flow, which could be premature; confirm before cutting that short (round 10
+  // feedback).
+  if(r.identified_seed && r.machete_path && r.machete_path.length){
+    const name = capName(sac.e.pokemon) || "the Pokémon";
+    if(!confirm(`Machete has a capture path for this seed, and ${name} hasn't been captured `
+        + `yet — are you sure you want to commit to this seed now?`)) return;
+  }
   const c = r.candidates[0];
   sac.seedB = { seed: c.seed, seed_hex: c.seed_hex, frame: c.frame, path: sac.path };
   renderSafariCompassNewRun();
 }
 
-function sacResetSeedB(){
-  sac.seedB = null; sac.seedBResult = null; sac.path = "";
+// "Change Seed B" retains the observed path rather than clearing it (round 10 feedback) --
+// re-queries against that same path so the candidate table isn't left stale/empty.
+async function sacResetSeedB(){
+  sac.seedB = null;
   sac.seedBExpandFrames = 0; sac.seedBExpandSeconds = 0;
-  renderSafariCompassNewRun();
+  await sacUpdateSeedB();
 }
 
 function openSaveSafariRunModal(){
@@ -2715,8 +2821,8 @@ function renderSafariReviewRuns(){
   const exportMode = !!sreview.exportMode;
   const exportCount = Object.keys(sreview.exportSelected || {}).length;
   const saveBar = exportMode
-    ? `<div class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <span>${exportCount} run(s) selected for export</span>
+    ? `<div id="runs-export-bar" class="notice warn" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span>${exportCount} run(s) selected for export — check the rows below to include them</span>
         <span><button class="btn small" onclick="_runsExportCancel('sreview')">Cancel</button>
         <button class="btn small primary" onclick="_runsExportSelected('sreview')">Export selected</button></span>
       </div>`
@@ -2728,23 +2834,24 @@ function renderSafariReviewRuns(){
   const body = sreview.runs.length === 0
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
+        ${exportMode ? `<th>export</th>` : ""}
         <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>${exportMode ? "export" : "exclude"}</th><th>reason</th><th></th></tr></thead>
+        <th>notes</th><th>${exportMode ? "" : "exclude"}</th><th>reason</th><th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = sreview.dirty[r.id] !== undefined;
           const staged = isDirty ? sreview.dirty[r.id] : r.excluded;
           const rowBg = isDirty ? ' style="background:rgba(255,196,0,.12)"' : "";
           const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
-          const checkboxCell = exportMode
-            ? `<td><input type="checkbox" ${sreview.exportSelected?.[r.id]?"checked":""}
-                onchange="_runsExportToggle('sreview','${esc(r.id)}',this.checked)"></td>`
-            : `<td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
-          return `<tr${rowBg}>
+          const selected = !!sreview.exportSelected?.[r.id];
+          const excludeCell = exportMode ? "" :
+            `<td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
+          return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('sreview','${esc(r.id)}')"` : ""}>
+          ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
           <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
-          <td${muted}>${r.vector_ms ?? "—"}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
+          <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
-          ${checkboxCell}
+          ${excludeCell}
           <td${muted}>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
               onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
@@ -3110,7 +3217,7 @@ async function showUserWarnings(profileId, userId){
   if(!u) return;
   const hardErrors = u.hard_errors || [];
   openModal(`<h3>${esc(u.name)}</h3>
-    ${hardErrors.length ? `<div class="notice danger">Cannot be used in Metronome Compass yet:
+    ${hardErrors.length ? `<div class="notice danger">Cannot be used in Metronome Compass:
         <ul>${hardErrors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
     ${u.warnings.length ? `<div class="notice warn">You might experience more errors in
         metronome compass: <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
@@ -3271,9 +3378,10 @@ async function updateUserWarnings(){
 
   // Creating a user is NEVER blocked here (clayton-b42.10.2) — these are both just
   // heads-up notices; hard_errors specifically means "won't be selectable in Metronome
-  // Compass yet", not "can't be saved".
+  // Compass", not "can't be saved". No "...yet" (round 10 feedback) -- that framing
+  // isn't accurate for every hard error (not knowing Metronome never gets supported).
   if(errors.length){
-    errBox.innerHTML = `This metronome user cannot be used in Metronome Compass yet:
+    errBox.innerHTML = `This metronome user cannot be used in Metronome Compass:
       <ul>${errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>`;
     errBox.hidden = false;
   } else {
@@ -3293,7 +3401,7 @@ async function addUser(ev, profileId){
   ev.preventDefault();
   const res = await api("add_metronome_user", profileId, _readUserForm());
   if(res.hard_errors && res.hard_errors.length)
-    toast("Added, but cannot be used in Metronome Compass yet: " + res.hard_errors.join("; "));
+    toast("Added, but cannot be used in Metronome Compass: " + res.hard_errors.join("; "));
   else if(res.warnings && res.warnings.length)
     toast("Added, but: " + res.warnings.join("; "));
   openProfile(profileId);

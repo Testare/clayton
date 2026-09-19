@@ -56,8 +56,8 @@ class MetronomeUser:
         """Human-readable reasons this user may be unreliable for calibration (empty ==
         no concerns). Advisory only — the user is still fully creatable and selectable in
         Metronome Compass; the UI frames these as "you might experience more errors in
-        metronome compass", not a block. See hard_errors for the (much narrower) set of
-        issues that DO block selection in Metronome Compass specifically."""
+        metronome compass", not a block. See hard_errors for the set of issues that DO
+        block selection in Metronome Compass specifically."""
         warnings: list[str] = []
         if self.species != _REQUIRED_SPECIES:
             warnings.append(
@@ -67,23 +67,30 @@ class MetronomeUser:
         if (self.ability and self.ability != _REQUIRED_ABILITY
                 and self.ability not in HARD_ERROR_ABILITIES):
             warnings.append(f"ability should be {_REQUIRED_ABILITY} (this is {self.ability})")
-        if not any(m.lower() == _REQUIRED_MOVE.lower() for m in self.moveset):
-            warnings.append("does not know Metronome")
-        if not self.lagging_tail:
-            warnings.append("is not holding a Lagging Tail")
         return warnings
 
     def hard_errors(self) -> list[str]:
         """Reasons this user can't be SELECTED in Metronome Compass (e.g. New Run's user
         picker) — but a user can still always be created, viewed, and removed on the
         Profile page with these present; nothing here blocks add_metronome_user. The UI
-        frames these as "cannot be used in metronome compass yet"."""
+        frames these as "cannot be used in Metronome Compass" (round 10 feedback: no "...
+        yet" — that phrasing is only accurate for the hard-error abilities, which might
+        genuinely gain support later; not knowing Metronome never will, since Metronome
+        Compass has no way to calibrate off a user that can't use the move at all). Not
+        knowing Metronome and not holding a Lagging Tail moved here from
+        suitability_warnings (round 9 feedback) — Metronome Compass can't calibrate off a
+        user that can't use the move or won't hold still for the timing check, so these
+        are hard blocks, not advisory."""
         errors: list[str] = []
         if self.ability in HARD_ERROR_ABILITIES:
             errors.append(
                 f"{self.ability} changes move-effect RNG behavior this toolkit models for "
                 f"calibration — a metronome user with this ability can't be used"
             )
+        if not any(m.lower() == _REQUIRED_MOVE.lower() for m in self.moveset):
+            errors.append("does not know Metronome")
+        if not self.lagging_tail:
+            errors.append("is not holding a Lagging Tail")
         return errors
 
     @property

@@ -70,13 +70,14 @@ class TestMetronomeUsers(unittest.TestCase):
         self.assertTrue(good.is_suitable)
         self.assertEqual(good.suitability_warnings(), [])
 
+        # Not knowing Metronome and not holding a Lagging Tail are hard errors (round 9
+        # feedback), not soft warnings -- only the off-species check is still advisory here.
         bad = MetronomeUser(id=2, name="bad", species="Ditto", moveset=[], lagging_tail=False)
         w = bad.suitability_warnings()
         self.assertFalse(bad.is_suitable)
         self.assertTrue(any("Chansey" in m for m in w))
-        self.assertTrue(any("Metronome" in m for m in w))
-        self.assertTrue(any("Lagging Tail" in m for m in w))
-        self.assertEqual(bad.hard_errors(), [])  # unsuitable, but not a hard error
+        self.assertFalse(any("does not know Metronome" in m for m in w))
+        self.assertFalse(any("Lagging Tail" in m for m in w))
 
     def test_hard_errors(self):
         clean = MetronomeUser(id=1, name="ok", **_GOOD_USER)
@@ -93,6 +94,23 @@ class TestMetronomeUsers(unittest.TestCase):
             # selectability), even though suitability_warnings() itself is empty here.
             self.assertEqual(blocked.suitability_warnings(), [])
             self.assertFalse(blocked.is_suitable)
+
+    def test_not_knowing_metronome_is_a_hard_error(self):
+        u = MetronomeUser(id=1, name="no-metronome", **{**_GOOD_USER, "moveset": ["Tackle"]})
+        errs = u.hard_errors()
+        self.assertTrue(any("does not know Metronome" in e for e in errs))
+        self.assertFalse(u.is_suitable)
+        # Still fully creatable -- Profile.add_metronome_user never blocks on this.
+        p = Profile(name="Silver")
+        created = p.add_metronome_user("no-metronome", **{**_GOOD_USER, "moveset": ["Tackle"]})
+        self.assertEqual(len(p.metronome_users), 1)
+        self.assertTrue(created.hard_errors())
+
+    def test_not_holding_lagging_tail_is_a_hard_error(self):
+        u = MetronomeUser(id=1, name="no-tail", **{**_GOOD_USER, "lagging_tail": False})
+        errs = u.hard_errors()
+        self.assertTrue(any("Lagging Tail" in e for e in errs))
+        self.assertFalse(u.is_suitable)
 
     def test_profile_has_valid_user(self):
         p = Profile(name="Silver")

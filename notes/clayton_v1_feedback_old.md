@@ -1,3 +1,91 @@
+(Note to self: bbBbbb001100)
+# Feedback 10
+## General
+* The new UI for Vector ms looks great, the color is just a little too vibrant/orange (Might make people think something is wrong). Can we make it so that it is obviously visible, but not so vibrant that people think there is something wrong with the number?
+
+## Profiles
+* I think I need to make a slight amendment - While we might eventually add support for Serene Grace and other abilties (hence the "yet" in the message), we will never support metronome users that do not know metronome, it doesn't make sense. We can either just remove the yet, or treat not knowing metronome as its own category.
+
+## Review data - Export runs
+* There is STILL no obvious UI to select each row. I suggested adding a column to the beginning each row with a checkbox for export (there are no problems with the banner showing up), so the user could actuallly select the rows for export, but nothing like that exists, and clicking on the row itself doesn't do anything either. I took a screenshot to help you. This applies to both Metronome Compass and Safari Compass.
+
+## Safari Compass
+* With the path observations being below the table now, we can finally see the seed table without scrolling after giving input. But, we should re-order the other elements as well. Basically the order should probably be something like this:
+    * Candidate seed table (And the header with the count of matching seeds out of total)
+    * The messages about unique seed, with use the "Use this seed" button (When it is visible)
+    * Path so far
+    * Machete path
+    * New Observations Input section
+* Since we still can't scroll to the bottom on enter, maybe move the "m mud M mud, crit" mini guide (And the full guide button) to be right under the "New observations" header, and change it to just "New observations - Enter to apply"
+* When the user types "u" to undo, it should remove the last element in the "Path so far", not add a u to it.
+* When we hit "Change seed B", it should retain the observed path we just had.
+* When we hit "Use this seed", if there is a machete path for the seed and the metang has not been captured yet, we should prompt them asking them if they are sure they want to commit the seed when there is a machete path and the <pokemon> has not been captured yet.
+
+# Feedback 9
+
+## Profile
+* The following are hard errors, not soft errors, they should prevent metronome user from being used:
+  * Not knowing the move metronome
+  * Not holding a Lagging Tail
+
+## Expedition home page
+* Pokemon name should be capitalized
+* "key seed" -> "Key seed:"
+
+## General
+I don't know if this is possible, but can we have it so the last 3 digits of Vector ms are a slightly different color, to make it easier not to lose count of zeroes?
+
+## Metronome Compass
+* When narrowing ended without a unique seed, the message should be "Path ended prematurely, no unique seed identified. We recommend you reset your run and try again."
+* When exporting runs, if I choose "Choose manually...", there is no UI element allowing me to choose runs to export.
+
+## Safari Chart
+* When "Rank targets" is clicked, there should be a spinner or loading bar while it loads the chart report. If the chart report is created automatically after the chart is computed, it should show the same ui then.
+
+## Safari Compass
+* When we hit our key seed exactly for Seed A, Seed A advances should disable the "target frame" field, with a message that Seed A matches key seed, advancing to key seed advances.
+* STILL have to scroll down after putting in the input in Seed B. Maybe the solution is to put the table above the input?
+* Got a weird message about "Cannot throw ball, pokemon has fled or been captured" when the cnadidates have all been narrowed down. Took a screnshot. I think it might happen when a seed is eliminated that was previously being used to generate flee flags.
+* The full guide sidebar isn't wide enough to see the whole in game message on each row and also see the letter to type. I think it might be okay to make the sidebar a little wider, drop the quote marks around the messages, and allow them to wrap? Or at least give us the ability to resize the sidebar.
+
+# Feedback 8
+
+## Profile
+* Change error messages
+  * "This metronome user can't be created" -> "This metronome user cannot be used in metronome compass yet"
+  * "The metronome user won't be suitable for calibration" -> "You might experience more errors in metronome compass"
+* To be clear, the user should be able to create whatever metronome user they want - They just won't be able to select them in Metronome Compass
+
+## Expedition
+* When Pokemon is selected, safari area should be limited to only areas where you can find that pokemon
+* If that pokemon has block requirements (Like Metang), the safari block scores should display how many are required (Like changed the titled "Peak (required: 56)") and turn red if the number required is less than the number put in. Our in-house pokemon finder solution for Safari Compass/Seed A Advances should error if requirements rae not met
+* I've changed my mind - Remove the configuration for number of chatots, it is more confusing and catching chatot is much easier than most of the effort needed for this project.
+
+## Import/Export
+* We can import/export models, expeditions and profiles, which is good.
+* We should be also be able to import/export compass and safari runs as jsonl files. When running export, we should prompt if they want to export all runs, all runs except excluded, or to manually choose which runs to export, where we can add a temporary "export" column with checkboxes have a banner similar to the "save changes" banner to "Export selected"
+
+## Find Target
+* Once agin, the "top ranked" only has a success chance of 28.5%, but the initial time for a different time (2000-01-01 14:00:11) is 28.6%. Plase make sure ranked targets is truly finding the best target. 
+* The table for ranked targets and best targets refers to initial time as "Boot time", we should not change some standard terminology.
+
+## Safari Compass - New Run
+* The "Skipped nearer frame(s) with an ambiguous margin" messaging is confusing
+  * For Seed A 0x0B0E02CC, I input KPK, and apparently it found a metang 5 frames away so it is only doing 5 elm calls, but it output "(skipped 6 nearer frame(s0 with an ambiguous margin)", which is pretty confusing.
+  * More importantly, I chose an aim for a target of 300 frames, and it actually gave me exactly 300 frames, but it says it (skipped 2 nearer frame(s) with an ambiguous margin). How could it have skipped frames when it is exactly on target?
+  * Explain to me why these messages were what they said.
+* Seed advances should output the user's calculated current frame when it is found
+* After determining seed advances, Seed B input field should be focused automatically
+* When widening search window, default to 1 second instead of 2.
+* Once again I'm having to scroll down after inputting a path change in order to see the seed table.
+
+## New Feature - Flee flags
+* This feature is less UI focused than library focused perhaps, but it would be nice to have a tool to help prevent metang fleeing while we're still trying to identify it or find a machete path.So I'm thinking of introducing "Flee flags". Please create a bead for this idea, and once you've implemented and commited the rest of the feedback get started on it.
+* When there are 5 or less seeds remaining in the Seed B candidate pool for Safari Compass, we start calculating these flee flags
+* We look ahead 3 turns for each remaining seed, sort of a mini-machete, and gather information for each choice. If the pokemon is guaranteed to flee in 3 turns if the user throws a ball here, for example, we could put the flag "F03", or if it will flee in 2 turns if the user throws bait, "Fb2". If it is guaranteed to flee no matter what you do, we can just output "F2" if it will flee in 2 turns, or "F" if it is going to flee this turn, etc.
+* We add a column for "Flee flags" to the candidate seed table and add these there. If there are multiple we can separate them by commas ("F03, Fb2, Fm2").
+* In the table, each flag should have a tooltip that explains what they mean (For example, hovering over "F02" should say "<Pokemon> is guaranteed to flee in 2 turns if you throw a ball")
+
 # Feedback 7
 
 ## Profile
