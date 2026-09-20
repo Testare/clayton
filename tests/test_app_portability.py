@@ -101,6 +101,19 @@ class TestPortability(unittest.TestCase):
         self.assertFalse(res["merged"])
         self.assertNotEqual(res["profile_id"], self.pid)
         self.assertEqual(len(self.api.list_profiles()), 2)
+        # Round 13 feedback: two profiles sharing the exact same, indistinguishable name was
+        # confusing -- the kept-both copy gets "(2)" appended.
+        self.assertEqual(res["profile_name"], "Silver (2)")
+        self.assertEqual(self.api.get_profile(res["profile_id"])["name"], "Silver (2)")
+        self.assertEqual(self.api.get_profile(self.pid)["name"], "Silver")  # original untouched
+
+    def test_repeated_collisions_number_upward(self):
+        env = self.api.export_profile_bundle(self.pid)
+        first = self.api.import_profile_bundle(env, on_collision="new")
+        self.assertEqual(first["profile_name"], "Silver (2)")
+        second = self.api.import_profile_bundle(env, on_collision="new")
+        self.assertEqual(second["profile_name"], "Silver (3)")
+        self.assertEqual(len(self.api.list_profiles()), 3)
 
     def test_collision_resolved_merge_folds_into_existing_profile(self):
         env = self.api.export_profile_bundle(self.pid)
@@ -193,6 +206,25 @@ class TestRunsJsonlPortability(unittest.TestCase):
         self.assertEqual(by_kind["metronome"]["tag"], "300s")
         self.assertEqual(by_kind["safari"]["b_seed"]["frame"], 18700)
 
+    def test_import_stamps_saved_at_with_import_time_keeping_file_order(self):
+        # Round 13 feedback: an imported run's saved_at should reflect when it was IMPORTED
+        # (so it groups at the top of the Runs table, sorted by saved_at), not whatever it
+        # carried from the export -- with consecutive rows nudged forward by a millisecond
+        # each so they don't collide and keep the file's own order.
+        import datetime as dt
+        from app import portability
+        rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"], self.run_b["id"]])
+        before = dt.datetime.now()
+        pid2 = self.api.create_profile({"name": "SoulSilver"})["id"]
+        imported = portability.import_runs_jsonl(self.api._store, pid2, rows)
+        after = dt.datetime.now()
+
+        t0 = dt.datetime.fromisoformat(imported[0]["saved_at"])
+        t1 = dt.datetime.fromisoformat(imported[1]["saved_at"])
+        self.assertLessEqual(before, t0)
+        self.assertLessEqual(t1, after + dt.timedelta(seconds=1))
+        self.assertEqual((t1 - t0).total_seconds(), 0.001)  # exactly 1ms apart, file order
+
     def test_import_requires_an_existing_profile(self):
         from app import portability
         rows = portability.export_runs_jsonl(self.api._store, [self.run_a["id"]])
@@ -266,6 +298,17 @@ class TestExpeditionPortability(unittest.TestCase):
         self.assertNotIn("collision", res)
         self.assertNotEqual(res["expedition_id"], self.eid)
         self.assertEqual(len(self.api.list_expeditions(self.pid)), 2)
+        # Round 13 feedback: distinguish the kept-both copy by name.
+        self.assertEqual(res["expedition_name"], "Metang (2)")
+        self.assertEqual(self.api.get_expedition(self.eid)["name"], "Metang")  # original untouched
+
+    def test_repeated_expedition_collisions_number_upward(self):
+        env = self.api.export_expedition(self.eid)
+        first = self.api.import_expedition(self.pid, env, on_collision="copy")
+        self.assertEqual(first["expedition_name"], "Metang (2)")
+        second = self.api.import_expedition(self.pid, env, on_collision="copy")
+        self.assertEqual(second["expedition_name"], "Metang (3)")
+        self.assertEqual(len(self.api.list_expeditions(self.pid)), 3)
 
     def test_collision_replace_overwrites_in_place(self):
         env = self.api.export_expedition(self.eid)

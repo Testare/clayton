@@ -311,7 +311,18 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
                 refined_per_time.append(best_refined)
             else:
                 refined_per_time.append(r)
-        per_time = refined_per_time
+        # THE ACTUAL ROOT CAUSE of the "Ranked Targets misses a target that's clearly better"
+        # bug reported across rounds 7/8/11 despite three earlier attempts at the coarse-sweep
+        # angle: per_time entered this loop p-desc sorted (rank_boot_marginal's own sort), but
+        # refining updates each row's `p` in place and the list was never re-sorted afterward.
+        # best_per_scenario's own docstring requires p-desc input -- it just keeps the FIRST
+        # row seen per (second, mdmsh) key via setdefault, trusting sort order to make that the
+        # highest one. Fed the STALE (coarse-order) sort, it could just as easily keep a lower-p
+        # row over a higher-p one that happened to have a worse COARSE score (and so sorted
+        # later) but a better REFINED one -- silently discarding the true best for that
+        # scenario. Confirmed directly against a real profile/chart/canon map: without this
+        # re-sort, best_per_scenario's top-3 differed from the correctly-sorted version's.
+        per_time = sorted(refined_per_time, key=lambda r: (-r["p"], r["M"]))
 
     overall = best_per_scenario(per_time)
     limit = int(params.get("limit", 10))

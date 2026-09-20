@@ -285,6 +285,51 @@ class TestRankBestPerTimeRefinesBeforeCutting(unittest.TestCase):
             self.assertEqual(best["initial_time"], target_time.strftime(chart._TIME_FMT))
             self.assertGreater(best["p"], 0.85)  # the refined value, not the coarse ~0.63
 
+    def test_per_time_is_resorted_by_refined_p_before_best_per_scenario(self):
+        """The ACTUAL root cause behind the 'Ranked Targets misses an obviously-better
+        target' bug reported (and NOT fixed) across rounds 7, 8, and 11's first attempt:
+        per_time enters the refine loop p-desc sorted by COARSE score (rank_boot_marginal's
+        own sort), but refining updates each row's `p` in place -- the list was never
+        re-sorted by the NEW (refined) p afterward. best_per_scenario's own docstring
+        requires p-desc sorted input: it keeps only the FIRST row seen per (second, mdmsh)
+        key via dict.setdefault, trusting sort order to make that the highest-p one. Fed
+        stale (coarse-order) input, it can discard a genuinely higher-refined-p row in favor
+        of a lower one that merely had a better COARSE score (and so sorted earlier) --
+        confirmed directly against a real profile/chart/canon map, where this was silently
+        dropping the actual best target from the ranked list entirely. This test doesn't
+        need two boot times to collide on the same (second, mdmsh) scenario (rare to
+        engineer by hand, common with thousands of real candidate times) -- it instead
+        verifies the underlying invariant directly: whatever best_per_scenario is actually
+        called with must already be in refined-p-desc order, regardless of what the coarse
+        order was."""
+        from unittest.mock import patch
+        import app.chart as chart_mod
+        with _isolated_cwd():
+            wide_chart = {**_CHART, "setup_delay_seconds": 0, "max_target_seconds": 15}
+            filler_times, target_time, models = self._hand_built_canon(wide_chart)
+            candidate_times = filler_times + [target_time]
+
+            captured = {}
+            real_best_per_scenario = chart_mod.best_per_scenario
+            def _spy(ranked):
+                captured["ranked"] = list(ranked)
+                return real_best_per_scenario(ranked)
+
+            with patch("app.chart.get_times", return_value=(0, candidate_times)), \
+                 patch("app.chart.best_per_scenario", side_effect=_spy):
+                chart_mod.rank_best_per_time(_EXP, wide_chart, models, {"limit": 3, "step": 4})
+
+            ranked = captured["ranked"]
+            self.assertEqual(len(ranked), 7)
+            # The target boot time's coarse score is the WORST of the 7 (see
+            # _hand_built_canon's own comment) but its REFINED score is the best -- if the
+            # list fed to best_per_scenario were still coarse-ordered, this would be false.
+            self.assertTrue(all(a["p"] >= b["p"] for a, b in zip(ranked, ranked[1:])),
+                            "per_time passed to best_per_scenario is not p-desc sorted by "
+                            "the REFINED p -- best_per_scenario's setdefault will silently "
+                            "keep the wrong row whenever two boot times collide on scenario")
+            self.assertEqual(ranked[0]["initial_time"], target_time)
+
     def test_a_true_peak_far_from_the_single_best_coarse_point_still_surfaces(self):
         """Round 11 feedback: refine_near's radius around only the SINGLE best coarse-sampled
         point per boot time still isn't enough -- if a decoy sits exactly on a step=4 grid

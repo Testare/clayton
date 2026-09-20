@@ -121,7 +121,49 @@ class Facade:
             artifact=standard_calibration_modelset(), active=True)
         self._store.write(_CALIBRATION_MODELS, doc.id, doc.to_dict())
 
+    def update_profile(self, profile_id: str, fields: dict) -> dict:
+        """Update a profile's own settings (name, trainer name, version, console note) after
+        creation (round 13 feedback) -- everything else (metronome users, etc.) is
+        untouched."""
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("a profile needs a name")
+        p = self._load_profile(profile_id)
+        p.name = name
+        p.trainer_name = fields.get("trainer_name", "")
+        p.version = fields.get("version", "")
+        p.console = fields.get("console", "")
+        self._save_profile(p)
+        return self.get_profile(profile_id)
+
+    def profile_delete_summary(self, profile_id: str) -> dict:
+        """What delete_profile would remove (or, if expeditions exist, what's blocking it --
+        see delete_profile), for a confirmation prompt."""
+        expeditions = self.list_expeditions(profile_id)
+        runs = len(self.list_runs(profile_id, "metronome")) + len(self.list_runs(profile_id, "safari"))
+        return {"expeditions": len(expeditions), "expedition_names": [e["name"] for e in expeditions],
+               "runs": runs, "calibration_models": len(self.list_calibration_models(profile_id)),
+               "metronome_users": len((self._store.read(_PROFILES, profile_id) or {})
+                                      .get("metronome_users", []))}
+
     def delete_profile(self, profile_id: str) -> bool:
+        """Deletes the profile and its own directly-owned data (every run, every calibration
+        model -- metronome users live inline on the profile document, so they're removed
+        automatically with it). Does NOT delete this profile's expeditions (round 13
+        feedback) -- refuses instead while any exist, so the user deletes/reviews them
+        individually (each has its own Delete on the Configure page) rather than losing them
+        as a side effect of deleting the profile."""
+        expeditions = self.list_expeditions(profile_id)
+        if expeditions:
+            names = ", ".join(e["name"] for e in expeditions)
+            raise ValueError(
+                f"This profile still has {len(expeditions)} expedition(s) ({names}) -- "
+                "delete those first, then delete the profile.")
+        for kind in ("metronome", "safari"):
+            for r in self.list_runs(profile_id, kind):
+                self._store.delete(_RUNS, r["id"])
+        for m in self.list_calibration_models(profile_id):
+            self._store.delete(_CALIBRATION_MODELS, m["id"])
         return self._store.delete(_PROFILES, profile_id)
 
     # -- metronome users --------------------------------------------------
@@ -205,9 +247,18 @@ class Facade:
                 "name": e.name,
                 "profile_id": e.profile_id,
                 "pokemon": e.pokemon,
+                "completed": e.completed,
             })
-        out.sort(key=lambda d: d["name"].lower())
+        # Completed expeditions sort below incomplete ones (round 12 feedback), name within
+        # each group.
+        out.sort(key=lambda d: (d["completed"], d["name"].lower()))
         return out
+
+    def set_expedition_completed(self, expedition_id: str, completed: bool) -> dict:
+        e = self._load_expedition(expedition_id)
+        e.completed = bool(completed)
+        self._store.write(_EXPEDITIONS, e.id, e.to_dict())
+        return e.to_dict()
 
     def get_expedition(self, expedition_id: str) -> dict:
         return self._load_expedition(expedition_id).to_dict()
@@ -234,7 +285,19 @@ class Facade:
         self._store.write(_EXPEDITIONS, e.id, e.to_dict())
         return e.to_dict()
 
+    def expedition_delete_summary(self, expedition_id: str) -> dict:
+        """What delete_expedition would remove, for a confirmation prompt."""
+        return {"charts": len(self.list_charts(expedition_id)),
+               "targets": len(self.list_targets(expedition_id))}
+
     def delete_expedition(self, expedition_id: str) -> bool:
+        """Deletes the expedition and everything scoped to it (its charts and targets).
+        Runs, calibration models, and metronome users live on the PROFILE, not the
+        expedition (see app/models.py's Run/MetronomeUser docs), so they're untouched."""
+        for c in self.list_charts(expedition_id):
+            self._store.delete(_CHARTS, c["id"])
+        for t in self.list_targets(expedition_id):
+            self._store.delete(_TARGETS, t["id"])
         return self._store.delete(_EXPEDITIONS, expedition_id)
 
     # -- reference data ---------------------------------------------------

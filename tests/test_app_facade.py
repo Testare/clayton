@@ -167,6 +167,62 @@ class TestFacade(unittest.TestCase):
         self.assertIn("Peak", areas)
         self.assertGreaterEqual(len(areas), 12)
 
+    def test_delete_expedition_cascades_its_charts_and_targets(self):
+        # Round 12 feedback: a Delete button needs an accurate "what will be deleted"
+        # summary, which only makes sense if delete actually cascades rather than leaving
+        # orphaned charts/targets pointing at a gone expedition_id.
+        p = self.api.create_profile({"name": "P1"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
+        c = self.api.create_chart(e["id"], {"name": "Balls", "strategy_name": "only-balls",
+                                            "criteria_name": "capture"})
+        self.api.save_target(e["id"], c["id"], {"name": "T1", "initial_time": "2025-07-24T14:45:56", "vector_ms": 300000, "target_delay": 100, "p": 0.5, "sigma": 10.0})
+
+        summary = self.api.expedition_delete_summary(e["id"])
+        self.assertEqual(summary, {"charts": 1, "targets": 1})
+
+        self.assertTrue(self.api.delete_expedition(e["id"]))
+        self.assertEqual(self.api.list_charts(e["id"]), [])
+        self.assertEqual(self.api.list_targets(e["id"]), [])
+        self.assertIsNone(self.api._store.read("expeditions", e["id"]))
+
+    def test_delete_profile_refuses_while_expeditions_exist(self):
+        # Round 13 feedback: deleting a profile must NOT delete its expeditions -- the
+        # earlier (round 12) behavior cascaded them away, which turned out to be the wrong
+        # call. delete_profile now refuses outright while any exist, rather than silently
+        # orphaning them (their profile_id would point at nothing) or silently skipping them
+        # (which would contradict "delete everything the profile owns").
+        p = self.api.create_profile({"name": "P1"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
+
+        summary = self.api.profile_delete_summary(p["id"])
+        self.assertEqual(summary["expeditions"], 1)
+        self.assertEqual(summary["expedition_names"], ["Metang"])
+
+        with self.assertRaises(ValueError):
+            self.api.delete_profile(p["id"])
+        # Nothing was touched.
+        self.assertIsNotNone(self.api._store.read("profiles", p["id"]))
+        self.assertIsNotNone(self.api._store.read("expeditions", e["id"]))
+
+    def test_delete_profile_cascades_runs_and_models_once_expeditions_are_gone(self):
+        p = self.api.create_profile({"name": "P1"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
+        self.api.save_metronome_run(p["id"], {"tag": "t", "vector_ms": 300000,
+                                              "a_seed": {"seed": 1}, "b_seed": {"seed": 2}})
+        self.api.add_metronome_user(p["id"], {"name": "Chansey", **_GOOD_USER})
+        self.assertTrue(self.api.delete_expedition(e["id"]))  # delete it individually first
+
+        summary = self.api.profile_delete_summary(p["id"])
+        self.assertEqual(summary["expeditions"], 0)
+        self.assertEqual(summary["runs"], 1)
+        self.assertGreaterEqual(summary["calibration_models"], 1)  # Standard, auto-created
+        self.assertEqual(summary["metronome_users"], 1)
+
+        self.assertTrue(self.api.delete_profile(p["id"]))
+        self.assertEqual(self.api.list_runs(p["id"], "metronome"), [])
+        self.assertEqual(self.api.list_calibration_models(p["id"]), [])
+        self.assertIsNone(self.api._store.read("profiles", p["id"]))
+
     def test_list_safari_areas_for_pokemon(self):
         self.assertEqual(self.api.list_safari_areas_for_pokemon("metang"), ["Mountain"])
 

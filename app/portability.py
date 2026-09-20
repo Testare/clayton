@@ -77,6 +77,21 @@ def _find_by_name(store, collection: str, name: str, **extra_match) -> dict | No
     return None
 
 
+def _unique_name(store, collection: str, name: str, **extra_match) -> str:
+    """`name`, or the next "<name> (N)" that doesn't collide within `extra_match`'s scope.
+    Used when an import keeps a separate copy alongside a same-named existing doc (round 13
+    feedback -- two indistinguishable same-named entries was confusing; append (2), or (3)
+    if THAT'S also taken, etc.)."""
+    if _find_by_name(store, collection, name, **extra_match) is None:
+        return name
+    n = 2
+    while True:
+        candidate = f"{name} ({n})"
+        if _find_by_name(store, collection, candidate, **extra_match) is None:
+            return candidate
+        n += 1
+
+
 def _const_map(old_value, new_value) -> dict:
     """{old_value: new_value} — a one-entry _import_children `repoint` mapping for a field
     every doc in a batch shares the SAME old value for (e.g. every doc in a profile bundle
@@ -138,6 +153,8 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
         exp["id"] = existing["id"]
     else:
         exp["id"] = _new_id()
+        if existing:  # collision resolved as "keep both" -- distinguish by name
+            exp["name"] = _unique_name(store, "expeditions", name, profile_id=profile_id)
     store.write("expeditions", exp["id"], exp)
 
     exp_id_map = {old_exp_id: exp["id"]}
@@ -146,7 +163,7 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
                               expedition_id=exp_id_map)
     targets = _import_children(store, "targets", data.get("targets", []), {},
                                expedition_id=exp_id_map, chart_id=chart_id_map)
-    return {"expedition_id": exp["id"],
+    return {"expedition_id": exp["id"], "expedition_name": exp["name"],
             "counts": {"charts": len(charts), "targets": len(targets)}}
 
 
@@ -180,14 +197,26 @@ def export_runs_jsonl(store, run_ids: list[str]) -> list[dict]:
 def import_runs_jsonl(store, profile_id: str, rows: list[dict]) -> list[dict]:
     """Import a list of run dicts (from a jsonl export) into `profile_id` as fresh copies
     — new ids, re-pointed profile_id, everything else (tag/notes/excluded/seeds/...)
-    carried through verbatim. Always a copy, never overwrites an existing run."""
+    carried through verbatim. Always a copy, never overwrites an existing run.
+
+    `saved_at` is overwritten with the import time (round 13 feedback), not whatever it
+    carried in the export -- a run's *original* save time isn't very meaningful once it's
+    landed on a different profile/machine, and the Runs table sorts by saved_at, so this
+    groups an import together at the top instead of scattering it wherever the old
+    timestamps happened to fall. Consecutive rows get the import instant nudged forward by
+    one extra millisecond each so they don't collide and keep the file's own order --
+    invisible in the Runs table, which only ever renders saved_at to whole-second precision.
+    """
     if store.read("profiles", profile_id) is None:
         raise ValueError(f"no profile with id {profile_id!r}")
+    import datetime as _dt
+    now = _dt.datetime.now()
     out = []
-    for row in rows:
+    for i, row in enumerate(rows):
         doc = dict(row)
         doc["id"] = _new_id()
         doc["profile_id"] = profile_id
+        doc["saved_at"] = (now + _dt.timedelta(milliseconds=i)).isoformat(timespec="milliseconds")
         store.write("runs", doc["id"], doc)
         out.append(doc)
     return out
@@ -254,6 +283,8 @@ def import_profile_bundle(store, envelope: dict, on_collision: str | None = None
         target_profile_id = existing["id"]
     else:
         profile["id"] = _new_id()
+        if existing:  # collision resolved as "keep both" -- distinguish by name
+            profile["name"] = _unique_name(store, "profiles", name)
         store.write("profiles", profile["id"], profile)
         target_profile_id = profile["id"]
 
@@ -288,7 +319,7 @@ def import_profile_bundle(store, envelope: dict, on_collision: str | None = None
             store.write("calibration_models", m["id"], m)
 
     return {
-        "profile_id": target_profile_id, "profile_name": name, "merged": merging,
+        "profile_id": target_profile_id, "profile_name": profile.get("name", name), "merged": merging,
         "counts": {"expeditions": len(expeditions), "charts": len(charts),
                   "targets": len(targets), "runs": len(runs), "calibration_models": len(models)},
     }

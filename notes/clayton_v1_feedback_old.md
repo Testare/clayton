@@ -1,4 +1,49 @@
 (Note to self: bbBbbb001100)
+# Feedback 13
+
+## Profiles/Expeditions
+
+* Deleting a profile should not delete related expeditions.
+* When importing a profile or expedition that matches an existing one, and we chose to keep both, can we add (2) after the name? Or if that name already exists, add (3), etc.
+* When importing runs, change the time saved to the time that the data was imported, maybe with a slight time increase to keep them in import order (Can we add a millisecond to each consecutive time in the data, but hide that millisecond from the display table?)
+* Can we add an option to configure profile settings after creation? (Such as name, trainer name, etc.)
+
+## Safari Compass 
+* Hitting enter in the Optional look for <pokemon> near advance field should move focus to the New elm calls heard field.
+
+# Feedback 12
+
+## General
+* Stop putting "..." after buttons
+## Profiles/Expeditions
+* The order of the Import New buttons on profile and expedition are flipped from each other. Make them consistent, and probably rename them both to "New" and "Import"
+* When I hit "Import expedition...", I get a prompt asking which profile to import the expedition to, then hit "Import..." but nothing happens, it doesn't even ask me to find a file to import.
+* I also don't have a way to delete expeditions or profiles. We should have a button on the page for managing profiles to delete it and likewise on the Expedition configuration page (Though obviously with a prompt that asks if we're sure, since deleting an expedition/profile is a big deal. Be sure it includes the details of what will be deleted)
+* We also should have a way to mark expeditions as complete. 
+  * We should have a button in the "Configure expedition" page next to the Save/cancel buttons for "Mark as complete". If it is already marked complete, change it to "Mark as incomplete"
+  * Expeditions marked complete should have a star or checkmark next to their name on the expedition selection page, and should be positioned below the expeditions not yet complete.
+  * If we save a run in Safari compass with a successful capture and Seed A matches the key seed, we should ask the user if they want to mark the expedition as complete after they save.
+
+## Clayton Safari Compass
+* When I select the text in the widen search box and let go of the mouse outside the popup window, it closes pre-emptively.
+# Feedback 11
+## Import/Export 
+When exporting runs, let's drop the
+* When exporting runs from metronome, let's have the default name be "clayton-runs-metronome.jsonl", and "clayton-runs-safari.jsonl". Let's also add profile and expedition into the output names for those as well to help differentiate them.
+* Let's drop "target_timer_calibration" as well as "frame_guide" from the run data.
+* When exporting/importing, it always defaults to "~/.local/share/Clayton", let's default to ~ instead on linux? (And probably the user documents folder on Windows). Then let's default to the last location the file explorer was opened to if possible.
+* There is an option to export expeditions, but not an option to import expeditions.
+
+## Safari Chart
+* IT IS STILL NOT SHOWING (2000-01-01 14:00:11, 180003) AT THE TOP RANKED TARGETS, EVEN THOUGH IT HAS P(SUCCESS) OF 28.6%, WHICH IS GREATER THAN ALL THE ONES IN TOP RANKED TARGETS. IS BEST TARGETS AT TIME USING A DIFFERENT ALGORITHM? A CACHING ISSUE? THIS IS A SERIOUS INCONSISTENCY.
+  * I am using the "six-bait-then-balls" strategy, and a criteria of "machete-50-turns-after-3-balls" on the range of 180-186 seconds.
+  * Top result in chart is 2000-06-27 14:52:54 and Vector ms of 180003.
+
+## Safari Compass
+* My feedback about disabling the "(Optional) Look for metang near advance" field when Seed A hits the Key seed has not been applied. In fact, the field should probably be hidden in that case.
+* The guide text is a little confusing, I think instead of "(]! = Sweet Scent here)" it should say '(Sweet scent at the "!")'
+* The widened search parameters for Seed B should be saved until the seed is saved, so that if we hit "change seed B" we don't have to re-widen the search.
+
 # Feedback 10
 ## General
 * The new UI for Vector ms looks great, the color is just a little too vibrant/orange (Might make people think something is wrong). Can we make it so that it is obviously visible, but not so vibrant that people think there is something wrong with the number?

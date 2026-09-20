@@ -201,6 +201,10 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
 // Species names are stored lowercase (they're the raw claytonlib/basedata key, e.g.
 // "nidoran-f") -- this capitalizes each hyphen-separated part for display.
 const capName = (s) => String(s ?? "").replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
+// Imported runs get a millisecond nudged onto saved_at to keep them in file order without
+// colliding (see app.portability.import_runs_jsonl) -- never shown in the Runs table, which
+// always displays to whole-second precision.
+const fmtSavedAt = (s) => String(s ?? "").replace("T", " ").replace(/\.\d+$/, "");
 // Vector ms values are long, mostly-zero numbers (e.g. 300000) where it's easy to lose count
 // of trailing zeroes at a glance -- this tints the last 3 digits so they read as a distinct
 // group. Returns markup (an <span>), not plain text, so callers must interpolate it directly
@@ -231,7 +235,15 @@ function openModal(html, wide){
   const d = document.createElement("div");
   d.id = "modal-backdrop"; d.className = "modal-backdrop";
   d.innerHTML = `<div class="modal${wide?" wide":""}">${html}</div>`;
-  d.addEventListener("click", (ev) => { if(ev.target === d) closeModal(); });
+  // Close only when BOTH the press and release land directly on the backdrop -- a bare click
+  // listener also fires (with ev.target === d) when the user starts a text-selection drag
+  // INSIDE the modal (e.g. selecting text in an input) and releases the mouse outside it: the
+  // browser resolves that click's target to the nearest common ancestor of the mousedown/
+  // mouseup targets, which is the backdrop itself, closing it pre-emptively (round 12
+  // feedback: "select text in the widen search box, let go outside, it closes").
+  let downOnBackdrop = false;
+  d.addEventListener("mousedown", (ev) => { downOnBackdrop = ev.target === d; });
+  d.addEventListener("click", (ev) => { if(downOnBackdrop && ev.target === d) closeModal(); });
   document.body.appendChild(d);
 }
 function closeModal(){ $("modal-backdrop")?.remove(); }
@@ -341,15 +353,15 @@ async function renderExpeditions(){
   } else {
     body = `<div class="row-list">` + expeditions.map(e => `
       <div class="card clickable" onclick="openExpeditionHome('${esc(e.id)}')">
-        <div><div class="title">${esc(e.name)}</div>
+        <div><div class="title">${e.completed ? `<span title="Completed">✓</span> ` : ""}${esc(e.name)}</div>
           <div class="sub">${esc(e.pokemon || "—")} · profile: ${esc(byId[e.profile_id] || "unknown")}</div></div>
         <span class="muted">Open →</span>
       </div>`).join("") + `</div>`;
   }
   mount(`<div class="head"><h2>Expeditions</h2>
       <div style="display:flex;gap:10px">
-        <button class="btn primary" ${profiles.length?"":"disabled"} onclick="expeditionForm()">New expedition</button>
-        <button class="btn" ${profiles.length?"":"disabled"} onclick="importExpeditionFromList()">Import expedition…</button>
+        <button class="btn primary" ${profiles.length?"":"disabled"} onclick="expeditionForm()">New</button>
+        <button class="btn" ${profiles.length?"":"disabled"} onclick="importExpeditionFromList()">Import</button>
       </div>
     </div>${body}`);
 }
@@ -365,9 +377,18 @@ function importExpeditionFromList(){
       <select id="import-exp-profile">${state.profiles.map(p =>
         `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></div>
     <div class="actions">
-      <button class="btn primary" onclick="closeModal();importExpeditionInto($('import-exp-profile').value)">Import…</button>
+      <button class="btn primary" onclick="_importExpeditionFromListConfirm()">Import</button>
       <button class="btn" onclick="closeModal()">Cancel</button>
     </div>`);
+}
+
+// Read the select's value BEFORE closing the modal -- closeModal() removes #import-exp-profile
+// from the DOM, so reading it after (as the previous inline onclick did) always threw a silent
+// TypeError and the import never even started (round 12 feedback: "nothing happens").
+function _importExpeditionFromListConfirm(){
+  const profileId = $("import-exp-profile").value;
+  closeModal();
+  importExpeditionInto(profileId);
 }
 
 // existing: an expedition doc when editing, else null (create).
@@ -430,6 +451,10 @@ async function expeditionForm(existing){
         <button class="btn primary" type="submit">${editing ? "Save" : "Create"}</button>
         <button class="btn" type="button" onclick="${editing
           ? `openExpeditionHome('${esc(existing.id)}')` : `setView('expeditions')`}">Cancel</button>
+        ${editing ? `
+          <button class="btn" type="button" onclick="toggleExpeditionComplete('${esc(existing.id)}',${!existing.completed})">
+            ${existing.completed ? "Mark as incomplete" : "Mark as complete"}</button>
+          <button class="btn danger" type="button" onclick="confirmDeleteExpedition('${esc(existing.id)}','${esc(existing.name)}')">Delete</button>` : ""}
       </div>
     </form>`);
   updateBlockRequirement();
@@ -504,6 +529,37 @@ async function saveExpedition(ev, existingId){
   return false;
 }
 
+async function toggleExpeditionComplete(id, completed){
+  await api("set_expedition_completed", id, completed);
+  toast(completed ? "Marked as complete." : "Marked as incomplete.");
+  editExpedition(id);
+}
+
+// Deleting an expedition cascades its charts/targets (see Facade.delete_expedition) -- runs,
+// calibration models, and metronome users live on the profile and are unaffected.
+async function confirmDeleteExpedition(id, name){
+  const s = await api("expedition_delete_summary", id);
+  openModal(`<h3>Delete "${esc(name)}"?</h3>
+    <p class="muted">This permanently deletes this expedition and everything scoped to it:</p>
+    <ul class="muted">
+      <li>${s.charts} chart(s)</li>
+      <li>${s.targets} saved target(s)</li>
+    </ul>
+    <p class="muted">Saved runs, calibration models, and metronome users belong to the
+      profile, not the expedition, and won't be touched.</p>
+    <p class="muted"><b>This cannot be undone.</b></p>
+    <div class="actions">
+      <button class="btn danger" onclick="deleteExpeditionConfirmed('${esc(id)}')">Delete permanently</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function deleteExpeditionConfirmed(id){
+  await api("delete_expedition", id);
+  closeModal();
+  toast("Expedition deleted.");
+  setView("expeditions");
+}
+
 // --- Expedition home + tool pages -----------------------------------------
 async function openExpeditionHome(id){
   const e = await api("get_expedition", id);
@@ -523,7 +579,7 @@ async function openExpeditionHome(id){
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="editExpedition('${esc(id)}')">Configure</button>
         <button class="btn" onclick="preferencesPage('${esc(id)}')">Preferences</button>
-        <button class="btn" onclick="exportExpedition('${esc(id)}')">Export…</button>
+        <button class="btn" onclick="exportExpedition('${esc(id)}')">Export</button>
         <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
       </div></div>
     <div class="muted">${e.pokemon ? esc(capName(e.pokemon)) : "—"}${e.safari_area ? " · " + esc(e.safari_area) : ""}
@@ -714,7 +770,7 @@ function renderNewRun(){
           <div id="nr-vector-preview" class="hint" style="font-family:ui-monospace,monospace">${fmtVectorMs(nr.vectorMs)}</div></div>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target…</button>
+        <button class="btn small" type="button" onclick="nrPickFromTarget()">Choose from saved target</button>
         <button class="btn small" type="button" onclick="openTimePicker(nr.e.key_seed, nrPickTime)">Pick time</button>
       </div>
     </form>
@@ -1152,7 +1208,7 @@ function renderReviewRuns(){
             `<td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
           return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('review','${esc(r.id)}')"` : ""}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
-          <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${esc(fmtSavedAt(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
@@ -1167,8 +1223,8 @@ function renderReviewRuns(){
         <select onchange="review.tag=this.value;renderReview()">${tagOpts}</select></div>
       <div style="display:flex;gap:8px;align-items:center">
         <div class="muted">${review.runs.length} run(s) for this profile</div>
-        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('review')">Export runs…</button>
-          <button class="btn small" onclick="_importRuns('review')">Import runs…</button>` : ""}
+        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('review')">Export runs</button>
+          <button class="btn small" onclick="_importRuns('review')">Import runs</button>` : ""}
       </div>
     </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Outliers (flagged automatically) are always left
@@ -1240,7 +1296,7 @@ function _openExportRunsModal(panelKey){
     <div class="actions" style="flex-direction:column;align-items:stretch;gap:8px">
       <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','all')">All runs</button>
       <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','not-excluded')">All except excluded</button>
-      <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','manual')">Choose manually…</button>
+      <button class="btn" type="button" onclick="_exportRunsScope('${panelKey}','manual')">Choose manually</button>
       <button class="btn" type="button" onclick="closeModal()">Cancel</button>
     </div>`);
 }
@@ -1400,7 +1456,7 @@ function renderCalibrateModel(){
       </form>`;
   }
   const savedHeader = `<div class="head" style="margin-bottom:12px"><div class="section-label" style="margin:0">Saved models</div>
-      <button class="btn small" onclick="importCalibrationModel()">Import model…</button></div>`;
+      <button class="btn small" onclick="importCalibrationModel()">Import model</button></div>`;
   const savedList = (review.savedModels && review.savedModels.length)
     ? `<div class="candtable" style="max-height:none"><table><thead><tr>
           <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
@@ -1524,7 +1580,7 @@ function renderChartFindTarget(){
     canonSection = `<div class="section-label">Computed chart</div>
       <div class="panel">
         <div class="muted">delay window: ${chart.setup_delay_seconds}–${chart.max_target_seconds}s
-          <button class="btn small" ${computing?"disabled":""} style="margin-left:6px" onclick="ctOpenEditWindow()">Edit window…</button><br>
+          <button class="btn small" ${computing?"disabled":""} style="margin-left:6px" onclick="ctOpenEditWindow()">Edit window</button><br>
           strategy: ${esc(chart.strategy_name)} · criteria: ${esc(chart.criteria_name)}
           · model: ${ct.activeModel ? `#${ct.activeModel.number} ${esc(ct.activeModel.name || "(unnamed)")}` : "none"}</div>
         ${built ? `<div class="info-line done" style="margin-top:10px">Computed —
@@ -1541,7 +1597,7 @@ function renderChartFindTarget(){
           <button class="btn primary" ${(noModel||computing)?"disabled":""} onclick="ctBuildCanon()">
             ${built ? "Recompute / extend chart" : "Compute chart"}</button>
           ${built ? `<button class="btn" ${ct.ranking?"disabled":""} onclick="ctRank()">${ct.ranking ? "Ranking…" : "Rank targets"}</button>` : ""}
-          ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time…</button>` : ""}
+          ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time</button>` : ""}
         </div>
         ${ct.ranking ? `<div class="progress-wrap" style="margin-top:8px"><div class="progress-bar indeterminate"></div></div>` : ""}
       </div>
@@ -2168,7 +2224,7 @@ function renderSafariCompassNewRun(){
           <div id="sac-vector-preview" class="hint" style="font-family:ui-monospace,monospace">${fmtVectorMs(sac.vectorMs)}</div></div>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target…</button>
+        <button class="btn small" type="button" onclick="sacPickFromTarget()">Choose from saved target</button>
         <button class="btn small" type="button" onclick="openTimePicker(sac.e.key_seed, sacPickTime)">Pick time</button>
       </div>
     </form>
@@ -2245,9 +2301,20 @@ function timeOfDay(isoTimeStr){
 function _sacAimAdvanceField(){
   if(sac.e.preferences?.target_frame_source === "pokefinder") return "";
   if(!sac.e.pokemon || !sac.e.safari_area) return "";
+  // An exact key-seed hit never needs an in-house search at all -- the target frame is
+  // already known (sac.e.key_seed_advances) -- so this field (which only feeds that search,
+  // see sacFindTargetFrame) is pointless here regardless of whether Seed A is pinned yet.
+  // Checked HERE, inside the one shared function, rather than at each of this function's
+  // call sites -- round 11 feedback's fix only covered the POST-pinning call site
+  // (renderInHouseFrameSearch), missing the PRE-pinning one in renderFrameGuideSection
+  // (shown while still collecting Elm calls to pin the current frame), which is the one the
+  // user actually hits first on a key-seed match; guarding centrally here can't miss a call
+  // site like that again.
+  if(sac.seedA && sac.seedA.seed === sac.e.key_seed && sac.e.key_seed_advances != null) return "";
   return `<div class="field"><label>(Optional) Look for ${esc(sac.e.pokemon)} near advance</label>
     <input id="sac-aim-advance" type="number" min="0" placeholder="nearest"
-      value="${esc(sac.aimAdvance ?? "")}" oninput="sac.aimAdvance = this.value"></div>`;
+      value="${esc(sac.aimAdvance ?? "")}" oninput="sac.aimAdvance = this.value"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();$('sac-frame-elm-new')?.focus();}"></div>`;
 }
 
 function renderFrameGuideSection(){
@@ -2781,8 +2848,29 @@ async function sacSaveRun(ev){
     frame_guide: sac.frameGuide?.description || "", ..._readAdvanceRecipe(f) });
   sac.e = await api("save_expedition", {...sac.e,
     last_safari_compass_defaults: {...sac.e.last_safari_compass_defaults, tag}});
-  sacShowSavedPrompt();
+
+  // "C" (captured) as the observed path's last character + Seed A on the key seed -- offer
+  // to mark the expedition complete (round 12 feedback), unless it already is.
+  const captured = (sac.seedB?.path || "").endsWith("C");
+  const keySeedHit = sac.seedA?.seed === sac.e.key_seed;
+  if(captured && keySeedHit && !sac.e.completed) sacShowMarkCompletePrompt();
+  else sacShowSavedPrompt();
   return false;
+}
+
+function sacShowMarkCompletePrompt(){
+  openModal(`<h3>Nice catch!</h3>
+    <p class="muted" style="margin:0 0 16px">Seed A matched the key seed and this run ended
+      in a capture — mark this expedition as complete?</p>
+    <div class="actions">
+      <button class="btn primary" type="button" onclick="closeModal();sacMarkCompleteThenPrompt()">Mark as complete</button>
+      <button class="btn" type="button" onclick="closeModal();sacShowSavedPrompt()">Not yet</button>
+    </div>`);
+}
+async function sacMarkCompleteThenPrompt(){
+  sac.e = await api("set_expedition_completed", sac.expId, true);
+  toast("Marked as complete.");
+  sacShowSavedPrompt();
 }
 
 function sacReset(){
@@ -2884,7 +2972,7 @@ function renderSafariReviewRuns(){
             `<td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
           return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('sreview','${esc(r.id)}')"` : ""}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
-          <td${muted}>${esc((r.saved_at||"").replace("T"," "))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${esc(fmtSavedAt(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
           <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
@@ -2898,8 +2986,8 @@ function renderSafariReviewRuns(){
         <select onchange="sreview.tag=this.value;renderSafariReview()">${tagOpts}</select></div>
       <div style="display:flex;gap:8px;align-items:center">
         <div class="muted">${sreview.runs.length} run(s) for this profile</div>
-        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('sreview')">Export runs…</button>
-          <button class="btn small" onclick="_importRuns('sreview')">Import runs…</button>` : ""}
+        ${!exportMode ? `<button class="btn small" onclick="_openExportRunsModal('sreview')">Export runs</button>
+          <button class="btn small" onclick="_importRuns('sreview')">Import runs</button>` : ""}
       </div>
     </div>${saveBar}${body}
     <div class="hint muted" style="margin-top:14px">Safari runs fit the safari load-path offset
@@ -3093,7 +3181,7 @@ function renderSafariCalibrateModel(){
 
   const savedHeader = `<div class="head" style="margin-top:20px;margin-bottom:12px">
       <div class="section-label" style="margin:0">Saved models</div>
-      <button class="btn small" onclick="sreviewImportCalibrationModel()">Import model…</button></div>`;
+      <button class="btn small" onclick="sreviewImportCalibrationModel()">Import model</button></div>`;
   const savedList = `<div class="candtable" style="max-height:none"><table><thead><tr>
         <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
       <tbody>${models.map(m => `<tr>
@@ -3129,8 +3217,8 @@ async function renderProfiles(){
         </div>`).join("") + `</div>`;
   mount(`<div class="head"><h2>Profiles</h2>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="importProfile()">Import…</button>
-        <button class="btn primary" onclick="profileForm()">New profile</button>
+        <button class="btn primary" onclick="profileForm()">New</button>
+        <button class="btn" onclick="importProfile()">Import</button>
       </div></div>${body}`);
 }
 
@@ -3142,7 +3230,7 @@ function exportProfile(id){
     <div class="hint muted" style="margin-bottom:11px">Their exclude flag travels with them either
       way, so leaving this on round-trips exclusion state on re-import.</div>
     <div class="actions">
-      <button class="btn primary" onclick="exportProfileConfirmed('${esc(id)}')">Export…</button>
+      <button class="btn primary" onclick="exportProfileConfirmed('${esc(id)}')">Export</button>
       <button class="btn" onclick="closeModal()">Cancel</button>
     </div>`);
 }
@@ -3206,7 +3294,7 @@ async function importExpeditionInto(profileId){
     return;
   }
   if(res.imported){
-    toast(`Imported expedition — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
+    toast(`Imported "${res.expedition_name}" — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
     openProfile(profileId);
   }
 }
@@ -3219,32 +3307,86 @@ async function importExpeditionResolve(onCollision){
   openProfile(pid);
 }
 
-function profileForm(){
-  mount(`<div class="head"><h2>New profile</h2></div>
-    <form class="panel" onsubmit="return saveProfile(event)">
-      <div class="field"><label>Name</label><input name="name" required placeholder="SoulSilver — DS Lite">
+// Deleting a profile deletes its OWN directly-owned data (runs, calibration models) but
+// NOT its expeditions (round 13 feedback) -- delete_profile refuses while any exist, so this
+// shows a "delete those first" notice instead of a delete-confirmation when that's the case.
+// The confirmation (when it does apply) names exactly what goes with it, fetched fresh so it
+// can't go stale between opening the page and confirming.
+async function confirmDeleteProfile(id, name){
+  const s = await api("profile_delete_summary", id);
+  if(s.expeditions > 0){
+    openModal(`<h3>Can't delete "${esc(name)}" yet</h3>
+      <p class="muted">This profile still has ${s.expeditions} expedition(s) — delete those
+        first (each has its own Delete on its Configure page), then delete the profile:</p>
+      <ul class="muted">${s.expedition_names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>
+      <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+    return;
+  }
+  openModal(`<h3>Delete "${esc(name)}"?</h3>
+    <p class="muted">This permanently deletes this profile and everything it owns:</p>
+    <ul class="muted">
+      <li>${s.runs} saved run(s)</li>
+      <li>${s.calibration_models} calibration model(s)</li>
+      <li>${s.metronome_users} metronome user(s)</li>
+    </ul>
+    <p class="muted"><b>This cannot be undone.</b></p>
+    <div class="actions">
+      <button class="btn danger" onclick="deleteProfileConfirmed('${esc(id)}')">Delete permanently</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function deleteProfileConfirmed(id){
+  await api("delete_profile", id);
+  closeModal();
+  toast("Profile deleted.");
+  setView("profiles");
+}
+
+async function editProfile(id){
+  profileForm(await api("get_profile", id));
+}
+
+// existing: a profile doc when editing settings after creation (round 13 feedback), else
+// null (create).
+function profileForm(existing){
+  const editing = !!existing;
+  mount(`<div class="head"><h2>${editing ? "Profile settings" : "New profile"}</h2></div>
+    <form class="panel" onsubmit="return saveProfile(event, ${editing ? `'${esc(existing.id)}'` : "null"})">
+      <div class="field"><label>Name</label>
+        <input name="name" required value="${esc(existing?.name || "")}" placeholder="SoulSilver — DS Lite">
         <div class="hint">A console + cartridge identity. Models/runs are shared across its expeditions.</div></div>
       <div class="grid2">
-        <div class="field"><label>Trainer name</label><input name="trainer_name" placeholder="Testare"></div>
+        <div class="field"><label>Trainer name</label>
+          <input name="trainer_name" value="${esc(existing?.trainer_name || "")}" placeholder="Testare"></div>
         <div class="field"><label>Version</label><select name="version">
-          <option value="">—</option><option>HeartGold</option><option>SoulSilver</option></select></div>
+          <option value=""${existing?.version?"":" selected"}>—</option>
+          <option${existing?.version==="HeartGold"?" selected":""}>HeartGold</option>
+          <option${existing?.version==="SoulSilver"?" selected":""}>SoulSilver</option></select></div>
       </div>
-      <div class="field"><label>Console note</label><input name="console" placeholder="original DS Lite">
+      <div class="field"><label>Console note</label>
+        <input name="console" value="${esc(existing?.console || "")}" placeholder="original DS Lite">
         <div class="hint">Playing this cartridge on a different console may shift timing — use a separate profile then.</div></div>
       <div class="actions">
-        <button class="btn primary" type="submit">Create</button>
-        <button class="btn" type="button" onclick="setView('profiles')">Cancel</button>
+        <button class="btn primary" type="submit">${editing ? "Save" : "Create"}</button>
+        <button class="btn" type="button" onclick="${editing
+          ? `openProfile('${esc(existing.id)}')` : `setView('profiles')`}">Cancel</button>
       </div>
     </form>`);
 }
 
-async function saveProfile(ev){
+async function saveProfile(ev, existingId){
   ev.preventDefault();
   const f = ev.target;
-  const p = await api("create_profile", {
+  const fields = {
     name: f.name.value, trainer_name: f.trainer_name.value.trim(),
-    version: f.version.value, console: f.console.value.trim() });
-  openProfile(p.id);
+    version: f.version.value, console: f.console.value.trim() };
+  if(existingId){
+    await api("update_profile", existingId, fields);
+    openProfile(existingId);
+  } else {
+    const p = await api("create_profile", fields);
+    openProfile(p.id);
+  }
   return false;
 }
 
@@ -3301,8 +3443,10 @@ async function openProfile(id){
 
   mount(`<div class="head"><h2>${esc(p.name)}</h2>
       <div style="display:flex;gap:10px">
+        <button class="btn" onclick="editProfile('${esc(p.id)}')">Settings</button>
         <button class="btn" onclick="exportProfile('${esc(p.id)}')">Export bundle</button>
-        <button class="btn" onclick="importExpeditionInto('${esc(p.id)}')">Import expedition…</button>
+        <button class="btn" onclick="importExpeditionInto('${esc(p.id)}')">Import expedition</button>
+        <button class="btn danger" onclick="confirmDeleteProfile('${esc(p.id)}','${esc(p.name)}')">Delete</button>
         <button class="btn" onclick="setView('profiles')">← All profiles</button>
       </div></div>
     <div class="muted">${esc(p.trainer_name || "—")}${p.version ? " · " + esc(p.version) : ""}${p.console ? " · " + esc(p.console) : ""}</div>

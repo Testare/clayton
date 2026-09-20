@@ -318,6 +318,10 @@ class Expedition:
     # {"startrel", "seconds_window", "delay_window", "match_parity", "tag"}
     last_safari_compass_defaults: dict = field(default_factory=dict)
     preferences: dict = field(default_factory=_default_preferences)
+    # Set via "Mark as complete" on the Configure page, or offered after a successful Safari
+    # Compass capture on the key seed (round 12 feedback). Purely a display/sort flag -- doesn't
+    # gate any tool.
+    completed: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -337,6 +341,7 @@ class Expedition:
             last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
             last_safari_compass_defaults=dict(d.get("last_safari_compass_defaults", {})),
             preferences={**_default_preferences(), **d.get("preferences", {})},
+            completed=bool(d.get("completed", False)),
         )
 
 
