@@ -1,8 +1,7 @@
 name: Windows build
 
-# Builds the Clayton desktop app into a standalone Windows .exe and uploads it as a
-# downloadable artifact. Trigger it by hand from the Actions tab ("Run workflow"), or
-# by pushing a tag like v0.1.0.
+# Builds the Clayton desktop app on Windows and uploads it as a downloadable artifact.
+# Trigger by hand from the Actions tab ("Run workflow"), or by pushing a tag like v0.1.0.
 on:
   workflow_dispatch:
   push:
@@ -22,12 +21,32 @@ jobs:
       - name: Install build deps
         run: pip install pywebview pyinstaller
 
+      # Catches an import-level break before spending minutes on the freeze. The GUI can't
+      # open on a CI runner, so this only proves the modules load and the data files resolve.
+      - name: Smoke-test the imports
+        run: python -c "import app.main, app.facade, claytonlib; print('imports OK')"
+
       - name: Build exe
         run: pyinstaller packaging/clayton.spec
+
+      # The spec produces a FOLDER build -- dist/Clayton/Clayton.exe alongside its _internal
+      # directory -- because that starts faster than one-file. The whole folder is the app, so
+      # the artifact is the folder; uploading Clayton.exe alone would give a download that
+      # cannot run. (This is what previously failed: the path was dist/clayton.exe, which the
+      # spec has never produced, so upload-artifact found nothing.)
+      - name: Check the build landed where we expect
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/Clayton/Clayton.exe")) {
+            Write-Host "Expected dist/Clayton/Clayton.exe. Contents of dist:"
+            Get-ChildItem -Recurse dist | Select-Object -First 40 | Format-Table FullName
+            exit 1
+          }
+          Write-Host "Built:" (Get-Item "dist/Clayton/Clayton.exe").Length "bytes"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: clayton-windows
-          path: dist/clayton.exe
+          path: dist/Clayton
           if-no-files-found: error

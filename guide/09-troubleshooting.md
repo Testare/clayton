@@ -71,6 +71,16 @@ Expected, and usually honest. A better-fitted model with a realistic jitter give
 numbers than an optimistic one. A saved target's frozen `P(success)*` is from when you saved
 it — **Examine** re-scores it live.
 
+## Windows: "Argument 'picture' must be a picture that can be used as a Icon"
+
+A pywebview bug rather than anything wrong with your setup — its Windows backend extracts the
+window icon from `sys.executable`, and the API it uses returns a bogus-but-nonzero value when
+that file has no icon, which pywebview doesn't check for. Store-installed Pythons trigger it
+most often.
+
+Fixed in Clayton — update to the latest commit. See
+[BUILDING-WINDOWS.md](../packaging/BUILDING-WINDOWS.md) for detail.
+
 ## The app won't start
 
 **Linux:** a blank window is usually the WebKitGTK renderer; Clayton already sets

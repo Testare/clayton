@@ -94,12 +94,70 @@ def _set_app_identity() -> None:
 def _icon_path():
     """The app's window icon (a Safari Ball, drawn by one-offs/make_icon.py), or None.
 
-    Returned as a path for ``webview.start(icon=)``, which hands it to the platform's own
-    loader (GTK: ``set_icon_from_file`` / ``set_default_icon_from_file``). None when the file
-    isn't there — an icon is cosmetic, so a packaging that dropped it must still launch.
+    Windows gets the ``.ico``: its icon APIs go through ``System.Drawing.Icon``, which rejects
+    a PNG outright. Everywhere else gets the PNG, which is what GTK's
+    ``set_icon_from_file`` wants. None when the file isn't there — an icon is cosmetic, so a
+    packaging that dropped it must still launch.
     """
-    path = Path(__file__).parent / "resources" / "clayton.png"
+    name = "clayton.ico" if sys.platform == "win32" else "clayton.png"
+    path = Path(__file__).parent / "resources" / name
     return path if path.exists() else None
+
+
+def _patch_windows_window_icon(icon) -> None:
+    """Work around a pywebview bug that crashes window creation on Windows.
+
+    ``webview/platforms/winforms.py`` sets the window icon like this::
+
+        icon_handle = windll.shell32.ExtractIconW(handle, sys.executable, 0)
+        if icon_handle != 0:
+            self.Icon = Icon.FromHandle(IntPtr.op_Explicit(Int32(icon_handle))).Clone()
+
+    ``ExtractIconW`` returns **1**, not 0, when the file holds no extractable icon — MSDN:
+    "If the file specified was not an executable file, DLL, or icon file, the return is 1."
+    That slips past the ``!= 0`` guard, and ``Icon.FromHandle(1)`` throws::
+
+        System.ArgumentException: Argument 'picture' must be a picture that can be used as a Icon
+
+    on the UI thread, before the window ever appears. It bites whenever ``sys.executable`` has
+    no icon resource — a Microsoft Store Python's app-execution alias, some venv shims — and is
+    independent of the ``icon=`` handed to ``webview.start()``, which the Windows backend never
+    reads at all.
+
+    Rather than just suppressing the crash, this swaps ``ExtractIconW`` for one that loads OUR
+    icon file. pywebview's own code then runs unchanged against a valid handle and the window
+    ends up wearing the Safari Ball. A failed load returns 0, which pywebview correctly reads
+    as "no icon" and skips — so the worst case is an iconless window, never a dead one.
+
+    Entirely best-effort: any failure here leaves pywebview's original behavior in place.
+    """
+    if sys.platform != "win32" or icon is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                      ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        # c_int, not a pointer type: pywebview narrows the result with Int32(), and real HICONs
+        # stay inside 32 bits even on 64-bit Windows.
+        user32.LoadImageW.restype = ctypes.c_int
+        IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x0010, 0x0040
+        path = str(icon)
+
+        def _extract_icon(_hinstance, _exe_path, _index):
+            try:
+                return user32.LoadImageW(None, path, IMAGE_ICON, 0, 0,
+                                         LR_LOADFROMFILE | LR_DEFAULTSIZE) or 0
+            except Exception:
+                return 0
+
+        # ctypes caches function pointers as attributes on the library object, and
+        # `windll.shell32` is a singleton, so assigning here is what pywebview will see.
+        ctypes.windll.shell32.ExtractIconW = _extract_icon
+    except Exception:
+        pass
 
 
 def main() -> None:
@@ -134,6 +192,7 @@ def main() -> None:
     gui = "gtk" if sys.platform.startswith("linux") else None
     _set_app_identity()
     icon = _icon_path()
+    _patch_windows_window_icon(icon)
     if icon is None:
         webview.start(gui=gui)
         return

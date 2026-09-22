@@ -11,7 +11,9 @@ image library, matching claytonlib's own no-dependency character. Regenerate eve
     python one-offs/make_icon.py
 
 Outputs:
-  app/resources/clayton.png              256x256, the runtime window icon (webview.start(icon=))
+  app/resources/clayton.png              256x256, the runtime window icon (GTK)
+  app/resources/clayton.ico              the runtime window icon on Windows, which needs a real
+                                         .ico -- System.Drawing.Icon rejects a PNG
   packaging/icons/<N>x<N>/clayton.png    the Linux hicolor theme sizes
   packaging/clayton.ico                  Windows, multi-resolution
   packaging/clayton.icns                 macOS, multi-resolution
@@ -29,6 +31,7 @@ from pathlib import Path
 SIZE = 32          # pixel-art grid
 ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_PNG = ROOT / "app" / "resources" / "clayton.png"
+RUNTIME_ICO = ROOT / "app" / "resources" / "clayton.ico"
 PACKAGING = ROOT / "packaging"
 
 # Freedesktop icon theme sizes; 256 doubles as the runtime window icon.
@@ -262,9 +265,9 @@ def main() -> None:
         out.write_bytes(png_bytes(resample(px, size)))
         written.append((out, f"{size}x{size} hicolor"))
 
-    ico = PACKAGING / "clayton.ico"
-    write_ico(px, ico, ICO_SIZES)
-    written.append((ico, f"Windows ico, {len(ICO_SIZES)} sizes"))
+    for ico in (PACKAGING / "clayton.ico", RUNTIME_ICO):
+        write_ico(px, ico, ICO_SIZES)
+        written.append((ico, f"Windows ico, {len(ICO_SIZES)} sizes"))
 
     icns = PACKAGING / "clayton.icns"
     write_icns(px, icns, ICNS_ENTRIES)

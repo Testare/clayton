@@ -104,6 +104,17 @@ The spec excludes Qt on purpose, so this shouldn't happen — but if it does, it
 binding is installed in your venv and is being picked up anyway. `pip uninstall PySide6 PyQt5
 PyQt6 qtpy` and rebuild.
 
+**`System.ArgumentException: Argument 'picture' must be a picture that can be used as a Icon`**
+A pywebview bug, not a problem with your build or the icon files. Its Windows backend sets the
+window icon by extracting one from `sys.executable`, and `ExtractIconW` returns **1** — not 0 —
+when that file has no icon to extract, which slips past pywebview's `!= 0` check and hands an
+invalid handle to `System.Drawing.Icon`. It shows up when Python itself has no icon resource:
+a Microsoft Store Python's app-execution alias is the usual culprit, and some venv shims too.
+
+Clayton works around this (`_patch_windows_window_icon` in `app\main.py`), so **update to the
+latest commit** if you hit it. If you're pinned to an older revision, installing Python from
+python.org rather than the Store also avoids it.
+
 **The window opens blank, or the app exits immediately**
 Almost always the WebView2 runtime (step 1). Install the Evergreen redistributable and retry.
 
