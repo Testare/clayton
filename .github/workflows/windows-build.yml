@@ -29,55 +29,50 @@ jobs:
       - name: Build exe
         run: pyinstaller packaging/clayton.spec
 
-      # The spec produces a FOLDER build -- dist/Clayton/Clayton.exe alongside its _internal
-      # directory -- because that starts faster than one-file. The whole folder is the app, so
-      # the artifact is the folder; uploading Clayton.exe alone would give a download that
-      # cannot run. (This is what previously failed: the path was dist/clayton.exe, which the
-      # spec has never produced, so upload-artifact found nothing.)
+      # The spec builds ONE FILE: dist/Clayton.exe, self-contained, nothing beside it.
       - name: Check the build landed where we expect
         shell: pwsh
         run: |
-          if (-not (Test-Path "dist/Clayton/Clayton.exe")) {
-            Write-Host "Expected dist/Clayton/Clayton.exe. Contents of dist:"
+          if (-not (Test-Path "dist/Clayton.exe")) {
+            Write-Host "Expected dist/Clayton.exe. Contents of dist:"
             Get-ChildItem -Recurse dist | Select-Object -First 40 | Format-Table FullName
             exit 1
           }
-          Write-Host "Built:" (Get-Item "dist/Clayton/Clayton.exe").Length "bytes"
+          Write-Host "Built:" (Get-Item "dist/Clayton.exe").Length "bytes"
 
-      # Every artifact is downloaded as a .zip from the internet, so Windows tags the
-      # extracted files with Mark of the Web -- and .NET then refuses to load the managed
-      # assembly pywebview needs, with an error that says nothing about the real cause.
-      # Ship the fix next to the binary rather than leaving people to find it.
+      # A one-file build should sidestep the Mark-of-the-Web problem that broke the folder
+      # build: its DLLs are unpacked to a temp directory at launch by the bootloader, and
+      # files a process writes carry no zone tag. Windows may still show a SmartScreen prompt
+      # for an unsigned downloaded exe, which is a different thing and just needs "Run anyway".
       - name: Add a read-me to the artifact
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item dist/Clayton.exe artifact/
           @'
           Clayton for Windows
           ===================
 
-          IMPORTANT - do this first, or the app will not start.
+          Clayton.exe is self-contained. Put it anywhere and run it.
 
-          Windows marks everything extracted from a downloaded .zip as untrusted, and the
-          .NET component Clayton uses refuses to load while that mark is present. Opening
-          PowerShell in THIS folder and running:
+          First launch may take a few seconds: the app unpacks itself into a temporary
+          folder each time it starts. That is the trade for being a single file.
 
-              Get-ChildItem -Recurse | Unblock-File
+          Windows will probably warn that it does not recognise the publisher - the build
+          is unsigned. Choose "More info" then "Run anyway".
 
-          clears it. You only need to do it once per download. (Right-clicking the .zip
-          before extracting, Properties, and ticking Unblock does the same thing.)
+          If it refuses to start with an error mentioning Python.Runtime.dll, the download
+          is still marked as blocked. In PowerShell, in this folder:
 
-          Then run Clayton.exe.
+              Unblock-File .\Clayton.exe
 
-          Clayton.exe needs the _internal folder beside it - move or copy the whole folder,
-          not just the .exe.
-
-          If it still will not start, Clayton shows a dialog explaining what failed; see
-          packaging/BUILDING-WINDOWS.md in the repository for the full list.
-          '@ | Set-Content -Path dist/Clayton/READ-ME-FIRST.txt -Encoding utf8
+          Your data is kept in %LOCALAPPDATA%\Clayton, separate from the executable, so
+          replacing Clayton.exe with a newer build never touches your profiles or runs.
+          '@ | Set-Content -Path artifact/READ-ME-FIRST.txt -Encoding utf8
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: clayton-windows
-          path: dist/Clayton
+          path: artifact
           if-no-files-found: error

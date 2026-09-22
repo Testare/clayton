@@ -80,11 +80,16 @@ pyinstaller packaging\clayton.spec
 A few minutes later you'll have:
 
 ```
-dist\Clayton\Clayton.exe
+dist\Clayton.exe
 ```
 
-The whole `dist\Clayton` folder is the app — `Clayton.exe` needs the `_internal` folder beside
-it. Move or zip the folder as a unit, not the `.exe` alone.
+That single file **is** the app — self-contained, nothing needs to sit beside it. Copy it
+wherever you like.
+
+> **Prefer a folder build?** Set `CLAYTON_ONEDIR=1` before building and you'll get
+> `dist\Clayton\` instead, with the exe next to an `_internal` directory. It starts
+> noticeably faster, because a one-file build unpacks itself on every launch — but then the
+> whole folder has to travel together.
 
 ## 7. Check it
 
@@ -93,6 +98,9 @@ Double-click `Clayton.exe`. You should get:
 - the Safari Ball icon on the executable and in the taskbar (**not** the Python icon)
 - no console window behind the app
 - the interface drawn normally
+
+First launch takes a few seconds while it unpacks itself. An unsigned downloaded build also
+draws a SmartScreen warning — *More info* → *Run anyway*.
 
 Your saved data lives in `%LOCALAPPDATA%\Clayton` and is **not** inside the build, so
 rebuilding never touches your profiles, runs or charts.
@@ -150,10 +158,14 @@ Rebuild with a console attached to see the traceback: edit `packaging\clayton.sp
 `console=True` in the `EXE(...)` block, rebuild, and run it from a terminal. Set it back
 afterwards.
 
-## Making a single .exe (optional)
+## Build modes
 
-The default build is a folder, which starts faster. For one self-contained file, change the
-`EXE(...)` call in the spec to include `a.binaries, a.datas` and drop the `COLLECT(...)`
-block — see PyInstaller's
-[one-file mode](https://pyinstaller.org/en/stable/usage.html#bundling-to-one-file). Expect a
-noticeably slower launch, since it unpacks itself on every run.
+| | Default (one file) | `CLAYTON_ONEDIR=1` |
+|---|---|---|
+| Output | `dist\Clayton.exe` | `dist\Clayton\` |
+| To move it | copy one file | copy the whole folder |
+| Startup | a few seconds — unpacks each launch | fast |
+| Size | ~15 MB | ~36 MB on disk |
+
+One file is the default because it is what people expect to download and run. The folder build
+is worth it if you launch Clayton constantly and the unpack delay annoys you.

@@ -52,7 +52,8 @@ pip install pywebview pyinstaller
 pyinstaller packaging\clayton.spec         # run from the REPO ROOT
 ```
 
-Produces `dist/Clayton/Clayton.exe` — windowed (no console), wearing `clayton.ico`. The
+Produces `dist/Clayton.exe` — a single self-contained file, windowed (no console), wearing
+`clayton.ico`. Set `CLAYTON_ONEDIR=1` for a faster-starting folder build instead. The
 EdgeChromium backend needs the **WebView2 runtime**, which ships with Windows 11 and recent
 Windows 10; on older machines install the Evergreen redistributable.
 
@@ -79,9 +80,13 @@ package on Linux.
 | | Built | Ran |
 |---|---|---|
 | Nix (Linux) | yes | yes |
-| PyInstaller on Linux | yes | reaches backend selection; fails on host GTK typelibs, as above |
-| PyInstaller on Windows | **not tested** | **not tested** |
+| PyInstaller on Linux | yes, both modes | reaches backend selection; fails on host GTK typelibs, as above |
+| PyInstaller on Windows | yes, via CI | **yes** — folder build, after unblocking the download |
 | PyInstaller on macOS | **not tested** | **not tested** |
+
+The Windows path is confirmed working as of the folder build. The switch to one-file is
+**not** re-confirmed on Windows yet — it builds and runs on Linux, and the Windows changes are
+the same spec, but treat the first one-file download as the real test.
 
 The Windows and macOS paths are written from the documented behaviour of PyInstaller and
 pywebview, and the spec's platform-independent parts (data collection, backend excludes, icon

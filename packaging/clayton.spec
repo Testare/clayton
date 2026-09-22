@@ -4,11 +4,17 @@
     pip install pyinstaller
     pyinstaller packaging/clayton.spec        # run from the REPO ROOT
 
-Produces:
-  Windows   dist/Clayton/Clayton.exe   windowed (no console), wearing packaging/clayton.ico
-  macOS     dist/Clayton.app           a real bundle, wearing packaging/clayton.icns
-  Linux     dist/Clayton/Clayton       a binary; the packaged Nix build is the better path
-                                       there, since it also installs the .desktop entry
+Produces ONE FILE by default -- everything packed into a single executable you can move
+around on its own:
+  Windows   dist/Clayton.exe    windowed (no console), wearing packaging/clayton.ico
+  macOS     dist/Clayton.app    a real bundle, wearing packaging/clayton.icns
+  Linux     dist/Clayton        a binary; the packaged Nix build is the better path there,
+                                since it also installs the .desktop entry
+
+Set CLAYTON_ONEDIR=1 for a folder build instead (dist/Clayton/ with the exe beside an
+_internal directory). That starts noticeably faster, because a one-file build unpacks its
+~45 MB into a temp directory on every launch, but it is a folder you have to keep together.
+One file is the default because it is what people expect to download and run.
 
 Nix users on Linux need none of this — `nix build .#clayton` already produces an installed
 app with its desktop entry and icon theme sizes. This exists for the platforms Nix isn't
@@ -20,6 +26,7 @@ paths — hence the `datas` entries below rather than any --add-data guesswork. 
 additionally resolves web/index.html and resources/clayton.png through Path(__file__).parent,
 which lands in the same place, so one set of entries covers both access styles.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -93,11 +100,15 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+onedir = bool(os.environ.get("CLAYTON_ONEDIR"))
+
+# Shared between both modes. In one-file mode the binaries and data go INTO the exe; in
+# folder mode they are held back and COLLECT lays them out beside it.
+_exe_args = [pyz, a.scripts] if onedir else [pyz, a.scripts, a.binaries, a.datas]
 exe = EXE(
-    pyz,
-    a.scripts,
+    *_exe_args,
     [],
-    exclude_binaries=True,
+    exclude_binaries=onedir,
     name="Clayton",
     debug=False,
     strip=False,
@@ -107,16 +118,19 @@ exe = EXE(
     icon=str(PACKAGING / "clayton.ico"),
 )
 
-coll = COLLECT(
-    exe, a.binaries, a.datas,
-    strip=False, upx=False, name="Clayton",
-)
+# The thing macOS should wrap in a .app: the collected tree, or the single binary.
+bundle_target = exe
+if onedir:
+    bundle_target = COLLECT(
+        exe, a.binaries, a.datas,
+        strip=False, upx=False, name="Clayton",
+    )
 
-# macOS only: wrap the collected tree in a real .app so Finder, the Dock and Launchpad treat
-# it as an application (and read the icns) instead of showing a bare unix executable.
+# macOS only: wrap it in a real .app so Finder, the Dock and Launchpad treat it as an
+# application (and read the icns) instead of showing a bare unix executable.
 if sys.platform == "darwin":
     app = BUNDLE(
-        coll,
+        bundle_target,
         name="Clayton.app",
         icon=str(PACKAGING / "clayton.icns"),
         bundle_identifier="Testare.Clayton.SafariRNG",
