@@ -65,6 +65,11 @@
   /* A muted blend toward --ink rather than the full --ember warning-orange -- full-strength
      --ember (used for warn badges elsewhere) read as "something's wrong with this number"
      rather than just "these are the last 3 digits" (round 10 feedback). */
+  .help-q{display:inline-flex;align-items:center;justify-content:center;
+    width:14px;height:14px;margin-left:4px;border-radius:50%;
+    border:1px solid var(--line);color:var(--muted);
+    font-size:10px;line-height:1;font-weight:600;cursor:help;vertical-align:middle}
+  .help-q:hover{color:var(--ink);border-color:var(--ink)}
   .ms-tail{color:color-mix(in srgb,var(--ember) 55%,var(--ink) 45%)}
   form.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
   .panel-tight{padding:12px 16px}
@@ -156,6 +161,18 @@
   /* Reflow the main content away from the pane instead of letting it sit on top and cover
      whatever's underneath (the pane is position:fixed, so it never affects layout on its own). */
   body.side-pane-open main{padding-right:500px}
+  /* Stacked action buttons: the COLUMN stacks, each button keeps its label on one line
+     (round 18 feedback -- flex stretch was wrapping the text inside each button too). */
+  .btn-stack{display:inline-flex;flex-direction:column;align-items:flex-end;gap:4px}
+  .btn-stack .btn{white-space:nowrap;width:100%;justify-content:center}
+  .tight-list{margin:0;padding-left:16px}
+  .tight-list li{margin:1px 0}
+  /* The seeds line ("999,999 seeds (1199x reuse)") must never wrap -- it reads as one fact
+     and splitting it mid-phrase is what the column looked broken doing (round 19 feedback). */
+  .tight-list li.nowrap{white-space:nowrap}
+  /* ...and the space for it comes from criteria, which is free to wrap. max-width on a <td>
+     is ignored without table-layout:fixed, so the constraint goes on a block INSIDE the cell. */
+  .cell-narrow{max-width:118px;overflow-wrap:anywhere}
   .progress-wrap{background:var(--surface-2);border:1px solid var(--line);border-radius:20px;
     height:10px;overflow:hidden;margin:10px 0}
   .progress-bar{height:100%;background:var(--grass);transition:width .25s ease}
@@ -209,6 +226,72 @@ const fmtSavedAt = (s) => String(s ?? "").replace("T", " ").replace(/\.\d+$/, ""
 // of trailing zeroes at a glance -- this tints the last 3 digits so they read as a distinct
 // group. Returns markup (an <span>), not plain text, so callers must interpolate it directly
 // rather than passing it through esc().
+// --- Runs-table shared columns (round 15) ---------------------------------
+// Both Review Data pages (metronome and safari) render the same runs table, so the column
+// definitions live here once. Header tooltips explain each column on hover; the Vector
+// delay / Delta delay pair is what makes a run's quality legible at a glance.
+const _RUNS_COL_TITLES = {
+  saved: "When this run was saved. Imported runs are stamped with their import time.",
+  tag: "Your label for the run — used to include or exclude a whole session from fits.",
+  seedA: "The initial (overworld) seed this run actually landed on, as identified by the compass.",
+  seedB: "The battle seed this run actually landed on, as identified by the compass.",
+  vms: "Vector ms — the commanded countdown you timed for (timer 3), in milliseconds.",
+  vdelay: "Vector delay — the realized difference in delays (game frames) between Seed B and "
+        + "Seed A. This is the quantity the calibration model fits.",
+  ddelay: "Delta delay — Vector delay minus what the active calibration model predicted for "
+        + "this run's Vector ms. Near zero means the model described this run well; a run far "
+        + "out is worth a look before it drags a fit.",
+  notes: "Your free-text note on this run, if any — hover the icon to read it.",
+  exclude: "Leave this run out of calibration fits. Separate from automatic outlier screening.",
+  reason: "Why this run is out of the fit, if it is: your own exclusion, its tag, incomplete "
+        + "data, or automatic outlier/contamination screening.",
+};
+const _th = (key, label) => `<th title="${esc(_RUNS_COL_TITLES[key] || "")}">${label}</th>`;
+
+// The Vector delay / Delta delay pair of cells for one run row. `m` is that run's entry from
+// run_delay_metrics (undefined when the run lacks both identified seeds). Delta is flagged
+// once it exceeds 2 sigma of the landing spread this run actually faced -- an absolute frame
+// threshold would be wrong, since the spread grows with Vector ms.
+// Width savers for the runs tables (round 17: the Delete column was being hidden behind the
+// horizontal scrollbar). Every seed is 0x-prefixed, so the prefix distinguishes nothing; the
+// saved timestamps are only ever compared by minute in practice.
+const fmtSeedShort = (hex) => hex ? String(hex).replace(/^0x/i, "") : "—";
+const fmtSavedShort = (s) => fmtSavedAt(s).replace(/:\d{2}$/, "");
+
+// "exclude" and "reason" merged into one column: the checkbox plus, when the run is out of
+// the fit, a badge saying why. They were two columns saying two halves of the same thing, and
+// the reason values ("manual" vs "outlier") rendered in two different styles for no reason.
+function _runsExcludeCell(reason, staged, isDirty, toggleFn, runId){
+  // Every reason gets the SAME badge styling (round 17 feedback): "manual" and "outlier" were
+  // rendered two different ways though they mean the same thing for the fit — this run is out.
+  const badge = isDirty ? `<span class="badge warn">unsaved</span>`
+    : reason ? `<span class="badge warn"
+        title="${esc(_RUNS_COL_TITLES.reason)}">${esc(reason)}</span>` : "";
+  return `<td style="white-space:nowrap"><input type="checkbox" ${staged?"checked":""}
+      onchange="${toggleFn}('${esc(runId)}',this.checked)"> ${badge}</td>`;
+}
+
+function _runsDelayCells(m, muted){
+  if(!m) return `<td${muted}>—</td><td${muted}>—</td>`;
+  const vd = `<td${muted}>${m.vector_delay}</td>`;
+  if(m.delta_delay == null) return `${vd}<td${muted} title="No calibration model to compare against.">—</td>`;
+  const d = Math.round(m.delta_delay);
+  const far = m.sigma > 0 && Math.abs(m.delta_delay) > 2 * m.sigma;
+  const sig = m.sigma > 0 ? ` (${(m.delta_delay / m.sigma).toFixed(1)}\u03c3)` : "";
+  const title = `Predicted ${Math.round(m.predicted_delay)} delays for this Vector ms${sig}`;
+  return `${vd}<td${muted} title="${esc(title)}">${far
+    ? `<span class="badge warn">${d > 0 ? "+" : ""}${d}</span>`
+    : `${d > 0 ? "+" : ""}${d}`}</td>`;
+}
+
+// A field label carrying its explanation as a hover tooltip, with a "?" marker so you can
+// tell there IS one. Used where the placeholder already explains the format but the hint
+// disappears the moment you type (round 16 feedback) -- the marker keeps it reachable.
+// The title sits on the LABEL, not just the marker, so hovering anywhere on the text works
+// (round 17 feedback); the marker repeats it so a hover that lands on the "?" still shows it.
+const helpLabel = (text, tip) =>
+  `<label title="${esc(tip)}">${text} <span class="help-q" title="${esc(tip)}">?</span></label>`;
+
 function fmtVectorMs(ms){
   if(ms == null || ms === "") return "—";
   const s = String(ms);
@@ -316,7 +399,7 @@ async function _timePickerLoad(){
   box.innerHTML = !times.length
     ? `<div class="empty">No valid times match those filters for this key seed.</div>`
     : `<div class="hint muted" style="margin-bottom:6px">${times.length} matching time(s)</div>
-      <div class="candtable" style="max-height:280px"><table><thead><tr><th>time</th></tr></thead>
+      <div class="candtable" style="max-height:280px"><table><thead><tr><th title="A DS clock datetime that produces this key seed — pick the one you can actually set and boot on.">time</th></tr></thead>
         <tbody>${times.map(t => `<tr class="pick" onclick="_timePickerPick('${esc(t)}')">
           <td>${esc(t.replace("T"," "))}</td></tr>`).join("")}</tbody></table></div>`;
 }
@@ -694,7 +777,7 @@ function _pickTargetModal(targets, applyFn){
   openModal(`<h3>Choose a saved target</h3>
     <div class="hint muted" style="margin-bottom:8px">Click a row to use that target.</div>
     <div class="candtable" style="max-height:340px"><table><thead><tr>
-        <th>name</th><th>initial time</th><th>vector ms</th><th>P(success)</th></tr></thead>
+        <th title="The name you gave this saved target.">name</th><th title="The DS clock datetime you aim to hit Seed A on for this target.">initial time</th><th title="Vector ms — the commanded countdown to time for (timer 3), in milliseconds.">vector ms</th><th title="Modelled chance this target succeeds, as scored when it was saved.">P(success)</th></tr></thead>
       <tbody>${targets.map(t => `<tr class="pick" onclick="_pickTargetUse('${esc(t.id)}')">
         <td>${esc(t.name)}</td><td>${esc((t.initial_time||"").replace("T"," "))}</td>
         <td>${fmtVectorMs(t.vector_ms)}</td><td>${(t.p*100).toFixed(1)}%</td>
@@ -816,17 +899,17 @@ function renderSeedA(){
   return `<h3>Seed A — ${nr.seedA ? "change" : "initial"} seed</h3>
     ${keepBar}
     <div class="rel-row">
-      <div class="field"><label>Roamer starting positions (R E L)</label>
+      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
         <input id="nr-startrel" value="${esc(nr._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
           oninput="nrValidateStartRel()" onkeydown="nrSeedAKey(event)"></div>
       <div class="field"><label>± seconds</label><input id="nr-secwin" type="number" min="0" value="${nr.secondsWindow}" onkeydown="nrSeedAKey(event)"></div>
       <div class="field"><label>± delays</label><input id="nr-delaywin" type="number" min="0" value="${nr.delayWindow}" onkeydown="nrSeedAKey(event)"></div>
       <button class="btn primary" onclick="nrGenerateSeedA()">Generate</button>
     </div>
-    <div class="field check"><input type="checkbox" id="nr-parity" ${nr.matchParity?"checked":""}><label for="nr-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <div class="field check"><input type="checkbox" id="nr-parity" ${nr.matchParity?"checked":""}><label for="nr-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
     <div class="info-line" id="nr-keyinfo">key seed: —</div>
     <div class="grid2">
-      <div class="field"><label>Observed roamer routes (R E L)</label>
+      <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
         <input id="nr-obsrel" placeholder="38 42 11  (. = any)" oninput="nrNarrowSeedA()"
           onkeydown="nrObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
@@ -847,7 +930,7 @@ function renderCandA(res, pickFn){
       <td>${c.r_route??"·"}</td><td>${c.e_route??"·"}</td><td>${c.l_route??"·"}</td>
       <td>${esc(c.elm)}</td></tr>`).join("");
   return `<div class="status"><b>${res.count}</b> candidate(s) — click one to identify Seed A</div>
-    <div class="candtable"><table><thead><tr><th>seed</th><th>Δdelay</th><th>Δsecond</th><th>R</th><th>E</th><th>L</th><th>elm</th></tr></thead>
+    <div class="candtable"><table><thead><tr><th title="A candidate initial seed still consistent with what you have entered.">seed</th><th title="How far this candidate's delay sits from the delay you aimed for.">Δdelay</th><th title="How far this candidate's RTC second sits from the second you aimed for.">Δsecond</th><th title="Roamer route for this seed — Raikou.">R</th><th title="Roamer route for this seed — Entei.">E</th><th title="Roamer route for this seed — Latias/Latios.">L</th><th title="The Elm phone calls this seed produces, in order — match them against what you hear.">elm</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
 }
 
@@ -934,7 +1017,7 @@ function renderSeedB(){
     // same reasoning as Seed A's summary.
     const movesTable = moves.length
       ? `<div class="candtable" style="max-height:220px;margin-top:8px"><table><thead><tr>
-            <th>turn</th><th>Metronome call</th></tr></thead>
+            <th title="Battle turn number.">turn</th><th title="The move Metronome called on this turn — match it against what you saw.">Metronome call</th></tr></thead>
           <tbody>${moves.map(m => `<tr><td>${m.turn}</td><td>${esc(m.move_name)}</td></tr>`).join("")}</tbody></table></div>`
       : "";
     return `<h3>Seed B — identified</h3>
@@ -1014,6 +1097,9 @@ async function nrStartSeedB(){
   renderNewRun();
   nr.seedBSession = await api("metronome_seed_b_start", {
     target_time: nr.initialTime, key_seed: nr.e.key_seed,
+    // Seed B is the battle seed Vector ms AFTER Seed A — the search has to be centered on
+    // where the active model puts it, not on the key seed (which is where Seed A is).
+    vector_ms: nr.vectorMs, profile_id: nr.e.profile_id,
     seconds_window: nr.sbSecondsWindow, delay_window: nr.sbDelayWindow,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
     metronome_only: metronomeOnly });
@@ -1121,15 +1207,20 @@ async function metronomeReviewData(expId){
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "metronome"), api("get_profile", e.profile_id)]);
   review = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs", preview: null,
+    delayMetrics: null,
     dirty: {}, dirtyTags: {}, exportMode: false, exportSelected: {} };
   await reviewRefreshPreview();
   renderReview();
 }
 
 async function reviewRefreshPreview(){
-  if(review.runs.length === 0){ review.preview = null; return; }
+  if(review.runs.length === 0){ review.preview = null; review.delayMetrics = null; return; }
   try{ review.preview = await api("preview_calibration", review.profileId); }
   catch(err){ review.preview = null; }
+  // Vector delay / Delta delay come from the profile's ACTIVE model, not from this preview
+  // fit — the columns say how each run sits against what's deployed today.
+  try{ review.delayMetrics = (await api("run_delay_metrics", review.profileId, "metronome")).metrics; }
+  catch(err){ review.delayMetrics = null; }
 }
 
 function reviewHasUnsaved(){
@@ -1171,6 +1262,7 @@ function renderReviewRuns(){
   const tagOpts = `<option value="">All tags</option>` +
     tags.map(t => `<option${t===review.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = review.preview?.reasons || {};
+  const metrics = review.delayMetrics || {};
   const dirtyCount = Object.keys(review.dirty).length;
   const exportMode = !!review.exportMode;
   const exportCount = Object.keys(review.exportSelected || {}).length;
@@ -1188,9 +1280,10 @@ function renderReviewRuns(){
   const body = review.runs.length === 0
     ? `<div class="empty">No metronome runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
-        ${exportMode ? `<th>export</th>` : ""}
-        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>${exportMode ? "" : "exclude"}</th><th>reason</th><th></th></tr></thead>
+        ${exportMode ? `<th title="Tick the runs to include in the export file.">export</th>` : ""}
+        ${_th("saved","saved")}${_th("tag","tag")}${_th("seedA","Seed A")}${_th("seedB","Seed B")}
+        ${_th("vms","Vms")}${_th("vdelay","V delay")}${_th("ddelay","\u0394 delay")}
+        ${_th("notes","note")}${exportMode ? "" : `<th title="${esc(_RUNS_COL_TITLES.exclude)}">exclude</th>`}<th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = review.dirty[r.id] !== undefined;
           const staged = isDirty ? review.dirty[r.id] : r.excluded;
@@ -1205,16 +1298,15 @@ function renderReviewRuns(){
           // no handler of its own; the <tr> click is the single source of truth, so there's
           // no double-toggle risk from clicking directly on the checkbox.
           const excludeCell = exportMode ? "" :
-            `<td><input type="checkbox" ${staged?"checked":""} onchange="reviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
+            _runsExcludeCell(reason, staged, isDirty, "reviewStageToggle", r.id);
           return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('review','${esc(r.id)}')"` : ""}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
-          <td${muted}>${esc(fmtSavedAt(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
-          <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
-          <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td${muted}>${esc(fmtSavedShort(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${esc(fmtSeedShort(r.a_seed?.seed_hex))}</td>
+          <td${muted}>${esc(fmtSeedShort(r.b_seed?.seed_hex))}</td>
+          <td${muted}>${fmtVectorMs(r.vector_ms)}</td>${_runsDelayCells(metrics[r.id], muted)}
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           ${excludeCell}
-          <td${muted}>${reason.startsWith("outlier")
-              ? `<span class="badge warn">${esc(reason)}</span>` : esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
               onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
@@ -1384,7 +1476,7 @@ function renderReviewTags(){
         onchange="reviewStageToggleTag('${esc(tag)}',this.checked)"> exclude tag</td></tr>`;
   }).join("");
   return `${saveBar}<div class="candtable" style="max-height:none"><table><thead><tr>
-      <th>tag</th><th>runs</th><th>included</th><th></th></tr></thead>
+      <th title="A run label. Excluding a tag leaves every run carrying it out of the fits.">tag</th><th title="How many saved runs carry this tag.">runs</th><th title="Whether runs with this tag are fed to calibration fits.">included</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:14px">Excluding a tag does not change individual runs'
       own checkboxes — excluded runs show "tag:&lt;name&gt;" as their reason in the Runs view.
@@ -1437,7 +1529,7 @@ function renderCalibrateModel(){
       <div class="hint muted">Safari Compass runs aren't used here — see Safari Compass →
         Review Data → Calibrate Model to fit the safari load-path offset.</div>
       <div class="candtable" style="max-height:none"><table><thead><tr>
-          <th>parameter</th><th>current active</th><th>new preview</th></tr></thead>
+          <th title="A fitted calibration-model parameter.">parameter</th><th title="The value in the model this profile is scoring against right now.">current active</th><th title="The value this re-fit would save, if you keep it.">new preview</th></tr></thead>
         <tbody>
           ${row("n_fit", "n_fit", (v)=>v??"—")}
           ${row("beta (frames/ms)", "beta", f2)}
@@ -1459,7 +1551,7 @@ function renderCalibrateModel(){
       <button class="btn small" onclick="importCalibrationModel()">Import model</button></div>`;
   const savedList = (review.savedModels && review.savedModels.length)
     ? `<div class="candtable" style="max-height:none"><table><thead><tr>
-          <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
+          <th title="Model number within this profile, in the order they were saved.">#</th><th title="The name you gave this saved model.">name</th><th title="When this model was fit and saved.">saved</th><th title="The model every tool in this profile currently scores against.">active</th><th></th></tr></thead>
         <tbody>${review.savedModels.map(m => `<tr>
           <td>${m.number}</td><td>${esc(m.name || "—")}</td>
           <td>${esc((m.created_at||"").replace("T"," "))}</td>
@@ -1599,7 +1691,7 @@ function renderChartFindTarget(){
           ${built ? `<button class="btn" ${ct.ranking?"disabled":""} onclick="ctRank()">${ct.ranking ? "Ranking…" : "Rank targets"}</button>` : ""}
           ${built ? `<button class="btn" onclick="ctOpenRankAtTime()">Find best target at a specific time</button>` : ""}
         </div>
-        ${ct.ranking ? `<div class="progress-wrap" style="margin-top:8px"><div class="progress-bar indeterminate"></div></div>` : ""}
+        ${renderRankProgress()}
       </div>
       ${ct.ranked && !ct.ranking ? renderRankedTargets() : ""}
       ${ct.rankedAtTime ? renderRankedAtTime() : ""}`;
@@ -1791,13 +1883,59 @@ async function ctSaveWindow(ev){
   return false;
 }
 
+// A cold rank is ~35 s, so it reports real progress rather than an indeterminate spinner
+// (round 18 feedback). Almost all of that time is the refine pass — the backend reports the
+// short "scan" phase separately, and the bar only starts moving once refining begins, because
+// a bar driven off the scan would sit at 0% for a second then at 100% for another 35.
+function renderRankProgress(){
+  if(!ct.ranking) return "";
+  const p = ct.rankProgress || {};
+  const pct = (p.phase === "refine" && p.total) ? Math.round((p.done / p.total) * 100) : null;
+  let eta = "";
+  if(pct !== null && p.done > 0 && ct.rankRefineStartedAt){
+    const etaMs = ((Date.now() - ct.rankRefineStartedAt) / p.done) * (p.total - p.done);
+    if(etaMs > 1500) eta = ` · ETA ${fmtDuration(etaMs)}`;
+  }
+  const label = p.phase === "refine"
+    ? `Refining ${(p.done||0).toLocaleString()} / ${(p.total||0).toLocaleString()} boot times${eta}`
+    : "Scoring candidate frames…";
+  return `<div style="margin-top:8px">
+      <div class="status">${label}</div>
+      <div class="progress-wrap">
+        <div class="progress-bar ${pct==null?"indeterminate":""}" style="${pct!=null?`width:${pct}%`:""}"></div>
+      </div>
+    </div>`;
+}
+
 async function ctRank(){
   ct.ranking = true;
+  ct.rankProgress = null;
+  ct.rankRefineStartedAt = null;
   renderChartFindTarget();
+  const expId = ct.expId, chartId = ct.chartId;
   try{
-    ct.ranked = await api("chart_rank_best_per_time", ct.expId, ct.chartId, {limit: 15, step: 4});
-  }catch(err){ ct.ranked = null; }
+    let snap = await api("chart_rank_start", expId, chartId, {limit: 15, step: 4});
+    while(!snap.done){
+      await sleep(300);
+      snap = await api("chart_rank_poll", snap.session_id);
+      // Only touch this page's state if the user hasn't navigated to a different chart since.
+      if(!ct || ct.expId !== expId || ct.chartId !== chartId) return;
+      const prog = snap.progress || {};
+      // Start the ETA clock when refining begins, not when the whole rank did — the scan
+      // phase before it runs at a completely different rate and would skew the estimate.
+      if(prog.phase === "refine" && !ct.rankRefineStartedAt) ct.rankRefineStartedAt = Date.now();
+      ct.rankProgress = prog;
+      renderChartFindTarget();
+    }
+    if(snap.error) throw new Error(snap.error);
+    ct.ranked = snap.result;
+  }catch(err){
+    ct.ranked = null;
+    toast(String(err && err.message ? err.message : err));
+  }
+  if(!ct || ct.expId !== expId || ct.chartId !== chartId) return;
   ct.ranking = false;
+  ct.rankProgress = null;
   renderChartFindTarget();
 }
 
@@ -1837,8 +1975,14 @@ async function ctRunRankAtTime(ev){
 // balls-no-flee, ...) is scoring something else entirely, so the generic "success" wording
 // applies instead. Falls back to "capture" phrasing if the chart can't be resolved (better
 // than showing nothing).
+// Find Target (ct) and Manage Data (cmd) are separate page states, and only one of them is
+// populated at a time — Manage Data can examine a saved target without Find Target ever having
+// been opened, which used to throw here on a null `ct` (round 17 feedback). Look in whichever
+// page state actually has the charts.
 function _chartIsCapture(chartId){
-  const chart = ct.charts.find(c => c.id === chartId);
+  const charts = (typeof ct !== "undefined" && ct?.charts)
+    || (typeof cmd !== "undefined" && cmd?.charts) || [];
+  const chart = charts.find(c => c.id === chartId);
   return !chart || chart.criteria_name === "capture";
 }
 function _pLabel(chartId){ return _chartIsCapture(chartId) ? "P(capture)" : "P(success)"; }
@@ -1857,11 +2001,16 @@ function renderRankedTargets(){
     </tr>`).join("");
   return `<div class="section-label">Ranked targets
       <span class="muted" style="text-transform:none;font-weight:400">
-        (best per initial time, of ${ct.ranked.per_time_count} candidates)</span></div>
+        (best per initial time, of ${ct.ranked.per_time_count} candidates)${ct.ranked.cached
+          ? ` · <span title="Reusing the saved report for this chart and model — it is recomputed automatically whenever the chart, the calibration model, or the precomputed data changes.">cached</span>`
+          : ""}</span></div>
     <div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>initial time</th><th>Vector ms</th><th>target delay</th><th>${esc(pLabel)}</th><th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
-      </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="hint muted" style="margin-top:8px">${_SIGMA_TITLE}</div>`;
+        <th title="The DS clock datetime you aim to hit Seed A on for this target.">initial time</th>
+        <th title="Vector ms — the commanded countdown to time for (timer 3), in milliseconds.">Vector ms</th>
+        <th title="The delay (game frame) the battle seed is predicted to land on.">target delay</th>
+        <th title="Modelled chance this target succeeds, scored against the currently active calibration model.">${esc(pLabel)}</th>
+        <th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 // Shown as both a header tooltip and a plain-text hint below sigma-carrying tables.
@@ -1881,11 +2030,15 @@ function renderRankedAtTime(){
     </tr>`).join("");
   return `<div class="section-label">Best targets at ${esc(ct.rankedAtTime[0].initial_time.replace("T"," "))}</div>
     <div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>initial time</th><th>Vector ms</th><th>target delay</th><th>${esc(pLabel)}</th><th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
+        <th title="The DS clock datetime you aim to hit Seed A on for this target.">initial time</th>
+        <th title="Vector ms — the commanded countdown to time for (timer 3), in milliseconds.">Vector ms</th>
+        <th title="The delay (game frame) the battle seed is predicted to land on.">target delay</th>
+        <th title="Modelled chance this target succeeds, scored against the currently active calibration model.">${esc(pLabel)}</th>
+        <th title="${_SIGMA_TITLE}"><span style="text-transform:none">σ</span></th><th></th>
       </tr></thead><tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:8px">Spread out to genuinely different targets
       (each at least ~0.5s apart) rather than a cluster of near-identical frames around the
-      single best one. ${_SIGMA_TITLE}</div>`;
+      single best one.</div>`;
 }
 
 async function ctExamineAtTime(idx){
@@ -1955,7 +2108,7 @@ function ctRenderExamineModal(ex){
     <div class="info-line">mean frame F=${ex.F.toFixed(1)} · σ=${ex.sigma.toFixed(1)}
       · marginal ${esc(_pLabel(ctExamineCtx?.chartId))} = <b>${(ex.p*100).toFixed(2)}%</b></div>
     <div class="candtable" style="max-height:220px"><table><thead><tr>
-      <th>second</th><th>P(second)</th><th>mdmsh</th><th>cp</th><th>contributes</th></tr></thead>
+      <th title="A candidate RTC second the battle seed could land on.">second</th><th title="Modelled chance the battle lands on this second.">P(second)</th><th title="The (month·day + minute + second) hash byte and hour that identify this second's seed family.">mdmsh</th><th title="Chance of success given the battle lands on this second.">cp</th><th title="This second's share of the target's total success chance — P(second) times cp.">contributes</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:8px">Click a second to see the individual seeds behind it.</div>
     <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
@@ -2024,14 +2177,8 @@ function renderSavedTargets(){
     </tr>`;
   }).join("");
   return `<div class="candtable" style="max-height:none"><table><thead><tr>
-      <th>name</th><th>initial time</th><th>Vector ms</th><th>P(success) at save time</th><th>chart</th><th></th>
-    </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="hint muted" style="margin-top:8px">This P(success) is frozen from when the
-      target was saved (P(capture) if that chart's criteria is literally "captured" — targets
-      here can come from different charts with different criteria, so this list uses the
-      generic wording). "Examine" always recomputes it live against whichever calibration
-      model is currently active — if you've switched models since saving, examine may show a
-      different number than this table.</div>`;
+      <th title="The name you gave this saved target.">name</th><th title="The DS clock datetime you aim to hit Seed A on for this target.">initial time</th><th title="Vector ms — the commanded countdown to time for (timer 3), in milliseconds.">Vector ms</th><th title="Modelled chance this target succeeds, frozen from when it was saved — P(capture) for a chart whose criteria is literally &quot;captured&quot;, but targets here can come from charts with different criteria, so the generic wording is used. &quot;Examine&quot; always recomputes it live against the currently active calibration model.">P(success)*</th><th title="The chart this target was ranked from.">chart</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 async function ctDeleteTarget(id){
@@ -2061,16 +2208,23 @@ function renderChartManageData(){
     : cmd.charts.map(c => {
         const cs = cmd.canonStatus[c.id] || {};
         return `<tr>
-          <td>${esc(c.name)}</td><td>${esc(c.strategy_name)}</td><td>${esc(c.criteria_name)}</td>
-          <td>${c.setup_delay_seconds}–${c.max_target_seconds}s</td>
+          <td>${esc(c.name)}</td><td>${esc(c.strategy_name)}</td>
+          <td><div class="cell-narrow">${esc(c.criteria_name)}</div></td>
+          <td style="white-space:nowrap">${c.setup_delay_seconds}–${c.max_target_seconds}s</td>
           <td>${cs.built
-            ? `${cs.n_mdmsh} mdmsh · ${(cs.n_distinct_seeds||0).toLocaleString()} seeds
-               (${(cs.reuse_factor||0).toFixed(0)}x) · ${(cs.built_models||[]).join(", ")}`
+            ? `<ul class="tight-list">
+                 <li>${cs.n_mdmsh} mdmsh classes</li>
+                 <li class="nowrap">${(cs.n_distinct_seeds||0).toLocaleString()} seeds (${(cs.reuse_factor||0).toFixed(0)}x reuse)</li>
+                 <li>models: ${esc((cs.built_models||[]).join(", ") || "—")}</li>
+                 <li>${esc(cs.human || "0 B")} on disk</li>
+               </ul>`
             : `<span class="muted">not built</span>`}</td>
-          <td style="text-align:right;white-space:nowrap">
-            <button class="btn small" onclick="cmdOpenFindTarget('${esc(c.id)}')">Open in Find Target</button>
-            ${cs.built ? `<button class="btn small danger" onclick="cmdDeleteCanon('${esc(c.id)}')">Delete computed data</button>` : ""}
-            <button class="btn small danger" onclick="cmdDeleteChart('${esc(c.id)}')">Delete chart</button>
+          <td style="text-align:right">
+            <div class="btn-stack">
+              <button class="btn small" onclick="cmdOpenFindTarget('${esc(c.id)}')">Open in Find Target</button>
+              ${cs.built ? `<button class="btn small danger" onclick="cmdDeleteCanon('${esc(c.id)}')">Delete computed data</button>` : ""}
+              <button class="btn small danger" onclick="cmdDeleteChart('${esc(c.id)}')">Delete chart</button>
+            </div>
           </td>
         </tr>`;
       }).join("");
@@ -2095,12 +2249,12 @@ function renderChartManageData(){
 
     <div class="section-label">Charts &amp; computed data</div>
     <div style="overflow-x:auto"><table><thead><tr>
-        <th>name</th><th>strategy</th><th>criteria</th><th>window</th><th>computed</th><th></th>
+        <th title="The name you gave this chart.">name</th><th title="Which actions this chart assumes you take each turn.">strategy</th><th title="What this chart counts as success.">criteria</th><th title="The range of countdown lengths this chart searches, in seconds.">window</th><th title="What this chart's precomputed canon map contains, and the disk it uses.">computed</th><th></th>
       </tr></thead><tbody>${chartRows}</tbody></table></div>
 
     <div class="section-label">Saved targets</div>
     <div style="overflow-x:auto"><table><thead><tr>
-        <th>name</th><th>chart</th><th>initial time</th><th>Vector ms</th><th>P(success) at save time</th><th></th>
+        <th title="The name you gave this saved target.">name</th><th title="The chart this target was ranked from.">chart</th><th title="The DS clock datetime you aim to hit Seed A on for this target.">initial time</th><th title="Vector ms — the commanded countdown to time for (timer 3), in milliseconds.">Vector ms</th><th title="Modelled chance this target succeeds, frozen from when it was saved — P(capture) for a chart whose criteria is literally &quot;captured&quot;, but targets here can come from charts with different criteria, so the generic wording is used. &quot;Examine&quot; always recomputes it live against the currently active calibration model.">P(success)*</th><th></th>
       </tr></thead><tbody>${targetRows}</tbody></table></div>
     <div class="hint muted" style="margin-top:8px">Frozen from save time — Examine always
       recomputes live against the currently active model.</div>`);
@@ -2132,7 +2286,10 @@ async function cmdDeleteChart(chartId){
 }
 
 async function cmdExamineTarget(targetId){
-  ctExamineCtx = { kind: "target", targetId };
+  // Carry the target's OWN chart id, so the P(capture)/P(success) wording matches the chart
+  // it was ranked from rather than defaulting to the capture phrasing.
+  const t = cmd.targets.find(x => x.id === targetId);
+  ctExamineCtx = { kind: "target", targetId, chartId: t ? t.chart_id : null };
   const ex = await api("examine_target", targetId, {});
   ctRenderExamineModal(ex);
 }
@@ -2256,17 +2413,17 @@ function renderSeedASafari(){
   return `<h3>Seed A — ${sac.seedA ? "change" : "initial"} seed</h3>
     ${keepBar}
     <div class="rel-row">
-      <div class="field"><label>Roamer starting positions (R E L)</label>
+      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
         <input id="sac-startrel" value="${esc(sac._startrel || "")}" placeholder="31 30 7  (- = not roaming)"
           oninput="sacValidateStartRel()" onkeydown="sacSeedAKey(event)"></div>
       <div class="field"><label>± seconds</label><input id="sac-secwin" type="number" min="0" value="${sac.secondsWindow}" onkeydown="sacSeedAKey(event)"></div>
       <div class="field"><label>± delays</label><input id="sac-delaywin" type="number" min="0" value="${sac.delayWindow}" onkeydown="sacSeedAKey(event)"></div>
       <button class="btn primary" onclick="sacGenerateSeedA()">Generate</button>
     </div>
-    <div class="field check"><input type="checkbox" id="sac-parity" ${sac.matchParity?"checked":""}><label for="sac-parity" style="margin:0">Match key-seed delay parity</label></div>
+    <div class="field check"><input type="checkbox" id="sac-parity" ${sac.matchParity?"checked":""}><label for="sac-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
     <div class="info-line" id="sac-keyinfo">key seed: —</div>
     <div class="grid2">
-      <div class="field"><label>Observed roamer routes (R E L)</label>
+      <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
         <input id="sac-obsrel" placeholder="38 42 11  (. = any)" oninput="sacNarrowSeedA()"
           onkeydown="sacObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
@@ -2567,11 +2724,16 @@ function renderCandBSafari(res){
     <tr><td>${esc(c.seed_hex)}</td><td>${c.frame}</td>
       <td>${c.delta>=0?"+":""}${c.delta ?? "·"}</td><td>${(c.posterior*100).toFixed(2)}%</td>
       ${showFlee ? `<td>${(c.flee_flags && c.flee_flags.length)
-          ? c.flee_flags.map(f => `<span title="${esc(f.tooltip)}" style="cursor:help;color:var(--grass);border-bottom:1px dotted var(--grass)">${esc(f.code)}</span>`).join(", ")
+          ? c.flee_flags.map(f => { // "F!" isn't a warning about a future turn — it means this
+              // candidate has ALREADY fled and is waiting on you to type F. Colour it apart
+              // from the predictive flags so it reads as an action, not a forecast.
+              const col = f.code === "F!" ? "var(--ember)" : "var(--grass)";
+              return `<span title="${esc(f.tooltip)}" style="cursor:help;color:${col};border-bottom:1px dotted ${col}">${esc(f.code)}</span>`;
+            }).join(", ")
           : "—"}</td>` : ""}
     </tr>`).join("");
   return `<div class="status"><b>${res.count}</b> / ${res.total} candidate(s) match</div>
-    <div class="candtable"><table><thead><tr><th>seed</th><th>frame</th><th>δ</th><th>P</th>
+    <div class="candtable"><table><thead><tr><th title="A candidate battle seed still consistent with the path you have entered.">seed</th><th title="The delay (game frame) this candidate seed was generated on.">frame</th><th title="How far this candidate sits from the frame the model predicted.">δ</th><th title="Relative chance this is the seed you actually hit, given the path so far.">P</th>
       ${showFlee ? `<th title="Guaranteed flee outcomes if you repeat that action from here, looking ahead up to 3 turns">flee flags <span class="hint" style="font-weight:normal">(hover)</span></th>` : ""}
       </tr></thead>
       <tbody>${rows}</tbody></table></div>`;
@@ -2659,7 +2821,7 @@ async function sacShowCheatsheet(){
   openSidePane(`<h3>Seed B — full guide</h3>
     <div class="hint muted" style="margin-bottom:8px">Type the letter for whichever message you see.</div>
     <div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>type</th><th>action</th><th>in-game message</th></tr></thead>
+        <th title="The character to type into the path box.">type</th><th title="What that character means.">action</th><th title="What you see on screen when this happens.">in-game message</th></tr></thead>
       <tbody>${trs}</tbody></table></div>
     <div class="actions"><button class="btn" onclick="closeSidePane()">Close</button></div>`);
 }
@@ -2673,6 +2835,10 @@ async function sacUpdateSeedB(){
     sac.seedBResult = await api("safari_compass_seed_b", sac.expId, {
       initial_time: sac.initialTime, vector_ms: sac.vectorMs, path: sac.path,
       machete_max_turns: sac.e.preferences?.machete_max_turns ?? 50,
+      // The advance count THIS run will make — the frame the planned route Sweet Scents on.
+      // Only used by a model carrying a per-advance safari offset; this panel is locked until
+      // a route is planned, so frameGuide is always set by the time we get here.
+      advances: sac.frameGuide?.encounter_frame ?? null,
       expand_frames: sac.seedBExpandFrames, expand_seconds: sac.seedBExpandSeconds});
   }catch(err){
     // api() already toasted this — also keep it visible in the panel itself (a toast is easy
@@ -2893,13 +3059,21 @@ async function safariReviewData(expId){
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "safari"), api("get_profile", e.profile_id)]);
   sreview = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs",
-    preview: null, dirty: {}, dirtyTags: {}, savedModels: null, calBaseId: null, calPreview: null,
+    keyAdvances: e.key_seed_advances,
+    preview: null, delayMetrics: null,
+    dirty: {}, dirtyTags: {}, savedModels: null, calBaseId: null, calPreview: null,
+    // Calibrate Model fit-time options (clayton-6h2.6). Fit-time only: whatever they produce is
+    // baked into the saved model, so prediction just uses whichever model is active. Defaulted
+    // from the chosen base model in sreviewSelectBaseModel, so they persist without re-clicking.
+    calPerAdvance: false, calSafariJitter: false,
     exportMode: false, exportSelected: {} };
   await sreviewRefreshPreview();
   renderSafariReview();
 }
 async function sreviewRefreshPreview(){
-  if(sreview.runs.length === 0){ sreview.preview = null; return; }
+  if(sreview.runs.length === 0){ sreview.preview = null; sreview.delayMetrics = null; return; }
+  try{ sreview.delayMetrics = (await api("run_delay_metrics", sreview.profileId, "safari")).metrics; }
+  catch(err){ sreview.delayMetrics = null; }
   try{ sreview.preview = await api("safari_run_exclude_reasons", sreview.profileId); }
   catch(err){ sreview.preview = null; }
 }
@@ -2942,6 +3116,7 @@ function renderSafariReviewRuns(){
   const tagOpts = `<option value="">All tags</option>` +
     tags.map(t => `<option${t===sreview.tag?" selected":""}>${esc(t)}</option>`).join("");
   const reasons = sreview.preview?.reasons || {};
+  const metrics = sreview.delayMetrics || {};
   const dirtyCount = Object.keys(sreview.dirty).length;
   const exportMode = !!sreview.exportMode;
   const exportCount = Object.keys(sreview.exportSelected || {}).length;
@@ -2959,9 +3134,10 @@ function renderSafariReviewRuns(){
   const body = sreview.runs.length === 0
     ? `<div class="empty">No safari runs yet — save one from New Run.</div>`
     : `<div class="candtable" style="max-height:none"><table><thead><tr>
-        ${exportMode ? `<th>export</th>` : ""}
-        <th>saved</th><th>tag</th><th>vector ms</th><th>Seed A</th><th>Seed B</th>
-        <th>notes</th><th>${exportMode ? "" : "exclude"}</th><th>reason</th><th></th></tr></thead>
+        ${exportMode ? `<th title="Tick the runs to include in the export file.">export</th>` : ""}
+        ${_th("saved","saved")}${_th("tag","tag")}${_th("seedA","Seed A")}${_th("seedB","Seed B")}
+        ${_th("vms","Vms")}${_th("vdelay","V delay")}${_th("ddelay","\u0394 delay")}
+        ${_th("notes","note")}${exportMode ? "" : `<th title="${esc(_RUNS_COL_TITLES.exclude)}">exclude</th>`}<th></th></tr></thead>
         <tbody>${shown.map(r => { const reason = reasons[r.id] || "";
           const isDirty = sreview.dirty[r.id] !== undefined;
           const staged = isDirty ? sreview.dirty[r.id] : r.excluded;
@@ -2969,15 +3145,15 @@ function renderSafariReviewRuns(){
           const muted = (reason && !isDirty) ? ' style="opacity:.6"' : "";
           const selected = !!sreview.exportSelected?.[r.id];
           const excludeCell = exportMode ? "" :
-            `<td><input type="checkbox" ${staged?"checked":""} onchange="sreviewStageToggle('${esc(r.id)}',this.checked)"></td>`;
+            _runsExcludeCell(reason, staged, isDirty, "sreviewStageToggle", r.id);
           return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('sreview','${esc(r.id)}')"` : ""}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
-          <td${muted}>${esc(fmtSavedAt(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
-          <td${muted}>${fmtVectorMs(r.vector_ms)}</td><td${muted}>${esc(r.a_seed?.seed_hex || "—")}</td>
-          <td${muted}>${esc(r.b_seed?.seed_hex || "—")}</td>
+          <td${muted}>${esc(fmtSavedShort(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
+          <td${muted}>${esc(fmtSeedShort(r.a_seed?.seed_hex))}</td>
+          <td${muted}>${esc(fmtSeedShort(r.b_seed?.seed_hex))}</td>
+          <td${muted}>${fmtVectorMs(r.vector_ms)}</td>${_runsDelayCells(metrics[r.id], muted)}
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           ${excludeCell}
-          <td${muted}>${esc(isDirty ? "unsaved" : (reason || "—"))}</td>
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
               onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
@@ -3016,7 +3192,7 @@ function renderSafariReviewTags(){
         onchange="sreviewStageToggleTag('${esc(tag)}',this.checked)"> exclude tag</td></tr>`;
   }).join("");
   return `${saveBar}<div class="candtable" style="max-height:none"><table><thead><tr>
-      <th>tag</th><th>runs</th><th>included</th><th></th></tr></thead>
+      <th title="A run label. Excluding a tag leaves every run carrying it out of the fits.">tag</th><th title="How many saved runs carry this tag.">runs</th><th title="Whether runs with this tag are fed to calibration fits.">included</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     <div class="hint muted" style="margin-top:14px">Excluding a tag does not change individual runs'
       own checkboxes — excluded runs show "tag:&lt;name&gt;" as their reason in the Runs view.
@@ -3085,12 +3261,27 @@ async function sreviewLoadSavedModels(){
 
 async function sreviewCalibrateRefresh(){
   if(!sreview.calBaseId){ sreview.calPreview = null; return; }
-  try{ sreview.calPreview = await api("preview_safari_calibration", sreview.profileId, sreview.calBaseId); }
+  try{ sreview.calPreview = await api("preview_safari_calibration", sreview.profileId, sreview.calBaseId,
+    {per_advance: sreview.calPerAdvance, safari_jitter: sreview.calSafariJitter}); }
   catch(err){ sreview.calPreview = null; }
 }
 
 async function sreviewSelectBaseModel(modelId){
   sreview.calBaseId = modelId;
+  // Inherit the base model's own fit-time choices, so re-fitting from a model that already
+  // carries a per-advance term (or a safari-path jitter) doesn't silently drop it.
+  const base = (sreview.savedModels || []).find(m => m.id === modelId);
+  const lin = base?.stats?.linear || base?.artifact?.models?.linear;
+  if(lin){
+    sreview.calPerAdvance = lin.safari_offset_per_advance != null;
+    sreview.calSafariJitter = lin.safari_jitter_c != null;
+  }
+  await sreviewCalibrateRefresh();
+  renderSafariReview();
+}
+
+async function sreviewToggleCalOption(key, on){
+  sreview[key] = !!on;
   await sreviewCalibrateRefresh();
   renderSafariReview();
 }
@@ -3133,6 +3324,64 @@ async function sreviewImportCalibrationModel(){
   }
 }
 
+// How much to trust the per-advance slope, in plain terms. The slope is always reported --
+// a rough early estimate is useful and its interval visibly shrinks as runs accumulate -- so
+// this is a warning band, not a gate. The number that matters is the CI half-width scaled by
+// THIS expedition's advance count: that's the correction's uncertainty in frames, directly
+// comparable to the landing spread it's correcting. Only a mathematically unestimable slope
+// (fewer than two distinct advance counts) is refused outright.
+function _perAdvanceConfidence(frames, sigma){
+  if(!(sigma > 0)) return null;
+  const r = frames / sigma;
+  if(r < 0.5) return {label: "Solid", cls: "ok",
+    note: "well inside your landing spread — safe to rely on"};
+  if(r < 1)   return {label: "Usable", cls: "ok",
+    note: "smaller than your landing spread — reasonable to rely on"};
+  if(r < 3)   return {label: "Rough", cls: "warn",
+    note: "comparable to your landing spread — treat as a working guess, keep collecting"};
+  return {label: "Very rough", cls: "warn",
+    note: "much larger than your landing spread — this correction is mostly noise so far"};
+}
+
+function _sreviewPerAdvanceNote(pv){
+  if(!pv.per_advance_requested) return "";
+  const f = pv.safari_offset?.linear;
+  const q = f?.quality;
+  if(!q) return "";
+  const missing = q.n_missing_advances
+    ? ` ${q.n_missing_advances} run(s) have no recorded advance count.` : "";
+
+  if(!q.estimable){
+    return `<div class="notice warn" style="margin-top:12px">No per-advance offset yet:
+      ${esc(q.reason || "not enough data")}. The flat safari_offset above was fit instead.${missing}</div>`;
+  }
+
+  const slope = `<strong>${Number(f.per_advance).toFixed(3)} frames/advance</strong>`;
+  const from = `from ${q.n_with_advances} run(s) spanning ${Number(q.spread).toFixed(0)} advances`;
+  const n = sreview.keyAdvances;
+
+  // No CI at all (too few runs to resample) -- say so rather than implying precision.
+  if(q.ci_halfwidth == null){
+    return `<div class="notice warn" style="margin-top:12px">Per-advance offset ${slope}
+      ${from} — ${esc(q.reason || "uncertainty unknown")}.${missing}</div>`;
+  }
+
+  const frames = q.ci_halfwidth * (n || 0);
+  const conf = n ? _perAdvanceConfidence(frames, q.sigma_ref) : null;
+  const scale = n
+    ? `At your ${n} advances that is a correction of
+       <strong>${(f.per_advance * n).toFixed(0)} &plusmn; ${frames.toFixed(0)} frames</strong>`
+    : `Uncertainty is &plusmn;${q.ci_halfwidth.toFixed(3)} frames per advance`;
+  const vs = (n && q.sigma_ref > 0)
+    ? ` — against a landing spread of about ${Number(q.sigma_ref).toFixed(0)} frames.` : ".";
+
+  return `<div class="notice ${conf ? conf.cls : ""}" style="margin-top:12px">
+    ${conf ? `<span class="badge ${conf.cls}">${conf.label}</span> ` : ""}
+    Per-advance offset ${slope} ${from}. ${scale}${vs}
+    ${conf ? `<div class="hint muted" style="margin-top:4px">${conf.note} — collect more runs,
+      with more varied advance counts, to narrow it.</div>` : ""}${missing}</div>`;
+}
+
 function renderSafariCalibrateModel(){
   const models = sreview.savedModels || [];
   if(!models.length) return `<div class="notice warn">No calibration models yet.</div>`;
@@ -3143,7 +3392,25 @@ function renderSafariCalibrateModel(){
   let content = `<div class="field" style="max-width:360px"><label>Base model</label>
       <select onchange="sreviewSelectBaseModel(this.value)">${baseOpts}</select></div>
     <div class="hint muted">The base model's own trend (beta/alpha) is held fixed — only
-      safari_offset is fit here. Metronome Compass's Calibrate Model never sees this value.</div>`;
+      safari_offset is fit here. Metronome Compass's Calibrate Model never sees this value.</div>
+    <div class="field check"><input type="checkbox" id="sr-cal-per-advance"
+        ${sreview.calPerAdvance ? "checked" : ""}
+        onchange="sreviewToggleCalOption('calPerAdvance', this.checked)">
+      <label for="sr-cal-per-advance" style="margin:0">Fit a per-advance offset
+        (safari_offset_per_advance)</label></div>
+    <div class="hint muted" style="margin:-4px 0 8px">Tests whether the number of Seed A
+      advances shifts the landing frame. Off = one flat offset for every run. Needs runs that
+      recorded an advance count, with different counts between them — the slope gets multiplied
+      by your key-seed advances at predict time, so its uncertainty is reported alongside it.</div>
+    <div class="field check"><input type="checkbox" id="sr-cal-safari-jitter"
+        ${sreview.calSafariJitter ? "checked" : ""}
+        onchange="sreviewToggleCalOption('calSafariJitter', this.checked)">
+      <label for="sr-cal-safari-jitter" style="margin:0">Use the safari runs' own spread for
+        the safari landing jitter (safari_jitter_c)</label></div>
+    <div class="hint muted" style="margin:-4px 0 8px">Off = safari scoring uses the jitter
+      measured on the <em>metronome</em> path. On = it uses how much these safari runs actually
+      scattered, which widens or narrows candidate windows and capture probabilities to
+      match.</div>`;
 
   const pv = sreview.calPreview;
   if(!pv){
@@ -3161,12 +3428,16 @@ function renderSafariCalibrateModel(){
         (${pv.n_safari_pre_excluded} excluded before fitting) · ${pv.n_safari_fit} used in the fit
         ${pv.n_safari_fit===0 ? "— save some from New Run to fit this" : ""}</div>
       <div class="candtable" style="max-height:none"><table><thead><tr>
-          <th>parameter</th><th>base model</th><th>new preview</th></tr></thead>
+          <th title="A fitted calibration-model parameter.">parameter</th><th title="The value in the base model you chose, held fixed except for the safari fields.">base model</th><th title="The value this re-fit would save, if you keep it.">new preview</th></tr></thead>
         <tbody>
           ${row("safari_offset (frames)", "safari_offset", f2)}
           ${row("safari_offset_n", "safari_offset_n", (v)=>v??"—")}
           ${row("safari_offset_std", "safari_offset_std", f2)}
+          ${sreview.calPerAdvance ? row("safari_offset_per_advance (frames/advance)",
+              "safari_offset_per_advance", f2) : ""}
+          ${sreview.calSafariJitter ? row("safari_jitter_c", "safari_jitter_c", f2) : ""}
         </tbody></table></div>
+      ${_sreviewPerAdvanceNote(pv)}
       ${!pv.changed ? `<div class="notice" style="margin-top:12px">No parameters would change
           from the base model — nothing to save.</div>` : ""}
       <form class="panel" style="margin-top:14px" onsubmit="return sreviewSaveSafariModel(event)">
@@ -3183,7 +3454,7 @@ function renderSafariCalibrateModel(){
       <div class="section-label" style="margin:0">Saved models</div>
       <button class="btn small" onclick="sreviewImportCalibrationModel()">Import model</button></div>`;
   const savedList = `<div class="candtable" style="max-height:none"><table><thead><tr>
-        <th>#</th><th>name</th><th>saved</th><th>active</th><th></th></tr></thead>
+        <th title="Model number within this profile, in the order they were saved.">#</th><th title="The name you gave this saved model.">name</th><th title="When this model was fit and saved.">saved</th><th title="The model every tool in this profile currently scores against.">active</th><th></th></tr></thead>
       <tbody>${models.map(m => `<tr>
         <td>${m.number}</td><td>${esc(m.name || "—")}</td>
         <td>${esc((m.created_at||"").replace("T"," "))}</td>
@@ -3295,7 +3566,9 @@ async function importExpeditionInto(profileId){
   }
   if(res.imported){
     toast(`Imported "${res.expedition_name}" — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
-    openProfile(profileId);
+    // Open what was just imported, not the profile it landed in (round 15 feedback) — you
+    // asked for this expedition, so that's where you should end up.
+    openExpeditionHome(res.expedition_id);
   }
 }
 async function importExpeditionResolve(onCollision){
@@ -3304,7 +3577,7 @@ async function importExpeditionResolve(onCollision){
   _pendingImportEnvelope = null; _pendingImportProfileId = null;
   closeModal();
   toast(`Imported expedition — ${res.counts.charts} chart(s), ${res.counts.targets} target(s)`);
-  openProfile(pid);
+  if(res.expedition_id) openExpeditionHome(res.expedition_id); else openProfile(pid);
 }
 
 // Deleting a profile deletes its OWN directly-owned data (runs, calibration models) but
@@ -3315,11 +3588,27 @@ async function importExpeditionResolve(onCollision){
 async function confirmDeleteProfile(id, name){
   const s = await api("profile_delete_summary", id);
   if(s.expeditions > 0){
+    // Deleting them isn't the only way out — an expedition can be MOVED to another profile
+    // instead (round 15 feedback), so offer that here rather than only naming the blockers.
+    const movable = s.other_profiles || [];
+    const rows = (s.expedition_list || []).map(e => `<tr>
+        <td>${esc(e.name)}</td>
+        <td style="text-align:right">${movable.length
+          ? `<select id="move-exp-${esc(e.id)}" style="max-width:190px">${movable.map(p =>
+              `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select>
+             <button class="btn small" onclick="moveExpeditionTo('${esc(e.id)}','${esc(id)}')">Move</button>`
+          : `<span class="muted">no other profile to move it to</span>`}</td>
+      </tr>`).join("");
     openModal(`<h3>Can't delete "${esc(name)}" yet</h3>
-      <p class="muted">This profile still has ${s.expeditions} expedition(s) — delete those
-        first (each has its own Delete on its Configure page), then delete the profile:</p>
-      <ul class="muted">${s.expedition_names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>
-      <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
+      <p class="muted">This profile still has ${s.expeditions} expedition(s). Deleting the
+        profile won't delete them — so either delete each one (its own Delete button is on its
+        Configure page) or move it to another profile, then delete this profile.</p>
+      <div class="candtable" style="max-height:260px"><table><thead><tr>
+          <th title="Expeditions still assigned to this profile.">expedition</th>
+          <th title="Reassign this expedition to a different profile. Its charts and targets go with it; runs and calibration models stay with their own profile."
+              style="text-align:right">move to</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`, true);
     return;
   }
   openModal(`<h3>Delete "${esc(name)}"?</h3>
@@ -3335,6 +3624,19 @@ async function confirmDeleteProfile(id, name){
       <button class="btn" onclick="closeModal()">Cancel</button>
     </div>`);
 }
+// Reassigning an expedition out of a profile that's being deleted. Re-opens the same prompt
+// so the remaining blockers (and whether any are left) are always current.
+async function moveExpeditionTo(expeditionId, fromProfileId){
+  const sel = $(`move-exp-${expeditionId}`);
+  if(!sel) return;
+  const target = sel.value;
+  await api("move_expedition", expeditionId, target);
+  closeModal();
+  toast("Expedition moved.");
+  const p = await api("get_profile", fromProfileId);
+  confirmDeleteProfile(fromProfileId, p.name);
+}
+
 async function deleteProfileConfirmed(id){
   await api("delete_profile", id);
   closeModal();
@@ -3421,7 +3723,7 @@ async function openProfile(id){
   const users = p.metronome_users.length === 0
     ? `<div class="empty">No metronome users yet. Add the Pokémon you calibrate with
         (P0: Chansey w/ Natural Cure, holding a Lagging Tail, knowing Metronome).</div>`
-    : `<table><thead><tr><th>id</th><th>Name</th><th>Species</th><th>Status</th><th></th></tr></thead>
+    : `<table><thead><tr><th title="This user's number within the profile.">id</th><th title="The name you gave this metronome user.">Name</th><th title="The species — determines which Metronome outcomes are possible.">Species</th><th title="Whether this user can be selected in Metronome Compass, and any warnings about it.">Status</th><th></th></tr></thead>
       <tbody>` + p.metronome_users.map(u => {
         const blocked = u.hard_errors && u.hard_errors.length > 0;
         const allIssues = [...(u.hard_errors||[]), ...(u.warnings||[])];

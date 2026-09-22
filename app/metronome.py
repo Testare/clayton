@@ -230,17 +230,50 @@ def _row_b_json(r: dict) -> dict:
     }
 
 
-def seed_b(params: dict) -> dict:
-    """Candidate battle seeds around a target, each with its precomputed Metronome path.
+def seed_b_center(key_seed: int, target_time: dt.datetime, vector_ms, model):
+    """The (time, delay) Seed B is PREDICTED to land on — what a Seed B search centers on.
 
-    params: target_time (ISO), key_seed, magikarp_level, opposite_gender,
-            seconds_window, delay_window, metronome_only, limit.
+    Seed B is the battle seed generated `vector_ms` after Seed A, so it is neither at Seed A's
+    delay nor at Seed A's RTC second, and searching around Seed A (which this used to do) can
+    only ever find it by brute-forcing a delay window thousands wide. Both coordinates come
+    from the calibration model, exactly as Safari Compass's own Seed B search already did
+    (CompassSafariInput.from_expedition_target):
+
+    * delay — Seed A's search delay plus the predicted dF. `model.frame(M, base_low16)` is the
+      battle seed's low16 field; subtracting base_low16 leaves the pure frame difference, which
+      is year-independent and so adds cleanly onto Seed A's own year-adjusted search delay.
+    * time — the RTC clock runs during the countdown, so Seed B's second is Seed A's plus
+      `M/1000 + rtc_offset_seconds` (rounded). Derived from REAL time, never from the frame
+      counter, which lags across loads (see notes/seed_hitting_process.md).
+    """
+    a_delay = _target_delay_for_key_seed(key_seed, target_time)
+    if model is None or vector_ms in (None, ""):
+        raise ValueError(
+            "Seed B needs the Vector ms and a calibration model to know where to look — "
+            "set a target (Initial time + Vector ms) before starting Seed B.")
+    M = float(vector_ms)
+    base_low16 = key_seed & 0xFFFF
+    dF = model.frame(M, base_low16) - base_low16
+    b_delay = a_delay + round(dF)
+    b_time = target_time + dt.timedelta(
+        seconds=round(M / 1000.0 + model.rtc_offset_seconds))
+    return b_time, b_delay
+
+
+def seed_b(params: dict, model=None) -> dict:
+    """Candidate battle seeds around the PREDICTED Seed B, each with its Metronome path.
+
+    params: target_time (ISO — Seed A's target), key_seed, vector_ms, magikarp_level,
+            opposite_gender, seconds_window, delay_window, metronome_only, limit.
+    `model` is the profile's active calibration model; see seed_b_center for why both the
+    search delay and the search time have to come from it.
     """
     target_time = _parse_time(params["target_time"])
-    target_delay = _target_delay_for_key_seed(int(params["key_seed"]), target_time)
+    b_time, b_delay = seed_b_center(
+        int(params["key_seed"]), target_time, params.get("vector_ms"), model)
     rows = generate_candidates_near(
-        target_time,
-        target_delay,
+        b_time,
+        b_delay,
         int(params.get("seconds_window", 2)),
         int(params.get("delay_window", 10)),
         magikarp_level=int(params["magikarp_level"]),
@@ -251,7 +284,7 @@ def seed_b(params: dict) -> dict:
     return {"candidates": [_row_b_json(r) for r in rows[:limit]], "count": len(rows)}
 
 
-def seed_b_runner(params: dict):
+def seed_b_runner(params: dict, model=None):
     """Build a ``runner(input_fn, output_fn) -> candidate|None`` for a narrowing session.
 
     Generates the full candidate set (with precomputed battle paths) once, then hands
@@ -262,10 +295,11 @@ def seed_b_runner(params: dict):
     opp = bool(params["opposite_gender"])
     metronome_only = bool(params.get("metronome_only", False))
     target_time = _parse_time(params["target_time"])
-    target_delay = _target_delay_for_key_seed(int(params["key_seed"]), target_time)
+    b_time, b_delay = seed_b_center(
+        int(params["key_seed"]), target_time, params.get("vector_ms"), model)
     candidates = generate_candidates_near(
-        target_time,
-        target_delay,
+        b_time,
+        b_delay,
         int(params.get("seconds_window", 2)),
         int(params.get("delay_window", 10)),
         magikarp_level=level,

@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Clayton
+GenericName=Safari Zone RNG Toolkit
+Comment=Pokémon HeartGold/SoulSilver Safari Zone RNG manipulation toolkit
+Exec=clayton
+Icon=clayton
+Terminal=false
+Categories=Utility;
+Keywords=pokemon;rng;safari;hgss;heartgold;soulsilver;seed;
+StartupNotify=true
+# Must match the window's WM_CLASS instance name, or the taskbar shows the window as an
+# unrelated "unknown" entry beside the launcher rather than merging the two. GTK takes it
+# from the GLib program name, which app/main.py sets explicitly to "clayton" so it can't
+# drift with however the binary happens to be invoked (a Nix wrapper, a PyInstaller bundle).
+StartupWMClass=clayton

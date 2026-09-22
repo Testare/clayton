@@ -223,6 +223,48 @@ class TestFacade(unittest.TestCase):
         self.assertEqual(self.api.list_calibration_models(p["id"]), [])
         self.assertIsNone(self.api._store.read("profiles", p["id"]))
 
+    def test_move_expedition_reassigns_it_and_keeps_its_charts(self):
+        # Round 15: reassigning is the alternative to deleting when a profile is going away.
+        # Charts/targets reference the EXPEDITION, so they follow it without being touched.
+        p1 = self.api.create_profile({"name": "P1"})
+        p2 = self.api.create_profile({"name": "P2"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p1["id"]})
+        c = self.api.create_chart(e["id"], {"name": "Balls", "strategy_name": "only-balls",
+                                            "criteria_name": "capture"})
+
+        moved = self.api.move_expedition(e["id"], p2["id"])
+        self.assertEqual(moved["profile_id"], p2["id"])
+        self.assertEqual([x["name"] for x in self.api.list_expeditions(p2["id"])], ["Metang"])
+        self.assertEqual(self.api.list_expeditions(p1["id"]), [])
+        self.assertEqual([x["id"] for x in self.api.list_charts(e["id"])], [c["id"]])
+
+    def test_move_expedition_unblocks_deleting_the_old_profile(self):
+        p1 = self.api.create_profile({"name": "P1"})
+        p2 = self.api.create_profile({"name": "P2"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p1["id"]})
+        with self.assertRaises(ValueError):
+            self.api.delete_profile(p1["id"])
+        self.api.move_expedition(e["id"], p2["id"])
+        self.assertTrue(self.api.delete_profile(p1["id"]))
+        self.assertIsNotNone(self.api._store.read("expeditions", e["id"]))  # survived
+
+    def test_move_expedition_rejects_an_unknown_profile(self):
+        p = self.api.create_profile({"name": "P1"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
+        with self.assertRaises(ValueError):
+            self.api.move_expedition(e["id"], "ghost")
+
+    def test_delete_summary_offers_the_profiles_an_expedition_could_move_to(self):
+        p1 = self.api.create_profile({"name": "P1"})
+        p2 = self.api.create_profile({"name": "P2"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p1["id"]})
+        s = self.api.profile_delete_summary(p1["id"])
+        self.assertEqual([x["name"] for x in s["other_profiles"]], ["P2"])
+        self.assertEqual([x["id"] for x in s["expedition_list"]], [e["id"]])
+        # A lone profile has nowhere to move them to, and must say so rather than offering it.
+        self.assertEqual(self.api.profile_delete_summary(p2["id"])["other_profiles"],
+                         [{"id": p1["id"], "name": "P1"}])
+
     def test_list_safari_areas_for_pokemon(self):
         self.assertEqual(self.api.list_safari_areas_for_pokemon("metang"), ["Mountain"])
 

@@ -1491,7 +1491,7 @@ def update_calibration_model(runs_path=COMPASS_RUNS_PATH, out_path=DEFAULT_MODEL
 
 
 def _safari_run_point(rec, fresh_only=True):
-    """(M, Fa, Fb, run_id) for a safari run, or None if it can't feed the offset fit.
+    """(M, Fa, Fb, run_id, advances) for a safari run, or None if it can't feed the offset fit.
 
     Needs a confident single identified seed (trusted battle frame), the Section-A a_seed
     (for F_a), and a commanded countdown M.  With `fresh_only`, battle-contaminated runs
@@ -1499,6 +1499,10 @@ def _safari_run_point(rec, fresh_only=True):
     `run_id` is `rec.get("_run_id")` (None on the plain JSONL path) -- an opaque passthrough
     so a caller fitting from its own in-memory records (see fit_safari_offset's `runs=`) can
     map each residual back onto its own run ids.
+
+    `advances` is the run's Seed A advance frame (the frame Sweet Scent fired on), or None for
+    a run saved before that was recorded.  It is NOT required here -- the flat-offset fit
+    doesn't need it and older runs legitimately lack it; only the per-advance fit screens on it.
     """
     if rec.get("seed") is None:                       # ambiguous / unidentified
         return None
@@ -1516,18 +1520,102 @@ def _safari_run_point(rec, fresh_only=True):
         return None
     # M = commanded countdown; calibration defaults to 0 (safari runs no longer record it).
     M = rec["target_timer_delay"] + (rec.get("target_timer_calibration") or 0)
-    return M, a["delay"], Fb, rec.get("_run_id")
+    return M, a["delay"], Fb, rec.get("_run_id"), rec.get("advance_frame")
 
 
-def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True, runs=None):
+# The per-advance slope is REPORTED WITH ITS UNCERTAINTY rather than withheld until it looks
+# good (clayton-6h2.3, revised).  An earlier version refused to adopt a slope below hand-picked
+# run-count/spread thresholds; those turned out to be both arbitrary and far too permissive --
+# simulated at the old thresholds (12 runs, spread 20, ~50-frame residual scatter) the 95% CI on
+# the correction at ~80 advances was still around +/-500 frames, ten times the landing jitter it
+# was correcting.  Run count and spread are only proxies: they cannot see the residual scatter,
+# which is the third term setting the uncertainty.
+#
+# The honest quantity is the CI half-width itself, which callers scale by the advance count they
+# will actually use to get "+/- N frames of correction uncertainty" -- directly comparable to the
+# landing spread.  That subsumes run count, spread AND scatter with no magic constants, and a
+# wide interval early is useful feedback (it shrinks visibly as runs accumulate) rather than
+# something to hide.  So the only hard refusal left is the one case where no estimate EXISTS:
+# fewer than two runs with distinct advance counts, where there is no line to fit.
+SAFARI_PER_ADVANCE_MIN_POINTS = 2     # two distinct advance counts define a line; below that, none does
+_BOOTSTRAP_MIN_POINTS = 3             # below this a resample is too degenerate to mean anything
+_BOOTSTRAP_RESAMPLES = 2000
+_BOOTSTRAP_SEED = 20260919           # fixed so a preview doesn't jitter between renders
+
+
+def _theil_sen(xs, ys):
+    """(slope, intercept) by Theil-Sen: median of pairwise slopes, then median of residuals.
+
+    Used instead of least squares because a single misidentified run must not be able to drag
+    the fit -- the same reason the flat-offset fit is a median.  Returns (0.0, median(ys)) when
+    no two points have distinct x (nothing to estimate a slope from).
+    """
+    slopes = [(ys[j] - ys[i]) / (xs[j] - xs[i])
+              for i in range(len(xs)) for j in range(i + 1, len(xs))
+              if xs[j] != xs[i]]
+    if not slopes:
+        return 0.0, statistics.median(ys)
+    slope = statistics.median(slopes)
+    return slope, statistics.median([y - slope * x for x, y in zip(xs, ys)])
+
+
+def _bootstrap_slope_ci(xs, ys, resamples=_BOOTSTRAP_RESAMPLES):
+    """A 95% percentile-bootstrap CI for the Theil-Sen slope, as (lo, hi).
+
+    Deliberately reported rather than a bare point estimate: with the small run counts this fit
+    realistically runs on, the interval is the number that says whether the slope is worth
+    believing.  Seeded, so re-previewing the same runs gives the same interval.
+    """
+    import random
+    if len(xs) < _BOOTSTRAP_MIN_POINTS:
+        return ()
+    rng = random.Random(_BOOTSTRAP_SEED)
+    n = len(xs)
+    slopes = []
+    for _ in range(resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        s, _b = _theil_sen([xs[i] for i in idx], [ys[i] for i in idx])
+        slopes.append(s)
+    slopes.sort()
+    lo = slopes[int(0.025 * (len(slopes) - 1))]
+    hi = slopes[int(math.ceil(0.975 * (len(slopes) - 1)))]
+    return (lo, hi)
+
+
+def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True, runs=None,
+                      per_advance=False, jitter=False):
     """Fit the safari load-path offset Δα for `model`, holding its slope/shape fixed.
 
     Δα = median over usable safari runs of (actual battle frame − model.frame(M, F_a)): how
     many frames the extra Safari-Zone loading screen lands off this (metronome-fit) model
     (abf.10).  Median so one mis-identified run can't drag it.  Returns
-    ``{"offset", "n", "std", "residuals", "residuals_by_run"}`` or None if there are no usable
-    runs.  ``residuals_by_run`` maps ``_run_id -> residual`` for every input record that had
-    one (empty when reading plain JSONL, which carries no ids).
+    ``{"offset", "n", "std", "residuals", "residuals_by_run", "per_advance", "per_advance_n",
+    "per_advance_ci", "quality", "jitter_c"}`` or None if there are no usable runs.
+    ``residuals_by_run`` maps ``_run_id -> residual`` for every input record that had one
+    (empty when reading plain JSONL, which carries no ids).
+
+    ``per_advance=True`` additionally fits ``safari_offset_per_advance`` -- frames per Seed A
+    advance -- jointly with the intercept by Theil-Sen, over the subset of runs that recorded an
+    advance count.  Fitting BOTH on that subset (rather than taking the intercept from every run
+    and the slope from the subset) matters: split across different sets, the two parameters
+    mis-attribute the offset between them.  Runs without an advance count are reported in
+    ``gate["n_missing_advances"]`` and otherwise ignored by this branch.
+
+    A slope is fit from whatever is there and reported WITH its uncertainty, rather than
+    withheld until it looks convincing -- a rough early estimate is useful, and watching its
+    interval shrink is how you see the data accumulating.  ``quality`` carries what a caller
+    needs to say how much to trust it: ``ci_halfwidth`` (frames per advance -- scale it by the
+    advance count you will actually run at to get the correction's uncertainty in frames) and
+    ``sigma_ref`` (the landing spread those same runs were fit against, so the two are directly
+    comparable).  The ONE hard refusal is the case where no estimate exists at all: fewer than
+    two DISTINCT advance counts, where slope and offset are the same parameter -- then
+    ``estimable`` is False, ``per_advance`` is 0.0, and the flat median offset stands.
+    ``ci_halfwidth`` is None below _BOOTSTRAP_MIN_POINTS runs (a slope, but no way to say how
+    uncertain); ``reason`` explains either case.
+
+    ``jitter=True`` additionally estimates ``jitter_c`` for the safari path from the spread of
+    these residuals about the fit (``std / sqrt(mean M)``, keeping the model's sqrt(M) form)
+    rather than inheriting the metronome fit's.
 
     `runs`, if given, is used INSTEAD of reading `runs_path` -- an in-memory list of run
     records already curated by a caller's own exclusion pass, exactly like calibrate_timer's
@@ -1537,11 +1625,63 @@ def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True, runs=N
     pts = [p for p in (_safari_run_point(r, fresh_only) for r in raw) if p]
     if not pts:
         return None
-    resid = [Fb - model.frame(M, Fa) for (M, Fa, Fb, _rid) in pts]   # metronome-path prediction
-    by_run = {rid: r for (_M, _Fa, _Fb, rid), r in zip(pts, resid) if rid is not None}
-    return {"offset": statistics.median(resid), "n": len(resid),
+    resid = [Fb - model.frame(M, Fa) for (M, Fa, Fb, _rid, _adv) in pts]  # metronome-path prediction
+    by_run = {rid: r for (_M, _Fa, _Fb, rid, _adv), r in zip(pts, resid) if rid is not None}
+
+    offset = statistics.median(resid)
+    slope = 0.0
+    ci: tuple = ()
+    quality = None
+    fit_resid = resid          # residuals about whatever fit was actually adopted
+    fit_Ms = [M for (M, _Fa, _Fb, _rid, _adv) in pts]
+
+    if per_advance:
+        with_adv = [(p, r) for p, r in zip(pts, resid) if p[4] is not None]
+        xs = [float(p[4]) for p, _r in with_adv]
+        ys = [r for _p, r in with_adv]
+        spread = (max(xs) - min(xs)) if xs else 0.0
+        quality = {"n_with_advances": len(xs), "n_missing_advances": len(pts) - len(xs),
+                   "spread": spread, "estimable": False, "reason": None,
+                   "ci_halfwidth": None, "sigma_ref": None}
+        if len(set(xs)) < SAFARI_PER_ADVANCE_MIN_POINTS:
+            # The ONLY hard refusal: with every run at the same advance count (or none at all)
+            # the slope and the offset are the same parameter -- there is no estimate to make,
+            # rough or otherwise. Falls back to the flat median offset over all runs.
+            quality["reason"] = (
+                "needs at least two runs with DIFFERENT advance counts — "
+                f"{len(xs)} run(s) recorded one, at {len(set(xs))} distinct value(s)"
+                if xs else "no run has recorded an advance count yet")
+        else:
+            slope, offset = _theil_sen(xs, ys)
+            ci = _bootstrap_slope_ci(xs, ys)
+            quality["estimable"] = True
+            if ci:
+                quality["ci_halfwidth"] = (ci[1] - ci[0]) / 2.0
+            else:
+                quality["reason"] = (
+                    f"fit from only {len(xs)} run(s) — too few to estimate how uncertain "
+                    f"the slope is, so treat it as a first guess")
+            fit_resid = [y - (offset + slope * x) for x, y in zip(xs, ys)]
+            fit_Ms = [p[0] for p, _r in with_adv]
+            # The landing spread these same runs were fit against, so a caller can say how the
+            # correction's uncertainty compares to the noise it is correcting. Reported here
+            # (where M is known) rather than computed by callers, but deliberately NOT scaled by
+            # any advance count -- the lever arm is an expedition concept the library never sees.
+            if fit_Ms:
+                quality["sigma_ref"] = model.jitter_sigma(statistics.mean(fit_Ms))
+
+    jitter_c = None
+    if jitter and len(fit_resid) > 1:
+        m_bar = statistics.mean(fit_Ms)
+        if m_bar > 0:
+            jitter_c = statistics.pstdev(fit_resid) / math.sqrt(m_bar)
+
+    return {"offset": offset, "n": len(resid),
             "std": statistics.pstdev(resid) if len(resid) > 1 else 0.0,
-            "residuals": resid, "residuals_by_run": by_run}
+            "residuals": resid, "residuals_by_run": by_run,
+            "per_advance": slope,
+            "per_advance_n": quality["n_with_advances"] if quality else 0,
+            "per_advance_ci": ci, "quality": quality, "jitter_c": jitter_c}
 
 
 def update_safari_offset(model_path=DEFAULT_MODEL_PATH, runs_path=SAFARI_RUNS_PATH,

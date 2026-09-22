@@ -69,10 +69,11 @@ class TestEffectiveIncluded(unittest.TestCase):
                                    "incomplete": "incomplete"})
 
 
-def _safari_run_dict(tag, vector_ms, seed, frame, a_delay=700, excluded=False):
+def _safari_run_dict(tag, vector_ms, seed, frame, a_delay=700, excluded=False,
+                     advance_frame=None):
     return {
         "kind": "safari", "tag": tag, "vector_ms": vector_ms, "target_timer_calibration": 0,
-        "excluded": excluded,
+        "excluded": excluded, "advance_frame": advance_frame,
         "a_seed": {"delay": a_delay},
         "b_seed": {"seed": seed, "seed_hex": f"0x{seed:08X}", "frame": frame},
     }
@@ -320,6 +321,169 @@ class TestStandardCalibrationModelSeed(unittest.TestCase):
         api.delete_calibration_model(m1["id"])
         self.assertEqual(api.list_calibration_models(p1), [])
         self.assertEqual(len(api.list_calibration_models(p2)), 1)
+
+
+class TestPreviewSafariPerAdvance(unittest.TestCase):
+    """The per-advance option on Safari Compass's Calibrate Model preview (clayton-6h2)."""
+
+    def _base_model(self):
+        metronome_runs = [{"id": f"clean-{i}", **_run_dict("keep", M, Fb)}
+                          for i, (M, Fb) in enumerate(_CLEAN)]
+        pre = calibration.preview_fit(metronome_runs, [])
+        from claytonlib.calibration import CalibrationModel
+        return {"linear": CalibrationModel.from_dict(pre["artifact"]["models"]["linear"])}
+
+    def _runs(self, linear, advances, offset=12.0, slope=2.0):
+        runs = []
+        for i, adv in enumerate(advances):
+            M = 200000 + 1000 * i
+            frame = round(linear.frame(M, 700) + offset + slope * adv)
+            runs.append({"id": f"sf-{i}",
+                         **_safari_run_dict("s", M, 100 + i, frame, advance_frame=adv)})
+        return runs
+
+    def test_advance_frame_reaches_the_fit(self):
+        # clayton-6h2.1: _record_for_safari_run used to drop advance_frame, so no fit could
+        # ever see it. Guard the passthrough at the record level directly.
+        rec = calibration._record_for_safari_run(
+            {"id": "x", **_safari_run_dict("s", 200000, 5, 12000, advance_frame=81)})
+        self.assertEqual(rec["advance_frame"], 81)
+
+    def test_off_by_default_so_existing_models_are_unaffected(self):
+        base = self._base_model()
+        report = calibration.preview_safari_offset(
+            base, self._runs(base["linear"], range(10, 130, 10)), [])
+        self.assertFalse(report["per_advance_requested"])
+        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset_per_advance"])
+        self.assertIsNone(report["safari_offset"]["linear"]["quality"])
+
+    def test_unestimable_slope_is_refused_and_leaves_the_flat_offset(self):
+        # The one hard refusal: every run at the same advance count means there is no line.
+        base = self._base_model()
+        report = calibration.preview_safari_offset(
+            base, self._runs(base["linear"], [50, 50, 50]), [], per_advance=True)
+        q = report["safari_offset"]["linear"]["quality"]
+        self.assertFalse(q["estimable"])
+        self.assertTrue(q["reason"])
+        self.assertIsNone(report["artifact"]["models"]["linear"]["safari_offset_per_advance"])
+        self.assertIsNotNone(report["artifact"]["models"]["linear"]["safari_offset"])
+
+    def test_a_rough_slope_from_few_runs_is_still_reported(self):
+        # Round 14: a wide interval early is useful progress feedback, so a small-n slope is
+        # surfaced with its uncertainty instead of being blocked.
+        base = self._base_model()
+        report = calibration.preview_safari_offset(
+            base, self._runs(base["linear"], [10, 50, 90]), [], per_advance=True)
+        q = report["safari_offset"]["linear"]["quality"]
+        self.assertTrue(q["estimable"])
+        self.assertIsNotNone(q["ci_halfwidth"])
+        self.assertIsNotNone(q["sigma_ref"])
+        self.assertAlmostEqual(
+            report["artifact"]["models"]["linear"]["safari_offset_per_advance"], 2.0, delta=0.2)
+
+    def test_runs_without_an_advance_count_are_flagged_once_a_slope_is_adopted(self):
+        base = self._base_model()
+        runs = self._runs(base["linear"], range(10, 130, 10))
+        runs.append({"id": "sf-noadv",
+                     **_safari_run_dict("s", 200000, 999, 12000)})   # advance_frame None
+        report = calibration.preview_safari_offset(base, runs, [], per_advance=True)
+        self.assertEqual(report["reasons"].get("sf-noadv"), "no advance count")
+
+    def test_no_advance_count_is_not_flagged_when_no_slope_was_fit(self):
+        # With no estimable slope the result is the flat median over ALL runs, so they DID
+        # feed it and must not be marked as having sat out.
+        base = self._base_model()
+        runs = self._runs(base["linear"], [50, 50, 50])
+        runs.append({"id": "sf-noadv", **_safari_run_dict("s", 200000, 999, 12000)})
+        report = calibration.preview_safari_offset(base, runs, [], per_advance=True)
+        self.assertNotIn("sf-noadv", report["reasons"])
+
+    def test_safari_jitter_option_fits_the_paths_own_spread(self):
+        base = self._base_model()
+        metronome_jitter = base["linear"].jitter_c
+        report = calibration.preview_safari_offset(
+            base, self._runs(base["linear"], range(10, 130, 10)), [], safari_jitter=True)
+        fit = report["artifact"]["models"]["linear"]["safari_jitter_c"]
+        self.assertIsNotNone(fit)
+        self.assertNotEqual(fit, metronome_jitter)
+
+    def test_facade_passes_the_options_through(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        pid = api.create_profile({"name": "P1"})["id"]
+        standard = next(m for m in api.list_calibration_models(pid) if m["name"] == "Standard")
+        report = api.preview_safari_calibration(pid, standard["id"], {"per_advance": True})
+        self.assertTrue(report["per_advance_requested"])
+        self.assertFalse(api.preview_safari_calibration(
+            pid, standard["id"])["per_advance_requested"])
+
+
+class TestRunDelayMetrics(unittest.TestCase):
+    """Vector delay / Delta delay for the Review Data runs tables (clayton-4ai.5/.6)."""
+
+    def _model(self, **kw):
+        from claytonlib.calibration import CalibrationModel
+        return CalibrationModel(kind="line", target="Fb", beta=0.06, alpha=700.0,
+                                jitter_c=0.15, **kw)
+
+    def test_metronome_run_reads_delay_from_both_seeds(self):
+        run = {"id": "r", **_run_dict("t", 200000, 12700)}   # Fa=700, Fb=12700
+        m = calibration.run_delay_metrics(run, self._model())
+        self.assertEqual(m["vector_delay"], 12000)
+        # model.frame(200000, 700) = 700 + 0.06*200000 = 12700 -> predicted dF = 12000
+        self.assertAlmostEqual(m["predicted_delay"], 12000.0)
+        self.assertAlmostEqual(m["delta_delay"], 0.0)
+
+    def test_safari_run_reads_b_seed_frame_not_delay(self):
+        # Safari runs store Seed B's counter as "frame", Seed A's as "delay" -- both are the
+        # same delay/game-frame quantity, so both spellings must resolve (clayton-4ai.6).
+        run = {"id": "r", **_safari_run_dict("s", 200000, 5, 12750)}
+        m = calibration.run_delay_metrics(run, self._model())
+        self.assertEqual(m["vector_delay"], 12050)          # 12750 - 700
+
+    def test_safari_delta_is_measured_against_the_safari_path(self):
+        # Without folding the safari offset, every safari run would show the same large
+        # constant delta and a genuine outlier wouldn't stand out from it.
+        run = {"id": "r", **_safari_run_dict("s", 200000, 5, 12300)}
+        m = calibration.run_delay_metrics(run, self._model(safari_offset=-400.0))
+        self.assertAlmostEqual(m["delta_delay"], 0.0)       # 12300 == 12700 - 400
+
+    def test_safari_delta_uses_this_runs_own_advance_count(self):
+        run = {"id": "r", **_safari_run_dict("s", 200000, 5, 12140, advance_frame=80)}
+        m = calibration.run_delay_metrics(
+            run, self._model(safari_offset=-400.0, safari_offset_per_advance=-2.0))
+        self.assertAlmostEqual(m["delta_delay"], 0.0)       # 12700 - 400 - 160
+
+    def test_sigma_comes_back_so_delta_can_be_read_in_context(self):
+        run = {"id": "r", **_run_dict("t", 200000, 12700)}
+        m = calibration.run_delay_metrics(run, self._model())
+        self.assertAlmostEqual(m["sigma"], 0.15 * (200000 ** 0.5))
+
+    def test_no_model_still_gives_the_vector_delay(self):
+        run = {"id": "r", **_run_dict("t", 200000, 12700)}
+        m = calibration.run_delay_metrics(run, None)
+        self.assertEqual(m["vector_delay"], 12000)
+        self.assertIsNone(m["delta_delay"])
+
+    def test_run_missing_a_seed_yields_no_metrics(self):
+        self.assertIsNone(calibration.run_delay_metrics(
+            {"id": "r", "kind": "metronome", "vector_ms": 1000, "a_seed": {}, "b_seed": {}}, None))
+
+    def test_facade_keys_metrics_by_run_id_for_the_requested_kind(self):
+        with _isolated_cwd():
+            api = Facade(FileStore(tempfile.mkdtemp()))
+            pid = api.create_profile({"name": "P"})["id"]
+            mr = api.save_metronome_run(pid, {"tag": "t", "vector_ms": 200000,
+                                              "a_seed": _seed(_BASE, 700),
+                                              "b_seed": _seed(_BASE, 12700)})
+            sr = api.save_safari_run(pid, {"tag": "s", "vector_ms": 200000,
+                                           "a_seed": {"seed": 1, "delay": 700},
+                                           "b_seed": {"seed": 2, "frame": 12300}})
+            metronome = api.run_delay_metrics(pid, "metronome")
+            self.assertIn(mr["id"], metronome["metrics"])
+            self.assertNotIn(sr["id"], metronome["metrics"])
+            self.assertTrue(metronome["has_model"])         # Standard is seeded
+            self.assertEqual(metronome["metrics"][mr["id"]]["vector_delay"], 12000)
+            self.assertIn(sr["id"], api.run_delay_metrics(pid, "safari")["metrics"])
 
 
 class TestFacadeSafariCalibration(unittest.TestCase):

@@ -90,17 +90,33 @@ class TestMakeFlag(unittest.TestCase):
 
 
 class TestComputeFleeFlags(unittest.TestCase):
-    def test_an_already_fled_context_returns_no_flags_instead_of_raising(self):
-        # Real bug report: app.safari_compass._apply_path's "pending" candidates can
-        # legitimately have ctx.has_fled()==True already (the flee is still AMBIGUOUS from
-        # the observed-path's point of view -- filter_fled=False keeps them until the next
-        # observation resolves it -- but the context itself has already transitioned).
-        # Calling throw_ball/bait/mud on a non-watching context raises "Cannot throw X,
-        # pokemon has fled or been captured" -- compute_flee_flags must not do that.
+    def test_an_already_fled_context_asks_for_the_F_input(self):
+        # app.safari_compass._apply_path's "pending" candidates can legitimately have
+        # ctx.has_fled()==True already (the flee is still AMBIGUOUS from the observed-path's
+        # point of view -- filter_fled=False keeps them until the next observation resolves
+        # it -- but the context itself has already transitioned). Calling throw_ball/bait/mud
+        # on a non-watching context raises, so this must not even try.
+        #
+        # Round 16 feedback: rather than showing nothing, say so -- "F!" tells the user this
+        # candidate has already run and typing F is what resolves it.
         ctx = _ctx(_ALWAYS_FLEES, _SEEDS[0])
         ctx.throw_ball()  # -> FLED on the very first throw (see _ALWAYS_FLEES' docstring)
         self.assertTrue(ctx.has_fled())
-        self.assertEqual(compute_flee_flags(ctx, max_turns=3), [])
+        flags = compute_flee_flags(ctx, max_turns=3)
+        self.assertEqual([f.code for f in flags], ["F!"])
+        self.assertEqual(flags[0].action, "already")
+        self.assertEqual(flags[0].turns, 0)
+        self.assertIn("type F", flags[0].tooltip)
+
+    def test_the_already_fled_flag_names_the_species(self):
+        ctx = _ctx(_ALWAYS_FLEES, _SEEDS[0])
+        ctx.throw_ball()
+        flags = compute_flee_flags(ctx, max_turns=3, pokemon_name="Metang")
+        self.assertTrue(flags[0].tooltip.startswith("Metang already fled"))
+
+    def test_a_still_watching_context_never_gets_the_already_fled_flag(self):
+        for ctx in (_ctx(_ALWAYS_FLEES, _SEEDS[0]), _ctx(_NEVER_FLEES, _SEEDS[0])):
+            self.assertNotIn("F!", [f.code for f in compute_flee_flags(ctx, max_turns=3)])
 
     def test_an_already_captured_context_returns_no_flags_instead_of_raising(self):
         ctx = _ctx(_ALWAYS_FLEES_AND_CATCHES, 0xCC16BF30)  # observed: captures on turn 1

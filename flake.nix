@@ -47,6 +47,19 @@
             makeWrapperArgs+=("''${gappsWrapperArgs[@]}")
           '';
 
+          # Desktop integration: without a .desktop entry and themed icons the app shows
+          # up as a nameless window with a generic icon, however good the icon file is.
+          # The entry's StartupWMClass matches the WM_CLASS that app/main.py pins via
+          # GLib.set_prgname, which is what lets the taskbar merge window and launcher.
+          postInstall = ''
+            install -Dm644 packaging/clayton.desktop \
+              $out/share/applications/clayton.desktop
+            for size in 16 24 32 48 64 128 256 512; do
+              install -Dm644 "packaging/icons/''${size}x''${size}/clayton.png" \
+                "$out/share/icons/hicolor/''${size}x''${size}/apps/clayton.png"
+            done
+          '';
+
           # The unittest suite reads dev-only data files; skip it in the sandbox and
           # just confirm the packages import.
           doCheck = false;
@@ -55,6 +68,7 @@
           meta = with pkgs.lib; {
             description = "HGSS Safari Zone RNG manipulation toolkit (desktop app)";
             mainProgram = "clayton";
+            desktopFile = "clayton.desktop";
             platforms = platforms.linux;
           };
         };

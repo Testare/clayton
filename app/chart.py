@@ -144,13 +144,24 @@ def summarize_models(models: dict[str, "CalibrationModel"]) -> dict | None:
     }
 
 
-def _pick_model(models: dict, fps_model: str, use_safari_offset: bool) -> "CalibrationModel":
+def _advances(exp: dict) -> int:
+    """The Seed A advance count a run on this expedition will make before Sweet Scent.
+
+    Feeds the model's per-advance safari offset (None/unfit on a model => no effect at all).
+    It is the expedition's configured key-seed advances because the chart's whole premise is
+    the key-seed run: hit `key_seed` as Seed A, advance `key_seed_advances` times, Sweet Scent.
+    """
+    return int(exp.get("key_seed_advances") or 0)
+
+
+def _pick_model(models: dict, fps_model: str, use_safari_offset: bool,
+                advances: int = 0) -> "CalibrationModel":
     if not models:
         raise ValueError(
             "no calibration model available — build one from Metronome Compass → Review "
             "Data → Calibrate Model first")
     model = models.get(fps_model) or next(iter(models.values()))
-    return model.with_safari_offset() if use_safari_offset else model
+    return model.with_safari_offset(advances) if use_safari_offset else model
 
 
 # ---------------------------------------------------------------------------
@@ -172,17 +183,55 @@ def _canon_store(exp: dict, chart: dict) -> CanonStore:
     return CanonStore(_bridge(exp, chart)._canon_store_path())
 
 
+def _human_bytes(n: int) -> str:
+    """A size a person can read at a glance — "4.2 MB", not 4404019."""
+    step = 1024.0
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < step or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" or size >= 100 else f"{size:.1f} {unit}"
+        size /= step
+    return f"{size:.1f} GB"
+
+
+def canon_disk_usage(exp: dict, chart: dict) -> dict:
+    """Bytes on disk for this chart's computed data — the canon map, its meta sidecar, and the
+    cached ranked report — plus a human-readable total (round 17 feedback)."""
+    import os
+    store = _canon_store(exp, chart)
+    total = 0
+    for p in (store.path, store.meta_path, _rank_report_path(exp, chart)):
+        try:
+            total += os.path.getsize(p)
+        except OSError:
+            pass
+    return {"bytes": total, "human": _human_bytes(total)}
+
+
+def canon_path(exp: dict, chart: dict) -> str:
+    """Where this chart's canon map lives. Keyed by pokemon + key seed + strategy + criteria,
+    NOT by chart id — several charts can share one map, which is what `reuse_factor` measures."""
+    return _canon_store(exp, chart).path
+
+
+def rank_report_path(exp: dict, chart: dict) -> str:
+    """Where this chart's cached ranked report lives (one per expedition x chart)."""
+    return _rank_report_path(exp, chart)
+
+
 def canon_status(exp: dict, chart: dict) -> dict:
     """Whether a canon map exists for this chart, and its coverage, without building it."""
     meta = _canon_store(exp, chart).read_meta()
+    usage = canon_disk_usage(exp, chart)
     if meta is None:
-        return {"built": False}
+        return {"built": False, **usage}
     return {
         "built": True, "n_mdmsh": meta.get("n_mdmsh"),
         "n_distinct_seeds": meta.get("n_distinct_seeds"),
         "reuse_factor": meta.get("reuse_factor"),
         "built_models": meta.get("built_models") or [],
         "last_setup": meta.get("last_setup"), "last_max": meta.get("last_max"),
+        **usage,
     }
 
 
@@ -193,11 +242,17 @@ def delete_canon(exp: dict, chart: dict) -> bool:
     import os
     store = _canon_store(exp, chart)
     existed = os.path.exists(store.path)
-    for p in (store.path, store.meta_path):
+    # Every cached ranked report is derived from this map, so they all go with it — including
+    # reports belonging to OTHER expeditions that share this canon (see _rank_report_path).
+    import glob
+    reports = glob.glob(store.path + ".rank.*.json")
+    for p in [store.path, store.meta_path, *reports]:
         try:
             os.remove(p)
         except FileNotFoundError:
             pass
+    for p in reports:
+        _RANK_MEMO.pop(p, None)
     return existed
 
 
@@ -220,7 +275,12 @@ def precompute_runner(exp: dict, chart: dict, models: dict, workers: int = 1):
     criteria = _resolve_criteria(chart["criteria_name"])
     store = _canon_store(exp, chart)
     base_delay, times = get_times(exp["key_seed"])
-    folded = {k: m.with_safari_offset() for k, m in models.items()}
+    # Same advance count the rankers will use — the canon is built over the FRAME RANGE the
+    # folded models ask for, so a per-advance offset shifts which frames need covering. That
+    # makes key_seed_advances a canon-invalidation trigger exactly like safari_offset is
+    # (clayton-6h2.5): change it on a model that carries a per-advance term and the canon must
+    # be extended before the chart is right again.
+    folded = {k: m.with_safari_offset(_advances(exp)) for k, m in models.items()}
 
     def runner(progress_cb):
         def _progress(done, total, stats):
@@ -251,7 +311,137 @@ def _row_json(r: dict, initial_time: dt.datetime | None = None) -> dict:
     }
 
 
-def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> dict:
+# ---------------------------------------------------------------------------
+# Ranked-target report cache (on disk)
+# ---------------------------------------------------------------------------
+# rank_best_per_time sweeps every candidate boot time (2,464 of them for a real key seed) and
+# takes ~35 s against a real canon map, every single time it's clicked (round 17 feedback).
+# The answer only changes when one of its actual inputs does, so the finished report is written
+# next to the chart's canon map -- on DISK, not just in memory, since an app restart is exactly
+# when re-waiting 35 s hurts most.
+#
+# The cache key covers everything that feeds the result: the expedition's key seed and advance
+# count, the chart's strategy/criteria/window, the FOLDED calibration model's own fields (which
+# is stricter than a model id -- it also catches a model edited in place), the sweep parameters,
+# and the canon map's coverage (so an incremental precompute invalidates it). `limit` is
+# deliberately NOT in the key: the full ranked list is stored and sliced per request, so asking
+# for more or fewer rows is instant.
+#
+# Rows are stored already JSON-shaped (_row_json), so no datetime round-tripping is needed and
+# a hit is a plain file read.
+_RANK_MEMO: dict = {}        # in-process front cache over the files, same keys
+_RANK_MEMO_MAX = 8
+
+
+def clear_rank_cache() -> None:
+    """Drop the in-process memo. On-disk reports stay (their keys make them self-invalidating);
+    delete_canon removes a chart's report file along with its map."""
+    _RANK_MEMO.clear()
+
+
+def _rank_report_path(exp: dict, chart: dict) -> str:
+    """Sibling of the chart's canon map, so the two live and die together.
+
+    Scoped by EXPEDITION *and* CHART id, because the canon path is neither. A canon map is
+    deliberately shared by everything with the same pokemon + key seed + strategy + criteria
+    (that sharing is the whole point of `reuse_factor`, and its signature omits setup/max so the
+    range can be extended in place) — but a ranked report additionally depends on the
+    expedition's key_seed_advances and on the chart's own window, so two things sharing a map do
+    NOT share a report. Without both ids in the name they would write to one file and invalidate
+    each other on every rank: still correct, since the stored key is checked, but they would take
+    turns waiting 35 s. A file each costs a couple of KB.
+
+    What one file holds is exactly one configuration. Re-ranking the same expedition+chart with
+    a different active calibration model overwrites it, so flipping between two models pays the
+    full sweep each time — the case that's worth the disk, a stable model, is the common one.
+    """
+    return f"{_canon_store(exp, chart).path}.rank.{exp.get('id', 'anon')}.{chart.get('id', 'anon')}.json"
+
+
+def _rank_cache_key(exp: dict, chart: dict, model, params: dict, meta: dict | None) -> list:
+    meta = meta or {}
+    return [
+        exp.get("key_seed"), _advances(exp),
+        chart.get("strategy_name"), chart.get("criteria_name"),
+        int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300)),
+        model.to_dict(),
+        int(params.get("step", 4)), float(params.get("k", 3.5)),
+        bool(params.get("include_calibration", False)),
+        meta.get("n_distinct_seeds"), meta.get("n_mdmsh"),
+        meta.get("last_setup"), meta.get("last_max"),
+    ]
+
+
+def _rank_cache_read(path: str, key: list):
+    """The cached (rows, per_time_count) for `key`, or None if absent/stale/unreadable.
+
+    A corrupt or half-written report must never break ranking -- it just means a recompute,
+    so every failure mode here is swallowed deliberately.
+    """
+    import json
+    memo = _RANK_MEMO.get(path)
+    if memo is not None and memo[0] == key:
+        return memo[1], memo[2]
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    # json turns tuples into lists; the key is built as a list for exactly that reason.
+    if doc.get("key") != json.loads(json.dumps(key)):
+        return None
+    rows, n = doc.get("rows") or [], doc.get("per_time_count", 0)
+    _rank_memo_put(path, key, rows, n)
+    return rows, n
+
+
+def _rank_memo_put(path: str, key: list, rows: list, n: int) -> None:
+    _RANK_MEMO[path] = (key, rows, n)
+    while len(_RANK_MEMO) > _RANK_MEMO_MAX:      # evict oldest (insertion-ordered dict)
+        _RANK_MEMO.pop(next(iter(_RANK_MEMO)))
+
+
+def _rank_cache_write(path: str, key: list, rows: list, n: int) -> None:
+    """Write the report atomically (temp file + replace) so a crash mid-write can't leave a
+    truncated report that later reads as valid-but-wrong."""
+    import json, os
+    _rank_memo_put(path, key, rows, n)
+    tmp = path + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(tmp, "w") as f:
+            json.dump({"key": key, "per_time_count": n, "rows": rows}, f)
+        os.replace(tmp, path)
+    except OSError:
+        # A read-only or full disk shouldn't fail the ranking the user asked for.
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def rank_cached_only(exp: dict, chart: dict, models: dict, params: dict) -> dict | None:
+    """The cached ranking if one is valid, else None — without loading the canon map.
+
+    Lets a caller serve an instant answer on the common path and only pay for a background,
+    progress-reporting run when there's real work to do (clayton-6n6.2).
+    """
+    store = _canon_store(exp, chart)
+    meta = store.read_meta()
+    if meta is None:
+        return None
+    model = _pick_model(models, params.get("fps_model", "linear"),
+                        params.get("use_safari_offset", True), _advances(exp))
+    cached = _rank_cache_read(_rank_report_path(exp, chart),
+                             _rank_cache_key(exp, chart, model, params, meta))
+    if cached is None:
+        return None
+    rows, per_time_count = cached
+    return {"top": rows[:int(params.get("limit", 10))],
+            "per_time_count": per_time_count, "cached": True}
+
+
+def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict, progress=None) -> dict:
     """Mode A: the best target for each candidate boot time, collapsed to distinct scenarios.
 
     Uses a coarse step (default 4 frames) across the whole window for performance — scoring
@@ -269,10 +459,21 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
     TRUE score and needs to be in contention before the cut, not after.
     """
     store = _canon_store(exp, chart)
-    if store.read_meta() is None:
+    meta = store.read_meta()
+    if meta is None:
         raise ValueError("no canon map yet — run precompute first")
+    model = _pick_model(models, params.get("fps_model", "linear"),
+                        params.get("use_safari_offset", True), _advances(exp))
+
+    limit = int(params.get("limit", 10))
+    report_path = _rank_report_path(exp, chart)
+    cache_key = _rank_cache_key(exp, chart, model, params, meta)
+    cached = _rank_cache_read(report_path, cache_key)
+    if cached is not None:
+        rows, per_time_count = cached
+        return {"top": rows[:limit], "per_time_count": per_time_count, "cached": True}
+
     cmap = store.load_map()
-    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
     base_delay, times = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
     step = int(params.get("step", 4))
@@ -293,12 +494,19 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
     # TestRankBestPerTimeRefinesBeforeCutting for the reproduced failure this widens against.
     per_time = rank_boot_marginal(
         cmap, model, times, base_delay, setup, maxt,
-        step=step, k=k, include_calibration=include_calibration, keep_top_k=5)
+        step=step, k=k, include_calibration=include_calibration, keep_top_k=5,
+        progress=(lambda d, t: progress(phase="scan", done=d, total=t)) if progress else None)
 
     radius = max(step - 1, 0)
     if radius:
         refined_per_time = []
-        for r in per_time:
+        # The refine loop, not the sweep above, is where the time actually goes: measured on a
+        # real chart it is 36.7 s of a 38.0 s rank (96.7%), against 1.25 s for the sweep. So
+        # this is the loop a progress bar has to track -- driving one off the sweep would sit
+        # at 0% for a second and then at 100% for another 37.
+        for _i, r in enumerate(per_time):
+            if progress is not None and _i % 32 == 0:
+                progress(phase="refine", done=_i, total=len(per_time))
             candidates = [r["F"]] + r.get("_coarse_alt_F", [])
             best_refined = None
             for F_c in candidates:
@@ -324,14 +532,13 @@ def rank_best_per_time(exp: dict, chart: dict, models: dict, params: dict) -> di
         # re-sort, best_per_scenario's top-3 differed from the correctly-sorted version's.
         per_time = sorted(refined_per_time, key=lambda r: (-r["p"], r["M"]))
 
+    if progress is not None:
+        progress(phase="refine", done=len(per_time), total=len(per_time))
     overall = best_per_scenario(per_time)
-    limit = int(params.get("limit", 10))
-    top = overall[:limit]
+    rows = [_row_json(r) for r in overall]
+    _rank_cache_write(report_path, cache_key, rows, len(per_time))
 
-    return {
-        "top": [_row_json(r) for r in top],
-        "per_time_count": len(per_time),
-    }
+    return {"top": rows[:limit], "per_time_count": len(per_time), "cached": False}
 
 
 def rank_at_time(exp: dict, chart: dict, models: dict, initial_time: str, params: dict) -> list[dict]:
@@ -347,7 +554,8 @@ def rank_at_time(exp: dict, chart: dict, models: dict, initial_time: str, params
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"),
+                        params.get("use_safari_offset", True), _advances(exp))
     base_delay, _ = get_times(exp["key_seed"])
     setup, maxt = int(chart.get("setup_delay_seconds", 0)), int(chart.get("max_target_seconds", 300))
     it = _parse_time(initial_time)
@@ -374,7 +582,8 @@ def examine(exp: dict, chart: dict, models: dict, initial_time: str, vector_ms: 
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"),
+                        params.get("use_safari_offset", True), _advances(exp))
     base_delay, _ = get_times(exp["key_seed"])
     it = _parse_time(initial_time)
 
@@ -401,7 +610,8 @@ def examine_second(exp: dict, chart: dict, models: dict, initial_time: str, vect
     if store.read_meta() is None:
         raise ValueError("no canon map yet — run precompute first")
     cmap = store.load_map()
-    model = _pick_model(models, params.get("fps_model", "linear"), params.get("use_safari_offset", True))
+    model = _pick_model(models, params.get("fps_model", "linear"),
+                        params.get("use_safari_offset", True), _advances(exp))
     base_delay, _ = get_times(exp["key_seed"])
     it = _parse_time(initial_time)
 

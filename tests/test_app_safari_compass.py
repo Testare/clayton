@@ -256,6 +256,57 @@ class TestFacadeSafariCompass(unittest.TestCase):
             self.assertTrue(res["path_valid"])
             self.assertGreater(res["count"], 0)
 
+    def _seed_b_frame_center(self, params):
+        """The frame center safari_compass.seed_b was actually handed, via the real facade."""
+        from unittest.mock import patch
+        seen = {}
+
+        def spy(exp, model, p):
+            seen["F"] = model.frame(float(p["vector_ms"]), 0)
+            return {}
+
+        with patch("app.safari_compass.seed_b", side_effect=spy):
+            self.api.safari_compass_seed_b(self.eid, params)
+        return seen["F"]
+
+    def _install_per_advance_model(self, per_advance):
+        """Make the profile's active model carry a per-advance safari offset."""
+        from claytonlib.calibration import CalibrationModel
+        m = CalibrationModel(kind="line", target="Fb", beta=0.06, alpha=0.0, jitter_c=0.15,
+                             safari_offset=-400.0, safari_offset_per_advance=per_advance)
+        preview = {"artifact": {"format": "modelset", "default": "linear",
+                                "models": {"linear": m.to_dict()}}, "stats": {}}
+        self.api.save_calibration_model(self.pid, {"name": "per-advance", "preview": preview})
+
+    def test_seed_b_uses_the_planned_advance_count(self):
+        # clayton-6h2.5: the run's own advance count is the frame the planned route Sweet
+        # Scents on -- NOT the expedition's key_seed_advances, which is only the fallback.
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            self._install_per_advance_model(-2.0)
+            base = self._seed_b_frame_center({**_PARAMS, "path": "", "advances": 0})
+            at50 = self._seed_b_frame_center({**_PARAMS, "path": "", "advances": 50})
+            self.assertAlmostEqual(at50 - base, -100.0)
+
+    def test_seed_b_falls_back_to_key_seed_advances(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            exp = self.api.get_expedition(self.eid)
+            exp["key_seed_advances"] = 81
+            self.api.save_expedition(exp)
+            self._install_per_advance_model(-2.0)
+            base = self._seed_b_frame_center({**_PARAMS, "path": "", "advances": 0})
+            fallback = self._seed_b_frame_center({**_PARAMS, "path": ""})   # no advances key
+            self.assertAlmostEqual(fallback - base, -162.0)
+
+    def test_advance_count_is_inert_on_a_model_without_the_term(self):
+        from tests.test_app_chart import _isolated_cwd
+        with _isolated_cwd():
+            self._install_per_advance_model(None)
+            self.assertAlmostEqual(
+                self._seed_b_frame_center({**_PARAMS, "path": "", "advances": 81}),
+                self._seed_b_frame_center({**_PARAMS, "path": "", "advances": 0}))
+
     def test_save_and_list_safari_run(self):
         run = self.api.save_safari_run(self.pid, {
             "tag": "sc1", "vector_ms": 300000,

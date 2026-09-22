@@ -110,6 +110,24 @@ class CalibrationModel:
     safari_offset: float | None = None
     safari_offset_n: int = 0          # safari runs behind the offset
     safari_offset_std: float = 0.0    # spread of the per-run residuals (frames)
+    # Per-advance safari offset (frames per Seed A advance): the hypothesis that the number of
+    # Seed A advances made during timer 3 (Elm calls + chatot flips) shifts the landing frame,
+    # so the safari-path prediction is `safari_offset + safari_offset_per_advance * advances`
+    # rather than a flat offset.  ADDITIVE with whatever sign the fit produces -- a negative
+    # value means frames are lost per advance (the original hypothesis), a positive one means
+    # they're gained; nothing here assumes a direction.  None = not fit / not in use, which
+    # reproduces the flat-offset behavior exactly.  UNFIT BY DEFAULT: the advance count is a
+    # large multiplier (~80 on a real expedition), so a poorly-determined slope is amplified
+    # far past the landing jitter -- see fit_safari_offset's evidence gate.
+    safari_offset_per_advance: float | None = None
+    safari_offset_per_advance_n: int = 0        # runs carrying an advance count
+    safari_offset_per_advance_ci: tuple = ()    # (lo, hi) bootstrap 95% CI on the slope
+    # Safari-path landing jitter (frames per sqrt(ms)), fit from the spread of the safari runs
+    # themselves rather than inherited from the metronome fit.  The safari load path is a
+    # different (longer) path than the metronome one, so its spread need not match; without
+    # this, every safari candidate window and capture probability is computed with the
+    # METRONOME jitter_c.  None = inherit jitter_c (the historical behavior).
+    safari_jitter_c: float | None = None
     # metadata (not used in the math)
     label: str = ""
     n_runs: int = 0
@@ -152,23 +170,45 @@ class CalibrationModel:
         legacy Fb model it solves on target_frame directly (base_low16 ignored)."""
         return self.solve(target_frame - (base_low16 if self.target == "dF" else 0))
 
-    def with_safari_offset(self) -> "CalibrationModel":
-        """A copy with the safari load-path offset folded into the mean, or self if none is set.
+    def safari_shift(self, advances: int = 0) -> float:
+        """Total safari load-path frame shift for `advances` Seed A advances.
 
-        The offset is baked into the intercept (``alpha`` for a line, the constant ``coeffs[0]``
-        for a quad) and ``safari_offset`` is cleared, so the mean now IS the safari-path frame at
-        every M.  This lets the existing chart scorer -- which calls ``frame``/``solve_frame`` --
-        score the safari path just by being handed this model, with no per-call flag threaded
-        through its internals (ctd.11).
+        ``safari_offset`` (the flat extra-loading-screen cost) plus
+        ``safari_offset_per_advance * advances``.  Either term being unfit contributes 0.
         """
-        if self.safari_offset is None:
+        shift = self.safari_offset or 0.0
+        if self.safari_offset_per_advance:
+            shift += self.safari_offset_per_advance * advances
+        return shift
+
+    def with_safari_offset(self, advances: int = 0) -> "CalibrationModel":
+        """A copy with the safari load path folded into the mean, or self if nothing applies.
+
+        The shift (``safari_shift(advances)``) is baked into the intercept (``alpha`` for a line,
+        the constant ``coeffs[0]`` for a quad) and the safari offset fields are cleared, so the
+        mean now IS the safari-path frame at every M.  This lets the existing chart scorer --
+        which calls ``frame``/``solve_frame`` -- score the safari path just by being handed this
+        model, with no per-call flag threaded through its internals (ctd.11).  ``advances`` is a
+        CONSTANT for any one chart target or compass run (the expedition's key_seed_advances, or
+        the planned encounter frame), which is exactly why the per-advance term folds into the
+        intercept here instead of threading an advance count through the scorers.
+
+        ``safari_jitter_c``, when fit, also replaces ``jitter_c`` -- the returned model's spread
+        is then the one measured on the safari path rather than the metronome path.
+        """
+        shift = self.safari_shift(advances)
+        if not shift and self.safari_jitter_c is None:
             return self
+        cleared = dict(safari_offset=None, safari_offset_per_advance=None)
+        if self.safari_jitter_c is not None:
+            cleared["jitter_c"] = self.safari_jitter_c
+            cleared["safari_jitter_c"] = None
         if self.kind == "quad":
             coeffs = list(self.coeffs)
             if coeffs:
-                coeffs[0] += self.safari_offset
-            return replace(self, coeffs=tuple(coeffs), safari_offset=None)
-        return replace(self, alpha=self.alpha + self.safari_offset, safari_offset=None)
+                coeffs[0] += shift
+            return replace(self, coeffs=tuple(coeffs), **cleared)
+        return replace(self, alpha=self.alpha + shift, **cleared)
 
     def solve(self, target_fb: float) -> float:
         """Commanded countdown M that centers the landing on target_fb (in mean()'s units)."""
@@ -299,12 +339,14 @@ class CalibrationModel:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["coeffs"] = list(self.coeffs)
+        d["safari_offset_per_advance_ci"] = list(self.safari_offset_per_advance_ci)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "CalibrationModel":
         d = dict(d)
         d["coeffs"] = tuple(d.get("coeffs", ()))
+        d["safari_offset_per_advance_ci"] = tuple(d.get("safari_offset_per_advance_ci") or ())
         # Defensive: a null in the artifact (e.g. an rtc_offset_std written before it was fit)
         # would otherwise flow into `sigma <= 0` comparisons and raise -- coerce to 0.0 (which
         # means "deterministic", the safe default) instead.

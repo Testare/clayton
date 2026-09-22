@@ -218,7 +218,7 @@ def rank_over_times(canon_map, model, times, base_delay: int, setup_delay_second
 def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_seconds: int,
                        max_target_seconds: int, step: int = 1, k: float = 3.5,
                        include_calibration: bool = False, limit: int | None = None,
-                       keep_top_k: int = 1) -> list[dict]:
+                       keep_top_k: int = 1, progress=None) -> list[dict]:
     """Best target M for EACH candidate boot time, scored by SECOND-MARGINALIZED capture prob.
 
     For each boot phase and target frame F, P(capture) = Σ_s P(S=s|M(F)) · cp(mdmsh(boot+s), F),
@@ -251,7 +251,14 @@ def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_sec
     m_min, m_max = setup_delay_seconds * 1000.0, max_target_seconds * 1000.0
     cp_memo: dict = {}
     best: dict = {}
-    for F_target in range(f_lo, f_hi + 1, step):
+    # `progress(done, total)`, if given, is called over the frame sweep -- the one loop here
+    # whose length is known up front. Reported every 16 frames rather than every frame so a
+    # slow caller (a UI polling across a thread boundary) can't become the bottleneck.
+    frames = range(f_lo, f_hi + 1, step)
+    n_frames = len(frames)
+    for _i, F_target in enumerate(frames):
+        if progress is not None and _i % 16 == 0:
+            progress(_i, n_frames)
         M = model.solve_frame(F_target, base_delay)
         if not (m_min <= M <= m_max):     # setup/max bound the countdown M (in seconds)
             continue
@@ -284,6 +291,8 @@ def rank_boot_marginal(canon_map, model, times, base_delay: int, setup_delay_sec
             elif pmarg > lst[-1]["p"]:
                 lst[-1] = entry
                 lst.sort(key=lambda r: -r["p"])
+    if progress is not None:
+        progress(n_frames, n_frames)
     rows = []
     for lst in best.values():
         top = lst[0]

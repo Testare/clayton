@@ -181,12 +181,16 @@ class TestSeedA(unittest.TestCase):
 class TestSeedB(unittest.TestCase):
     def setUp(self):
         self.api = Facade(FileStore(tempfile.mkdtemp()))
+        self.pid = self.api.create_profile({"name": "P1"})["id"]
+
+    def _params(self, **kw):
+        return {"target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
+                "vector_ms": 300000, "profile_id": self.pid,
+                "seconds_window": 0, "delay_window": 1,
+                "magikarp_level": 15, "opposite_gender": True, "metronome_only": True, **kw}
 
     def test_generates_paths(self):
-        res = self.api.metronome_seed_b({
-            "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
-            "seconds_window": 0, "delay_window": 1,
-            "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
+        res = self.api.metronome_seed_b(self._params())
         self.assertGreater(res["count"], 0)
         self.assertTrue(all("path_str" in c for c in res["candidates"]))
 
@@ -194,15 +198,100 @@ class TestSeedB(unittest.TestCase):
         # New Run's "Seed B identified" summary shows the whole move sequence (not just
         # path_str's compact token string) so the user can visually confirm they hit the
         # expected seed -- clayton-b42.8.4.
-        res = self.api.metronome_seed_b({
-            "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
-            "seconds_window": 0, "delay_window": 1,
-            "magikarp_level": 15, "opposite_gender": True, "metronome_only": False})
+        res = self.api.metronome_seed_b(self._params(metronome_only=False))
         self.assertGreater(res["count"], 0)
         moves = res["candidates"][0]["metronome_moves"]
         self.assertIsInstance(moves, list)
         for m in moves:
             self.assertIn("turn", m); self.assertIn("move_name", m); self.assertIn("move_num", m)
+
+
+class TestSeedBIsCenteredOnThePrediction(unittest.TestCase):
+    """Seed B is the BATTLE seed, generated Vector ms after Seed A — so a Seed B search has
+    to be centered where the calibration model says it lands, not on the key seed.
+
+    The original code searched around `_target_delay_for_key_seed(key_seed, target_time)` and
+    `target_time` — i.e. Seed A's own delay and second — which for a typical 300 s countdown
+    is off by ~17,700 delays AND ~305 seconds. No realistic window could reach it.
+    """
+
+    def setUp(self):
+        self.api = Facade(FileStore(tempfile.mkdtemp()))
+        self.pid = self.api.create_profile({"name": "P1"})["id"]
+        self.model = self.api._metronome_model({"profile_id": self.pid})
+
+    def test_center_is_seed_a_plus_the_predicted_df(self):
+        import datetime as dt
+        from app.metronome import _target_delay_for_key_seed, seed_b_center
+        t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
+        M = 300000
+        a_delay = _target_delay_for_key_seed(_KEY_SEED, t0)
+        b_time, b_delay = seed_b_center(_KEY_SEED, t0, M, self.model)
+
+        base_low16 = _KEY_SEED & 0xFFFF
+        expected_dF = self.model.frame(float(M), base_low16) - base_low16
+        self.assertEqual(b_delay, a_delay + round(expected_dF))
+        self.assertGreater(b_delay - a_delay, 10000)   # a real countdown, not Seed A's delay
+
+    def test_center_second_advances_with_real_time(self):
+        import datetime as dt
+        from app.metronome import seed_b_center
+        t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
+        M = 300000
+        b_time, _ = seed_b_center(_KEY_SEED, t0, M, self.model)
+        self.assertEqual((b_time - t0).total_seconds(),
+                         round(M / 1000.0 + self.model.rtc_offset_seconds))
+
+    def test_a_longer_countdown_moves_the_center_further_out(self):
+        import datetime as dt
+        from app.metronome import seed_b_center
+        t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
+        _t_short, short = seed_b_center(_KEY_SEED, t0, 200000, self.model)
+        _t_long, long_ = seed_b_center(_KEY_SEED, t0, 400000, self.model)
+        self.assertGreater(long_, short)
+
+    def test_top_candidate_sits_exactly_on_the_prediction(self):
+        import datetime as dt
+        from app.metronome import seed_b_center
+        t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
+        res = self.api.metronome_seed_b({
+            "target_time": t0.isoformat(), "key_seed": _KEY_SEED, "vector_ms": 300000,
+            "profile_id": self.pid, "seconds_window": 0, "delay_window": 2,
+            "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
+        b_time, b_delay = seed_b_center(_KEY_SEED, t0, 300000, self.model)
+        top = res["candidates"][0]
+        self.assertEqual(top["delay_delta"], 0)
+        self.assertEqual(top["delay"], b_delay)
+        self.assertEqual(top["time"], b_time.strftime("%Y-%m-%dT%H:%M:%S"))
+
+    def test_missing_vector_ms_is_a_clear_error_not_a_silent_wrong_search(self):
+        # Failing loudly matters more than usual here: the old behavior was to quietly search
+        # the wrong place and come back with candidates that could never contain the answer.
+        with self.assertRaises(ValueError) as cm:
+            self.api.metronome_seed_b({
+                "target_time": _TARGET["target_time"], "key_seed": _KEY_SEED,
+                "profile_id": self.pid, "seconds_window": 0, "delay_window": 1,
+                "magikarp_level": 15, "opposite_gender": True})
+        self.assertIn("Vector ms", str(cm.exception))
+
+    def test_safari_offset_is_not_applied_to_the_metronome_path(self):
+        # with_safari_offset describes the Safari Zone's extra loading screen; a Magikarp
+        # battle never goes through it. The facade must hand over the UNFOLDED model —
+        # model.frame() itself is always the metronome path, so folding is the only way the
+        # safari offset could leak in, and this pins that it doesn't.
+        import datetime as dt
+        from dataclasses import replace
+        from app.metronome import seed_b_center
+        t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
+        safari_model = replace(self.model, safari_offset=-400.0)
+
+        handed_over = self.api._metronome_model({"profile_id": self.pid})
+        self.assertEqual(handed_over.alpha, self.model.alpha)   # intercept untouched
+
+        plain = seed_b_center(_KEY_SEED, t0, 300000, safari_model)[1]
+        folded = seed_b_center(_KEY_SEED, t0, 300000, safari_model.with_safari_offset())[1]
+        self.assertEqual(plain - folded, 400)        # folding WOULD have moved it
+        self.assertEqual(seed_b_center(_KEY_SEED, t0, 300000, handed_over)[1], plain)
 
 
 class TestMetronomeMoves(unittest.TestCase):
@@ -273,8 +362,10 @@ class TestSeedBSession(unittest.TestCase):
 
     def test_real_narrowing_session_starts_then_aborts(self):
         api = Facade(FileStore(tempfile.mkdtemp()))
+        pid = api.create_profile({"name": "P1"})["id"]
         st = api.metronome_seed_b_start({
             "target_time": _TARGET_TIME, "key_seed": _KEY_SEED,
+            "vector_ms": 300000, "profile_id": pid,
             "seconds_window": 0, "delay_window": 1,
             "magikarp_level": 15, "opposite_gender": True, "metronome_only": True})
         self.assertIn("session_id", st)

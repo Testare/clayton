@@ -221,9 +221,45 @@ class TestRunsJsonlPortability(unittest.TestCase):
 
         t0 = dt.datetime.fromisoformat(imported[0]["saved_at"])
         t1 = dt.datetime.fromisoformat(imported[1]["saved_at"])
-        self.assertLessEqual(before, t0)
+        # saved_at is written at millisecond precision, so `before` has to be truncated the
+        # same way before comparing -- otherwise an import that completes inside the same
+        # millisecond makes this fail purely on the discarded sub-millisecond digits.
+        self.assertLessEqual(before.replace(microsecond=(before.microsecond // 1000) * 1000), t0)
         self.assertLessEqual(t1, after + dt.timedelta(seconds=1))
         self.assertEqual((t1 - t0).total_seconds(), 0.001)  # exactly 1ms apart, file order
+
+    def test_bundle_merge_auto_numbers_colliding_expeditions(self):
+        # Round 15: a bundle merged into an existing profile can carry expeditions whose names
+        # already exist there -- they get the same " (2)" treatment as any other collision,
+        # instead of leaving two indistinguishable entries.
+        from app import portability
+        src = self.api.create_profile({"name": "Source"})["id"]
+        self.api.create_expedition({"name": "Metang", "profile_id": src})
+        env = portability.export_profile_bundle(self.api._store, src)
+
+        # Merging the bundle back into its own profile: the expedition it carries collides
+        # with the one already there and must come out auto-numbered, not duplicated.
+        res = portability.import_profile_bundle(self.api._store, env, on_collision="merge")
+        names = sorted(e["name"] for e in self.api.list_expeditions(res["profile_id"]))
+        self.assertEqual(names, ["Metang", "Metang (2)"])
+
+    def test_bundle_import_numbers_duplicates_within_one_batch(self):
+        # Two same-named expeditions inside a single bundle must also come out distinguishable
+        # -- the rename happens per doc as each is written, not once up front.
+        from app import portability
+        src = self.api.create_profile({"name": "Source"})["id"]
+        self.api.create_expedition({"name": "Metang", "profile_id": src})
+        env = portability.export_profile_bundle(self.api._store, src)
+        dup = dict(env["data"]["expeditions"][0])
+        dup["id"] = dup["id"] + "x"
+        env["data"]["expeditions"].append(dup)
+
+        res = portability.import_profile_bundle(self.api._store, env, on_collision="new")
+        # The source profile keeps the original name; BOTH imported copies are numbered,
+        # because the collision is checked across every profile, not just the new one.
+        names = sorted(e["name"] for e in self.api.list_expeditions(res["profile_id"]))
+        self.assertEqual(names, ["Metang (2)", "Metang (3)"])
+        self.assertEqual([e["name"] for e in self.api.list_expeditions(src)], ["Metang"])
 
     def test_import_requires_an_existing_profile(self):
         from app import portability
@@ -275,15 +311,28 @@ class TestExpeditionPortability(unittest.TestCase):
         self.assertEqual(len(env["data"]["charts"]), 1)
         self.assertEqual(len(env["data"]["targets"]), 1)
 
-    def test_import_into_a_different_profile_no_collision(self):
+    def test_import_into_a_different_profile_is_still_a_collision(self):
+        # Round 16 feedback: expedition names are unique GLOBALLY, not per profile -- an
+        # expedition is associated with a profile rather than owned by one, and can be moved
+        # between them. This used to import silently, leaving two indistinguishable "Metang"s.
         env = self.api.export_expedition(self.eid)
         other = self.api.create_profile({"name": "Other"})["id"]
         res = self.api.import_expedition(other, env)
-        self.assertNotIn("collision", res)
+        self.assertTrue(res["collision"])
+        self.assertEqual(res["existing_id"], self.eid)
+        self.assertEqual(self.api.list_expeditions(other), [])   # nothing imported yet
+
+    def test_cross_profile_collision_resolved_copy_auto_numbers(self):
+        env = self.api.export_expedition(self.eid)
+        other = self.api.create_profile({"name": "Other"})["id"]
+        res = self.api.import_expedition(other, env, on_collision="copy")
+        self.assertEqual(res["expedition_name"], "Metang (2)")
         self.assertEqual(res["counts"], {"charts": 1, "targets": 1})
         exps = self.api.list_expeditions(other)
-        self.assertEqual([e["name"] for e in exps], ["Metang"])
+        self.assertEqual([e["name"] for e in exps], ["Metang (2)"])
         self.assertNotEqual(exps[0]["id"], self.eid)
+        # The original, in the other profile, is untouched.
+        self.assertEqual([e["name"] for e in self.api.list_expeditions(self.pid)], ["Metang"])
 
     def test_reimport_same_profile_is_a_collision(self):
         env = self.api.export_expedition(self.eid)

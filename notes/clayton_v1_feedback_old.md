@@ -1,4 +1,76 @@
 (Note to self: bbBbbb001100)
+
+# Feedback 16
+
+## Import/Export
+* When exporting models, expeditions, and profiles, give them a prefix that indicates what sort of data it is, not just "clayton-", but "clayton-profile-", for example.
+
+## X Compass - New Run
+* The tooltips for the roamer starting positions/observed positions should be on the whole header text, not just the icon at the end.
+
+## X Compass - Review Data
+* I understand I'm asking for a lot in the table, but now the scrollbar hides the delete button column, let's see if we can make the other columns more compact.
+  * The "outlier" and "manual" flags in the reason column have different UX, maybe make them both look like the "outlier" flag. Maybe instead of having a separate "Reason" column, we can have these flags next to the checkboxes in the "EXCLUDE" column?
+  * Minor: Maybe drop the "S" from the "Notes" column
+  * Drop the "0x" from the values in Seed A and Seed B column
+  * Drop the "Second" portion of the timestamp in the SAVED column
+  * Let me know if you have other ideas.
+
+## Safari Chart - Find Target
+* Rank Targets takes a while - Are we not caching the results per chart+model? (Clearing when delay window changes)
+
+## Safari Chart - Manage Data
+* In the Charts & Computed data table
+  * Can we stack the three buttons in the last column vertically?
+  * Can we add a column that indicates the size of the computed data? Human readable of course, not just raw byte count.
+* Saved Targets - The "Examine" button doesn't work.
+
+
+# Feedback 15
+
+## Import/Export
+* Your last fix didn't work - I imported a profile that had Shiny Metang expedition in it, and it still was not auto-numbered.
+* In fact, when I auto-import Shiny Metang itself (while targeting the other profile), it does not do the auto-numbering then either. 
+* TO BE CLEAR - Expedition names should be unique globally, not just unique per profile, since profiles can be changed. An expedition is associated with a profile, it isn't really a heirarchy. Technically by that model we shouldn't be exporting expeditions with profiles either, but I like the bundled export because it means moving data from one computer to another is pretty quick, so I do not want you changing that.
+
+## Metronome Compass
+
+* Oh my goodness I can't believe I didn't notice this until now. HUGE bug! For some reason it is looking for seeds around the key seed for Seed B. It should not be. It should be using the active model to look around the target for Seed B - What the model predicts the Seed B would be given the configured Vector ms.
+
+## Both Compasses
+* Add a tooltip for Roamer starting positions (In REL order, separated by space, "-" to skip roamer). Add a question mark icon after it to indicate the tooltip. This is already explained by the default text for the field, but it's good to have as tooltip as well.
+* Add a tooltip for Observed roamer routes, (In REL order, separated by spaces, "." to match any). Add a question mark icon after the title to indicate the tooltip. This is already explained by the default text for the field, but it's good to have as tooltip as well.
+## Find Target
+* For the "initial time" tooltip - This isn't the time you boot the game on, it is the time you try to hit Seed A on.
+* Change title of one column to "P(SUCCESS)*" with an asterisk, since the tooltip explains it well and the current title is too wordy and long. The explanation below the table is excessive, remove it.
+
+## Safari Compass - Flee Flags
+* Should probably have an "F!" flag for when the pokemon should have fled last turn and we're just waiting for the user to type "F" if it matches.
+
+## Safari Compass - General Question
+* Our metronome compass allows us to collect data on observed paths even when we don't know exactly what seed we hit. I'm not sure if these runs are statistically useful or not. If they are, should we make sure safari compass supports saving runs where we don't fully identify the seed?
+
+# Feedback 14
+
+# General
+* I think a good idea would be for each table to have tooltips when you hover on the column headers that explain the column.
+
+# Import/Export
+
+* When importing a profile, it might contains expeditions that match already existing expeditions, and they should have the same auto-numbering system applied.
+* When importing an expedition, for some reason after importing it switched page to the profile it was imported into instead of the new expedition.
+* When deleting a profile that has expeditions associated with it, it is also an option to assign the expedition to a new profile instead of deleting it, which the text should reflect.
+
+# Compass/Safari runs
+* Include more useful details:
+  * Vector delay (Fb - Fa, difference in game frames between the two seeds. If we already have a name we use for this number, let's do it).
+  * (Position vector MS and vector delay after seed a and seed b)
+  * Delta delay - How far vector delay is from what the currently active model would predict. This can help us identify runs we might want to exclude.
+  * It might be okay to shorten Vector ms to Vms or something like that if we need to make the table fit.
+* Make sure delay is the right metric
+
+# Safari Compass - Review data
+* Remove (today's behavior) from the checkbox.
 # Feedback 13
 
 ## Profiles/Expeditions

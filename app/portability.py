@@ -99,10 +99,18 @@ def _const_map(old_value, new_value) -> dict:
     return {old_value: new_value}
 
 
-def _import_children(store, collection: str, docs: list[dict], id_map: dict, **repoint) -> list[dict]:
+def _import_children(store, collection: str, docs: list[dict], id_map: dict,
+                     unique_name_scope: tuple | None = None, **repoint) -> list[dict]:
     """Write each of `docs` as a fresh copy (new id), re-pointing the fields named in
     `repoint` (field -> old value's id_map, e.g. expedition_id=exp_id_map) through their
-    own old->new mapping. Returns the new docs (each carrying its fresh id)."""
+    own old->new mapping. Returns the new docs (each carrying its fresh id).
+
+    `unique_name_scope`, when given, names the doc fields that scope a name collision — each
+    doc's "name" is then auto-numbered via _unique_name if it collides inside that scope. An
+    EMPTY tuple means globally unique (no scoping fields), which is what expeditions use; None
+    means don't deduplicate at all. Applied per doc as each is written, rather than up front, so
+    two same-named docs in the same batch also come out distinguishable (round 15/16 feedback).
+    """
     out = []
     for doc in docs:
         doc = dict(doc)
@@ -112,6 +120,9 @@ def _import_children(store, collection: str, docs: list[dict], id_map: dict, **r
         for field, mapping in repoint.items():
             if doc.get(field) in mapping:
                 doc[field] = mapping[doc[field]]
+        if unique_name_scope is not None and doc.get("name"):
+            doc["name"] = _unique_name(store, collection, doc["name"],
+                                       **{f: doc.get(f) for f in unique_name_scope})
         store.write(collection, doc["id"], doc)
         out.append(doc)
     return out
@@ -143,7 +154,11 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
         raise ValueError("export has no expedition")
     name = exp.get("name")
 
-    existing = _find_by_name(store, "expeditions", name, profile_id=profile_id) if name else None
+    # Expedition names are unique GLOBALLY, not per profile (round 16 feedback): an expedition
+    # is associated with a profile rather than owned by one, and can be moved between them, so
+    # a same-named expedition anywhere is the collision — scoping this by profile_id meant
+    # importing "Shiny Metang" into a DIFFERENT profile silently made a second one.
+    existing = _find_by_name(store, "expeditions", name) if name else None
     if existing and on_collision is None:
         return {"collision": True, "existing_id": existing["id"], "existing_name": existing["name"]}
 
@@ -154,7 +169,7 @@ def import_expedition(store, profile_id: str, envelope: dict, on_collision: str 
     else:
         exp["id"] = _new_id()
         if existing:  # collision resolved as "keep both" -- distinguish by name
-            exp["name"] = _unique_name(store, "expeditions", name, profile_id=profile_id)
+            exp["name"] = _unique_name(store, "expeditions", name)
     store.write("expeditions", exp["id"], exp)
 
     exp_id_map = {old_exp_id: exp["id"]}
@@ -300,8 +315,12 @@ def import_profile_bundle(store, envelope: dict, on_collision: str | None = None
 
     exp_id_map: dict = {}
     chart_id_map: dict = {}
+    # Expedition names are unique GLOBALLY (round 16 feedback), so a bundle can collide with
+    # expeditions in ANY profile, not just the one it's being merged into -- auto-number those
+    # the same way a single-expedition import does. The empty scope tuple is what makes the
+    # check global.
     expeditions = _import_children(store, "expeditions", src_expeditions, exp_id_map,
-                                   profile_id=profile_map)
+                                   unique_name_scope=(), profile_id=profile_map)
     charts = _import_children(store, "charts", data.get("charts", []), chart_id_map,
                               expedition_id=exp_id_map)
     targets = _import_children(store, "targets", data.get("targets", []), {},

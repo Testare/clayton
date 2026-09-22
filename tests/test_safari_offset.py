@@ -40,10 +40,12 @@ class TestModelSafariFields(unittest.TestCase):
         self.assertIsNone(m.safari_offset)
 
 
-def _safari_run(M, Fa, Fb, *, seed=0x0C0E02C2, prior_battles=0, a_seed=True):
+def _safari_run(M, Fa, Fb, *, seed=0x0C0E02C2, prior_battles=0, a_seed=True,
+                advance_frame=None):
     rec = {
         "target_timer_delay": M, "target_timer_calibration": 0,
         "seed": seed, "frame": Fb, "prior_battles": prior_battles,
+        "advance_frame": advance_frame,
     }
     if a_seed:
         rec["a_seed"] = {"seed": 1, "delay": Fa}
@@ -98,6 +100,134 @@ class TestFitSafariOffset(unittest.TestCase):
             os.remove(path)
         self.assertEqual(fit["n"], 1)
         self.assertAlmostEqual(fit["offset"], 3.0, places=6)
+
+
+class TestFitSafariPerAdvance(unittest.TestCase):
+    """The per-advance safari offset (clayton-6h2.3): a slope on the Seed A advance count,
+    fit jointly with the intercept and REPORTED WITH ITS UNCERTAINTY rather than withheld --
+    the only hard refusal is a slope that mathematically doesn't exist."""
+
+    def setUp(self):
+        self.model = _df_model(beta=0.0006, alpha=0.0)  # frame(M=100000, Fa=500) = 560 exactly
+
+    def _runs(self, advances, offset=10.0, slope=2.0, noise=None):
+        """Runs whose residual is exactly offset + slope*advance (plus optional noise)."""
+        out = []
+        for i, adv in enumerate(advances):
+            resid = offset + slope * adv + ((noise[i]) if noise else 0)
+            out.append(_safari_run(100000, 500, int(560 + resid), advance_frame=adv))
+        return out
+
+    def _fit(self, runs, **kw):
+        path = _write_runs(runs)
+        try:
+            return ct.fit_safari_offset(self.model, runs_path=path, **kw)
+        finally:
+            os.remove(path)
+
+    def test_off_by_default_matches_the_flat_median_fit(self):
+        fit = self._fit(self._runs(range(10, 130, 10)))
+        self.assertEqual(fit["per_advance"], 0.0)
+        self.assertIsNone(fit["quality"])
+        self.assertIsNone(fit["jitter_c"])
+
+    def test_refuses_only_when_no_slope_exists_at_all(self):
+        # Every run at the SAME advance count: slope and offset are the same parameter, so
+        # there is no estimate to make, rough or otherwise. This is the one hard refusal.
+        fit = self._fit(self._runs([80] * 8), per_advance=True)
+        self.assertFalse(fit["quality"]["estimable"])
+        self.assertIn("DIFFERENT advance counts", fit["quality"]["reason"])
+        self.assertEqual(fit["per_advance"], 0.0)
+        # ...and the flat offset is still fit over everything, so the fit stays usable.
+        self.assertEqual(fit["n"], 8)
+
+    def test_refuses_when_no_run_recorded_an_advance_count(self):
+        runs = [_safari_run(100000, 500, 600), _safari_run(100000, 500, 610)]
+        fit = self._fit(runs, per_advance=True)
+        self.assertFalse(fit["quality"]["estimable"])
+        self.assertIn("no run has recorded an advance count", fit["quality"]["reason"])
+
+    def test_a_rough_slope_from_few_runs_is_reported_not_withheld(self):
+        # The user's call (round 14): a wide interval early is useful feedback, so a small-n
+        # slope is fit and surfaced with its uncertainty rather than blocked. The old version
+        # of this test asserted the opposite -- that 5 runs were refused outright.
+        fit = self._fit(self._runs([10, 40, 70, 100, 130]), per_advance=True)
+        self.assertTrue(fit["quality"]["estimable"])
+        self.assertAlmostEqual(fit["per_advance"], 2.0, places=6)
+        self.assertIsNotNone(fit["quality"]["ci_halfwidth"])
+
+    def test_two_distinct_advances_fit_a_slope_but_admit_no_uncertainty(self):
+        fit = self._fit(self._runs([10, 90]), per_advance=True)
+        self.assertTrue(fit["quality"]["estimable"])
+        self.assertAlmostEqual(fit["per_advance"], 2.0, places=6)
+        self.assertIsNone(fit["quality"]["ci_halfwidth"])   # can't bootstrap 2 points
+        self.assertIn("too few", fit["quality"]["reason"])
+
+    def test_uncertainty_shrinks_as_runs_accumulate(self):
+        # The property that makes reporting-instead-of-blocking worth it: the interval visibly
+        # narrows with more (and more varied) runs, so progress is legible.
+        noise = lambda k: [7, -7] * k
+        small = self._fit(self._runs(range(10, 70, 10), noise=noise(3)), per_advance=True)
+        large = self._fit(self._runs(range(10, 250, 10), noise=noise(12)), per_advance=True)
+        self.assertLess(large["quality"]["ci_halfwidth"], small["quality"]["ci_halfwidth"])
+
+    def test_quality_reports_the_landing_spread_to_compare_against(self):
+        # sigma_ref lets a caller say how the correction's uncertainty compares to the noise
+        # it is correcting -- but is deliberately NOT scaled by any advance count here.
+        model = _df_model(beta=0.0006, alpha=0.0)
+        model.jitter_c = 0.15
+        self.model = model
+        fit = self._fit(self._runs(range(10, 130, 10)), per_advance=True)
+        self.assertAlmostEqual(fit["quality"]["sigma_ref"],
+                               0.15 * (100000 ** 0.5), places=6)
+
+    def test_recovers_the_slope_and_offset(self):
+        fit = self._fit(self._runs(range(10, 130, 10), offset=10.0, slope=2.0),
+                        per_advance=True)
+        self.assertTrue(fit["quality"]["estimable"])
+        self.assertEqual(fit["quality"]["n_with_advances"], 12)
+        self.assertAlmostEqual(fit["per_advance"], 2.0, places=6)
+        self.assertAlmostEqual(fit["offset"], 10.0, places=6)
+        self.assertEqual(fit["per_advance_n"], 12)
+
+    def test_one_wild_run_cannot_drag_the_slope(self):
+        # The whole reason this is Theil-Sen and not least squares: a single misidentified run
+        # (here a 5000-frame residual at a leverage point) must not move the estimate. OLS on
+        # this same data lands nowhere near 2.0.
+        runs = self._runs(range(10, 130, 10), offset=10.0, slope=2.0)
+        runs.append(_safari_run(100000, 500, 560 + 5000, advance_frame=125))
+        fit = self._fit(runs, per_advance=True)
+        self.assertAlmostEqual(fit["per_advance"], 2.0, places=6)
+
+    def test_reports_a_bootstrap_ci_bracketing_the_slope(self):
+        fit = self._fit(self._runs(range(10, 130, 10), slope=2.0), per_advance=True)
+        lo, hi = fit["per_advance_ci"]
+        self.assertLessEqual(lo, 2.0)
+        self.assertGreaterEqual(hi, 2.0)
+        self.assertAlmostEqual(fit["quality"]["ci_halfwidth"], (hi - lo) / 2, places=9)
+
+    def test_runs_without_an_advance_count_are_reported_not_guessed(self):
+        runs = self._runs(range(10, 130, 10))
+        runs += [_safari_run(100000, 500, 600), _safari_run(100000, 500, 610)]  # no advance_frame
+        fit = self._fit(runs, per_advance=True)
+        self.assertEqual(fit["quality"]["n_with_advances"], 12)
+        self.assertEqual(fit["quality"]["n_missing_advances"], 2)
+        # They sat out the slope fit entirely rather than being defaulted to 0 advances.
+        self.assertAlmostEqual(fit["per_advance"], 2.0, places=6)
+
+    def test_jitter_is_measured_about_the_adopted_fit(self):
+        # Residual scatter of +-3 frames about the line at M=100000 -> c = 3/sqrt(100000).
+        noise = [3, -3] * 6
+        fit = self._fit(self._runs(range(10, 130, 10), noise=noise),
+                        per_advance=True, jitter=True)
+        self.assertTrue(fit["quality"]["estimable"])
+        self.assertAlmostEqual(fit["jitter_c"], 3.0 / (100000 ** 0.5), places=9)
+
+    def test_jitter_without_per_advance_uses_the_flat_residuals(self):
+        fit = self._fit(self._runs([10, 20, 30], slope=0.0, noise=[4, -4, 0]),
+                        jitter=True)
+        self.assertIsNone(fit["quality"])
+        self.assertGreater(fit["jitter_c"], 0.0)
 
 
 class TestUpdateSafariOffset(unittest.TestCase):
@@ -162,6 +292,72 @@ class TestWithSafariOffset(unittest.TestCase):
     def test_returns_self_when_no_offset(self):
         m = CalibrationModel(kind="line", beta=0.0006, alpha=10.0)
         self.assertIs(m.with_safari_offset(), m)
+
+
+class TestWithSafariOffsetPerAdvance(unittest.TestCase):
+    """with_safari_offset(advances) folds offset + per_advance*advances (clayton-6h2.2).
+
+    The advance count is CONSTANT for any one chart target or compass run, which is why the
+    term folds into the intercept here rather than threading through the scorers.
+    """
+
+    def _model(self, **kw):
+        return CalibrationModel(kind="line", target="dF", beta=0.0006, alpha=10.0, **kw)
+
+    def test_advances_scale_the_per_advance_term(self):
+        m = self._model(safari_offset=30.0, safari_offset_per_advance=-2.0)
+        self.assertEqual(m.with_safari_offset(0).alpha, 40.0)     # 10 + 30
+        self.assertEqual(m.with_safari_offset(20).alpha, 0.0)     # 10 + 30 - 40
+        self.assertIsNone(m.with_safari_offset(20).safari_offset_per_advance)
+
+    def test_advances_ignored_when_the_model_has_no_per_advance_term(self):
+        # An advance count reaching a model fit without this feature must change nothing --
+        # that's what keeps every existing model's behavior identical.
+        m = self._model(safari_offset=30.0)
+        self.assertEqual(m.with_safari_offset(81).alpha, m.with_safari_offset(0).alpha)
+
+    def test_per_advance_alone_still_applies(self):
+        m = self._model(safari_offset=None, safari_offset_per_advance=1.5)
+        self.assertAlmostEqual(m.with_safari_offset(10).alpha, 25.0)
+        self.assertIs(m.with_safari_offset(0), m)   # nothing to fold at zero advances
+
+    def test_quad_folds_the_per_advance_term_too(self):
+        m = CalibrationModel(kind="quad", coeffs=(1.0, 2.0, 3.0), m_center=0.0, m_scale=1.0,
+                             safari_offset=5.0, safari_offset_per_advance=0.5)
+        self.assertEqual(m.with_safari_offset(10).coeffs, (11.0, 2.0, 3.0))
+
+    def test_safari_jitter_replaces_the_metronome_jitter(self):
+        m = self._model(safari_offset=30.0, jitter_c=0.1, safari_jitter_c=0.25)
+        baked = m.with_safari_offset(0)
+        self.assertEqual(baked.jitter_c, 0.25)
+        self.assertIsNone(baked.safari_jitter_c)    # cleared, so a second fold is a no-op
+        self.assertEqual(m.jitter_c, 0.1)           # original untouched
+
+    def test_safari_jitter_applies_even_with_no_offset_to_fold(self):
+        m = self._model(safari_offset=None, jitter_c=0.1, safari_jitter_c=0.25)
+        self.assertEqual(m.with_safari_offset().jitter_c, 0.25)
+
+    def test_safari_shift_is_the_sum_of_both_terms(self):
+        m = self._model(safari_offset=-400.0, safari_offset_per_advance=-2.0)
+        self.assertAlmostEqual(m.safari_shift(81), -562.0)
+        self.assertAlmostEqual(m.safari_shift(), -400.0)
+
+    def test_new_fields_roundtrip_and_old_artifacts_still_load(self):
+        m = self._model(safari_offset=30.0, safari_offset_per_advance=-2.0,
+                        safari_jitter_c=0.25)
+        m.safari_offset_per_advance_ci = (-3.0, -1.0)
+        m2 = CalibrationModel.from_dict(json.loads(json.dumps(m.to_dict())))
+        self.assertEqual(m2.safari_offset_per_advance, -2.0)
+        self.assertEqual(m2.safari_offset_per_advance_ci, (-3.0, -1.0))
+        self.assertEqual(m2.safari_jitter_c, 0.25)
+        d = m.to_dict()
+        for k in ("safari_offset_per_advance", "safari_offset_per_advance_n",
+                  "safari_offset_per_advance_ci", "safari_jitter_c"):
+            d.pop(k)
+        old = CalibrationModel.from_dict(d)
+        self.assertIsNone(old.safari_offset_per_advance)
+        self.assertIsNone(old.safari_jitter_c)
+        self.assertEqual(old.with_safari_offset(81).alpha, 40.0)   # flat offset only
 
 
 class TestReportUsesSafariOffset(unittest.TestCase):

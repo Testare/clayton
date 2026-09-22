@@ -20,6 +20,10 @@ turn") — so a ball flee on the very next action is "F0", not "F01"; the all-ac
 the same case is bare "F". Two-plus-turn examples: "F03" (ball, 3 turns), "Fb2" (bait, 2
 turns), "F2" (every action, 2 turns — the worst case across the three, since that's the
 longest it could take depending which one the player actually throws).
+
+"F!" is the one flag that is not a prediction: this candidate has ALREADY fled on the last
+action and is only still listed because the compass hasn't been told so yet (round 16
+feedback). It asks for an input rather than warning about a future turn.
 """
 from __future__ import annotations
 
@@ -37,8 +41,8 @@ _ACTION_DESC = {"ball": "you throw a ball", "bait": "you use bait", "mud": "you 
 
 @dataclass(frozen=True)
 class FleeFlag:
-    action: str    # "ball" | "bait" | "mud" | "any" (every action leads to a flee)
-    turns: int      # smallest N (1-indexed) this candidate flees within, for this action
+    action: str    # "ball" | "bait" | "mud" | "any" (every action flees) | "already" (it HAS)
+    turns: int      # smallest N (1-indexed) this candidate flees within; 0 for "already"
     code: str       # the short flag string, e.g. "F03", "Fb2", "F2", "F0", "F"
     tooltip: str    # a plain-language explanation, e.g. for a table-cell title attribute
 
@@ -82,6 +86,17 @@ def compute_flee_flags(ctx: SafariContext, max_turns: int = 3, pokemon_name: str
     observation resolves whether it really fled — see that module's docstring); throwing
     anything against a non-watching context raises, so this must not even try.
     """
+    if ctx.has_fled():
+        # This candidate's last action already produced a flee, but the compass can't COMMIT
+        # that until the next observation resolves it (see the filter_fled=False "pending"
+        # handling in app.safari_compass._apply_path) -- so the row is still on screen with a
+        # fled context. That's not a prediction about the future, it's a prompt: if the mon
+        # really did run, typing F here is what rules every other candidate out.
+        name = pokemon_name or "It"
+        return [FleeFlag(action="already", turns=0, code="F!",
+                         tooltip=f"{name} already fled on your last action, if this is the "
+                                 f"candidate you're on — type F to confirm it and rule the "
+                                 f"others out.")]
     if not ctx.is_watching():
         return []
     per_action: dict[str, int] = {}

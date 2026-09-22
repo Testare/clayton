@@ -138,13 +138,41 @@ class Facade:
 
     def profile_delete_summary(self, profile_id: str) -> dict:
         """What delete_profile would remove (or, if expeditions exist, what's blocking it --
-        see delete_profile), for a confirmation prompt."""
+        see delete_profile), for a confirmation prompt.
+
+        `expeditions`/`expedition_names` are what blocks it; `other_profiles` lists the
+        profiles those expeditions could be MOVED to instead of deleted (round 15 feedback --
+        reassigning is the other way out of the block, so the prompt has to offer it)."""
         expeditions = self.list_expeditions(profile_id)
         runs = len(self.list_runs(profile_id, "metronome")) + len(self.list_runs(profile_id, "safari"))
-        return {"expeditions": len(expeditions), "expedition_names": [e["name"] for e in expeditions],
+        others = [{"id": p["id"], "name": p["name"]} for p in self.list_profiles()
+                  if p["id"] != profile_id]
+        return {"expeditions": len(expeditions),
+               "expedition_names": [e["name"] for e in expeditions],
+               "expedition_list": [{"id": e["id"], "name": e["name"]} for e in expeditions],
+               "other_profiles": others,
                "runs": runs, "calibration_models": len(self.list_calibration_models(profile_id)),
                "metronome_users": len((self._store.read(_PROFILES, profile_id) or {})
                                       .get("metronome_users", []))}
+
+    def move_expedition(self, expedition_id: str, profile_id: str) -> dict:
+        """Reassign an expedition to a different profile.
+
+        The alternative to deleting an expedition when its profile is going away (round 15
+        feedback). Only the expedition's own `profile_id` moves: its charts and targets follow
+        it because they reference the EXPEDITION, not the profile. Runs and calibration models
+        do NOT follow -- those are owned by the profile directly, never by an expedition, so
+        the moved expedition is scored against its NEW profile's active calibration model.
+        """
+        exp = self._load_expedition(expedition_id)
+        if self._store.read(_PROFILES, profile_id) is None:
+            raise ValueError(f"no profile with id {profile_id!r}")
+        if exp.profile_id == profile_id:
+            return exp.to_dict()
+        exp.profile_id = profile_id
+        doc = exp.to_dict()
+        self._store.write(_EXPEDITIONS, exp.id, doc)
+        return doc
 
     def delete_profile(self, profile_id: str) -> bool:
         """Deletes the profile and its own directly-owned data (every run, every calibration
@@ -263,6 +291,26 @@ class Facade:
     def get_expedition(self, expedition_id: str) -> dict:
         return self._load_expedition(expedition_id).to_dict()
 
+    def _assert_expedition_name_free(self, name: str, except_id: str | None = None) -> None:
+        """Expedition names are unique GLOBALLY, not per profile (round 16 feedback).
+
+        An expedition is *associated with* a profile rather than owned by one — it can be moved
+        between them (move_expedition) — so scoping uniqueness per profile would let a rename or
+        a move create two indistinguishable "Shiny Metang"s. Imports resolve a collision by
+        auto-numbering; a person typing a name gets told instead, so they can pick a real one.
+        `except_id` is the expedition being edited, which never collides with itself.
+        """
+        for eid in self._store.list_ids(_EXPEDITIONS):
+            doc = self._store.read(_EXPEDITIONS, eid)
+            if doc is None or doc.get("id") == except_id:
+                continue
+            if (doc.get("name") or "").strip().lower() == name.lower():
+                owner = (self._store.read(_PROFILES, doc.get("profile_id")) or {}).get("name")
+                where = f" (in profile \"{owner}\")" if owner else ""
+                raise ValueError(
+                    f"An expedition named \"{doc['name']}\"{where} already exists. "
+                    "Expedition names have to be unique across every profile — pick another.")
+
     def create_expedition(self, fields: dict) -> dict:
         name = (fields.get("name") or "").strip()
         if not name:
@@ -272,6 +320,7 @@ class Facade:
             raise ValueError("an expedition must reference a profile")
         # Fail early if the referenced profile is missing.
         self._load_profile(profile_id)
+        self._assert_expedition_name_free(name)
         e = Expedition.from_dict({**fields, "name": name})
         self._store.write(_EXPEDITIONS, e.id, e.to_dict())
         return e.to_dict()
@@ -282,6 +331,7 @@ class Facade:
             raise ValueError("save_expedition needs an expedition id (use create_expedition for new)")
         e = Expedition.from_dict(expedition)
         self._load_profile(e.profile_id)  # validate the reference still resolves
+        self._assert_expedition_name_free(e.name.strip(), except_id=e.id)
         self._store.write(_EXPEDITIONS, e.id, e.to_dict())
         return e.to_dict()
 
@@ -338,9 +388,24 @@ class Facade:
         (a month alone, or month+day, etc.); with none, every valid time comes back."""
         return metronome.times_on_date(key_seed, month, day, second)
 
+    def _metronome_model(self, params: dict):
+        """The calibration model a metronome Seed B search should be centered on.
+
+        The METRONOME-path model -- never with_safari_offset(): that offset describes the
+        Safari Zone's extra loading screen, which has nothing to do with a Magikarp battle.
+        Scoped by profile_id when the caller supplies one; falls back to claytonlib's global
+        model file otherwise (a caller that predates profile-scoped models)."""
+        profile_id = params.get("profile_id")
+        models = (self._resolve_calibration_models(profile_id) if profile_id
+                  else chart_lib.global_calibration_models())
+        return models.get(params.get("fps_model", "linear")) or next(iter(models.values()), None)
+
     def metronome_seed_b(self, params: dict) -> dict:
-        """Candidate battle seeds, each with its precomputed Metronome path."""
-        return metronome.seed_b(params)
+        """Candidate battle seeds, each with its precomputed Metronome path.
+
+        Centered on where the active calibration model says Seed B lands for this target's
+        Vector ms -- NOT on the key seed, which is where Seed A lands."""
+        return metronome.seed_b(params, self._metronome_model(params))
 
     def _json_session_state(self, state: dict) -> dict:
         result = state.get("result")
@@ -350,7 +415,7 @@ class Facade:
 
     def metronome_seed_b_start(self, params: dict) -> dict:
         """Begin the interactive Seed B narrowing; returns the first question (or result)."""
-        runner = metronome.seed_b_runner(params)
+        runner = metronome.seed_b_runner(params, self._metronome_model(params))
         _sid, state = self._sessions.start(runner)
         return self._json_session_state(state)
 
@@ -376,7 +441,14 @@ class Facade:
                 "no calibration model available — build one from Metronome Compass → Review "
                 "Data → Calibrate Model first")
         if params.get("use_safari_offset", True):
-            model = model.with_safari_offset()
+            # The advance count the run will actually use: the encounter frame the frame-route
+            # guide planned (Safari Compass locks the Seed B panel until a route exists, so one
+            # is always available), falling back to the expedition's configured key-seed
+            # advances. It only matters at all when the model carries a per-advance offset.
+            advances = params.get("advances")
+            if advances is None:
+                advances = exp.get("key_seed_advances") or 0
+            model = model.with_safari_offset(int(advances))
         return safari_compass.seed_b(exp, model, params)
 
     def safari_compass_cheatsheet(self, pokemon_name: str) -> list[dict]:
@@ -478,6 +550,21 @@ class Facade:
         out.sort(key=lambda d: d.get("saved_at", ""), reverse=True)
         return out
 
+    def run_delay_metrics(self, profile_id: str, kind: str | None = None) -> dict:
+        """Per-run Vector delay / Delta delay for the Review Data runs tables (round 15).
+
+        Keyed by run id, so the table can look each row up without changing list_runs' shape
+        (these are derived from the profile's ACTIVE calibration model, which list_runs has no
+        business resolving on every call). See app.calibration.run_delay_metrics."""
+        models = self._resolve_calibration_models(profile_id)
+        model = models.get("linear") or next(iter(models.values()), None)
+        metrics = {}
+        for run in self.list_runs(profile_id, kind):
+            m = calibration_lib.run_delay_metrics(run, model)
+            if m is not None:
+                metrics[run["id"]] = m
+        return {"metrics": metrics, "has_model": model is not None}
+
     def get_run(self, run_id: str) -> dict:
         doc = self._store.read(_RUNS, run_id)
         if doc is None:
@@ -571,14 +658,24 @@ class Facade:
         self._load_profile(profile_id)
         return portability.import_calibration_model(self._store, profile_id, envelope)
 
+    def _export_filename(self, kind: str, name: str, ext: str = "json") -> str:
+        """A suggested export filename that says what the file IS, not just that it's ours.
+
+        "clayton-profile-Silver.json" rather than "clayton-Silver.json" (round 17 feedback) —
+        with expeditions, profiles, models and runs all exporting as plain JSON, the prefix is
+        the only thing distinguishing them in a folder.
+        """
+        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in (name or "")) or kind
+        return f"clayton-{kind}-{safe}.{ext}"
+
     def export_calibration_model_to_file(self, model_id: str) -> dict:
         """Export one calibration model via a native Save dialog."""
         from app import files
         env = self.export_calibration_model(model_id)
         m = env["data"]["model"]
-        name = m.get("name") or f"model-{m.get('number', '')}"
-        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "model"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
+        name = m.get("name") or f"{m.get('number', '')}"
+        path = files.save_json_dialog(
+            self._export_filename("model", name), env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_calibration_model_from_file(self, profile_id: str) -> dict:
@@ -594,9 +691,9 @@ class Facade:
         """Export one expedition via a native Save dialog."""
         from app import files
         env = self.export_expedition(expedition_id)
-        name = (self._store.read(_EXPEDITIONS, expedition_id) or {}).get("name", "expedition")
-        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "expedition"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
+        name = (self._store.read(_EXPEDITIONS, expedition_id) or {}).get("name", "")
+        path = files.save_json_dialog(
+            self._export_filename("expedition", name), env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_expedition_from_file(self, profile_id: str) -> dict:
@@ -621,9 +718,9 @@ class Facade:
         """Export a profile bundle via a native Save dialog."""
         from app import files
         env = self.export_profile_bundle(profile_id, include_excluded)
-        name = (self._store.read(_PROFILES, profile_id) or {}).get("name", "profile")
-        safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in name) or "profile"
-        path = files.save_json_dialog(f"clayton-{safe}.json", env, store=self._store)
+        name = (self._store.read(_PROFILES, profile_id) or {}).get("name", "")
+        path = files.save_json_dialog(
+            self._export_filename("profile", name), env, store=self._store)
         return {"saved": bool(path), "path": path}
 
     def import_profile_bundle_from_file(self) -> dict:
@@ -713,6 +810,37 @@ class Facade:
         return doc
 
     def delete_chart(self, chart_id: str) -> bool:
+        """Delete a chart, and its computed data too unless something else still maps to it.
+
+        A canon map is keyed by pokemon + key seed + strategy + criteria, NOT by chart id, so
+        several charts (across expeditions) can legitimately share one. Deleting the map while
+        another chart still points at it would silently throw away that chart's precompute, so
+        this only removes it once no other chart resolves to the same canon path (round 18
+        feedback). The chart's own cached rank report always goes, since nothing else uses it.
+        """
+        doc = self._store.read(_CHARTS, chart_id)
+        if doc is None:
+            return False
+        exp = self._store.read(_EXPEDITIONS, doc.get("expedition_id"))
+        if exp is not None:
+            import os
+            canon_path = chart_lib.canon_path(exp, doc)
+            try:
+                os.remove(chart_lib.rank_report_path(exp, doc))
+            except OSError:
+                pass
+            others = [cid for cid in self._store.list_ids(_CHARTS) if cid != chart_id]
+            shared = False
+            for cid in others:
+                other = self._store.read(_CHARTS, cid)
+                if other is None:
+                    continue
+                other_exp = self._store.read(_EXPEDITIONS, other.get("expedition_id"))
+                if other_exp is not None and chart_lib.canon_path(other_exp, other) == canon_path:
+                    shared = True
+                    break
+            if not shared:
+                chart_lib.delete_canon(exp, doc)
         return self._store.delete(_CHARTS, chart_id)
 
     # -- Safari Chart: compute ----------------------------------------------
@@ -740,6 +868,29 @@ class Facade:
         exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
         models = self._resolve_calibration_models(exp["profile_id"])
         return chart_lib.rank_best_per_time(exp, c, models, params)
+
+    def chart_rank_start(self, expedition_id: str, chart_id: str, params: dict) -> dict:
+        """Rank targets, reporting progress — a cold rank is ~35 s and deserves a real bar
+        rather than a spinner (round 18 feedback).
+
+        Returns a finished snapshot immediately when a valid cached report exists (the common
+        case, and it would be silly to make that wait on a poll cycle); otherwise starts a
+        background run and returns its first snapshot, polled via chart_rank_poll.
+        """
+        exp, c = self._load_expedition(expedition_id).to_dict(), self.get_chart(chart_id)
+        models = self._resolve_calibration_models(exp["profile_id"])
+        hit = chart_lib.rank_cached_only(exp, c, models, params)
+        if hit is not None:
+            return {"session_id": None, "done": True, "error": None,
+                    "progress": {}, "result": hit}
+
+        def runner(progress_cb):
+            return chart_lib.rank_best_per_time(exp, c, models, params, progress=progress_cb)
+
+        return self._chart_sessions.start(runner)
+
+    def chart_rank_poll(self, session_id: str) -> dict:
+        return self._chart_sessions.poll(session_id)
 
     def chart_rank_at_time(self, expedition_id: str, chart_id: str,
                            initial_time: str, params: dict) -> list[dict]:
@@ -824,12 +975,18 @@ class Facade:
         metronome_runs = self.list_runs(profile_id, kind="metronome")
         return calibration_lib.preview_fit(metronome_runs, p.excluded_tags)
 
-    def preview_safari_calibration(self, profile_id: str, base_model_id: str) -> dict:
+    def preview_safari_calibration(self, profile_id: str, base_model_id: str,
+                                   params: dict | None = None) -> dict:
         """Safari Compass's own Calibrate Model live preview: fit `safari_offset` from the
         profile's safari runs (after exclusions) against `base_model_id`'s own trend, held
         fixed. `base_model_id` may be ANY saved model for this profile, including the
         bundled "Standard" one — not just the currently-active model. Touches no persisted
-        state; save the result with save_calibration_model like any other preview."""
+        state; save the result with save_calibration_model like any other preview.
+
+        params: {"per_advance": bool, "safari_jitter": bool} — the two calibration-time
+        options (fit a per-advance offset; fit the safari path's own landing spread). Both
+        default off. They are fit-time only: what they produce is baked into the saved model,
+        so prediction just uses whichever model is active."""
         p = self._load_profile(profile_id)
         base_doc = self._store.read(_CALIBRATION_MODELS, base_model_id)
         if base_doc is None or base_doc.get("profile_id") != profile_id:
@@ -838,7 +995,11 @@ class Facade:
         base_models = {k: CalibrationModel.from_dict(v)
                        for k, v in base_doc["artifact"]["models"].items()}
         safari_runs = self.list_runs(profile_id, kind="safari")
-        report = calibration_lib.preview_safari_offset(base_models, safari_runs, p.excluded_tags)
+        params = params or {}
+        report = calibration_lib.preview_safari_offset(
+            base_models, safari_runs, p.excluded_tags,
+            per_advance=bool(params.get("per_advance")),
+            safari_jitter=bool(params.get("safari_jitter")))
         report["base_model_id"] = base_doc["id"]
         report["base_model_name"] = base_doc.get("name") or f"#{base_doc['number']}"
         return report
