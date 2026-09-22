@@ -23,6 +23,8 @@ which lands in the same place, so one set of entries covers both access styles.
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all
+
 ROOT = Path(SPECPATH).parent          # SPECPATH is packaging/, so ROOT is the repo root
 PACKAGING = ROOT / "packaging"
 
@@ -63,12 +65,27 @@ else:
 # `from app.facade import ...` imports are resolved by luck of pathex rather than by the
 # package actually being imported. The tiny launcher does `from app.main import main`, which
 # makes PyInstaller walk the real package graph.
+# PyInstaller ships no hook for pythonnet or clr_loader, so nothing tells it that they carry
+# native shims and a managed assembly (Python.Runtime.dll) that must travel with the build.
+# collect_all sweeps up their binaries and data rather than relying on the module graph, which
+# only sees the Python side. Windows-only: they aren't installed anywhere else.
+extra_binaries, extra_datas, extra_hidden = [], [], []
+if sys.platform == "win32":
+    for pkg in ("pythonnet", "clr_loader"):
+        try:
+            pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
+        except Exception:
+            continue                       # not installed -> nothing to collect
+        extra_datas += pkg_datas
+        extra_binaries += pkg_binaries
+        extra_hidden += pkg_hidden
+
 a = Analysis(
     [str(PACKAGING / "entry.py")],
     pathex=[str(ROOT)],
-    binaries=[],
-    datas=datas,
-    hiddenimports=hiddenimports,
+    binaries=extra_binaries,
+    datas=datas + extra_datas,
+    hiddenimports=hiddenimports + extra_hidden,
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "unittest", "pytest", "numpy", "matplotlib"] + unused_backends,

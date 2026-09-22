@@ -160,6 +160,65 @@ def _patch_windows_window_icon(icon) -> None:
         pass
 
 
+# Markers that identify the pythonnet/.NET load failure described in _explain_startup_failure.
+_DOTNET_FAILURE_MARKERS = ("Python.Runtime", "pythonnet", "clr_loader", "Failed to resolve")
+
+_DOTNET_HELP = """Clayton could not start its Windows interface.
+
+The .NET component it needs (Python.Runtime.dll) is present but Windows refused to load it.
+
+MOST LIKELY CAUSE: the download is still marked as "blocked".
+
+Windows tags anything extracted from an internet-downloaded .zip as untrusted, and .NET
+refuses to load an assembly with that mark. It only affects downloaded builds.
+
+TO FIX IT, in PowerShell, from the folder containing Clayton.exe:
+
+    Get-ChildItem -Recurse | Unblock-File
+
+Then run Clayton again. (You can also right-click the .zip BEFORE extracting, choose
+Properties, and tick Unblock.)
+
+IF THAT DOES NOT HELP, the other possibilities are:
+  * .NET Framework 4.x is missing - install it from Microsoft.
+  * A 32/64-bit mismatch between this build and your Python/.NET.
+
+The full technical error follows below."""
+
+
+def _explain_startup_failure(exc: BaseException) -> bool:
+    """Turn the pythonnet/.NET load failure into something a person can act on.
+
+    pywebview's Windows backend needs pythonnet, which loads a managed assembly
+    (Python.Runtime.dll) through .NET. When that load fails, clr_loader raises a bare
+    "Failed to resolve Python.Runtime.Loader.Initialize from <path>" with no reason attached,
+    and pywebview doesn't catch it (import_winforms only handles ImportError), so the user
+    gets a two-screen traceback whose actual cause isn't mentioned anywhere in it.
+
+    The cause is usually **Mark of the Web**: files extracted from a downloaded .zip are
+    tagged as untrusted, and .NET refuses to load an assembly so tagged. The native shim
+    loads fine either way -- only the managed assembly is zone-checked -- which is exactly
+    the shape of failure seen here.
+
+    Returns True if this looked like that failure and the user has been told; False to let
+    the original traceback through untouched.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    if not any(m in text for m in _DOTNET_FAILURE_MARKERS):
+        return False
+
+    message = f"{_DOTNET_HELP}\n\n{text}"
+    print(message, file=sys.stderr)
+    if sys.platform == "win32":
+        # A windowed build has no console, so stderr goes nowhere a user will look.
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, "Clayton could not start", 0x10)
+        except Exception:
+            pass
+    return True
+
+
 def main() -> None:
     _configure_linux_gtk_env()
     _chdir_into_app_data()
@@ -193,15 +252,24 @@ def main() -> None:
     _set_app_identity()
     icon = _icon_path()
     _patch_windows_window_icon(icon)
-    if icon is None:
-        webview.start(gui=gui)
-        return
+
+    def _start():
+        if icon is None:
+            webview.start(gui=gui)
+            return
+        try:
+            webview.start(gui=gui, icon=str(icon))
+        except TypeError:
+            # `icon` arrived in pywebview 6; an older one raises rather than ignoring it, and
+            # a missing window icon is never worth failing to launch over.
+            webview.start(gui=gui)
+
     try:
-        webview.start(gui=gui, icon=str(icon))
-    except TypeError:
-        # `icon` arrived in pywebview 6; an older one raises rather than ignoring it, and a
-        # missing window icon is never worth failing to launch over.
-        webview.start(gui=gui)
+        _start()
+    except Exception as exc:
+        if _explain_startup_failure(exc):
+            sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":

@@ -81,6 +81,18 @@ most often.
 Fixed in Clayton — update to the latest commit. See
 [BUILDING-WINDOWS.md](../packaging/BUILDING-WINDOWS.md) for detail.
 
+## Windows: "Failed to resolve Python.Runtime.Loader.Initialize"
+
+The downloaded build is still marked as blocked. Windows tags files extracted from an
+internet-downloaded `.zip` as untrusted, and .NET refuses to load its component while that tag
+is there. In PowerShell, from the folder holding `Clayton.exe`:
+
+```powershell
+Get-ChildItem -Recurse | Unblock-File
+```
+
+Builds you compiled yourself never hit this.
+
 ## The app won't start
 
 **Linux:** a blank window is usually the WebKitGTK renderer; Clayton already sets

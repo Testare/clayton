@@ -44,6 +44,37 @@ jobs:
           }
           Write-Host "Built:" (Get-Item "dist/Clayton/Clayton.exe").Length "bytes"
 
+      # Every artifact is downloaded as a .zip from the internet, so Windows tags the
+      # extracted files with Mark of the Web -- and .NET then refuses to load the managed
+      # assembly pywebview needs, with an error that says nothing about the real cause.
+      # Ship the fix next to the binary rather than leaving people to find it.
+      - name: Add a read-me to the artifact
+        shell: pwsh
+        run: |
+          @'
+          Clayton for Windows
+          ===================
+
+          IMPORTANT - do this first, or the app will not start.
+
+          Windows marks everything extracted from a downloaded .zip as untrusted, and the
+          .NET component Clayton uses refuses to load while that mark is present. Opening
+          PowerShell in THIS folder and running:
+
+              Get-ChildItem -Recurse | Unblock-File
+
+          clears it. You only need to do it once per download. (Right-clicking the .zip
+          before extracting, Properties, and ticking Unblock does the same thing.)
+
+          Then run Clayton.exe.
+
+          Clayton.exe needs the _internal folder beside it - move or copy the whole folder,
+          not just the .exe.
+
+          If it still will not start, Clayton shows a dialog explaining what failed; see
+          packaging/BUILDING-WINDOWS.md in the repository for the full list.
+          '@ | Set-Content -Path dist/Clayton/READ-ME-FIRST.txt -Encoding utf8
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

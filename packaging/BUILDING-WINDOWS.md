@@ -115,6 +115,25 @@ Clayton works around this (`_patch_windows_window_icon` in `app\main.py`), so **
 latest commit** if you hit it. If you're pinned to an older revision, installing Python from
 python.org rather than the Store also avoids it.
 
+**`RuntimeError: Failed to resolve Python.Runtime.Loader.Initialize from ...Python.Runtime.dll`**
+The file is there — Windows refused to *load* it. Almost always **Mark of the Web**: anything
+extracted from an internet-downloaded `.zip` is tagged untrusted, and .NET will not load a
+managed assembly carrying that tag. The native part of pythonnet loads either way, which is
+why the failure only appears at this late step.
+
+From PowerShell, in the folder containing `Clayton.exe`:
+
+```powershell
+Get-ChildItem -Recurse | Unblock-File
+```
+
+Or right-click the `.zip` **before** extracting → Properties → tick **Unblock**. Builds you
+compiled yourself are never affected — only downloaded ones.
+
+If unblocking doesn't help, the remaining candidates are a missing **.NET Framework 4.x**, or
+a 32/64-bit mismatch between the build and your .NET. Clayton shows this guidance in a dialog
+rather than a bare traceback.
+
 **The window opens blank, or the app exits immediately**
 Almost always the WebView2 runtime (step 1). Install the Evergreen redistributable and retry.
 
