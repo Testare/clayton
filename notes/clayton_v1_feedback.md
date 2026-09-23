@@ -1,14 +1,11 @@
-## X Compass - New Run
-* I should probably rename "Match key-seed delay parity" to "Even/Odd delay matches key seed", uses more understandable diction.
+## Expedition Configuration
+* Let's display flee rate and catch rate for the selected pokemon, both the raw numbers and the actual base percent chance (Round to the nearest non-decimal)
+  * For example, Spinda has a catch rate of 255 and flee rate of 60, which I think works out to "Catch rate: 255 (50%)" () and "Flee rate: 60 (24%)" (~61/255)
 
-## Safari Chart - Find Target
-* For the Ranking, is it possible to have a loading bar to indicate progress of the ranking? If so, it might be better than a spinner so we can show progress being made and help people estimate how long it'll take.
 
-## Safari Chart - Manage Data
-* Okay, I know I asked for the buttons to be stacked vertically, but the text inside them is also being stacked vertically and it looks bad (see screenshot). 
-* Let's have each button NOT wrap internally, but each button be stacked vertically within their row.
-* Similarly, for the "Computed" column, instead of just separating each point with a dot, let's make it a bulleted list
-* To save horizontal width, we could add the computed size to the "Computed" column as another list item instead of having its own column. Makes a lot of sense for it to be there.
-* Name, Criteria, and strategy columns can wrap, that's fine.
-* I'd also prefer if "Window" didn't wrap, but I'm flexible on that if we can't get it to fit otherwise
-* When deleting a chart, it should delete the computed data as well so long as no other expedition has a matching chart.
+## Profiles
+* There is currently no way to view details of existing metronome users - We should add a summary that pops up when a metronome user's row is clicked on in the Profile summary page.
+
+
+## X Compass - Review Data
+* Similar to profiles, it would be good if we could click on a run and get more details on the run than the sparse info in the table.

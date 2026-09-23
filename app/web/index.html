@@ -268,7 +268,70 @@ function _runsExcludeCell(reason, staged, isDirty, toggleFn, runId){
     : reason ? `<span class="badge warn"
         title="${esc(_RUNS_COL_TITLES.reason)}">${esc(reason)}</span>` : "";
   return `<td style="white-space:nowrap"><input type="checkbox" ${staged?"checked":""}
+      onclick="event.stopPropagation()"
       onchange="${toggleFn}('${esc(runId)}',this.checked)"> ${badge}</td>`;
+}
+
+// The full record for one run. Reached by clicking its row in either Review Data table
+// (round 20 feedback: the table is deliberately compact, so everything that didn't fit --
+// both seeds in full, the advance recipe, the frame-route guide, notes -- lives here).
+// `panel` is "review" (metronome) or "sreview" (safari); it decides which page state to read
+// so the modal shows the same exclusion/metrics the table did.
+async function showRunDetail(panel, runId){
+  const st = panel === "review" ? review : sreview;
+  const run = (st.runs || []).find(r => r.id === runId);
+  if(!run) return;
+  const m = (st.delayMetrics || {})[runId];
+  const reason = (st.preview?.reasons || {})[runId] || "";
+
+  const seed = (label, sd) => {
+    if(!sd || (sd.seed == null && sd.seed_hex == null)) return [label, null];
+    const bits = [`<code>${esc(sd.seed_hex || sd.seed)}</code>`];
+    const delay = sd.frame != null ? sd.frame : sd.delay;
+    if(delay != null) bits.push(`delay ${delay}`);
+    if(sd.time) bits.push(esc(String(sd.time).replace("T", " ")));
+    if(sd.delay_delta != null) bits.push(`&Delta;delay vs aim ${sd.delay_delta > 0 ? "+" : ""}${sd.delay_delta}`);
+    if(sd.sec_delta != null) bits.push(`&Delta;second vs aim ${sd.sec_delta > 0 ? "+" : ""}${sd.sec_delta}`);
+    return [label, bits.join(" · ")];
+  };
+
+  let delta = null;
+  if(m && m.delta_delay != null){
+    const sig = m.sigma > 0 ? ` (${(m.delta_delay / m.sigma).toFixed(1)}\u03c3)` : "";
+    delta = `${m.delta_delay > 0 ? "+" : ""}${Math.round(m.delta_delay)} frames${sig}
+      — predicted ${Math.round(m.predicted_delay)}`;
+  }
+
+  const recipe = [
+    run.elm_calls != null ? `${run.elm_calls} Elm call(s)` : null,
+    run.chatot_flips != null ? `${run.chatot_flips} chatot flip(s)` : null,
+    run.advance_frame != null ? `advance frame ${run.advance_frame}` : null,
+  ].filter(Boolean).join(" · ") || null;
+
+  const path = run.b_seed?.path || run.b_seed?.path_str || null;
+
+  openModal(`<h3>Run${run.tag ? ` — ${esc(run.tag)}` : ""}</h3>
+    ${_detailRows([
+      ["Saved", esc(fmtSavedAt(run.saved_at))],
+      ["Kind", esc(run.kind || "—")],
+      ["Tag", run.tag ? esc(run.tag) : null],
+      ["Vector ms", fmtVectorMs(run.vector_ms)],
+      ["Timer calibration", run.target_timer_calibration ? `${run.target_timer_calibration} ms` : null],
+      seed("Seed A", run.a_seed),
+      seed("Seed B", run.b_seed),
+      ["Vector delay", m ? `${m.vector_delay} frames` : null],
+      ["\u0394 delay vs model", delta],
+      ["Advance recipe", recipe],
+      ["Observed path", path ? `<code style="overflow-wrap:anywhere">${esc(path)}</code>` : null],
+      ["In calibration fit", run.excluded
+        ? `<span class="badge warn">excluded (manual)</span>`
+        : reason ? `<span class="badge warn">excluded (${esc(reason)})</span>`
+                 : `<span class="badge ok">included</span>`],
+      ["Notes", run.notes ? esc(run.notes) : null],
+    ])}
+    ${run.frame_guide ? `<div class="section-label" style="margin-top:14px">Frame route</div>
+      <div class="info-line" style="white-space:pre-wrap">${esc(run.frame_guide)}</div>` : ""}
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`, true);
 }
 
 function _runsDelayCells(m, muted){
@@ -291,6 +354,29 @@ function _runsDelayCells(m, muted){
 // (round 17 feedback); the marker repeats it so a hover that lands on the "?" still shows it.
 const helpLabel = (text, tip) =>
   `<label title="${esc(tip)}">${text} <span class="help-q" title="${esc(tip)}">?</span></label>`;
+
+// The game's raw catch/flee rates say little on their own -- a catch rate of 255 is a 50%
+// ball, not a certainty -- so both are shown with what they actually work out to. Rounded to
+// whole percents, EXCEPT that a non-zero chance below 0.5% shows as "<1%" rather than "0%":
+// Metang's catch rate of 3 is 0.42%, and rendering that as 0% reads as "impossible".
+function fmtRatePercent(fraction){
+  const pct = fraction * 100;
+  if(pct > 0 && pct < 0.5) return "<1%";
+  return `${Math.round(pct)}%`;
+}
+
+async function updatePokemonRates(){
+  const el = $("exp-rates");
+  if(!el) return;
+  const f = $("expedition-form");
+  const name = f ? f.pokemon.value.trim() : "";
+  if(!name){ el.innerHTML = ""; return; }
+  let r = null;
+  try{ r = await api("safari_pokemon_rates", name); }catch(err){ r = null; }
+  if(!r){ el.innerHTML = ""; return; }
+  el.innerHTML = `Catch rate: <b>${r.catch_rate}</b> (${fmtRatePercent(r.catch_percent)} per ball)
+    · Flee rate: <b>${r.flee_rate}</b> (${fmtRatePercent(r.flee_percent)} per check)`;
+}
 
 function fmtVectorMs(ms){
   if(ms == null || ms === "") return "—";
@@ -502,7 +588,8 @@ async function expeditionForm(existing){
         <div class="field"><label>Name</label>
           <input name="name" required value="${esc(existing?.name || "")}" placeholder="Shiny Metang"></div>
         <div class="field"><label>Profile</label><select name="profile_id" required>${profileOpts}</select></div>
-        <div class="field"><label>Pokémon</label><select name="pokemon" onchange="onExpeditionPokemonChange()">${pokemonOpts}</select></div>
+        <div class="field"><label>Pokémon</label><select name="pokemon" onchange="onExpeditionPokemonChange()">${pokemonOpts}</select>
+          <div id="exp-rates" class="hint muted"></div></div>
         <div class="field"><label>Safari area</label><select name="safari_area" onchange="updateBlockRequirement()">${areaOpts}</select></div>
       </div>
       <div class="grid2">
@@ -541,12 +628,14 @@ async function expeditionForm(existing){
       </div>
     </form>`);
   updateBlockRequirement();
+  updatePokemonRates();
 }
 
 // Once a Pokemon is chosen, narrow the Safari area dropdown to areas it can actually
 // appear in (clayton-b42.10.3) — re-fetches on every change since it depends on the
 // current pokemon value.
 async function onExpeditionPokemonChange(){
+  updatePokemonRates();
   const f = $("expedition-form");
   const pokemon = f.pokemon.value.trim();
   const areaSel = f.safari_area;
@@ -1299,7 +1388,9 @@ function renderReviewRuns(){
           // no double-toggle risk from clicking directly on the checkbox.
           const excludeCell = exportMode ? "" :
             _runsExcludeCell(reason, staged, isDirty, "reviewStageToggle", r.id);
-          return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('review','${esc(r.id)}')"` : ""}>
+          return `<tr${rowBg}${exportMode
+            ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('review','${esc(r.id)}')"`
+            : ` class="pick" onclick="showRunDetail('review','${esc(r.id)}')"`}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
           <td${muted}>${esc(fmtSavedShort(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${esc(fmtSeedShort(r.a_seed?.seed_hex))}</td>
@@ -1308,7 +1399,7 @@ function renderReviewRuns(){
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           ${excludeCell}
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
-              onclick="reviewDelete('${esc(r.id)}')">Delete</button></td>
+              onclick="event.stopPropagation();reviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
@@ -3146,7 +3237,9 @@ function renderSafariReviewRuns(){
           const selected = !!sreview.exportSelected?.[r.id];
           const excludeCell = exportMode ? "" :
             _runsExcludeCell(reason, staged, isDirty, "sreviewStageToggle", r.id);
-          return `<tr${rowBg}${exportMode ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('sreview','${esc(r.id)}')"` : ""}>
+          return `<tr${rowBg}${exportMode
+            ? ` class="pick${selected?" selected":""}" onclick="_runsExportToggleRow('sreview','${esc(r.id)}')"`
+            : ` class="pick" onclick="showRunDetail('sreview','${esc(r.id)}')"`}>
           ${exportMode ? `<td><input type="checkbox" ${selected?"checked":""}></td>` : ""}
           <td${muted}>${esc(fmtSavedShort(r.saved_at))}</td><td${muted}>${esc(r.tag||"—")}</td>
           <td${muted}>${esc(fmtSeedShort(r.a_seed?.seed_hex))}</td>
@@ -3155,7 +3248,7 @@ function renderSafariReviewRuns(){
           <td>${r.notes ? `<span title="${esc(r.notes)}" style="cursor:help">📝</span>` : ""}</td>
           ${excludeCell}
           <td style="text-align:right"><button class="btn small danger" ${exportMode?"disabled":""}
-              onclick="sreviewDelete('${esc(r.id)}')">Delete</button></td>
+              onclick="event.stopPropagation();sreviewDelete('${esc(r.id)}')">Delete</button></td>
         </tr>`;}).join("")}</tbody></table></div>`;
   return `<div class="head" style="margin-bottom:12px">
       <div class="field" style="margin:0;max-width:240px"><label>Filter by tag</label>
@@ -3692,16 +3785,48 @@ async function saveProfile(ev, existingId){
   return false;
 }
 
+// A definition list of label/value pairs — the shape every detail modal on this page uses.
+function _detailRows(pairs){
+  const rows = pairs
+    .filter(([, value]) => value !== undefined)
+    .map(([label, value]) => `<tr><th style="white-space:nowrap;width:1%">${esc(label)}</th>
+      <td>${value === null || value === "" ? `<span class="muted">—</span>` : value}</td></tr>`)
+    .join("");
+  return `<div class="candtable" style="max-height:none"><table><tbody>${rows}</tbody></table></div>`;
+}
+
+// The full record for one metronome user. Reached by clicking its row (round 20 feedback: the
+// list showed name/species/status and nothing else, so there was no way to check what a user
+// was actually configured with) and by clicking its status badge, which used to open a
+// warnings-only version of this.
 async function showUserWarnings(profileId, userId){
   const p = await api("get_profile", profileId);
   const u = p.metronome_users.find(x => x.id === userId);
   if(!u) return;
   const hardErrors = u.hard_errors || [];
+  const moves = (u.moveset || []).length
+    ? (u.moveset || []).map(m => esc(m)).join(", ")
+    : null;
+  const status = u.is_suitable
+    ? `<span class="badge ok">suitable</span>`
+    : hardErrors.length ? `<span class="badge danger">cannot be used in Metronome Compass</span>`
+                        : `<span class="badge warn">${(u.warnings || []).length} warning(s)</span>`;
   openModal(`<h3>${esc(u.name)}</h3>
-    ${hardErrors.length ? `<div class="notice danger">Cannot be used in Metronome Compass:
-        <ul>${hardErrors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
-    ${u.warnings.length ? `<div class="notice warn">You might experience more errors in
-        metronome compass: <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
+    ${_detailRows([
+      ["id", u.id],
+      ["Species", esc(u.species)],
+      ["Ability", u.ability ? esc(u.ability) : null],
+      ["Moves", moves],
+      ["Gender", u.gender ? esc(capName(u.gender)) : null],
+      ["Level", u.level],
+      ["Lagging Tail", u.lagging_tail ? "yes" : `<span class="muted">no</span>`],
+      ["Status", status],
+    ])}
+    ${hardErrors.length ? `<div class="notice danger" style="margin-top:12px">Cannot be used in
+        Metronome Compass: <ul>${hardErrors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
+    ${(u.warnings || []).length ? `<div class="notice warn" style="margin-top:12px">You might
+        experience more errors in metronome compass:
+        <ul>${u.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}
     <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
 }
 
@@ -3730,13 +3855,14 @@ async function openProfile(id){
         const badge = u.is_suitable ? `<span class="badge ok">suitable</span>`
           : blocked
             ? `<span class="badge danger" style="cursor:pointer" title="${esc(allIssues.join('; '))}"
-                onclick="showUserWarnings('${esc(p.id)}',${u.id})">cannot be used in Metronome Compass</span>`
+                onclick="event.stopPropagation();showUserWarnings('${esc(p.id)}',${u.id})">cannot be used in Metronome Compass</span>`
             : `<span class="badge warn" style="cursor:pointer" title="${esc(allIssues.join('; '))}"
-                onclick="showUserWarnings('${esc(p.id)}',${u.id})">${esc(u.warnings.length)} warning(s)</span>`;
-        return `<tr><td>${u.id}</td><td>${esc(_mUserLabel(u, p.metronome_users))}</td><td>${esc(u.species)}</td>
+                onclick="event.stopPropagation();showUserWarnings('${esc(p.id)}',${u.id})">${esc(u.warnings.length)} warning(s)</span>`;
+        return `<tr class="pick" onclick="showUserWarnings('${esc(p.id)}',${u.id})">
+          <td>${u.id}</td><td>${esc(_mUserLabel(u, p.metronome_users))}</td><td>${esc(u.species)}</td>
           <td>${badge}</td>
           <td style="text-align:right"><button class="btn small danger"
-            onclick="removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`;
+            onclick="event.stopPropagation();removeUser('${esc(p.id)}',${u.id})">Remove</button></td></tr>`;
       }).join("")
       + `</tbody></table>`;
 

@@ -363,6 +363,25 @@ class Facade:
         from claytonlib.safari_encounters import areas_for_species
         return areas_for_species(pokemon)
 
+    def safari_pokemon_rates(self, pokemon_name: str) -> dict | None:
+        """Base catch and flee rates for a species, raw and as percentages.
+
+        The raw numbers are the game's own; the percentages are what they actually work out
+        to per ball / per flee check, which is the part that isn't guessable from the raw
+        value (catch rate 255 is a 50% ball, not a certainty). `catch_percent`/`flee_percent`
+        are fractions in 0..1 -- the UI does the rounding, since it also decides how to show a
+        chance that rounds to zero without being zero."""
+        from claytonlib.safari import safari_pokemon_by_name
+        if not pokemon_name:
+            return None
+        try:
+            p = safari_pokemon_by_name(pokemon_name)
+        except Exception:
+            return None
+        return {"name": p.name,
+                "catch_rate": p.base_catch_rate, "catch_percent": p.capture_chance(),
+                "flee_rate": p.base_flee_rate, "flee_percent": p.flee_chance()}
+
     def safari_block_requirement(self, area: str, pokemon: str) -> dict | None:
         """The block score `pokemon` needs to appear in `area`, or None if it's already
         reachable unconditionally there (or doesn't appear in that area at all) — drives

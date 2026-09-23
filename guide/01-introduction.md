@@ -3,7 +3,7 @@
 ## The problem
 
 You want a specific Safari Zone Pokémon — shiny, or a particular nature and IV spread. You
-know its seed. On any other route you would hit that seed and walk into the grass.
+know its seed. On any other route you would hit that seed, perform the advances, and 
 
 The Safari Zone makes that much harder, for three reasons:
 

@@ -1,9 +1,6 @@
 # Clayton — User Guide
 
-Clayton is a toolkit for RNG manipulation in the **Pokémon HeartGold / SoulSilver Safari
-Zone**. It helps you pick a datetime to boot on, work out which seed you actually hit, and
-solve a capture path — so a rare Safari Zone Pokémon becomes a planned catch instead of a
-gamble.
+Clayton is a toolkit for RNG manipulation in the **Pokémon HeartGold / SoulSilver Safari Zone**. While you can use other guides and tools to manipulate the RNG state to determine *which pokemon you encounter*, this tool helps you with manipulating the other relevant RNG state - The state of the encounter that determines whether you actually catch the pokemon before it flees.
 
 ## Read in this order
 

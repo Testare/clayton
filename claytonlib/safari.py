@@ -78,6 +78,25 @@ class SafariPokemon:
         b_div = math.floor(math.sqrt(math.floor(math.sqrt(0xFF0000 / max(a, 1)))))
         return math.floor(0xFFFF0 / b_div)
 
+    def capture_chance(self, capture_rate_stages: int = 0) -> float:
+        """Probability a single ball captures, at the given catch-rate stage (0 = base).
+
+        A capture needs all FOUR shake rolls to come in under ``b``, and each roll is the RNG's
+        high 16 bits -- so it is ``(b / 65536) ** 4``.  See throw_ball, which is what this
+        describes; the arithmetic is duplicated nowhere else.
+        """
+        b = self.adjusted_catch_rates_b[capture_rate_stages]
+        return (b / 65536.0) ** 4
+
+    def flee_chance(self, flee_rate_stages: int = 0) -> float:
+        """Probability of a flee check passing, at the given flee-rate stage (0 = base).
+
+        __flee_check rolls ``advance() % 255`` -- 255 outcomes, 0..254 -- and flees when the
+        roll is ``<= flee_rate``, which is ``flee_rate + 1`` of them.  The +1 matters: at the
+        common base rate of 60 it is the difference between 23.5% and 23.9%.
+        """
+        return (self.adjusted_flee_rates[flee_rate_stages] + 1) / 255.0
+
     def __post_init__(self):
         object.__setattr__(self, 'adjusted_flee_rates', tuple(
             min(255, math.floor(STAGE_MULTIPLIERS[i] * self.base_flee_rate))
