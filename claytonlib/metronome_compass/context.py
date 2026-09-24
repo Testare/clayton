@@ -168,13 +168,24 @@ class BattleContext(ABC):
         state = self.battle_state.get('state')
         return state is not None and state.user_lock_on_turns > 0
 
-    def effective_accuracy(self, base: int) -> int:
-        """Apply accuracy/evasion stat stages and gravity to a base accuracy.
+    def effective_accuracy(self, base: int, physical: bool = False) -> int:
+        """Apply accuracy/evasion stat stages, gravity and the user's ability to a base accuracy.
 
         base=0 is the always-hit sentinel and is returned unchanged. Uses the
         Gen-IV accuracy stage table (net = user accuracy stage − target evasion
         stage, clamped to ±6) and the 5/3 gravity multiplier. Integer floor math
         matches the game's fixed-point behaviour.
+
+        `physical` says whether the move being rolled is physical, which is what Hustle's
+        x0.8 accuracy cut applies to. Callers pass `move.is_physical`; it is threaded
+        explicitly rather than read from some "current move" on the context so that the site
+        rolling the accuracy is the site that names the move — there is no way to roll one
+        move's accuracy while Hustle consults another's category.
+
+        The ability is applied after the stage/gravity maths, matching the game's order of
+        move accuracy -> stages -> ability modifiers. In this battle the user's accuracy and
+        Magikarp's evasion are almost always 0 and gravity is rare, so ordering seldom bites;
+        the exact rounding wants ground-truth confirmation all the same (clayton-2ae.7).
 
         Lock-On/Mind Reader is NOT handled here: it doesn't change the accuracy
         value, it forces the *result* while still consuming the roll. See
@@ -192,17 +203,20 @@ class BattleContext(ABC):
             acc = base * 3 // (3 - net)
         if state.gravity_turns > 0:
             acc = acc * 5 // 3
+        if physical and getattr(state, 'user_ability', None) == 'Hustle':
+            acc = acc * 8 // 10
         return acc
 
-    def hit_crit_or_miss(self, accuracy: int, crit_stage: int = 0) -> PathToken:
+    def hit_crit_or_miss(self, accuracy: int, crit_stage: int = 0,
+                         physical: bool = False) -> PathToken:
         """Resolve the crit/damage/hit 3-roll sequence to a single Miss, Hit, or Crit token.
 
         A single h/!/- question covers all three outcomes in interactive mode.
         accuracy=0 means the move always hits (no accuracy roll consumed).
         crit_stage=1 for high-crit moves (effect 43); default 0 for normal moves.
         The user's Focus Energy crit stage is added on top of crit_stage.
-        The hit roll uses effective_accuracy() so evasion/accuracy stages and
-        gravity are respected.
+        The hit roll uses effective_accuracy() so evasion/accuracy stages, gravity and the
+        user's ability are respected; pass `physical=move.is_physical` so Hustle can apply.
         """
         state = self.battle_state.get('state')
         total_crit_stage = crit_stage + (state.user_crit_stage if state is not None else 0)
@@ -216,7 +230,8 @@ class BattleContext(ABC):
                 return Crit() if is_crit else Hit()
             hit_roll = ctx.advance_observable()
             # Lock-On still rolls the hit check; only the result is forced to Hit.
-            is_hit = ctx.lock_on_active() or hit_roll % 100 < ctx.effective_accuracy(accuracy)
+            is_hit = (ctx.lock_on_active()
+                      or hit_roll % 100 < ctx.effective_accuracy(accuracy, physical))
             if not is_hit:
                 return Miss()
             return Crit() if is_crit else Hit()

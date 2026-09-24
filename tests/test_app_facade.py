@@ -100,9 +100,9 @@ class TestFacade(unittest.TestCase):
     def test_prospective_hard_errors_helper(self):
         self.assertEqual(self.api.metronome_user_hard_errors({"name": "x", **_GOOD_USER}), [])
         errs = self.api.metronome_user_hard_errors(
-            {"name": "x", **{**_GOOD_USER, "ability": "Hustle"}})
+            {"name": "x", **{**_GOOD_USER, "ability": "Cute Charm"}})
         self.assertTrue(errs)
-        self.assertTrue(any("Hustle" in e for e in errs))
+        self.assertTrue(any("Cute Charm" in e for e in errs))
 
     def test_list_metronome_species(self):
         species = self.api.list_metronome_species()
@@ -119,9 +119,11 @@ class TestFacade(unittest.TestCase):
         # Quick Feet provably cannot matter under the Lagging Tail, so neither blocks.
         granbull = by_name["Granbull"]
         self.assertEqual(granbull["blocking_abilities"], [])
-        # Togekiss is Hustle / Serene Grace. Hustle is still unimplemented, so it blocks --
-        # the one family that currently does.
-        self.assertEqual(by_name["Togekiss"]["blocking_abilities"], ["Hustle"])
+        # Togekiss is Hustle / Serene Grace, both modelled now, so it no longer blocks.
+        self.assertEqual(by_name["Togekiss"]["blocking_abilities"], [])
+        # Cleffa is Cute Charm / Magic Guard. Cute Charm is the one ability still awaiting an
+        # implementation, so it is what blocks.
+        self.assertEqual(by_name["Cleffa"]["blocking_abilities"], ["Cute Charm"])
 
     def test_remove_metronome_user(self):
         p = self.api.create_profile({"name": "Silver"})

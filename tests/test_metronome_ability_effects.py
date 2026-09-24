@@ -146,15 +146,87 @@ class TestIntimidate(unittest.TestCase):
         self.assertEqual(differing, 0)
 
 
+class TestHustle(unittest.TestCase):
+    def _ctx(self, ability):
+        from claytonlib.metronome_compass import RngContext
+        ctx = RngContext(0)
+        state = MetronomeBattleState()
+        state.user_ability = ability
+        ctx.battle_state["state"] = state
+        return ctx
+
+    def test_physical_accuracy_is_cut_to_four_fifths(self):
+        ctx = self._ctx("Hustle")
+        for base, expected in ((50, 40), (70, 56), (85, 68), (90, 72), (95, 76), (100, 80)):
+            self.assertEqual(ctx.effective_accuracy(base, physical=True), expected)
+
+    def test_special_and_status_moves_are_untouched(self):
+        ctx = self._ctx("Hustle")
+        for base in (50, 70, 85, 95, 100):
+            self.assertEqual(ctx.effective_accuracy(base, physical=False), base)
+
+    def test_the_always_hit_sentinel_stays_always_hit(self):
+        # accuracy 0 means "bypasses the accuracy check"; cutting it would be meaningless
+        # and 0*8//10 is 0 anyway, but a move that cannot miss must not start missing.
+        for ability in ("Hustle", "Natural Cure"):
+            self.assertEqual(self._ctx(ability).effective_accuracy(0, physical=True), 0)
+
+    def test_other_abilities_do_not_cut_accuracy(self):
+        for ability in (None, "Natural Cure", "Serene Grace", "Magic Guard", "Intimidate"):
+            ctx = self._ctx(ability)
+            self.assertEqual(ctx.effective_accuracy(95, physical=True), 95)
+
+    def test_move_category_reaches_the_roll(self):
+        # The whole mechanism depends on Move carrying its category through from moves.json.
+        from claytonlib.moves import _moves_by_number
+        moves = _moves_by_number()
+        self.assertTrue(moves[33].is_physical)        # Tackle
+        self.assertFalse(moves[53].is_physical)       # Flamethrower, special
+        self.assertFalse(moves[118].is_physical)      # Metronome, status
+
+    def test_every_accuracy_roll_names_its_move(self):
+        # Threading `physical` explicitly is only safe if nothing rolls accuracy without it.
+        # The exceptions are three hard-coded special-move accuracies (Nature Power's Hydro
+        # Pump, Thunder in sun, Blizzard in hail); anything else appearing here is a site
+        # that would silently skip Hustle.
+        import pathlib
+        import re
+        allowed = {"ctx.hit_crit_or_miss(80)", "ctx.hit_crit_or_miss(0)",
+                   "ctx.hit_crit_or_miss(50)"}
+        root = pathlib.Path(__file__).resolve().parent.parent / "claytonlib" / "metronome_compass"
+        offenders = []
+        for f in root.glob("*.py"):
+            for line in f.read_text().splitlines():
+                for call in re.findall(r"(?:ctx|c|self)\.(?:hit_crit_or_miss|effective_accuracy)\([^)]*\)", line):
+                    if "physical" in call or "def " in line:
+                        continue
+                    if call.replace("c.", "ctx.").replace("self.", "ctx.") in allowed:
+                        continue
+                    offenders.append(f"{f.name}: {call}")
+        self.assertEqual(offenders, [], f"accuracy rolled without naming the move: {offenders}")
+
+    def test_it_actually_moves_paths(self):
+        seeds = _seeds(400)
+        differing = sum(1 for s in seeds if _path(s, "Hustle") != _path(s, "Natural Cure"))
+        self.assertGreater(differing, len(seeds) // 10)
+
+    def test_more_misses_not_fewer(self):
+        # Cutting accuracy can only make physical moves miss more often.
+        seeds = _seeds(400)
+        nc = sum(_path(s, "Natural Cure").count("-") for s in seeds)
+        hu = sum(_path(s, "Hustle").count("-") for s in seeds)
+        self.assertGreater(hu, nc)
+
+
 class TestTheRegistryMatchesReality(unittest.TestCase):
     def test_modelled_abilities_are_no_longer_blocked(self):
         from app.models import HARD_ERROR_ABILITIES
-        for ability in ("Serene Grace", "Magic Guard", "Intimidate"):
+        for ability in ("Serene Grace", "Magic Guard", "Intimidate", "Hustle"):
             self.assertNotIn(ability, HARD_ERROR_ABILITIES)
 
     def test_the_unimplemented_ones_still_are(self):
         from app.models import HARD_ERROR_ABILITIES
-        self.assertEqual(sorted(HARD_ERROR_ABILITIES), ["Cute Charm", "Hustle"])
+        self.assertEqual(sorted(HARD_ERROR_ABILITIES), ["Cute Charm"])
 
 
 if __name__ == "__main__":

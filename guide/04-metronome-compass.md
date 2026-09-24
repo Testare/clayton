@@ -92,7 +92,7 @@ You can see why I consider this step optional. In retrospect... This was probabl
 
 **I would still recommend a level 6 chansey with natural cure, and maybe use some vitamins if you wish.** This does mean capturing a chansey and another metronome user, then breeding metronome onto the chansey. However, go to whatever lengths you feel are appropriate. A level 1 cleffa will still survive most turn 1's (Most magikarp are < Level 15, and the ones that aren't have a 50% chance to select tackle, and a 5% chance to miss). A level 100 Adamant full-offense Granbull might still miss the first move, select a status move, or even use false swipe, allowing you to get two moves off and potentially identify the seed. I wouldn't recommend these, but they CAN be used if you don't mind wasting more runs.
 
-I'd avoid the ablities Serene Grace, Cute Charm, Hustle, and Magic Guard if you can, since metronome compass is untested with them, but technically speaking the code for them SHOULD work.
+I'd avoid the ablities Serene Grace, Hustle, and Magic Guard if you can, since metronome compass is untested with them, but technically speaking the code for them SHOULD work. As of now, Cute Charm is fully NOT supported right now.
 
 ## Using Clayton
 ### Set yourself up in game
@@ -106,27 +106,35 @@ Once you have the requirements in game, get into position!
 * Check your pokegear and make a note of which routes your roamers on are on. It is easier if this is the last screen accessed before you save your game.
 * Save the game!
 
+Once this is done, I recommend opening the pokemon summary screen for your metronome user so you can see it for this next step.
+
 ### Setting up a Metronome user in Clayton
 
-Click the "Profiles" navigation button on the left sidebar, then click "Manage" on the profile you created earlier. There is a table showing metronome users, and a form to add them. Most of the fields are pretty obvious what they need, and the software should warn you if the pokemon you put in is not supported, though make sure to get the details right. 
+Click the "Profiles" navigation button on the left sidebar, then click "Manage" on the profile you created earlier. There is a table showing metronome users, and a form to add them. Most of the fields are pretty obvious what they need, and the software should warn you if the pokemon you put in is not supported, though make sure to get the details right. In particular, the order of the moves actuall DOES matter if metronome calls the move "Conversion", which determines what type your metronome user will become, and gender will matter for moves like attract and captivate.
+
+Once you have a valid metronome user configured, we can use the compass!
 
 > **Screenshot:** the Metronome user form, with the suitability warnings.
 
 ## Doing a calibration run
 
-**Metronome Compass → New Run.**
+Open your expedition, then under the metronome Compass category choose "New Run"
 
 ### Set the target
 
-| Field | What to put |
-|---|---|
-| Metronome user | The one you just made |
-| Initial time | The datetime you're aiming to hit Seed A on |
-| Vector ms | The countdown you're going to time |
+| Field          | What to put                                 |
+| -------------- | ------------------------------------------- |
+| Metronome user | The one you just made                       |
+| Initial time   | The datetime you're aiming to hit Seed A on |
+| Vector ms      | The countdown you're going to time          |
 
-For calibration, **vary Vector ms between runs**. A model fitted on six runs all at 300,000 ms
+For best calibration, **vary Vector ms between runs**. A model fitted on six runs all at 300,000 ms
 knows one point on a line and has to guess the slope. Spread them — 180,000 / 240,000 /
-300,000 / 360,000 and so on — and the fit gets much better fast.
+300,000 / 360,000 and so on — and the fit gets much better fast. Don't worry about times that are lower than you expect it will take you to get set up in the Safari Zone, or longer than you care to wait or. That said, it can be useful to have a few data points on the same Vector ms just for you to see how much your frame is varying between runs.
+
+If you have already used Safari Chart and saved some targets from it, you can use those for the initial time/Vector ms field as well.
+
+Metronome Compass assumes that you are going to try and hit your key seed for Seed A. If you want to hit a different seed, you'll need to make a different expedition, but the calibration runs are saved to the profile so if you use the same profile the data is still useful.
 
 ### Identify Seed A
 

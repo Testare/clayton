@@ -101,7 +101,7 @@ class TestPlumbingChangesNoPrediction(unittest.TestCase):
         # provably-no-effect, and the ones not yet implemented.
         moveset = resolve_moveset(metronome_only=False)
         baseline = self._paths(moveset, None)
-        for ability in ("Natural Cure", "Hustle", "Cute Charm",
+        for ability in ("Natural Cure", "Cute Charm",
                         "Pickup", "Run Away", "Quick Feet", "Thick Fat",
                         "Immunity", "Synchronize"):
             self.assertEqual(self._paths(moveset, ability), baseline,

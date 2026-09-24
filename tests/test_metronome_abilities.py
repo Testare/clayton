@@ -138,13 +138,14 @@ class TestModelsUsesTheRegistry(unittest.TestCase):
 
     def test_a_blocked_ability_is_not_also_warned_about(self):
         # It is reported once, as a block, not twice in two different voices. Uses an ability
-        # that is still unsupported -- Serene Grace, the old example, is modelled now.
-        u = self._user("Hustle")
+        # that is still unsupported -- Serene Grace and Hustle, the earlier examples, are
+        # both modelled now.
+        u = self._user("Cute Charm")
         self.assertTrue(u.hard_errors())
         self.assertEqual(u.suitability_warnings(), [])
 
     def test_a_modelled_ability_neither_blocks_nor_warns(self):
-        for ability in ("Serene Grace", "Magic Guard", "Intimidate"):
+        for ability in ("Serene Grace", "Magic Guard", "Intimidate", "Hustle"):
             u = self._user(ability)
             self.assertEqual(u.hard_errors(), [], f"{ability} is modelled and must not block")
 
@@ -156,7 +157,7 @@ class TestModelsUsesTheRegistry(unittest.TestCase):
         api = Facade(FileStore(tempfile.mkdtemp()))
         pid = api.create_profile({"name": "P"})["id"]
         res = api.add_metronome_user(pid, {
-            "name": "Togekiss", "species": "Togekiss", "ability": "Hustle",
+            "name": "Clefairy", "species": "Clefairy", "ability": "Cute Charm",
             "moveset": ["Metronome"], "lagging_tail": True})
         self.assertTrue(res["hard_errors"])
         self.assertEqual(len(api.get_profile(pid)["metronome_users"]), 1)

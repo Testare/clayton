@@ -107,9 +107,12 @@ METRONOME_ABILITIES: dict[str, AbilityInfo] = {info.name: info for info in (
           "masked: any Tackle Magikarp lands damages the user directly, which Magic Guard "
           "does not prevent, so it only decides anything while Magikarp has not connected — "
           "always, below level 15, where Magikarp can only Splash."),
-    _info("Hustle", _U,
+    _info("Hustle", _M,
           "Cuts the accuracy of physical moves to 80%, changing hit/miss and therefore every "
-          "roll that follows. Not implemented (clayton-2ae.8)."),
+          "roll that follows. Implemented in BattleContext.effective_accuracy, which takes "
+          "`physical` from the move at each accuracy roll -- threaded explicitly so the site "
+          "rolling the accuracy is the site that names the move. Move.category (0 physical / "
+          "1 special / 2 status) now comes through from moves.json."),
     _info("Intimidate", _M,
           "Lowers Magikarp's Attack a stage on entry. Implemented in apply_entry_ability. "
           "Currently changes no observed path: damage magnitude is invisible, and the only "

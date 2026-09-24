@@ -22,13 +22,18 @@ TYPE_NAMES: dict[int, str] = {
 }
 
 
+# Damage category, as moves.json stores it.
+CATEGORY_PHYSICAL, CATEGORY_SPECIAL, CATEGORY_STATUS = 0, 1, 2
+
+
 class Move:
     """Move metadata loaded from moves.json."""
-    __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy', 'type_id')
+    __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy',
+                 'type_id', 'category')
 
     def __init__(self, number: int, name: str, metronome_usable: bool,
                  effect: int = 0, effect_chance: int = 0, accuracy: int = 0,
-                 type_id: int = 0):
+                 type_id: int = 0, category: int = CATEGORY_STATUS):
         self.number = number
         self.name = name
         self.metronome_usable = metronome_usable
@@ -36,6 +41,14 @@ class Move:
         self.effect_chance = effect_chance
         self.accuracy = accuracy  # 0 = always hits (bypasses accuracy check)
         self.type_id = type_id
+        # 0 physical / 1 special / 2 status, as moves.json carries it. Defaults to status,
+        # the inert choice: a Move built without one gains no physical-move behaviour.
+        self.category = category
+
+    @property
+    def is_physical(self) -> bool:
+        """Whether this is a physical move — what Hustle's accuracy cut applies to."""
+        return self.category == CATEGORY_PHYSICAL
 
     @property
     def type_name(self) -> str:
@@ -74,6 +87,7 @@ def _load_moves() -> list[Move]:
                 effect_chance=m["effect_chance"],
                 accuracy=m["accuracy"],
                 type_id=m["type"],
+                category=m["category"],
             )
             for m in data
         ]

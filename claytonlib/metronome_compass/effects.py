@@ -194,7 +194,7 @@ def _hit_check(ctx: 'BattleContext', move: Move) -> bool:
         # Lock-On still rolls the hit check; only the result is forced to Hit.
         if c.lock_on_active():
             return Hit()
-        return Hit() if roll % 100 < c.effective_accuracy(move.accuracy) else Miss()
+        return Hit() if roll % 100 < c.effective_accuracy(move.accuracy, move.is_physical) else Miss()
     token = ctx.emit(
         rng_to_token=rng_to_token,
         question="Did it hit? (y/n):",
@@ -337,13 +337,13 @@ def _all_user_stats_applier(ctx: 'BattleContext') -> Callable[[], bool]:
 # ---------------------------------------------------------------------------
 
 def _eff_damage(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     return not isinstance(token, Miss)
 
 
 def _eff_high_crit(ctx: 'BattleContext', move: Move) -> bool:
     """Increased crit stage; same RNG roll count as standard."""
-    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1)
+    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1, physical=move.is_physical)
     return not isinstance(token, Miss)
 
 
@@ -351,7 +351,8 @@ def _eff_nature_power(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 173: vs Magikarp, Nature Power always becomes Hydro Pump and runs
     its crit/damage/hit rolls (notes/refined/effects.md). Nature Power's own
     accuracy is 0 (which would skip the hit roll), so use Hydro Pump's 80."""
-    token = ctx.hit_crit_or_miss(80)  # Hydro Pump accuracy
+    # Hydro Pump's accuracy. Special, so no Hustle cut -- hence no `physical=`.
+    token = ctx.hit_crit_or_miss(80)
     return not isinstance(token, Miss)
 
 
@@ -393,7 +394,7 @@ def _eff_fixed_damage(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_recoil(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 48/198/269 (Take Down, Double-Edge, Wood Hammer, Head Smash, ...):
     standard damage; on a hit the user takes recoil damage."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     _mark_user_recoil(ctx)
@@ -403,7 +404,7 @@ def _eff_recoil(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_recoil_crash(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 45 (Jump Kick / Hi Jump Kick): no recoil on hit, but on a MISS the
     user takes crash damage."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         _mark_user_recoil(ctx)
         return False
@@ -412,7 +413,7 @@ def _eff_recoil_crash(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_flare_blitz(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 253 (Flare Blitz): damage + recoil on hit + burn secondary proc."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     _mark_user_recoil(ctx)
@@ -422,7 +423,7 @@ def _eff_flare_blitz(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_volt_tackle(ctx: 'BattleContext', move: Move) -> bool:
     """Effect 262 (Volt Tackle): damage + recoil on hit + paralyze secondary proc."""
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     _mark_user_recoil(ctx)
@@ -436,7 +437,7 @@ def _eff_volt_tackle(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_damage_secondary(ctx: 'BattleContext', move: Move,
                           apply: Callable[[], bool] | None = None) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.effect_proc(move.effect_chance, apply)
@@ -446,7 +447,7 @@ def _eff_damage_secondary(ctx: 'BattleContext', move: Move,
 def _eff_high_crit_secondary(ctx: 'BattleContext', move: Move,
                              apply: Callable[[], bool] | None = None) -> bool:
     """High-crit damage + observable secondary effect proc."""
-    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1)
+    token = ctx.hit_crit_or_miss(move.accuracy, crit_stage=1, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.effect_proc(move.effect_chance, apply)
@@ -533,7 +534,7 @@ def _eff_user_spatk_minus2(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_damage_flinch(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.advance_unobservable(1)  # flinch roll — not observable since Magikarp already moved
@@ -547,7 +548,7 @@ def _eff_damage_flinch(ctx: 'BattleContext', move: Move) -> bool:
 
 def _eff_damage_status_flinch(ctx: 'BattleContext', move: Move,
                               apply: Callable[[], bool] | None = None) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.effect_proc(move.effect_chance, apply)  # burn/freeze/paralyze (observable)
@@ -615,7 +616,7 @@ def _eff_confuse_hit(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_damage_confuse(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
 
@@ -823,7 +824,7 @@ def _eff_dream_eater(ctx: 'BattleContext', move: Move) -> bool:
     if state.mk_status.status != NonVolatileStatus.SLEEP:
         ctx.advance_unobservable(1)  # hit check roll consumed but has no visible effect
         return False
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     return not isinstance(token, Miss)
 
 
@@ -899,7 +900,7 @@ def _eff_multi_hit(ctx: 'BattleContext', move: Move) -> bool:
         hit_count = 2 if r1 % 4 == 0 else 3
 
     # First hit: full C/D/H sequence
-    first_token = ctx.hit_crit_or_miss(move.accuracy)
+    first_token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(first_token, Miss):
         return False
 
@@ -957,7 +958,7 @@ def _eff_multi_hit(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_double_hit(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.advance_unobservable(2)  # 2 contact rolls
@@ -970,15 +971,15 @@ def _eff_double_hit(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_triple_kick(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.advance_unobservable(2)  # 2 contact rolls
-    token2 = ctx.hit_crit_or_miss(move.accuracy)
+    token2 = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token2, Miss):
         return True
     ctx.advance_unobservable(2)  # 2 contact rolls
-    ctx.hit_crit_or_miss(move.accuracy)
+    ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     return True
 
 
@@ -987,7 +988,7 @@ def _eff_triple_kick(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_twineedle(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     poison = _status_applier(ctx, NonVolatileStatus.POISON)
@@ -1007,7 +1008,7 @@ def _eff_twineedle(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_bind(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     if state.mk_binding_turns > 0:
@@ -1076,7 +1077,7 @@ def _eff_nightmare(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_hyper_beam(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     state.user_recharging = True
@@ -1104,7 +1105,7 @@ def _eff_magnitude(ctx: 'BattleContext', move: Move) -> bool:
         question="Magnitude level? (4-10):",
         input_to_token=lambda s: Magnitude(int(s.strip())),
     )
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     return not isinstance(token, Miss)
 
 
@@ -1125,7 +1126,7 @@ def _eff_tri_attack(ctx: 'BattleContext', move: Move) -> bool:
     status_type = _STATUS[type_val % 3]
     status_label = _LABEL[type_val % 3]
 
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
 
@@ -1196,7 +1197,7 @@ def _eff_present(ctx: 'BattleContext', move: Move) -> bool:
     )
     if not isinstance(mode_token, Miss):
         # Damage mode: standard crit/damage/hit.
-        hit_token = ctx.hit_crit_or_miss(move.accuracy)
+        hit_token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
         return not isinstance(hit_token, Miss)
     # Heal mode: hit check, then heal Magikarp. Like our recovery moves, this
     # fails when the target is provably at full HP; when its HP is unprovable
@@ -1220,11 +1221,11 @@ def _eff_thunder(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.weather == 'rain':
-        token = ctx.hit_crit_or_miss(0)       # always hits
+        token = ctx.hit_crit_or_miss(0)       # always hits (Thunder is special: no Hustle)
     elif state.weather == 'sunny':
-        token = ctx.hit_crit_or_miss(50)      # accuracy 50 in sun
+        token = ctx.hit_crit_or_miss(50)      # accuracy 50 in sun (special: no Hustle)
     else:
-        token = ctx.hit_crit_or_miss(move.accuracy)
+        token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.effect_proc(move.effect_chance, _status_applier(ctx, NonVolatileStatus.PARALYZED))
@@ -1239,9 +1240,9 @@ def _eff_blizzard(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.weather == 'hail':
-        token = ctx.hit_crit_or_miss(0)       # always hits in hail
+        token = ctx.hit_crit_or_miss(0)       # always hits in hail (special: no Hustle)
     else:
-        token = ctx.hit_crit_or_miss(move.accuracy)
+        token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     ctx.effect_proc(move.effect_chance,
@@ -1259,7 +1260,7 @@ def _eff_fake_out(ctx: 'BattleContext', move: Move) -> bool:
     # turn_number is 0-indexed and incremented at end of turn, so Chansey's very
     # first turn in battle (the only turn Fake Out works) is turn 0.
     if state.turn_number == 0:
-        token = ctx.hit_crit_or_miss(move.accuracy)
+        token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
         if isinstance(token, Miss):
             return False
         ctx.advance_unobservable(1)  # flinch chance roll (100%, still rolled)
@@ -1307,7 +1308,7 @@ def _eff_beat_up(ctx: 'BattleContext', move: Move) -> bool:
     # First attacker (the user): crit/damage/hit. Its two "attack successful"
     # rolls are the standard post-move-success advances that simulate_turn adds
     # once the move returns True, so we must NOT count them again here.
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     # Each remaining party member: crit + damage (no hit check) + two success rolls.
@@ -1405,7 +1406,7 @@ def _eff_spit_up(ctx: 'BattleContext', move: Move) -> bool:
             return Crit() if is_crit else Hit()
         hit_roll = c.advance_observable()
         # Lock-On still rolls the hit check; only the result is forced to Hit.
-        is_hit = c.lock_on_active() or hit_roll % 100 < c.effective_accuracy(move.accuracy)
+        is_hit = c.lock_on_active() or hit_roll % 100 < c.effective_accuracy(move.accuracy, move.is_physical)
         if not is_hit:
             return Miss()
         return Crit() if is_crit else Hit()
@@ -1437,7 +1438,7 @@ def _eff_captivate(ctx: 'BattleContext', move: Move) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eff_selfdestruct(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     _emit_path_end(ctx)
     return not isinstance(token, Miss)
 
@@ -1472,7 +1473,7 @@ def _eff_whirlwind(ctx: 'BattleContext', move: Move) -> bool:
 
 
 def _eff_u_turn(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     _emit_path_end(ctx)
@@ -1480,7 +1481,7 @@ def _eff_u_turn(ctx: 'BattleContext', move: Move) -> bool:
 
 
 def _eff_fling(ctx: 'BattleContext', move: Move) -> bool:
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     _emit_path_end(ctx)
@@ -1581,7 +1582,7 @@ def _eff_hidden_power(ctx: 'BattleContext', move: Move) -> bool:
         ctx.raw_emit(PathEnd())
         ctx.battle_state['unsupported'] = True
         return False
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     return not isinstance(token, Miss)
 
 
@@ -2036,7 +2037,7 @@ def _eff_wake_up_slap(ctx: 'BattleContext', move: Move) -> bool:
     """Wake-Up Slap (217): C/D/H; on hit, cures Magikarp's sleep."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     if state.mk_status.status == NonVolatileStatus.SLEEP:
@@ -2049,7 +2050,7 @@ def _eff_smelling_salt(ctx: 'BattleContext', move: Move) -> bool:
     """Smelling Salt (171): C/D/H; on hit, cures Magikarp's paralysis."""
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     if state.mk_status.status == NonVolatileStatus.PARALYZED:
@@ -2364,7 +2365,7 @@ def _eff_solar_beam(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
     if state.weather == 'sunny':
-        token = ctx.hit_crit_or_miss(move.accuracy)
+        token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
         return not isinstance(token, Miss)
     state.user_locked_move_num = move.number
     state.user_locked_effect = move.effect
@@ -2381,7 +2382,7 @@ def _eff_solar_beam(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     # Total 2-3 turns, hidden at apply — no prompt. Interactive tracks the max and
@@ -2399,7 +2400,7 @@ def _eff_thrash(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     # 2-5 extra turns, hidden at apply — no prompt. Interactive tracks the max and
@@ -2420,7 +2421,7 @@ def _eff_uproar(ctx: 'BattleContext', move: Move) -> bool:
 def _eff_rollout(ctx: 'BattleContext', move: Move) -> bool:
     from .path import MetronomeBattleState
     state: MetronomeBattleState = ctx.battle_state['state']
-    token = ctx.hit_crit_or_miss(move.accuracy)
+    token = ctx.hit_crit_or_miss(move.accuracy, physical=move.is_physical)
     if isinstance(token, Miss):
         return False
     state.user_locked_move_num = move.number
@@ -2473,19 +2474,19 @@ def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_mov
         return triggered  # True = damage dealt (no rolls); False = move fails
 
     elif effect in {39, 155, 255, 256, 272}:  # Group A: charge-fire
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         return not isinstance(token, Miss)
 
     elif effect == 151:  # Solar Beam charge continuation
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         return not isinstance(token, Miss)
 
     elif effect == 75:  # Sky Attack: C/D/H + unobservable flinch on hit
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         if not isinstance(token, Miss):
@@ -2494,7 +2495,7 @@ def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_mov
         return False
 
     elif effect == 263:  # Bounce: C/D/H + observable paralyze proc on hit
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         if not isinstance(token, Miss):
@@ -2504,23 +2505,23 @@ def simulate_locked_continuation(ctx: 'BattleContext', state: object, locked_mov
         return False
 
     elif effect == 145:  # Skull Bash: C/D/H only (unobservable roll was on turn 1)
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         state.user_locked_move_num = None  # type: ignore[attr-defined]
         state.user_locked_effect = None    # type: ignore[attr-defined]
         return not isinstance(token, Miss)
 
     elif effect == 27:  # Thrash/Outrage/Petal Dance: C/D/H; rampage-end confusion in simulate_turn
-        return not isinstance(ctx.hit_crit_or_miss(locked_move.accuracy), Miss)
+        return not isinstance(ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical), Miss)
 
     elif effect == 159:  # Uproar: C/D/H each turn; lock does not end early on miss
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         if state.user_locked_turns == 0:  # type: ignore[attr-defined]
             state.user_locked_move_num = None  # type: ignore[attr-defined]
             state.user_locked_effect = None    # type: ignore[attr-defined]
         return not isinstance(token, Miss)
 
     elif effect == 117:  # Rollout/Ice Ball: C/D/H; miss ends lock early
-        token = ctx.hit_crit_or_miss(locked_move.accuracy)
+        token = ctx.hit_crit_or_miss(locked_move.accuracy, physical=locked_move.is_physical)
         if isinstance(token, Miss):
             state.user_locked_turns = 0        # type: ignore[attr-defined]
             state.user_locked_move_num = None  # type: ignore[attr-defined]
