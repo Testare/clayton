@@ -32,13 +32,13 @@ Clayton addresses each of those in turn.
 ## The shape of a hunt
 
 ```
-  Set up a profile and an expedition          once per game / per target
+  Set up a profile and an expedition            once per game / per target
         │
         ▼
-  Calibrate with Metronome Compass            a handful of runs, once per setup
+  Calibrate with Metronome Compass (Optional)   a handful of runs, once per setup
         │
         ▼
-  Safari Chart → pick a target                (initial time, Vector ms)
+  Safari Chart → pick a target                  (initial time, Vector ms)
         │
         ▼
   Run it: boot, load, advance, Sweet Scent
@@ -50,7 +50,7 @@ Clayton addresses each of those in turn.
         └── missed?  save the run ────────────┘   feeds back into calibration
 ```
 
-The loop matters. A missed attempt is not wasted: saving the run improves your calibration,
+The loop matters. A missed attempt might not be wasted: saving the run improves your calibration,
 which makes the next target more accurate.
 
 ## What Clayton does not do

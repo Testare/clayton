@@ -34,18 +34,16 @@ game on a different flashcart, times differently and needs its own profile.
 
 **Profiles → New.**
 
-| Field | What to put |
-|---|---|
-| Name | Anything you'll recognise: `SoulSilver — DSi` |
-| Trainer name | Your in-game name (a label; nothing is computed from it) |
-| Version | HeartGold or SoulSilver |
-| Console | Which DS. Worth recording — timing differs between models |
-
-Every new profile starts with a bundled **Standard** calibration model so the tools work
-immediately. It is a real fitted model, but it is not *yours* — replace it as soon as you have
-your own ([page 4](04-metronome-compass.md)).
+| Field        | What to put                                               |
+| ------------ | --------------------------------------------------------- |
+| Name         | Anything you'll recognise: `SoulSilver — DSi`             |
+| Trainer name | Your in-game name (a label; nothing is computed from it)  |
+| Version      | HeartGold or SoulSilver                                   |
+| Console      | Which DS. Worth recording — timing differs between models |
 
 > **Screenshot:** the New Profile form.
+
+Once created, you'll have an option to add metronome users to the profile. Don't worry about that for now, we'll cover that in the metronome compass section.
 
 ## Step 2 — Make an expedition
 
@@ -54,34 +52,19 @@ block scores. Charts and saved targets belong to it.
 
 **Expeditions → New.**
 
-| Field | What to put |
-|---|---|
-| Name | `Shiny Metang`. Must be unique across *all* profiles |
-| Profile | The profile above |
-| Pokémon | The species you're after |
-| Safari area | Which area it's in — narrowed to areas that actually hold your species |
-| **Key seed** | The initial seed (Seed A) you intend to hit, as hex: `0x0D0E02BA` |
-| **Key-seed advances** | The Seed A advance frame you'll Sweet Scent on |
-| Safari block scores | See [page 7](07-safari-blocks.md) |
+| Field                 | What to put                                                            |
+| --------------------- | ---------------------------------------------------------------------- |
+| Name                  | Whatever you want. Must be unique across *all* profiles                   |
+| Profile               | The profile above                                                      |
+| Pokémon               | The species you're after                                               |
+| Safari area           | Which area it's in — narrowed to areas that actually hold your species |
+| **Key seed**          | The initial seed (Seed A) you intend to hit: `0x0D0E02BA`      |
+| **Key-seed advances** | The Seed A advance frame you'll Sweet Scent on                         |
+| Safari block scores   | See [page 7](07-safari-blocks.md)                                      |
 
-### Where the key seed comes from
+### Where the key seed/key-seed advances comes from
 
-From PokeFinder or RNG Reporter: search for the spread you want, and note the **initial seed**
-that produces it. That's your key seed. Clayton takes it from there and never second-guesses
-it.
-
-### What "key-seed advances" means
-
-After your save loads on Seed A, the overworld RNG advances as you act — each Elm phone call
-is one advance, each Chatot cry flip is two. The encounter that fires when you Sweet Scent is
-decided by how many advances you've made.
-
-So: **key-seed advances** is the advance frame your target Pokémon sits on for that seed.
-PokeFinder will tell you which frame holds your spread; that number goes here.
-
-If you'd rather Clayton work it out, it can search for the frame itself using your block
-scores — set **Preferences → Target frame source** to `in_house`. Either way the field is
-required, because Safari Chart needs it to know how long your run will take.
+From whatever tool you prefer, like PokeFinder or RNGReporter. When you find a combination of seed and advances that produces the pokemon you want, that is your key seed and the key-seed advances. For example, on my file, seed 0x0C0E02C2 and 81 advances produces a shiny adamant Metang.
 
 > **Screenshot:** the expedition Configure form.
 
@@ -97,8 +80,9 @@ Open the expedition. You should see three tools:
 
 ## What next
 
-Do **not** jump to Safari Chart. Its targets are only as good as your calibration, and right
-now you're using a model fitted on somebody else's hardware.
+For the perfect, ideal run, you should now get ready to use metronome compass. However, it is not STRICTLY necessary, and it'll take time both to get set up and also to collect data.
+
+If you do not use metronome compass, you can use the standard statistical model that ships with this software instead, and jump straight to using Safari Chart. It might not be as accurate or precise for your specfic model, but it might be accurate enough to identify seeds in Safari Compass, and you can do some reasonable calibrations using only Safari Compass.
 
 Set up your timer first ([page 3](03-timers.md)), then calibrate
 ([page 4](04-metronome-compass.md)).
