@@ -19,15 +19,20 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict, dataclass, field
 
+from claytonlib.metronome_abilities import ability_info, unsupported_abilities
+
 # Metronome-user suitability (P0). See draft2 "Metronome Users".
 _REQUIRED_SPECIES = "Chansey"
 _REQUIRED_ABILITY = "Natural Cure"
 _REQUIRED_MOVE = "Metronome"
-# Abilities that change move-effect RNG behavior this toolkit models for calibration
-# (Serene Grace doubles secondary-effect chance; Cute Charm/Magic Guard interact with battle
-# RNG in ways Metronome Compass doesn't account for) -- a hard block at creation, unlike an
-# off-species/off-ability choice, which is only a soft suitability warning (clayton-b42.9.7).
-HARD_ERROR_ABILITIES = frozenset({"Serene Grace", "Cute Charm", "Magic Guard"})
+# Abilities the simulation does not implement, and which WOULD change this battle -- so a
+# user carrying one can't be selected in Metronome Compass (creation is never blocked; see
+# hard_errors). Derived from claytonlib.metronome_abilities rather than listed here, so the
+# block follows what is actually implemented instead of a parallel hand-maintained set: an
+# ability that gains support stops blocking by virtue of its registry entry changing
+# (clayton-2ae.5). Abilities that provably cannot affect this fight are classified NO_EFFECT
+# there and never blocked.
+HARD_ERROR_ABILITIES = unsupported_abilities()
 
 
 def _new_id() -> str:
@@ -65,7 +70,7 @@ class MetronomeUser:
                 f"{_REQUIRED_SPECIES} — using {self.species} may produce errors"
             )
         if (self.ability and self.ability != _REQUIRED_ABILITY
-                and self.ability not in HARD_ERROR_ABILITIES):
+                and ability_info(self.ability).is_supported):
             warnings.append(f"ability should be {_REQUIRED_ABILITY} (this is {self.ability})")
         return warnings
 
@@ -82,10 +87,13 @@ class MetronomeUser:
         user that can't use the move or won't hold still for the timing check, so these
         are hard blocks, not advisory."""
         errors: list[str] = []
-        if self.ability in HARD_ERROR_ABILITIES:
+        info = ability_info(self.ability)
+        if not info.is_supported:
+            # The registry's own reason, so the message says what this specific ability does
+            # to the battle rather than one generic sentence for every blocked ability.
             errors.append(
-                f"{self.ability} changes move-effect RNG behavior this toolkit models for "
-                f"calibration — a metronome user with this ability can't be used"
+                f"{self.ability} is not simulated yet — {info.reason} "
+                f"A metronome user with this ability can't be used for calibration."
             )
         if not any(m.lower() == _REQUIRED_MOVE.lower() for m in self.moveset):
             errors.append("does not know Metronome")

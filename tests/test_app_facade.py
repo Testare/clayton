@@ -114,8 +114,14 @@ class TestFacade(unittest.TestCase):
         self.assertEqual(chansey["gender"], "female_only")
         self.assertIn("Serene Grace", chansey["blocking_abilities"])
         self.assertNotIn("Natural Cure", chansey["blocking_abilities"])
+        # Granbull is Intimidate / Quick Feet. Intimidate blocks as of clayton-2ae.5 -- it
+        # shifts where a stat stage hits its floor, which changes whether a lowering effect
+        # procs, which changes the path. Quick Feet does not: the Lagging Tail already makes
+        # the user move second, so its Speed decides nothing. This used to assert neither
+        # blocked, back when unmodelled abilities were permitted with only a warning.
         granbull = by_name["Granbull"]
-        self.assertEqual(granbull["blocking_abilities"], [])
+        self.assertEqual(granbull["blocking_abilities"], ["Intimidate"])
+        self.assertNotIn("Quick Feet", granbull["blocking_abilities"])
 
     def test_remove_metronome_user(self):
         p = self.api.create_profile({"name": "Silver"})

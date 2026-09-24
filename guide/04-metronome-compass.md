@@ -1,27 +1,82 @@
 # 4. Metronome Compass
 
-**Do this before anything else.** Safari Chart's targets are only as good as the model behind
-them, and until you calibrate you are using one fitted on somebody else's hardware.
-
-## What it measures
-
-One number, over and over: **for a countdown of length M, how many frames actually elapse?**
+Metronome Compass is the tool for calibrating the general parameters of the statistical model to you and your hardware. Frame rate, delays, how precise our timing is, etc. It boils down to wanting to answer this question: **For a given amount of time (Vector ms), how many frames actually elapse between the game loading its initial RNG seed and the battle RNG state?**
 
 The relationship is close to linear — roughly 59.83 frames per second — but the intercept and
 the scatter are yours. They depend on your console, your cartridge or flashcart, and how
 consistently you press.
 
-## Why Metronome
+To answer this question, we need to do runs where we know both Seed A and Seed B, as well as the amount of time we set for Timer 3/Vector ms. We collect these data points, and we use them to generate "models" that try to answer this core question.
 
-You need a way to see *exactly* which battle seed you landed on. Metronome does that: it picks
-a move at random from the full move list, so the sequence of moves across a battle is a
-near-unique fingerprint of the seed.
+## How Metronome Compass works
 
-Feed Clayton the moves you saw, and it tells you precisely which seed produced them.
+Identifying Seed B relies on identifying random events and using those random events to eliminate seeds where that outcome would not have happened, around an area we expect to find the seed. For Metronome compass, we have a pokemon use the move metronome, which has around 400 different possible outcome, not even including things like secondary effects, misses, enemy pokemon moves, etc. Each move has roughly the same probability as well, which means consistently reducing the number of possible seeds. In my experience, checking an area of +/- 2000 frames and +/- 2 seconds (about 20,000 seeds) usually only takes 2 turns of battle to uniquely identify a seed.
 
-The Magikarp in the lake outside is the usual target — easy to reach, easy to re-encounter.
+This is why we have metronome compass and not just safari compass: In the Safari zone, throwing a ball has at most 5 different outcomes (0 shakes, 1 shake, 2/3 shakes, and a full capture), and other actions have less. All actions have an outcome that is more likely than the others. Because of this, it takes a lot more random events in the safari zone around a much smaller area to identify Seed B. On top of that, there are lots of values for Seed B where the pokemon will flee before you can uniquely identify it at all. I think I average around 25% of runs where I successfully identify the seed for metang, and for some pokemon it would be much worse.
 
-### Setting up a Metronome user
+Once you have identified Seed A and Seed B, with a configured vector ms, we can save this as a run, which data point informs models.
+
+### Models
+
+A model is basically just a collection of numbers that we use to try and make accurate calculations. It is calibrated from the data we gather here, and used in both the Safari tools to try and find optimal values of Vector ms, as well as determine what seeds we are likely to hit in Safari Compass.
+
+### Why Metronome Compass is optional
+
+Given that, why would I say Metronome compass is optional?
+
+First of all, it takes time. You need to get the resources in game for it to work, and then you have to spend time you could be spending trying to hit your seed on calibrating a model.
+
+I have included a "Standard model" in the tool. As of the time I'm writing this, this is just the model I used myself, though I'm hoping if people share data with me to make it a little more general purpose. It isn't perfect, but obviously it was good enough for me to identify seeds and eventually capture a shiny metang.
+
+Additionally, metronome compass is not quite perfect. It isn't quite as flexible as it should be. It also depends on me understanding how **every single move and field condition** interact with the rng and with each other. I did my best to be thorough, but I made mistakes, and the code is not perfect. If you suspect some moves are not implemented correctly, let me know, and we can try to correct it.
+
+Finally, the accuracy of the model might not be as important for some pokemon as others. When I caught my Shiny metang, it was actually *500* frames earlier than the model predicted it would be, outside the expected range. However, it stuck around long enough for me to identify the seed in the larger area, and then Safari Machete was able to help me capture it (More about that in Safari Compass).
+
+That aside, metronome compass was highly important to getting these tools working at all, and it is important for getting the best possible results from the other tools.
+
+## Actually using Metronome Compass
+
+### What you'll need in game
+
+In the game, you'll need these: 
+
+* Access to Blackthorn City
+* A sweet-scent user
+* A surf user
+* Lagging Tail
+* A metronome user
+* Recommended: Pokerus
+
+Hopefully, you've reached the point in the game where you have access to Blackthorn city, and much further: You have to have the national pokedex before you can fully unlock the Safari Zone, which is one of the first requirements for meeting most of the best safari zone pokemon, including Metang. However, all you technically need for this step is access to Blackthorn city.
+
+The only thing you'll really NEED that is not a pokemon is the Lagging Tail. You can find this on Route 47, consequently a route on the way to the Safari Zone. If you lost it somehow or if you prefer, wild slowpoke have a 5% chance to hold one as well, which you can find consistently in Slowpoke well (<Cue surprised pikachu face>). Using RNG manipulation, if you identify your starting seed in there it should be near trivial to manipulate to find a slowpoke that is holding one, and honestly not too hard to just find it just by using thief on them until you find it. This item is very important to ensure your metronome user always moves second.
+
+Other than our main hero pokemon, you'll also need pokemon that know sweet scent to start the encounter and a pokemon that knows surf. The reasons will be pretty obvious soon. I recommend these NOT be your metronome user itself, but it doesn't really matter.
+
+I also recommend you get pokerus on one of your pokemon, not necessarily one of the ones you'll use here. Doing this allows you to use Professor Elm for your Elm calls instead of Irwin. I love Irwin, and when the values are E or K he's actually pretty fast, but when it is P Irwin's call takes a looong time, and the key to gathering good data is consistency. Professor Elm's calls all take about the same time, and you can only actually use him for elm calls once one of your pokemon have contracted Pokerus. I followed [this guide](khttps://www.youtube.com/watch?v=uu7nzNycwSs) myself, good luck to you.
+
+Finally, you need a metronome user.
+
+### Your metronome user
+
+There are a handful of different pokemon that can know metronome, either through level up or egg moves. These pokemon have different stats, movepools, and abilities.
+
+The ideal metronome user is weak offensively, but strong defensively. Weak offenses keep you from fainting the wild pokemon and ending the encounter before identifying the seed. Strong defenses keep you from BEING fainted by the wild pokemon and ending the encounter early. Speed does not matter - We'll be using a lagging tail to ensure you are always moving second.
+
+A bit of a spoiler here, but we'll be fighting Magikarp, between level 2 and 20. It is weak offensively (If less than level 15, it won't even be able to hit you), but also not the strongest defensively. I chose them because of their weak offenses, and because they have a spawn table that is not shared with any other pokemon. You'll ideally be able to survive at least two tackles from a level 20 magikarp, and ideally hit a level 2 magikarp twice before it faints.
+
+Movepool is also important. Something you might not know - Metronome actually won't pick moves the user already knows, and plenty of moves will prematurely end your run before identifying your seed. Explosion, U-turn, Baton pass, Healing Wish, Fling, Roar... These moves switch you out, faint your pokemon, force the magikarp to flee, make you lose your item, etc. Each of these render metronome compass unable to continue if they don't identify your seed immediately.
+
+Abilities are important, but mostly because of limitations of metronome compass. I have only tested the compass with Natural Cure on my metronome user, so other abilities are not tested. Serene Grace doubles the chance of secondary effects happening, Hustle affects accuracy, and Magic Guard can actually mess up subtle interactions with RNG related to user's healthiness. Abilities like Quick Feet or Intimidate are less likely to mess with the battle's RNG state though. Natural Cure is the one we built around (Since it literally can't effect anything).
+
+The metronome user I chose was a Level 6 Chansey with the ability Natural Cure, and the moves Metronome, Fling, Healing Wish, and Solar Beam. 
+* Chansey has great defense and terrible offense, much more defense than Happiny but not much worse than Blissey, while its offense is notably worse than Blissey. 
+* I can prevent Healing Wish (which faints me), Fling (which loses my lagging tail and ends the run) and solar beam (Strong, super-effective damage into Magikarp) I bred it to have good defense and HP, and low attack and special attack, using vitamins to boost defensive stats as well, though EV training is limited by its low level.  In my use, it very rarely fainted from moves other than its own, and I think only once did it faint a low level magikarp in just two turns (Using Roar of Time). Acquiring this Chansey took work: 
+* Had to catch a chansey first (Not tooooo hard with RNG manipulation), then catch a 
+* Caught a MALE Clefaiary
+* Trained 
+
+# ## Setting up a Metronome user in Clayton
 
 **Profile → Metronome users → Add.** You need a Pokémon that:
 

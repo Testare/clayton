@@ -29,6 +29,7 @@ Given these disclaimers, I would love help from the community!
 
 ## Possible future work
 * Finding a regular encounter seed so you can save your rare balls for when you know you'll be successful (Identifying the encounter through in-game RNG events, then determining how to manipulate the RNG state until a ball's success rate is perfect)
+* More metronome compass support (Fix moves, support other metronome users better, maybe support locations like Slowpoke well)
 * Extending to work with other games (DPPt Great Marsh especially, since the code is likely similar)
 * Finding a battle seed RNG for speedrunning
 

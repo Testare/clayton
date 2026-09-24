@@ -1,27 +1,6 @@
 # 1. Introduction
 
-## The problem
-
-You want a specific Safari Zone Pokémon — shiny, or a particular nature and IV spread. You
-know its seed. On any other route you would hit that seed, perform the advances, and 
-
-The Safari Zone makes that much harder, for three reasons:
-
-**The encounter is two seeds, not one.** You hit an initial seed when you load your save —
-call it **Seed A**. But the Pokémon's identity is decided by a *second* seed, generated when
-the encounter actually fires — **Seed B**. Seed B depends on how much time passed between the
-two, which depends on your hardware and your hands.
-
-**The battle is a gamble even then.** Safari Zone Pokémon flee. Every ball, bait and mud throw
-consumes RNG and changes the flee and catch rolls. Hitting the right seed is not the same as
-catching the Pokémon.
-
-**The encounter itself has conditions.** Rare Safari species only appear once you have enough
-of the right blocks placed in the right area, and only at the right time of day.
-
 ## What Clayton does
-
-Clayton addresses each of those in turn.
 
 | Tool | What it's for |
 |---|---|
