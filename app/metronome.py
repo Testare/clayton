@@ -279,6 +279,7 @@ def seed_b(params: dict, model=None) -> dict:
         magikarp_level=int(params["magikarp_level"]),
         opposite_gender=bool(params["opposite_gender"]),
         metronome_only=bool(params.get("metronome_only", False)),
+        user_ability=params.get("user_ability"),
     )
     limit = int(params.get("limit", 15))
     return {"candidates": [_row_b_json(r) for r in rows[:limit]], "count": len(rows)}
@@ -294,6 +295,7 @@ def seed_b_runner(params: dict, model=None):
     level = int(params["magikarp_level"])
     opp = bool(params["opposite_gender"])
     metronome_only = bool(params.get("metronome_only", False))
+    user_ability = params.get("user_ability")
     target_time = _parse_time(params["target_time"])
     b_time, b_delay = seed_b_center(
         int(params["key_seed"]), target_time, params.get("vector_ms"), model)
@@ -305,12 +307,15 @@ def seed_b_runner(params: dict, model=None):
         magikarp_level=level,
         opposite_gender=opp,
         metronome_only=metronome_only,
+        user_ability=user_ability,
     )
 
     def runner(input_fn, output_fn):
+        # Same user_ability the candidates were generated with -- narrowing compares observed
+        # turns against those precomputed paths, so the two battles have to be configured alike.
         return narrow_candidates(
             candidates, level, opp, metronome_only=metronome_only,
-            input_fn=input_fn, output_fn=output_fn,
+            input_fn=input_fn, output_fn=output_fn, user_ability=user_ability,
         )
 
     return runner

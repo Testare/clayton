@@ -419,11 +419,33 @@ class Facade:
                   else chart_lib.global_calibration_models())
         return models.get(params.get("fps_model", "linear")) or next(iter(models.values()), None)
 
+    def _with_metronome_user_ability(self, params: dict) -> dict:
+        """`params` plus the selected metronome user's ability, read from the stored profile.
+
+        Resolved here rather than sent by the UI so the simulation is configured from the
+        record the user actually saved, not from whatever the page happened to have in hand.
+        Needs `profile_id` and `metronome_user_id`; without both, or if the id no longer
+        resolves, the ability stays unset and the battle runs as it always has.
+        """
+        if params.get("user_ability") is not None:
+            return params                       # an explicit override wins (tests, callers)
+        profile_id, user_id = params.get("profile_id"), params.get("metronome_user_id")
+        if not profile_id or user_id is None:
+            return params
+        doc = self._store.read(_PROFILES, profile_id)
+        if doc is None:
+            return params
+        for u in doc.get("metronome_users", []):
+            if u.get("id") == user_id:
+                return {**params, "user_ability": u.get("ability")}
+        return params
+
     def metronome_seed_b(self, params: dict) -> dict:
         """Candidate battle seeds, each with its precomputed Metronome path.
 
         Centered on where the active calibration model says Seed B lands for this target's
         Vector ms -- NOT on the key seed, which is where Seed A lands."""
+        params = self._with_metronome_user_ability(params)
         return metronome.seed_b(params, self._metronome_model(params))
 
     def _json_session_state(self, state: dict) -> dict:
@@ -434,6 +456,7 @@ class Facade:
 
     def metronome_seed_b_start(self, params: dict) -> dict:
         """Begin the interactive Seed B narrowing; returns the first question (or result)."""
+        params = self._with_metronome_user_ability(params)
         runner = metronome.seed_b_runner(params, self._metronome_model(params))
         _sid, state = self._sessions.start(runner)
         return self._json_session_state(state)

@@ -1189,6 +1189,8 @@ async function nrStartSeedB(){
     // Seed B is the battle seed Vector ms AFTER Seed A — the search has to be centered on
     // where the active model puts it, not on the key seed (which is where Seed A is).
     vector_ms: nr.vectorMs, profile_id: nr.e.profile_id,
+    // The facade looks the ability up from the stored profile rather than trusting this page.
+    metronome_user_id: nr.userId,
     seconds_window: nr.sbSecondsWindow, delay_window: nr.sbDelayWindow,
     magikarp_level: level, opposite_gender: mkGender !== userGender,
     metronome_only: metronomeOnly });

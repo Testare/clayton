@@ -387,7 +387,7 @@ def resolve_moveset(metronome_only=False):
 
 def generate_candidates_near(target_time, target_delay, seconds_window, delay_window,
                              magikarp_level, opposite_gender,
-                             metronome_only=False, n_turns=10):
+                             metronome_only=False, n_turns=10, user_ability=None):
     """Every seed within +/-seconds_window seconds and +/-delay_window delays of
     (target_time, target_delay), each annotated with its precomputed Metronome battle
     path.  The Metronome user is level 7 and, unless metronome_only=True, knows
@@ -417,7 +417,8 @@ def generate_candidates_near(target_time, target_delay, seconds_window, delay_wi
                 continue
             path = precompute_path(seed, magikarp_level=magikarp_level,
                                    opposite_gender=opposite_gender,
-                                   moveset=moveset, n_turns=n_turns)
+                                   moveset=moveset, n_turns=n_turns,
+                                   user_ability=user_ability)
             by_seed[seed] = (key, {
                 "seed": seed,
                 "time": t,
@@ -459,7 +460,7 @@ def _abort_on_keyword(orig_input):
 
 
 def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_only=False,
-                      input_fn=None, output_fn=None):
+                      input_fn=None, output_fn=None, user_ability=None):
     """Interactively narrow `candidates` to a single seed.
 
     `input_fn(prompt) -> str` and `output_fn(*args) -> None` override the console I/O
@@ -496,6 +497,10 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     ctx = InteractiveContext()
     state = MetronomeBattleState()
     state.target_level = magikarp_level
+    # Must match what generate_candidates_near handed precompute_path, for the same reason
+    # the movepool must: the candidates' precomputed paths were built with it, so narrowing
+    # against a differently-configured battle would compare predictions to a battle nobody ran.
+    state.user_ability = user_ability
     ctx.battle_state["opposite_gender"] = opposite_gender
     ctx.battle_state["state"] = state
     user_move_types = [moves_by_num[118].type_name]

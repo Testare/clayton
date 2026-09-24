@@ -620,6 +620,7 @@ def precompute_path(
     opposite_gender: bool,
     moveset: tuple[int, ...] = (),
     n_turns: int = 10,
+    user_ability: str | None = None,
 ) -> BattlePath:
     """Pre-compute the battle path for a single seed.
 
@@ -627,6 +628,12 @@ def precompute_path(
     It affects two things: Metronome re-rolls whenever it would call a move in
     the movepool, and Conversion 2's success (it fails while every movepool move,
     including Metronome, is Normal-type). Defaults to Metronome-only.
+
+    `user_ability` is the Metronome user's ability at battle start. Nothing reads it to
+    change behavior YET -- the per-ability work is clayton-2ae's other tasks -- so passing
+    one must not alter any prediction; it only makes the ability available to effects that
+    will branch on it, and to Role Play / Skill Swap, which already move it around
+    mid-battle. None keeps the historical "no ability" state.
     """
     moves_by_num = _moves_by_number()
     known = frozenset(moveset)
@@ -636,6 +643,7 @@ def precompute_path(
     # else threshold = 30 + user - target). The Metronome user's level has no input
     # source yet and keeps its default of 7 (MetronomeBattleState.user_level).
     state.target_level = magikarp_level
+    state.user_ability = user_ability
     ctx.battle_state['opposite_gender'] = opposite_gender
     ctx.battle_state['state'] = state
     # Build move-type list for Conversion 2 (Metronome + the rest of the movepool)
