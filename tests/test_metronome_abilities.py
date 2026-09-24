@@ -137,10 +137,16 @@ class TestModelsUsesTheRegistry(unittest.TestCase):
         self.assertEqual(u.suitability_warnings(), [])
 
     def test_a_blocked_ability_is_not_also_warned_about(self):
-        # It is reported once, as a block, not twice in two different voices.
-        u = self._user("Serene Grace")
+        # It is reported once, as a block, not twice in two different voices. Uses an ability
+        # that is still unsupported -- Serene Grace, the old example, is modelled now.
+        u = self._user("Hustle")
         self.assertTrue(u.hard_errors())
         self.assertEqual(u.suitability_warnings(), [])
+
+    def test_a_modelled_ability_neither_blocks_nor_warns(self):
+        for ability in ("Serene Grace", "Magic Guard", "Intimidate"):
+            u = self._user(ability)
+            self.assertEqual(u.hard_errors(), [], f"{ability} is modelled and must not block")
 
     def test_creation_is_never_blocked(self):
         # hard_errors gates SELECTION only; people must still record the Pokemon they own.

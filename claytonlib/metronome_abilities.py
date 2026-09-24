@@ -91,25 +91,32 @@ METRONOME_ABILITIES: dict[str, AbilityInfo] = {info.name: info for info in (
           "inflict none of those with Splash or Tackle, and a self-inflicted status (Rest) "
           "never triggers Synchronize."),
 
-    _info("Serene Grace", _U,
-          "Doubles every secondary-effect chance, which substantially changes which effects "
-          "proc and therefore the whole path. Not implemented (clayton-2ae.2)."),
+    _info("Serene Grace", _M,
+          "Doubles every secondary-effect chance. Implemented in "
+          "BattleContext.secondary_effect_chance: the threshold doubles, clamped at 100, "
+          "while the roll itself is unchanged, so RNG consumption is identical and only the "
+          "outcome moves. Changes roughly a fifth of paths."),
     _info("Cute Charm", _U,
           "30% chance to infatuate an attacker that makes contact, adding a conditional roll "
           "and then a per-turn immobilise roll. Not implemented (clayton-2ae.3)."),
-    _info("Magic Guard", _U,
-          "Prevents indirect damage, including recoil — so the user stays provably at full "
-          "HP where it normally would not, and recovery moves that would have succeeded fail "
-          "instead (Take Down then Milk Drink). A move failing rather than succeeding changes "
-          "the advance count. Not implemented (clayton-2ae.4)."),
+    _info("Magic Guard", _M,
+          "Prevents indirect damage, including recoil, so the user stays provably at full HP "
+          "where it otherwise would not and a recovery move fails for want of anything to "
+          "heal — Take Down then Milk Drink. A failed move skips the post-success advances, "
+          "desyncing every later turn. Implemented in _mark_user_recoil. Note it is often "
+          "masked: any Tackle Magikarp lands damages the user directly, which Magic Guard "
+          "does not prevent, so it only decides anything while Magikarp has not connected — "
+          "always, below level 15, where Magikarp can only Splash."),
     _info("Hustle", _U,
           "Cuts the accuracy of physical moves to 80%, changing hit/miss and therefore every "
           "roll that follows. Not implemented (clayton-2ae.8)."),
-    _info("Intimidate", _U,
-          "Lowers Magikarp's Attack a stage on entry. The battle ignores damage magnitude, "
-          "but it does model stat STAGES, and a stat already at its floor makes a lowering "
-          "effect fail to proc (_target_stat_applier) — which changes the path. Starting the "
-          "stage at -1 moves where that floor is reached. Not implemented (clayton-2ae.9)."),
+    _info("Intimidate", _M,
+          "Lowers Magikarp's Attack a stage on entry. Implemented in apply_entry_ability. "
+          "Currently changes no observed path: damage magnitude is invisible, and the only "
+          "way a stage is observable today is the floor check in _target_stat_applier, which "
+          "needs six lowering effects in one battle to reach — and which clayton-eaj says is "
+          "wrong anyway. Modelled regardless, because the stage is real state that Psych Up, "
+          "Power Swap and Heart Swap read and move around."),
 )}
 
 

@@ -20,6 +20,7 @@ from .path import (
     PAR, FRZ, CFZ, SCFZ, SLP, FLN, LV, Struggle, Prevented, StatusEnd, PathEnd, Unsupported,
     BindDmg, BindEnd, DrowsySlept, Magnitude, ConversionType,
     NonVolatileStatus, MagikarpStatus, MetronomeBattleState,
+    apply_entry_ability,
 )
 from .context import BattleContext, RngContext, InteractiveContext
 from .effects import move_effect, EFFECT_HANDLERS, simulate_metronome_roll, _METRONOME_POOL, _parse_hit
@@ -644,6 +645,7 @@ def precompute_path(
     # source yet and keeps its default of 7 (MetronomeBattleState.user_level).
     state.target_level = magikarp_level
     state.user_ability = user_ability
+    apply_entry_ability(state)
     ctx.battle_state['opposite_gender'] = opposite_gender
     ctx.battle_state['state'] = state
     # Build move-type list for Conversion 2 (Metronome + the rest of the movepool)

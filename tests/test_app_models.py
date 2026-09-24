@@ -42,10 +42,10 @@ class TestMetronomeUsers(unittest.TestCase):
 
     def test_hard_error_ability_is_still_creatable(self):
         # The user must always be able to create whatever metronome user they want -- a
-        # hard_errors() issue (e.g. Serene Grace) blocks SELECTING this user in Metronome
+        # hard_errors() issue (e.g. Hustle) blocks SELECTING this user in Metronome
         # Compass, not creating it (clayton-b42.10.2).
         p = Profile(name="Silver")
-        u = p.add_metronome_user("Bad", **{**_GOOD_USER, "ability": "Serene Grace"})
+        u = p.add_metronome_user("Bad", **{**_GOOD_USER, "ability": "Hustle"})
         self.assertEqual(len(p.metronome_users), 1)
         self.assertTrue(u.hard_errors())
         self.assertFalse(u.is_suitable)
@@ -83,7 +83,9 @@ class TestMetronomeUsers(unittest.TestCase):
         clean = MetronomeUser(id=1, name="ok", **_GOOD_USER)
         self.assertEqual(clean.hard_errors(), [])
 
-        for ability in ("Serene Grace", "Cute Charm", "Magic Guard"):
+        # Only the abilities still awaiting an implementation block. Serene Grace, Magic
+        # Guard and Intimidate used to be here and are now modelled (clayton-2ae.2/.4/.9).
+        for ability in ("Cute Charm", "Hustle"):
             blocked = MetronomeUser(id=2, name="bad", **{**_GOOD_USER, "ability": ability})
             errs = blocked.hard_errors()
             self.assertTrue(errs, ability)

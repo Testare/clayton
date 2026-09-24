@@ -8,10 +8,10 @@ These tests pin the two halves of that:
 
 * the ability ARRIVES — a value that is plumbed but unread is exactly the state being fixed,
   so "it got there" is the thing worth asserting;
-* passing one CHANGES NOTHING yet. No effect branches on user_ability until clayton-2ae's
-  per-ability tasks land, so every prediction must be byte-identical with and without it.
-  When an ability does start changing paths, the relevant case here should fail loudly rather
-  than a behavioural change slipping in unnoticed.
+* passing an ability that nothing reads CHANGES NOTHING. The abilities that ARE modelled
+  (Serene Grace, Magic Guard, Intimidate) have their own tests in
+  test_metronome_ability_effects.py; what is guarded here is that everything else -- the
+  recommended Natural Cure above all -- stays byte-identical.
 """
 import tempfile
 import unittest
@@ -94,12 +94,18 @@ class TestPlumbingChangesNoPrediction(unittest.TestCase):
                                             moveset=moveset, n_turns=10, user_ability=ability))
                 for s in _SEEDS]
 
-    def test_identical_with_a_full_movepool(self):
+    def test_identical_for_every_ability_that_should_not_move_a_path(self):
+        # This asserted ALL abilities when none were modelled. Serene Grace, Magic Guard and
+        # Intimidate are implemented now and have their own tests; what remains here is the
+        # set that must still be inert -- the recommended ability, the ones classified as
+        # provably-no-effect, and the ones not yet implemented.
         moveset = resolve_moveset(metronome_only=False)
         baseline = self._paths(moveset, None)
-        for ability in ("Natural Cure", "Serene Grace", "Hustle", "Magic Guard", "Cute Charm"):
+        for ability in ("Natural Cure", "Hustle", "Cute Charm",
+                        "Pickup", "Run Away", "Quick Feet", "Thick Fat",
+                        "Immunity", "Synchronize"):
             self.assertEqual(self._paths(moveset, ability), baseline,
-                             f"{ability} changed a path, but nothing models it yet")
+                             f"{ability} changed a path but nothing should read it")
 
     def test_identical_metronome_only(self):
         baseline = self._paths((), None)

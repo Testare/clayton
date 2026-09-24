@@ -233,6 +233,20 @@ class BattleContext(ABC):
             state.mk_recovered = False
         return token
 
+    def secondary_effect_chance(self, chance: int) -> int:
+        """`chance` after the user's ability, i.e. doubled under Serene Grace.
+
+        Serene Grace doubles every secondary-effect chance. It shifts the THRESHOLD only --
+        the roll still happens either way (`_resolve_proc` always advances), so RNG
+        consumption is unchanged and only the outcome moves. Clamped at 100 so a chance that
+        was already certain stays certain rather than becoming a nonsensical 200, and 0 stays
+        0 so a move with no secondary effect gains none.
+        """
+        state = self.battle_state.get('state')
+        if state is None or getattr(state, 'user_ability', None) != 'Serene Grace':
+            return chance
+        return min(100, chance * 2)
+
     def effect_proc(self, chance: int, apply: Callable[[], bool] | None = None) -> bool:
         """Roll/ask whether a secondary effect proc'd. Emits EffectProc if observable.
 
@@ -243,9 +257,14 @@ class BattleContext(ABC):
         Magikarp that already has a non-volatile status (or freeze in sun) rolls
         the RNG but shows no message, so no token is emitted.
 
+        The chance passes through `secondary_effect_chance` first, which is where Serene
+        Grace doubles it. Every secondary effect in the battle is the USER's — Magikarp only
+        ever uses Splash or Tackle, neither of which has one — so this one site covers the
+        whole ability.
+
         Only call this after confirming the move hit.
         """
-        proc = self._resolve_proc(chance)
+        proc = self._resolve_proc(self.secondary_effect_chance(chance))
         if proc:
             observable = True if apply is None else apply()
             if observable:

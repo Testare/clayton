@@ -34,9 +34,7 @@ Finally, the accuracy of the model might not be as important for some pokemon as
 
 That aside, metronome compass was highly important to getting these tools working at all, and it is important for getting the best possible results from the other tools.
 
-## Actually using Metronome Compass
-
-### What you'll need in game
+## What you'll need in game
 
 In the game, you'll need these: 
 
@@ -45,6 +43,7 @@ In the game, you'll need these:
 * A surf user
 * Lagging Tail
 * A metronome user
+* Highly recommended: Active Roamers
 * Recommended: Pokerus
 
 Hopefully, you've reached the point in the game where you have access to Blackthorn city, and much further: You have to have the national pokedex before you can fully unlock the Safari Zone, which is one of the first requirements for meeting most of the best safari zone pokemon, including Metang. However, all you technically need for this step is access to Blackthorn city.
@@ -52,6 +51,8 @@ Hopefully, you've reached the point in the game where you have access to Blackth
 The only thing you'll really NEED that is not a pokemon is the Lagging Tail. You can find this on Route 47, consequently a route on the way to the Safari Zone. If you lost it somehow or if you prefer, wild slowpoke have a 5% chance to hold one as well, which you can find consistently in Slowpoke well (<Cue surprised pikachu face>). Using RNG manipulation, if you identify your starting seed in there it should be near trivial to manipulate to find a slowpoke that is holding one, and honestly not too hard to just find it just by using thief on them until you find it. This item is very important to ensure your metronome user always moves second.
 
 Other than our main hero pokemon, you'll also need pokemon that know sweet scent to start the encounter and a pokemon that knows surf. The reasons will be pretty obvious soon. I recommend these NOT be your metronome user itself, but it doesn't really matter.
+
+This is also much easier if you have active roamers in your game: The more the better. It'll make it much quicker to identify Seed A. 
 
 I also recommend you get pokerus on one of your pokemon, not necessarily one of the ones you'll use here. Doing this allows you to use Professor Elm for your Elm calls instead of Irwin. I love Irwin, and when the values are E or K he's actually pretty fast, but when it is P Irwin's call takes a looong time, and the key to gathering good data is consistency. Professor Elm's calls all take about the same time, and you can only actually use him for elm calls once one of your pokemon have contracted Pokerus. I followed [this guide](khttps://www.youtube.com/watch?v=uu7nzNycwSs) myself, good luck to you.
 
@@ -71,23 +72,43 @@ Abilities are important, but mostly because of limitations of metronome compass.
 
 The metronome user I chose was a Level 6 Chansey with the ability Natural Cure, and the moves Metronome, Fling, Healing Wish, and Solar Beam. 
 * Chansey has great defense and terrible offense, much more defense than Happiny but not much worse than Blissey, while its offense is notably worse than Blissey. 
-* I can prevent Healing Wish (which faints me), Fling (which loses my lagging tail and ends the run) and solar beam (Strong, super-effective damage into Magikarp) I bred it to have good defense and HP, and low attack and special attack, using vitamins to boost defensive stats as well, though EV training is limited by its low level.  In my use, it very rarely fainted from moves other than its own, and I think only once did it faint a low level magikarp in just two turns (Using Roar of Time). Acquiring this Chansey took work: 
+* I can prevent Healing Wish (which faints me), Fling (which loses my lagging tail and ends the run) and solar beam (Strong, super-effective damage into Magikarp).
+* The ability Natural Cure won't mess with RNG.
+* I bred it to have good defense and HP, and low attack and special attack, using vitamins to boost defensive stats as well, though EV training is limited by its low level. At level 6 these don't matter tooo much, but every little bit helps
+
+In my use, it very rarely fainted from moves other than its own, even after SEVERAL turns, and I think only once did it faint a low level magikarp in just two turns (Using Roar of Time). Acquiring this Chansey took lots of work: 
 * Had to catch a chansey first (Not tooooo hard with RNG manipulation), then catch a 
-* Caught a MALE Clefaiary
-* Trained 
+* Bred it with my perfect ditto and used RNG manipulation to give it good bulk stats.
+* Trained up chansey to level 42, until it knew Fling and Healing Wish
+* Caught a MALE Clefairy
+* Trained the male clefairy to Level 46 until it knew Healing Wish and Metronome
+* Used the "Fling" TM on the male Clefairy (Only 1 per game...). 
+* Bred the male clefairy with the female chansey. Metronome is an egg move, Healing Wish and Fling are level up moves that it learns early because both parents know it. Use RNG manipulation to try and get good bulk and bad offense IVs.
+* Buy TM22 from Goldrenrod, use it to teach this chansey SolarBeam
+* Use a bunch of vitamins
+* Level it up to level 6 in slowpoke well
 
-# ## Setting up a Metronome user in Clayton
+You can see why I consider this step optional. In retrospect... This was probably largely *overkill*. I built a chansey where it wasn't uncommon for me to use all 10 PP for metronome. Since it takes about 2 metronome moves to identify a move in a pool of 20,000 seeds, this chansey could often identify a seed in a pool of more than *trillions*. And while I prevented a few moves that end runs early (2 for sure, 1 only if the magikarp is low level), there are still plenty of other ones.
 
-**Profile → Metronome users → Add.** You need a Pokémon that:
+**I would still recommend a level 6 chansey with natural cure, and maybe use some vitamins if you wish.** This does mean capturing a chansey and another metronome user, then breeding metronome onto the chansey. However, go to whatever lengths you feel are appropriate. A level 1 cleffa will still survive most turn 1's (Most magikarp are < Level 15, and the ones that aren't have a 50% chance to select tackle, and a 5% chance to miss). A level 100 Adamant full-offense Granbull might still miss the first move, select a status move, or even use false swipe, allowing you to get two moves off and potentially identify the seed. I wouldn't recommend these, but they CAN be used if you don't mind wasting more runs.
 
-- knows **Metronome**
-- ideally knows **nothing else** (every extra move adds ambiguity)
-- holds a **Lagging Tail** (so it always moves second, making the opponent's roll readable)
-- has an ability that doesn't interfere
+I'd avoid the ablities Serene Grace, Cute Charm, Hustle, and Magic Guard if you can, since metronome compass is untested with them, but technically speaking the code for them SHOULD work.
 
-Chansey with Natural Cure is the classic. Clayton will warn you about unsuitable choices and
-will *block* ones that make identification impossible — Serene Grace, for instance, changes
-the rolls.
+## Using Clayton
+### Set yourself up in game
+
+Once you have the requirements in game, get into position!
+* Fly to Blackthorn city
+* Add your sweet scent, surf, and metronome user to your party.
+* Give your metronome user the lagging tail, and move it to the first position in your party.
+* Use surf into the lake near the Blackthorn City Gym
+* If you can, move professor Elm (Or Irwin if you don't have pokerus) to the top of your pokegear contacts so he's ready to call .
+* Check your pokegear and make a note of which routes your roamers on are on. It is easier if this is the last screen accessed before you save your game.
+* Save the game!
+
+### Setting up a Metronome user in Clayton
+
+Click the "Profiles" navigation button on the left sidebar, then click "Manage" on the profile you created earlier. There is a table showing metronome users, and a form to add them. Most of the fields are pretty obvious what they need, and the software should warn you if the pokemon you put in is not supported, though make sure to get the details right. 
 
 > **Screenshot:** the Metronome user form, with the suitability warnings.
 

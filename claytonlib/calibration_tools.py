@@ -481,7 +481,7 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     out = output_fn or print  # redirect this driver's own output when run headless
     from claytonlib.metronome_compass import (
         simulate_turn, InteractiveContext, MetronomeBattleState,
-        MetronomeMove, _BATTLE_START_ADVANCES,
+        MetronomeMove, _BATTLE_START_ADVANCES, apply_entry_ability,
     )
     from claytonlib.moves import _moves_by_number
 
@@ -501,6 +501,7 @@ def narrow_candidates(candidates, magikarp_level, opposite_gender, metronome_onl
     # the movepool must: the candidates' precomputed paths were built with it, so narrowing
     # against a differently-configured battle would compare predictions to a battle nobody ran.
     state.user_ability = user_ability
+    apply_entry_ability(state)
     ctx.battle_state["opposite_gender"] = opposite_gender
     ctx.battle_state["state"] = state
     user_move_types = [moves_by_num[118].type_name]

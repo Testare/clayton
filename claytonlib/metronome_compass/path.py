@@ -348,3 +348,21 @@ class MetronomeBattleState:
         c.mk_status = self.mk_status.copy()
         c.user_types = list(self.user_types)
         return c
+
+
+def apply_entry_ability(state: "MetronomeBattleState") -> None:
+    """Apply the user's on-entry ability, once, at battle start.
+
+    Only Intimidate has one here: it drops Magikarp's Attack a stage as the user comes in.
+
+    The battle never reads damage MAGNITUDE -- there is no HP total, only whether the user is
+    provably below full -- so this does not change how hard Tackle hits. It is modelled
+    because stat stages are real state that other effects read and move around (Psych Up,
+    Power Swap, Heart Swap, and the lowering effects themselves), and because leaving a stat
+    stage wrong is the kind of quiet inaccuracy that surfaces much later as an unexplained
+    path divergence.
+
+    Must be called AFTER state.user_ability is set, and only once per battle.
+    """
+    if state.user_ability == "Intimidate":
+        state.target_atk_stage = max(-6, state.target_atk_stage - 1)

@@ -357,8 +357,20 @@ def _eff_nature_power(ctx: 'BattleContext', move: Move) -> bool:
 
 def _mark_user_recoil(ctx: 'BattleContext') -> None:
     """Recoil/crash damage to Chansey → provably not full HP (clears any prior
-    heal). Matters for the HP-knowledge model used by recovery/Belly Drum/etc."""
+    heal). Matters for the HP-knowledge model used by recovery/Belly Drum/etc.
+
+    Magic Guard prevents indirect damage, recoil included, so under it the user does NOT
+    become provably-damaged. That is observable: a recovery move which would have succeeded
+    on the recoil now fails for want of anything to heal -- Take Down then Milk Drink is the
+    canonical case -- and a move failing instead of succeeding changes the advance count.
+
+    Deliberately scoped to recoil and crash damage. Self-inflicted HP costs (Belly Drum,
+    Substitute) are not indirect damage and Magic Guard does not prevent them, so their own
+    call sites still mark the user damaged.
+    """
     state = ctx.battle_state['state']
+    if getattr(state, 'user_ability', None) == 'Magic Guard':
+        return
     state.user_took_damage = True
     state.user_recovered = False
 

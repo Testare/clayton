@@ -100,9 +100,9 @@ class TestFacade(unittest.TestCase):
     def test_prospective_hard_errors_helper(self):
         self.assertEqual(self.api.metronome_user_hard_errors({"name": "x", **_GOOD_USER}), [])
         errs = self.api.metronome_user_hard_errors(
-            {"name": "x", **{**_GOOD_USER, "ability": "Magic Guard"}})
+            {"name": "x", **{**_GOOD_USER, "ability": "Hustle"}})
         self.assertTrue(errs)
-        self.assertTrue(any("Magic Guard" in e for e in errs))
+        self.assertTrue(any("Hustle" in e for e in errs))
 
     def test_list_metronome_species(self):
         species = self.api.list_metronome_species()
@@ -112,16 +112,16 @@ class TestFacade(unittest.TestCase):
         chansey = by_name["Chansey"]
         self.assertIn("Metronome", chansey["moves"])
         self.assertEqual(chansey["gender"], "female_only")
-        self.assertIn("Serene Grace", chansey["blocking_abilities"])
-        self.assertNotIn("Natural Cure", chansey["blocking_abilities"])
-        # Granbull is Intimidate / Quick Feet. Intimidate blocks as of clayton-2ae.5 -- it
-        # shifts where a stat stage hits its floor, which changes whether a lowering effect
-        # procs, which changes the path. Quick Feet does not: the Lagging Tail already makes
-        # the user move second, so its Speed decides nothing. This used to assert neither
-        # blocked, back when unmodelled abilities were permitted with only a warning.
+        # Chansey is Natural Cure / Serene Grace, and BOTH are now supported -- Serene Grace
+        # is modelled as of clayton-2ae.2 -- so nothing on Chansey blocks.
+        self.assertEqual(chansey["blocking_abilities"], [])
+        # Granbull is Intimidate / Quick Feet: Intimidate is modelled (clayton-2ae.9) and
+        # Quick Feet provably cannot matter under the Lagging Tail, so neither blocks.
         granbull = by_name["Granbull"]
-        self.assertEqual(granbull["blocking_abilities"], ["Intimidate"])
-        self.assertNotIn("Quick Feet", granbull["blocking_abilities"])
+        self.assertEqual(granbull["blocking_abilities"], [])
+        # Togekiss is Hustle / Serene Grace. Hustle is still unimplemented, so it blocks --
+        # the one family that currently does.
+        self.assertEqual(by_name["Togekiss"]["blocking_abilities"], ["Hustle"])
 
     def test_remove_metronome_user(self):
         p = self.api.create_profile({"name": "Silver"})
