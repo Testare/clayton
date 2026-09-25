@@ -1,4 +1,4 @@
-# 4. Metronome Compass
+# 5. Metronome Compass
 
 Metronome Compass is the tool for calibrating the general parameters of the statistical model to you and your hardware. Frame rate, delays, how precise our timing is, etc. It boils down to wanting to answer this question: **For a given amount of time (Vector ms), how many frames actually elapse between the game loading its initial RNG seed and the battle RNG state?**
 
@@ -239,4 +239,4 @@ Give the new model a name of some sort, then hit "Save". Make it active to use i
 
 ---
 
-Next: [Safari Chart](05-safari-chart.md)
+Next: [Safari Chart](06-safari-chart.md)

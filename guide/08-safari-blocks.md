@@ -1,4 +1,4 @@
-# 7. Safari blocks
+# 8. Safari blocks
 
 None of the rest matters if your Pokémon cannot appear. Rare Safari Zone species are gated
 behind **blocks** — decorative objects you place in an area — and they only show up once you
@@ -52,4 +52,4 @@ This is also an argument for setting blocks up **early** — well before you pla
 
 ---
 
-Next: [Glossary](08-glossary.md)
+Next: [Glossary](09-glossary.md)

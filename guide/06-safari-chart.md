@@ -1,4 +1,4 @@
-# 5. Safari Chart
+# 6. Safari Chart
 
 Safari Chart answers one question: **which datetime should I boot on, and how long should
 timer 3 be?**
@@ -85,4 +85,4 @@ Charts, their computed data and its size on disk, and your saved targets are all
 
 ---
 
-Next: [Safari Compass](06-safari-compass.md)
+Next: [Safari Compass](07-safari-compass.md)

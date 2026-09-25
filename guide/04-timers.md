@@ -1,4 +1,4 @@
-# 3. Timers and hitting seeds
+# 4. Timers and hitting seeds
 
 Everything Clayton predicts rests on you pressing three buttons at three planned moments. This
 page covers what those moments are and how to set a timer up for them.
@@ -23,11 +23,11 @@ below still applies.
 ## The four moments
 
 ```
-  t0 ───────── t1 ───────── t2 ───────── t3
-  │            │            │            │
+  t0 ────────── t1 ────────── t2 ────────── t3
+  │             │             │             │
   set clock    boot game    load save    Sweet Scent
   start timer  (frame 0)    → SEED A     → SEED B
-               │◄─ timer 1 ─►│◄─ timer 2 ─►│◄─ timer 3 ─►│
+  │◄─ timer 1 ─►│◄─ timer 2 ─►│◄─ timer 3 ─►│
 ```
 
 **t0** — set the DS clock and start the timer.** Set the DS to your target datetime and press
@@ -72,4 +72,4 @@ Stage 3 is the Vector MS - In Safari Compass you'll likely be using one that cam
 
 ---
 
-Next: [Metronome Compass](04-metronome-compass.md)
+Next: [Metronome Compass](05-metronome-compass.md)

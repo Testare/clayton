@@ -1,4 +1,4 @@
-# 8. Glossary
+# 9. Glossary
 
 **Advance frame** — How many times the overworld RNG has ticked since Seed A was generated.
 Driven by what you do, not by the clock: each Elm call is one advance, each Chatot flip is
@@ -79,4 +79,4 @@ your save to pressing Sweet Scent. What Safari Chart chooses for you.
 
 ---
 
-Next: [Troubleshooting](09-troubleshooting.md)
+Next: [Troubleshooting](10-troubleshooting.md)

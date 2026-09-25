@@ -1,4 +1,4 @@
-# 6. Safari Compass
+# 7. Safari Compass
 
 This is the reason the other tools exist - This is the tool that helps you actually perform the capture of the pokemon you want. It tells you which seed A you actually hit, walks
 you to the right advance frame, and once the battle starts, helps you identify what Seed B you hit and maybe even tells you how to catch it.
@@ -202,4 +202,4 @@ These are included in the software, but their usefulness has not yet been determ
 
 ---
 
-Next: [Safari blocks](07-safari-blocks.md)
+Next: [Safari blocks](08-safari-blocks.md)

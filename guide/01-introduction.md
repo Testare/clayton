@@ -68,7 +68,7 @@ These are the general steps you will follow:
   produces the Pokémon you want, then tell Clayton about it.
 - **It won't teach you to hit a seed.** Setting the DS clock, timing the boot, hitting an
   initial seed — that's assumed knowledge.
-- **It won't place your blocks.** See [Safari blocks](07-safari-blocks.md) for what's needed
+- **It won't place your blocks.** See [Safari blocks](08-safari-blocks.md) for what's needed
   and why.
 
 
@@ -80,4 +80,4 @@ These are the general steps you will follow:
 
 ---
 
-Next: [Getting started](02-getting-started.md)
+Next: [Installing Clayton](02-installation.md)
