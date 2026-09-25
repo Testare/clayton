@@ -47,7 +47,7 @@ If your timers aren't set up yet to hit that initial seed and Vector ms, do it n
 
 Once all of that is ready, you can begin!
 
-> **Screenshot:** the New Run header with a target chosen.
+![Safari Compass New Run, with an initial time and Vector ms filled in from a saved target](img/safari-compass-seed-a-new-run-fields.png)
 
 ## Step 1 — Seed A
 
@@ -57,8 +57,12 @@ Once you've loaded into the game, you can open your pokegear really quick to che
 
 Talk to the man at the counter, and get through his text as quick as possible, then run into the safari zone and walk into the grass. NOW open your pokegear and confirm your roamers if you haven't already. Then do elm calls until the seed is identified. Again, if you are done calibrating and just want to find your pokemon, and you didn't hit your seed here, you can reset. Otherwise hit enter/click on the identified seed to lock it in and move to the next step.
 
+![Seed A narrowed to one candidate, showing the observed roamer routes and Elm calls](img/safari-compass-seed-a-narrow-seeds.png)
 
-> **Screenshot:** Seed A identified, showing a key-seed hit.
+*The key-seed line above the inputs is what you are trying to match — routes, then Elm calls. One candidate left means Seed A is pinned.*
+
+
+![Seed A identified, showing the seed, its delay, roamer routes and Elm calls](img/safari-compass-seed-a-identified.png)
 
 ## Step 2 — Seed A advances
 
@@ -69,6 +73,8 @@ The next step is to hit an advance that contains your target pokemon.
 Type the Elm calls you've heard so far. By default this should already contain the calls you did to identify the seed. As you do this the program will narrow down what frame you are on. You can put multiple calls in the input line, but it doesn't narrow down until you hit enter.
 
 If you didn't hit your key seed, there is also an optional field that says "look for <pokemon> near advance." This input is taken for the next step.
+
+![The Seed A advances input, with Elm calls typed in and an optional target-advance field](img/safari-compass-seed-a-advances-input.png)
 
 Once you have given enough calls for Clayton to identify your exact frame (Might not need to be any more than you already have for the Seed A identification), it moves on to planning your route to your pokemon.
 
@@ -93,6 +99,11 @@ It also produces a guide that looks something like this:
 ```
 PEEEP[KPE]!KEP
 ```
+
+![The planned route: current advance frame, the chatot-flip and Elm-call route, and the guide string](img/safari-compass-seed-a-advances-guide.png)
+
+*Both together, as Clayton shows them — the current frame, the route to the target, and the
+guide string with `!` marking where to Sweet Scent.*
 
 Let me explain: **Chatot flips** are used for advancing the game fast. To make it easier to count, a flip is actually 2 chatot screens. You look at the first chatot screen, then flip to the other, and that is 1 chattot flip. Then you go back to the other screen, and flip again, that's 2. It is a lot easier to quickly count to 33 instead of counting to 66 every time you alternate. Of course that means when the number of advances to do is odd, you'll end up with the .5 after the count, for which you just switch to the other chatot and then exist the summary screen.
 
@@ -139,6 +150,11 @@ Now type what you see, one letter/number per turn (Except for the pokemon fleein
 
 You can see this table in the Clayton app itself by opening the full guide, and there is a mini guide on it as well.
 
+![The Seed B panel: candidate seeds above, the observations input and its mini legend below](img/safari-compass-seed-b-general.png)
+
+*The candidate count at the top is what you are driving down. Every character you add filters
+the list; the legend under the input is the same table, abbreviated.*
+
 The pokemon might flee before you catch it. That's fine, and should be expected - If these pokemon were easy to catch, this tool wouldn't be here. Sometimes during calibration runs that's more than okay - It is just as good as a capture if you successfully narrowed it down to 1 seed.
 
 
@@ -158,7 +174,7 @@ If machete finds a path, it will output that path for you, with the next action/
 
 Keep in mind this will not work if you didn't actually find your candidate seed. A false identification could lead to your pokemon fleeing while you follow the machete path, so use with caution and continue inputting the results you are seeing so that if you see an outcome different from the machete path you can expand your search. I have had it happen at least once that machete recommended a path to me that involved throwing mud right away, and then metang fled and I found out I found the wrong seed.
 
-> **Screenshot:** Seed B narrowed to one candidate, with a machete path.
+![Seed B narrowed to a single candidate, with the machete path to catch it](img/safari-compass-seed-b-machete.png)
 
 ### Flee flags
 

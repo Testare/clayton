@@ -48,7 +48,7 @@ Unlike Strategy/Criteria, you can adjust the window without having to recalculat
 `setup_delay_seconds` to `max_target_seconds` bounds the countdown. The lower bound must be
 long enough to actually do your setup — 180 s is a sensible floor.
 
-> **Screenshot:** the New chart form.
+![The New chart form, choosing a strategy, a success criteria and a countdown window](img/safari-chart-new-chart-form.png)
 
 ## Computing the chart
 
@@ -74,7 +74,7 @@ In any case, you'll get tables with rows of different possible targets, which ar
 
 The most important button is "Save target." It saves this target to a collection on the expedition, and you can easily re-use it in the Compass tools.
 
-> **Screenshot:** the ranked targets table.
+![Ranked targets, each row an initial time and Vector ms with its success chance](img/safari-chart-ranked-targets.png)
 
 ## Manage Data
 

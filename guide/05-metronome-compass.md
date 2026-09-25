@@ -114,7 +114,9 @@ Click the "Profiles" navigation button on the left sidebar, then click "Manage" 
 
 Once you have a valid metronome user configured, we can use the compass!
 
-> **Screenshot:** the Metronome user form, with the suitability warnings.
+![The metronome user form with warnings shown beneath an unsuitable choice](img/metronome-compass-add-user-with-errors.png)
+
+*Clayton flags a user it can't calibrate reliably with — here, the reasons are listed as you fill the form in.*
 
 ## Doing a calibration run
 
@@ -161,7 +163,7 @@ Now, back out of the pokegear, go to your pokemon screen and get ready to hit "S
 
 
 
-> **Screenshot:** Seed A narrowing down to a single candidate.
+![Seed A narrowed to one candidate after entering roamer routes and Elm calls](img/metronome-compass-seed-a-narrowing.png)
 
 ### Identify Seed B
 
@@ -188,7 +190,15 @@ If you identify the seed, metronome compass will tell you what metronome moves i
 We have a little bit of an ouroboros situation here: Metronome Compass is used to calibrate models, but it uses a model to determine what seed we expect to hit here. Your first few runs will likely be far from expected, but hopefully as time goes you'll hit closer to the expected target more consistently.
 
 
-> **Screenshot:** the Seed B narrowing questions.
+![The Seed B interview, asking about the battle one turn at a time](img/metronome-compass-seed-b-interview.png)
+
+Once the answers narrow it to a single seed, Clayton shows which one you hit, how far that was
+from the target, and the whole move sequence for it:
+
+![Seed B identified, with its delay and the full turn-by-turn Metronome call list](img/metronome-compass-seed-b-results.png)
+
+*The move list runs past the turns you answered for, so you can keep comparing against what you
+actually saw and confirm the identification was right.*
 
 ### Save the run
 
@@ -235,7 +245,7 @@ You'll see a live preview of the new model against your current active model. Wh
 
 Give the new model a name of some sort, then hit "Save". Make it active to use it for Metronome Compass as well as other tools!
 
-> **Screenshot:** the Calibrate Model preview with the parameter comparison.
+![The Calibrate Model preview, comparing each fitted parameter against the base model](img/metronome-compass-new-model.png)
 
 ---
 

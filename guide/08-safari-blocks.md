@@ -22,7 +22,7 @@ Clayton knows these requirements. Set your Pokémon and area on the expedition a
 
 It can be noted that sometimes you can change other blocks to change which encounter slot a pokemon you are targeting falls into, changing what pokemon you can get shiny from the same seed.
 
-> **Screenshot:** the block-score fields with the requirement shown.
+![The expedition's block-score fields, with the requirement for the chosen species shown](img/safari-blocks-expedition-config-block-score-requirements.png)
 
 ## How much is each block worth.
 

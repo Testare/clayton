@@ -18,7 +18,7 @@ game on a different flashcart, times differently and needs its own profile.
 | Version      | HeartGold or SoulSilver                                   |
 | Console      | Which DS. Worth recording — timing differs between models |
 
-> **Screenshot:** the New Profile form.
+![The New Profile form, with name, trainer name, version and console fields](img/getting-started-new-profile.png)
 
 Once created, you'll have an option to add metronome users to the profile. Don't worry about that for now, we'll cover that in the metronome compass section.
 
@@ -43,7 +43,7 @@ block scores. Charts and saved targets belong to it.
 
 From whatever tool you prefer, like PokeFinder or RNGReporter. When you find a combination of seed and advances that produces the pokemon you want, that is your key seed and the key-seed advances. For example, on my file, seed 0x0C0E02C2 and 81 advances produces a shiny adamant Metang.
 
-> **Screenshot:** the expedition Configure form.
+![The expedition form, showing the key seed and key-seed advances fields](img/getting-started-new-expedition.png)
 
 ## Step 3 — Check the tools are there
 
@@ -53,7 +53,7 @@ Open the expedition. You should see three tools:
 - **⛺🗺️ Safari Chart** — Find Target, Manage Data
 - **⛺🧭 Safari Compass** — New Run, Review Data
 
-> **Screenshot:** the expedition home page with the three tool cards.
+![An expedition's home page, with cards for Metronome Compass, Safari Chart and Safari Compass](img/getting-started-expedition-landing-page.png)
 
 ## What next
 
