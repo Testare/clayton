@@ -31,11 +31,16 @@ class TestEveryReachableAbilityIsClassified(unittest.TestCase):
             self.assertTrue(info.reason.strip(), f"{name} has no reason recorded")
             self.assertEqual(info.name, name)
 
-    def test_unknown_is_unsupported_rather_than_waved_through(self):
+    def test_unknown_warns_rather_than_being_waved_through(self):
         # An ability the registry has never heard of has an unknown effect, and "unknown"
         # must not collapse to "none" -- that is the failure mode this whole file exists for.
-        self.assertIs(ability_info("Levitate").support, AbilitySupport.UNSUPPORTED)
-        self.assertFalse(ability_info("Levitate").is_supported)
+        # It does NOT block, though: "we have not judged this" is a weaker claim than a
+        # named UNSUPPORTED entry's "we judged it, and it breaks the simulation", and
+        # blocking on it would be refusing a run on a guess.
+        info = ability_info("Levitate")
+        self.assertIs(info.support, AbilitySupport.UNKNOWN)
+        self.assertFalse(info.is_supported)
+        self.assertFalse(info.blocks_selection)
 
     def test_no_recorded_ability_is_treated_as_no_effect(self):
         for blank in (None, ""):
@@ -124,6 +129,14 @@ class TestModelsUsesTheRegistry(unittest.TestCase):
             self.assertTrue(errors, f"{ability} should block selection")
             self.assertIn(ability, errors[0])
             self.assertIn("not simulated yet", errors[0])
+
+    def test_an_unregistered_ability_warns_but_does_not_block(self):
+        u = self._user("Levitate")
+        self.assertEqual(u.hard_errors(), [], "an unjudged ability must not block a run")
+        warnings = u.suitability_warnings()
+        self.assertTrue(any("Levitate" in w for w in warnings), warnings)
+        self.assertFalse(any("ability should be" in w for w in warnings),
+                         "reported once, naming the ability -- not also the generic nudge")
 
     def test_no_effect_abilities_never_block(self):
         for name, info in METRONOME_ABILITIES.items():

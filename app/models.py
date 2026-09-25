@@ -31,7 +31,8 @@ _REQUIRED_MOVE = "Metronome"
 # block follows what is actually implemented instead of a parallel hand-maintained set: an
 # ability that gains support stops blocking by virtue of its registry entry changing
 # (clayton-2ae.5). Abilities that provably cannot affect this fight are classified NO_EFFECT
-# there and never blocked.
+# there and never blocked, and one the registry has never heard of is UNKNOWN -- it warns,
+# since "not yet judged" is a weaker claim than "judged, and it breaks the simulation".
 HARD_ERROR_ABILITIES = unsupported_abilities()
 
 
@@ -69,9 +70,19 @@ class MetronomeUser:
                 f"Metronome Compass is built and verified specifically for Natural Cure "
                 f"{_REQUIRED_SPECIES} — using {self.species} may produce errors"
             )
-        if (self.ability and self.ability != _REQUIRED_ABILITY
-                and ability_info(self.ability).is_supported):
-            warnings.append(f"ability should be {_REQUIRED_ABILITY} (this is {self.ability})")
+        if self.ability and self.ability != _REQUIRED_ABILITY:
+            info = ability_info(self.ability)
+            if info.is_supported:
+                warnings.append(
+                    f"ability should be {_REQUIRED_ABILITY} (this is {self.ability})")
+            elif not info.blocks_selection:
+                # UNKNOWN: an ability the registry has never judged. That is a weaker claim
+                # than a named unsupported one, so it warns rather than blocking (the run is
+                # the player's call), but it is never silent -- see metronome_abilities.
+                warnings.append(
+                    f"{info.reason} Metronome Compass may identify the wrong seed with "
+                    f"this user."
+                )
         return warnings
 
     def hard_errors(self) -> list[str]:
@@ -85,12 +96,16 @@ class MetronomeUser:
         knowing Metronome and not holding a Lagging Tail moved here from
         suitability_warnings (round 9 feedback) — Metronome Compass can't calibrate off a
         user that can't use the move or won't hold still for the timing check, so these
-        are hard blocks, not advisory."""
+        are hard blocks, not advisory.
+
+        Only a REGISTERED unsupported ability (Cute Charm) blocks. An ability the registry
+        has never judged warns from suitability_warnings instead."""
         errors: list[str] = []
         info = ability_info(self.ability)
-        if not info.is_supported:
+        if info.blocks_selection:
             # The registry's own reason, so the message says what this specific ability does
-            # to the battle rather than one generic sentence for every blocked ability.
+            # to the battle rather than one generic sentence for every blocked ability. Only
+            # a NAMED unsupported ability lands here -- an unrecognised one warns instead.
             errors.append(
                 f"{self.ability} is not simulated yet — {info.reason} "
                 f"A metronome user with this ability can't be used for calibration."

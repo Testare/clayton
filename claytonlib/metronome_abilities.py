@@ -22,9 +22,11 @@ pinned by tests/test_metronome_abilities.py, so a change that invalidates one fa
 * The user always moves second because of the Lagging Tail, so its Speed never decides
   anything.
 
-Support levels feed app.models: UNSUPPORTED is what blocks SELECTION in Metronome Compass.
-It never blocks CREATING the user — people must still be able to record the Pokemon they own
-(clayton-b42.10.2).
+Support levels feed app.models. UNSUPPORTED — an ability the registry names and says WOULD
+change this battle — is what blocks SELECTION in Metronome Compass. UNKNOWN, an ability the
+registry has never heard of, only warns: it is a data-drift signal rather than a known-bad
+simulation, and refusing to run on it would be refusing on a guess. Neither blocks CREATING
+the user — people must still be able to record the Pokemon they own (clayton-b42.10.2).
 """
 from __future__ import annotations
 
@@ -46,6 +48,11 @@ class AbilitySupport(Enum):
     """It WOULD change this battle and is not implemented. Blocks selection, because a
     silently-wrong path is worse than a refusal: it yields a wrong seed and a wrong model."""
 
+    UNKNOWN = "unknown"
+    """Not in the registry at all, so its effect here has never been judged. Warns rather
+    than blocking: unlike UNSUPPORTED we have no finding that it breaks anything, and the
+    player is better placed than a guess to decide whether to spend a run on it."""
+
 
 @dataclass(frozen=True)
 class AbilityInfo:
@@ -55,7 +62,13 @@ class AbilityInfo:
 
     @property
     def is_supported(self) -> bool:
-        return self.support is not AbilitySupport.UNSUPPORTED
+        """MODELLED or NO_EFFECT — the simulation is known to be right for this ability."""
+        return self.support in (AbilitySupport.MODELLED, AbilitySupport.NO_EFFECT)
+
+    @property
+    def blocks_selection(self) -> bool:
+        """Only a NAMED unsupported ability blocks. An UNKNOWN one warns (see the enum)."""
+        return self.support is AbilitySupport.UNSUPPORTED
 
 
 def _info(name, support, reason):
@@ -126,9 +139,11 @@ METRONOME_ABILITIES: dict[str, AbilityInfo] = {info.name: info for info in (
 def ability_info(name: str | None) -> AbilityInfo:
     """The registry entry for `name`.
 
-    An unknown ability is reported UNSUPPORTED rather than waved through: the whole point of
+    An unknown ability is reported UNKNOWN rather than waved through: the whole point of
     this registry is that nothing is silently ignored, and the UI only ever offers abilities
     the chosen species actually has, so an unrecognised one means the data moved under us.
+    It WARNS rather than blocking, though — "we have not looked at this" is a weaker claim
+    than UNSUPPORTED's "we looked, and it breaks the simulation".
     `None` (no ability recorded) is treated as no effect, matching the historical default.
     """
     if name is None or name == "":
@@ -136,9 +151,9 @@ def ability_info(name: str | None) -> AbilityInfo:
     known = METRONOME_ABILITIES.get(name)
     if known is not None:
         return known
-    return _info(name, AbilitySupport.UNSUPPORTED,
+    return _info(name, AbilitySupport.UNKNOWN,
                  f"{name} is not in the metronome-ability registry, so its effect on this "
-                 f"battle is unknown and cannot be assumed to be nothing.")
+                 f"battle has never been checked and cannot be assumed to be nothing.")
 
 
 def unsupported_abilities() -> frozenset[str]:
