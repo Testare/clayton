@@ -2,6 +2,10 @@
 
 Step by step, from a clean Windows machine to `Clayton.exe`.
 
+> You may not need this at all: the
+> [Releases page](https://github.com/Testare/clayton/releases) carries a prebuilt
+> `Clayton-windows.exe`. This is for building it yourself.
+
 > This path has **not been tested** — it was written from PyInstaller's and pywebview's
 > documented behaviour, with the platform-independent parts of the spec verified by a real
 > build on Linux. If something here is wrong, the "If it goes wrong" section at the bottom

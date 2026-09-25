@@ -34,6 +34,13 @@ launcher — the classic symptom being a duplicate, generic-icon entry in the ta
 On Windows the same function sets an explicit **AppUserModelID**; without one the shell groups
 the window under the host Python interpreter and shows *its* icon rather than ours.
 
+## Releases
+
+`.github/workflows/build.yml` builds all three platforms and publishes the bare
+executables to a GitHub Release — `Clayton-windows.exe`, `Clayton-macos`, `Clayton-linux`.
+Run it from the Actions tab (tagged from `VERSION`, marked a prerelease by default) or push
+a `v*` tag. Release notes come from `packaging/RELEASE_NOTES.md`.
+
 ## Linux — Nix (recommended)
 
 ```

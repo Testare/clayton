@@ -1,0 +1,166 @@
+name: Build and release
+
+# Builds Clayton for Windows, Linux and macOS and publishes the executables to a GitHub
+# Release, so they can be linked and downloaded like any other project's binaries.
+#
+# Run it by hand from the Actions tab, or push a tag like v0.1.0. By hand, the tag comes from
+# the VERSION file and the release is marked a prerelease unless you say otherwise.
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: "Mark the release as a prerelease"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+# Creating a release needs write access to repository contents.
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        shell: bash
+        run: |
+          # A tag push names itself; a manual run takes the version from VERSION, which is
+          # the single place the number lives (app/_version.py reads the same file).
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="v$(tr -d '[:space:]' < VERSION)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $tag"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false        # one platform failing should not hide the others' results
+      matrix:
+        include:
+          - os: windows-latest
+            asset: Clayton-windows.exe
+            built: dist/Clayton.exe
+          - os: ubuntu-latest
+            asset: Clayton-linux
+            built: dist/Clayton
+          - os: macos-latest
+            asset: Clayton-macos
+            built: dist/Clayton
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # PyInstaller's Linux build links against the system GTK/WebKit stack, so the builder
+      # needs them present even though it never opens a window.
+      - name: Install Linux GUI libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgirepository1.0-dev libcairo2-dev gir1.2-gtk-3.0 \
+                                  gir1.2-webkit2-4.1 libgtk-3-0
+
+      - name: Install build deps
+        run: pip install pywebview pyinstaller
+
+      # Catches an import-level break before spending minutes on the freeze. The GUI can't
+      # open on a CI runner, so this only proves the modules load and the data files resolve.
+      - name: Smoke-test the imports
+        run: python -c "import app.main, app.facade, claytonlib; print('imports OK')"
+
+      - name: Build
+        run: pyinstaller packaging/clayton.spec
+
+      # The spec builds ONE FILE, so the artifact is a single executable with no folder and
+      # no archive around it. Renamed per platform because a Release's assets share one
+      # namespace and three files called "Clayton" would collide.
+      - name: Name the executable for its platform
+        shell: bash
+        run: |
+          if [ ! -f "${{ matrix.built }}" ]; then
+            echo "Expected ${{ matrix.built }}. Contents of dist:"
+            ls -lR dist || true
+            exit 1
+          fi
+          mkdir -p out
+          cp "${{ matrix.built }}" "out/${{ matrix.asset }}"
+          chmod +x "out/${{ matrix.asset }}" || true
+          ls -l out
+
+      # Passed between jobs as an artifact (which GitHub always zips); the release job
+      # unpacks it and attaches the bare executable.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    if: always() && needs.build.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+          merge-multiple: true      # flatten to one directory of bare executables
+
+      - name: Show what will be published
+        shell: bash
+        run: ls -l downloaded
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Release notes live in a reviewable file rather than inline here: a heredoc inside
+          # a YAML block scalar has to sit at column 0 to terminate, which makes it a trap.
+          flag=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && \
+             [ "${{ inputs.prerelease }}" = "true" ]; then
+            flag="--prerelease"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists - replacing its assets."
+            gh release upload "$TAG" downloaded/* --clobber
+          else
+            gh release create "$TAG" downloaded/* \
+              --title "Clayton $TAG" \
+              --notes-file packaging/RELEASE_NOTES.md $flag
+          fi
+
+      - name: Write the run summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        shell: bash
+        run: |
+          url=$(gh release view "$TAG" --json url -q .url)
+          {
+            echo "## Clayton $TAG"
+            echo
+            echo "### [Release page]($url)"
+            echo
+            echo "| Asset | Size |"
+            echo "|---|---|"
+            for f in downloaded/*; do
+              printf "| \`%s\` | %s |\n" "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

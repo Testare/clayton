@@ -54,7 +54,7 @@ Other than our main hero pokemon, you'll also need pokemon that know sweet scent
 
 This is also much easier if you have active roamers in your game: The more the better. It'll make it much quicker to identify Seed A. 
 
-I also recommend you get pokerus on one of your pokemon, not necessarily one of the ones you'll use here. Doing this allows you to use Professor Elm for your Elm calls instead of Irwin. I love Irwin, and when the values are E or K he's actually pretty fast, but when it is P Irwin's call takes a looong time, and the key to gathering good data is consistency. Professor Elm's calls all take about the same time, and you can only actually use him for elm calls once one of your pokemon have contracted Pokerus. I followed [this guide](khttps://www.youtube.com/watch?v=uu7nzNycwSs) myself, good luck to you.
+I also recommend you get pokerus on one of your pokemon, not necessarily one of the ones you'll use here. Doing this allows you to use Professor Elm for your Elm calls instead of Irwin. I love Irwin, and when the values are E or K he's actually pretty fast, but when it is P Irwin's call takes a looong time, and the key to gathering good data is consistency. Professor Elm's calls all take about the same time, and you can only actually use him for elm calls once one of your pokemon have contracted Pokerus. I followed [this guide](https://www.youtube.com/watch?v=uu7nzNycwSs) myself, good luck to you.
 
 Finally, you need a metronome user.
 

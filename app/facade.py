@@ -352,6 +352,11 @@ class Facade:
 
     # -- reference data ---------------------------------------------------
 
+    def app_version(self) -> str:
+        """Clayton's version string, for the window header. See app/_version.py."""
+        from app._version import version
+        return version()
+
     def list_safari_areas(self) -> list[str]:
         """The Safari Zone area names, for the expedition-config dropdown."""
         from claytonlib.safari_encounters import safari_areas

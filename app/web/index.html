@@ -31,8 +31,11 @@
     background:var(--surface);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
   .brand .dot{width:12px;height:12px;border-radius:50%;background:var(--grass)}
   .brand b{font-size:16px;letter-spacing:.02em}
-  .topbar{grid-area:top;display:flex;align-items:center;padding:0 22px;
+  .topbar{grid-area:top;display:flex;align-items:center;justify-content:space-between;
+    padding:0 22px;gap:14px;
     background:var(--surface);border-bottom:1px solid var(--line);color:var(--ink-soft);font-size:13px}
+  /* Right-aligned so the title stays the thing you read first. */
+  .topbar .version{font-family:ui-monospace,monospace;font-size:12px;opacity:.75}
   nav{grid-area:nav;background:var(--surface);border-right:1px solid var(--line);padding:10px 8px;
     display:flex;flex-direction:column;gap:3px}
   nav button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 10px;
@@ -187,7 +190,7 @@
 <body>
 <div class="app">
   <div class="brand"><span class="dot"></span><b>Clayton</b></div>
-  <div class="topbar" id="topbar">HGSS Safari Zone RNG toolkit</div>
+  <div class="topbar" id="topbar"><span>HGSS Safari Zone RNG toolkit</span><span class="version" id="app-version"></span></div>
   <nav id="nav">
     <button data-view="expeditions">⛺ Expeditions</button>
     <button data-view="profiles">🎮 Profiles</button>
@@ -4027,8 +4030,17 @@ async function removeUser(profileId, userId){
 }
 
 // --- boot -----------------------------------------------------------------
+// The header's version label. Best-effort and deliberately non-blocking: it is decoration,
+// so a failure here must not stop the app rendering.
+async function showVersion(){
+  const el = $("app-version");
+  if(!el) return;
+  try{ el.textContent = "v" + await api("app_version"); }
+  catch(err){ el.textContent = ""; }
+}
+
 let started = false;
-function boot(){ if(started) return; started = true; setView("expeditions"); }
+function boot(){ if(started) return; started = true; showVersion(); setView("expeditions"); }
 window.addEventListener("pywebviewready", boot);
 if(window.pywebview) boot();
 </script>

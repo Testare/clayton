@@ -30,4 +30,4 @@ include = ["claytonlib*", "app*"]
 # resource loading (claytonlib) and the pywebview window (app) resolve them.
 claytonlib = ["basedata/*.json"]
 app = ["web/*.html", "web/*.css", "web/*.js", "resources/*.json", "resources/*.png",
-       "resources/*.ico"]
+       "resources/*.ico", "resources/VERSION"]
