@@ -34,7 +34,7 @@ Criteria is what determines if the given strategy counts as successful.
 | **Lasted N balls**             | Caught, or N balls without fleeing         |
 
 * **Captured** is the most straightforward - Just using the configured strategy, will this seed lead to a capture
-* **Lasted N turns/balls** is a little less straightforward - Instead of defining success as a capture alone, it defines success as a pokemon not fleeing for N turns/after N balls were thrown. This is not as useful when you're actually trying to catch a pokemon, but when using Safari Compass runs to calibrate the model, this is useful for that, since a pokemon that stick around longer means you are more likely to identify your seed.
+* **Lasted N turns/balls** is a little less straightforward - Instead of defining success as a capture alone, it defines success as a pokemon not fleeing for N turns/after N balls were thrown. This is not as useful when you're actually trying to catch a pokemon, but when using Safari Compass runs to calibrate the model, this is useful for that, since a pokemon that sticks around longer means you are more likely to identify your seed.
 * Finally **Machete path after N balls** is probably the most useful/expensive "Criteria". **Machete** is a Safari Compass tool that simulates every possible action you take for a number of turns, looking for a series of actions that leads to a capture. It is very powerful, leading to many captures that would not be possible otherwise, but also computationally expensive, and it requires you to know exactly what Seed B you are on in order to work. So in general, you want to wait until a certain number of balls/random events have occurred, giving you a chance to identify the seed. This "Criteria" waits until N balls have been thrown (according to the given strategy), and then runs machete to see if there is a path to success. You can configure how far ahead machete looks, but the longer you configure it to look, it takes exponentially more time to actually check each seed.
 
 ### The window
@@ -52,7 +52,7 @@ long enough to actually do your setup — 180 s is a sensible floor.
 
 ## Computing the chart
 
-When the chart is created and the window is set, you can hit "Compute chart" to begin the process of finding candidate seeds and calculating whether they succeed or not. For most strategy and criteria, this is relatively fast, even over a window of several minutes, but for charts with the machete criteria configured, this can actually take hours to calculate.
+When the chart is created and the window is set, you can hit "Compute chart" to begin the process of finding candidate seeds and calculating whether they succeed or not. For most strategies and criteria, this is relatively fast, even over a window of several minutes, but for charts with the machete criteria configured, this can actually take hours to calculate.
 
 While you can't change strategy/criteria without needing a whole new chart, you CAN adjust the window. If you are creating a chart with the machete algorithm, I suggest starting with a narrow window (190-200, for example), and then once you have a target to test against you can increase this window drastically and run compute chart in the background while you use that initial target in Safari Compass. You are free to navigate between other tools while the chart is computing as well.
 
@@ -68,7 +68,7 @@ You can also try creating a chart with a low machete value and then one with a h
 
 **Rank targets** scores every candidate boot time and time within the currently configured chart window.
 
-This take some small amount of time, and ranks combinations of "initial times" (Seed A times) and vector ms on their likelihood of success given the chart and model. The report first generated shows top results over all the initial times, but you can also use "Find best target at specific time" if you want to find the best time for a specific date/time combination.
+This takes some small amount of time, and ranks combinations of "initial times" (Seed A times) and vector ms on their likelihood of success given the chart and model. The report first generated shows top results over all the initial times, but you can also use "Find best target at specific time" if you want to find the best time for a specific date/time combination.
 
 In any case, you'll get tables with rows of different possible targets, which are combinations of initial times and vector ms. It gives a breakdown of how likely "success" is predicted to be at that location, and gives you the ability to examine the target to see the seeds that contribute to that number, broken up by RTC second and the calculated likelihood of hitting that seed.
 
@@ -78,7 +78,7 @@ The most important button is "Save target." It saves this target to a collection
 
 ## Manage Data
 
-Charts, their computed data and its size on disk, and your saved targets are all saved data that be managed with the "Manage data" tool.
+Charts, their computed data and its size on disk, and your saved targets are all saved data that can be managed with the "Manage data" tool.
 
 - **Delete computed data** deletes the computed data; the chart stays and can rebuild.
 - **Delete chart** also removes its computed data (unless another chart in Clayton shares it), and then deletes the chart itself from the expedition.

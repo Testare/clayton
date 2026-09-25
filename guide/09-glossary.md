@@ -13,7 +13,7 @@ of the chart now.
 **Chart** — A strategy paired with a success condition, scoped to an expedition. What Safari
 Chart ranks targets against.
 
-**Chatot flip** — Looking at a chatot's summary screen so that it plays the recorded chattot
+**Chatot flip** — Looking at a chatot's summary screen so that it plays the recorded chatot
 cry, twice. We count it twice so that we can count quickly when flipping between two chatot 
 summary screens: Counting after pressing up AND down on the d-pad instead of pressing up, counting, pressing down, counting.
 Bulk of any long approach. Not verifiable, which is why routes finish on Elm calls instead.
@@ -35,7 +35,7 @@ on a ball, `F3` flees within three turns whatever you do, and `F!` means it has 
 fled and is waiting for you to type `F`.
 
 **Initial time** — The DS clock datetime you aim to hit **Seed A** on. NOT the exact time 
-you boot the game on the DS, or set the time to, but exact time you should load the file.
+you boot the game on the DS, or set the time to, but the exact time you should load the file.
 
 **Jitter (σ)** — The spread of the landing frame, in frames. Yours, from your calibration.
 Sets how wide every search has to be; smaller is better.
@@ -60,7 +60,7 @@ properties of the physical setup.
 times it covers. High is good; it's why precompute is affordable.
 
 **RTC second** — The DS wall-clock second a seed was made on. One of the two coordinates that
-fix a seed;  Misses are independently of frame.
+fix a seed; misses are independent of frame.
 
 **Safari offset** — How far the Safari Zone's extra loading screen and actions push the landing frame
 compared to the metronome path. Fit separately, in Safari Compass's Calibrate Model.
@@ -69,7 +69,7 @@ compared to the metronome path. Fit separately, in Safari Compass's Calibrate Mo
 encounters, roamers, Elm calls.
 
 **Seed B** — The battle seed, generated when the encounter fires (t3). Decides wild pokemon's
-actions and all random effects that happens in the battle.
+actions and all random effects that happen in the battle.
 
 **Vector delay** — The realized difference in delays between Seed B and Seed A — what actually
 happened. Internally `dF`. This is the quantity the calibration model fits.

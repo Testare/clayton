@@ -6,8 +6,8 @@ page covers what those moments are and how to set a timer up for them.
 ## Seed A and Seed B
 
 A core concept going forward is the concept of Seed A and Seed B.
-* **Seed A** is the seed that is generated when you start the game. It seeds the RNG state that determines what pokemon you can encounter. When Seed A is your "Key seed", and you perform your key-seed advances, you'll be guarnateed to encounter the pokemon you are hunting.
-* **Seed B** is the seed that generated when the encounter with the pokemon starts. This RNG state determines nothing about the pokemon after the encounter is done, but during the encounter it determines the moves it uses, whether they miss, whether secondary effects proc, and whether balls shake/capture. In the safari zone, it also determines if the pokemon runs away, and whether bait or mud "crit".
+* **Seed A** is the seed that is generated when you start the game. It seeds the RNG state that determines what pokemon you can encounter. When Seed A is your "Key seed", and you perform your key-seed advances, you'll be guaranteed to encounter the pokemon you are hunting.
+* **Seed B** is the seed that is generated when the encounter with the pokemon starts. This RNG state determines nothing about the pokemon after the encounter is done, but during the encounter it determines the moves it uses, whether they miss, whether secondary effects proc, and whether balls shake/capture. In the safari zone, it also determines if the pokemon runs away, and whether bait or mud "crit".
 
 To catch the pokemon you want, you'll need to hit a pretty specific Seed A. Don't worry about needing to hit two seeds in a row though: You're not going to be trying to hit a specific Seed B. You're going to hit around an _area_ of seeds.
 
@@ -30,7 +30,7 @@ below still applies.
   │◄─ timer 1 ─►│◄─ timer 2 ─►│◄─ timer 3 ─►│
 ```
 
-**t0** — set the DS clock and start the timer.** Set the DS to your target datetime and press
+**t0 — set the DS clock and start the timer.** Set the DS to your target datetime and press
 the clock's confirm button at the instant EonTimer starts. Then reset the DS, ready to boot.
 
 **t1 — boot the game.** Timer 1 elapses; you press A on the boot screen. The delay counter
@@ -45,12 +45,12 @@ RNG advances, get into position, and press Sweet Scent on the beep. An animation
 ## Vector ms/Vector Delay
 
 **Vector ms is the length of timer 3** — the countdown from loading your save to pressing
-Sweet Scent, in milliseconds. It is the number clayton tries to model, it is the single number Safari Chart is choosing for you. It is called "Vector ms" because a vector is an arrow between two points, and this is the time (in ms/milliseconds) from Seed A to Seed B.
+Sweet Scent, in milliseconds. It is the number Clayton tries to model, it is the single number Safari Chart is choosing for you. It is called "Vector ms" because a vector is an arrow between two points, and this is the time (in ms/milliseconds) from Seed A to Seed B.
 
 It must be long enough to actually do the required setup:
-* Enter the safari zone and walking into position
+* Enter the safari zone and walk into position
 * Identify your seed and your advances
-* Make you advances 
+* Make your advances 
 * Get ready to press sweet scent
 
 Clayton currently assumes this will take around 3 minutes, so chart defaults to a minimum of 180,000 milliseconds for Vector ms. If you can do this faster you can lower it, or if you need more time you can raise it.

@@ -26,7 +26,7 @@ It is recommended to position your target area in front of the entrance to reduc
 
 For the sake of simplicity, this guide is going to assume you are catching a pokemon in grass or surf. I have not tried this with fishing pokemon, but the animation is quite different from sweet scent, so I assume the timings will be quite different.
 
-My recommendatino would be that you do not use safari runs using sweet scent and safari runs using the fishing pole together on the same calibration. You can either manually exclude all safari fishing runs while calibrating normally, and only fishing runs while calibrating model for fishing (easy enough using tag exclusiions), or you can create an entirely different profile for use with fishing. I'll explain model calibrations later.
+My recommendation would be that you do not use safari runs using sweet scent and safari runs using the fishing pole together on the same calibration. You can either manually exclude all safari fishing runs while calibrating normally, and only fishing runs while calibrating model for fishing (easy enough using tag exclusions), or you can create an entirely different profile for use with fishing. I'll explain model calibrations later.
 
 ## Safari Compass Run
 ### Setting yourself up in game
@@ -37,9 +37,9 @@ My recommendatino would be that you do not use safari runs using sweet scent and
 * Use your repel if you are catching pokemon in grass.
 * Save, close the game, and get ready to go.
 
-### Get clayton ready
+### Get Clayton ready
 
-Choose a target. You can choose from your saved targets, or manually enter the initial time and Vetor ms.
+Choose a target. You can choose from your saved targets, or manually enter the initial time and Vector ms.
 
 Put the roamer starting positions from the previous step into their fields, adjust the delay/second config to your liking, and hit generate. It'll show you where the roamers need to be to indicate you might've hit your key seed.
 
@@ -105,28 +105,28 @@ PEEEP[KPE]!KEP
 *Both together, as Clayton shows them — the current frame, the route to the target, and the
 guide string with `!` marking where to Sweet Scent.*
 
-Let me explain: **Chatot flips** are used for advancing the game fast. To make it easier to count, a flip is actually 2 chatot screens. You look at the first chatot screen, then flip to the other, and that is 1 chattot flip. Then you go back to the other screen, and flip again, that's 2. It is a lot easier to quickly count to 33 instead of counting to 66 every time you alternate. Of course that means when the number of advances to do is odd, you'll end up with the .5 after the count, for which you just switch to the other chatot and then exist the summary screen.
+Let me explain: **Chatot flips** are used for advancing the game fast. To make it easier to count, a flip is actually 2 chatot screens. You look at the first chatot screen, then flip to the other, and that is 1 chatot flip. Then you go back to the other screen, and flip again, that's 2. It is a lot easier to quickly count to 33 instead of counting to 66 every time you alternate. Of course that means when the number of advances to do is odd, you'll end up with the .5 after the count, for which you just switch to the other chatot and then exit the summary screen.
 
-This makes it easier to not mess up your count, but it is still not difficult to mess up. That's why we try to reserve a few elm calls at the end so you can be confident you counted correctly. It is usually 3, but if you are very close to your frame it might be less or more (If chatot flips would be 1 or less, we just let you do more elm calls). There is a setting preferences if you prefer more or less elm calls at the end.
+This makes it easier to not mess up your count, but it is still not difficult to mess up. That's why we try to reserve a few elm calls at the end so you can be confident you counted correctly. It is usually 3, but if you are very close to your frame it might be less or more (If chatot flips would be 1 or less, we just let you do more elm calls). There is a setting in preferences if you prefer more or less elm calls at the end.
 
-That is what the guide tells you: It shows the elm calls immediately preceding your target, then the elm calls it expects you to hear in the brackets, and then an exclaimation point to indicate you should use sweet scent before advancing further, and then also some calls after the sweet scent so you can know if you missed.
+That is what the guide tells you: It shows the elm calls immediately preceding your target, then the elm calls it expects you to hear in the brackets, and then an exclamation point to indicate you should use sweet scent before advancing further, and then also some calls after the sweet scent so you can know if you missed.
 
-For the example guide above, if you did chatot flips but thought you might be off by 1, then you call elm and you get his P response then his E response, you can reasonably determine that you probably did half a chatot flip too many and hit sweet scent here instead of doing that last elm call. Likewise, if you get PKP, you can guess that you actually did one chattot flip too little, and do that last extra elm call.
+For the example guide above, if you did chatot flips but thought you might be off by 1, then you call elm and you get his P response then his E response, you can reasonably determine that you probably did half a chatot flip too many and hit sweet scent here instead of doing that last elm call. Likewise, if you get PKP, you can guess that you actually did one chatot flip too few, and do that last extra elm call.
 
-Now that you've done this, back out of the pokgear, go to the pokemon summary screen and get ready to press sweet scent. This was a lot to do relatively quickly, and now you just have to wait for Timer 3 to go off!
+Now that you've done this, back out of the pokegear, go to the pokemon summary screen and get ready to press sweet scent. This was a lot to do relatively quickly, and now you just have to wait for Timer 3 to go off!
 
 ### When the margin is ambiguous
 
-When picking a target frame, clayton filters routes whose final Elm calls read the same a frame or two either side — where a miscount would be invisible. For example, if the closest target frame would lead to a guide like this:
+When picking a target frame, Clayton filters routes whose final Elm calls read the same a frame or two on either side — where a miscount would be invisible. For example, if the closest target frame would lead to a guide like this:
 > PEPKE[EEE]!EKP
 
 How would the 3 elm calls let you know you hit your seed? If you get 3 E responses you could be one frame early OR late in this particular case.
 
-Just thought you ought to know in case the frame it finds is further away than you would expected.
+Just thought you ought to know in case the frame it finds is further away than you would expect.
 
 ## Seed B - THE ENCOUNTER
 
-Once timer 3 goes off fire off sweet scent! If you hit your key seed, your target pokemon should be staring at you now. If you didn't hit your key seed, another pokemon of the same species should be right there. If not, either your advances messed up, your blocks are messed up, or Clayton's code is messed up (oops!).
+Once timer 3 goes off, fire off sweet scent! If you hit your key seed, your target pokemon should be staring at you now. If you didn't hit your key seed, another pokemon of the same species should be right there. If not, either your advances messed up, your blocks are messed up, or Clayton's code is messed up (oops!).
 
 Now we try to identify what seed B you hit. There is an input line that records what action you took and its outcome in a concise format - Each character basically corresponds to one outcome, one message.
 
@@ -158,11 +158,11 @@ the list; the legend under the input is the same table, abbreviated.*
 The pokemon might flee before you catch it. That's fine, and should be expected - If these pokemon were easy to catch, this tool wouldn't be here. Sometimes during calibration runs that's more than okay - It is just as good as a capture if you successfully narrowed it down to 1 seed.
 
 
-You can type as many letters as you want before hitting enter. Once you do, it will filter seeds that do not match from the results. Keep in mind the initial results are determined by the model, but your seed B might very well might be outside it. If all the seeds are filtered out, do not despair, just widen the search until it finds a possible seed.
+You can type as many letters as you want before hitting enter. Once you do, it will filter seeds that do not match from the results. Keep in mind the initial results are determined by the model, but your seed B might very well be outside it. If all the seeds are filtered out, do not despair, just widen the search until it finds a possible seed.
 
 ### Wait I missed that...
 
-If you chose an action but forgot to watch for the outcome (You threw bait, but didn't remark if Metang was "easting" or "busy eating"), you can use a "?" character to precede your action to indicate you aren't sure the outcome was what you typed. In this example, you could type "?b" or "?B", both function the same. ?0 indicates a ball thrown with an uncertain outcome (though obviously not capture), ?m indicates mud thrown, etc. It won't narrow out many candidates (except ones where metang fled before you could throw), but it keeps the RNG state tracking on the right course as you make more observations.
+If you chose an action but forgot to watch for the outcome (You threw bait, but didn't remark if Metang was "eating" or "busy eating"), you can use a "?" character to precede your action to indicate you aren't sure the outcome was what you typed. In this example, you could type "?b" or "?B", both function the same. ?0 indicates a ball thrown with an uncertain outcome (though obviously not capture), ?m indicates mud thrown, etc. It won't narrow out many candidates (except ones where metang fled before you could throw), but it keeps the RNG state tracking on the right course as you make more observations.
 
 ### Machete
 
