@@ -22,6 +22,7 @@ from dataclasses import replace
 
 from claytonlib.compass import CompassSafariInput, calibrated_candidates, posteriors
 from claytonlib.compass._core import _apply_action
+from claytonlib.compass._display import _balls_remaining
 from claytonlib.compass._types import CompassAction, ParseError, UndoAction, parse_input
 from claytonlib.safari import SafariStep, safari_pokemon_by_name
 
@@ -151,7 +152,9 @@ def seed_b(exp: dict, model, params: dict) -> dict:
     path = (params.get("path") or "").strip()
     parsed = parse_input(path) if path else []
     if isinstance(parsed, ParseError):
-        return {"path_valid": False, "count": 0, "total": total, "candidates": [], "terminal": None}
+        return {"path_valid": False, "count": 0, "total": total, "candidates": [],
+                "terminal": None, "balls_remaining": inputs.options.starting_ball_count,
+                "starting_ball_count": inputs.options.starting_ball_count}
 
     actions = [a for a in parsed if isinstance(a, (CompassAction, UndoAction))]
     # Jane offload isn't wired up here (draft2: "Jane might not be an immediate priority") --
@@ -171,6 +174,14 @@ def seed_b(exp: dict, model, params: dict) -> dict:
         "path_valid": True, "count": len(current), "total": total, "terminal": terminal,
         "candidates": [_row_json(ctx, seed, frame, meta, post, exp.get("pokemon"), show_flee)
                        for ctx, seed, frame in ranked[:limit]],
+        # Safari Balls left, the same number the notebook's status block printed. Derived
+        # from the path on every call (like everything else here) rather than tracked in the
+        # UI, so it can't drift from the candidate contexts -- a surviving candidate's own
+        # balls_remaining is authoritative, with a fall back to counting observed throws for
+        # when the last observation eliminated everything.
+        "balls_remaining": _balls_remaining(current, actions,
+                                            inputs.options.starting_ball_count),
+        "starting_ball_count": inputs.options.starting_ball_count,
     }
 
     if len(current) == 1 and terminal is None:

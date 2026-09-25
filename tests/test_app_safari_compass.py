@@ -48,6 +48,28 @@ class TestSeedB(unittest.TestCase):
         fled = seed_b(_EXP, _model(), {**_PARAMS, "path": "bF"})
         self.assertEqual(fled["terminal"], "fled")
 
+    def test_balls_remaining_counts_only_throws(self):
+        # Bait and mud are free; every 0-3 and a capture spends one ball.
+        self.assertEqual(seed_b(_EXP, _model(), {**_PARAMS, "path": ""})["balls_remaining"], 30)
+        self.assertEqual(seed_b(_EXP, _model(), {**_PARAMS, "path": "bBmM"})["balls_remaining"], 30)
+        self.assertEqual(seed_b(_EXP, _model(), {**_PARAMS, "path": "bb0321"})["balls_remaining"], 26)
+        # An uncertain throw ("?0") still consumed a ball.
+        self.assertEqual(seed_b(_EXP, _model(), {**_PARAMS, "path": "?0?0"})["balls_remaining"], 28)
+
+    def test_balls_remaining_survives_an_eliminating_observation(self):
+        # Once a path has eliminated every candidate there is no context left to read the
+        # count off, so seed_b's helper falls back to counting the observed throws -- it must
+        # still be right, since that is exactly when the player is deciding whether to widen.
+        from app.safari_compass import _balls_remaining
+        from claytonlib.compass._types import parse_input
+        actions = list(parse_input("bb0321"))
+        self.assertEqual(_balls_remaining([], actions, 30), 26)
+
+    def test_balls_remaining_reported_for_a_capture(self):
+        res = seed_b(_EXP, _model(), {**_PARAMS, "path": "b00C"})
+        self.assertEqual(res["terminal"], "captured")
+        self.assertEqual(res["balls_remaining"], 27)
+
     def test_single_candidate_offers_machete_path(self):
         inputs = _build_input(_EXP, _model(0.01), {**_PARAMS, "k": 0.05})
         candidates, meta = calibrated_candidates(inputs)

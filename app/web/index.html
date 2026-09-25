@@ -65,6 +65,7 @@
   .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
   .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
   .badge.danger{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
+  .badge.plain{background:var(--surface-2);color:var(--ink);border:1px solid var(--line)}
   /* A muted blend toward --ink rather than the full --ember warning-orange -- full-strength
      --ember (used for warn badges elsewhere) read as "something's wrong with this number"
      rather than just "these are the last 3 digits" (round 10 feedback). */
@@ -2835,6 +2836,29 @@ function renderCandBSafari(res){
       <tbody>${rows}</tbody></table></div>`;
 }
 
+// "Path so far" + the Safari Ball counter, which the notebook's status block printed and the
+// app was missing. The count is NOT tracked client-side: it comes straight off the seed_b
+// result, which derives it from the same path string on every call -- so "resets when the
+// path is changed" needs no special handling here (sacChangePath clears sac.path, the next
+// query comes back at the starting count) and it can never drift from the candidate states.
+function _sacBallBadge(r){
+  const left = r && typeof r.balls_remaining === "number" ? r.balls_remaining : null;
+  if(left === null) return "";
+  const start = r.starting_ball_count ?? 30;
+  const tone = left === 0 ? "danger" : (left <= 5 ? "warn" : "plain");
+  return `<span class="badge ${tone}" title="Safari Balls left of ${start}. Every throw spends
+    one (0-3 shakes, or a capture); bait and mud are free.">${left} / ${start} balls</span>`;
+}
+
+function _sacPathLine(r){
+  const badge = _sacBallBadge(r);
+  if(!sac.path && !badge) return "";
+  return `<div class="hint muted" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    ${sac.path ? `<span>Path so far: <code style="overflow-wrap:anywhere;word-break:break-all">${esc(sac.path)}</code></span>
+      <button class="btn small" type="button" onclick="sacChangePath()">Change</button>` : ""}
+    ${badge}</div>`;
+}
+
 function renderSeedBSafari(){
   if(!sac.seedA) return `<h3>Seed B — battle seed</h3>
     <div class="status">Identify Seed A first.</div>`;
@@ -2878,8 +2902,7 @@ function renderSeedBSafari(){
   return `<h3 id="sac-seedb-anchor">Seed B — battle seed</h3>
     ${table}
     ${message}
-    ${sac.path ? `<div class="hint muted">Path so far: <code>${esc(sac.path)}</code>
-      <button class="btn small" type="button" onclick="sacChangePath()">Change</button></div>` : ""}
+    ${_sacPathLine(r)}
     ${macheteLine}
     <div class="hint muted" style="margin-top:14px"><b>New observations</b> — Enter to apply</div>
     <div class="hint muted legend">

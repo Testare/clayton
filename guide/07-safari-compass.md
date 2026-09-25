@@ -130,9 +130,9 @@ Once timer 3 goes off, fire off sweet scent! If you hit your key seed, your targ
 
 Now we try to identify what seed B you hit. There is an input line that records what action you took and its outcome in a concise format - Each character basically corresponds to one outcome, one message.
 
-This part doesn't /yet/ recommend what you should do. You should likely use whatever strategy you used for the chart. For catching Metang, I prefer throwing six bait and then throwing balls.
+This part doesn't /yet/ recommend what you should do. You should likely use whatever strategy you used for the chart. For catching Metang, I prefer throwing six bait and then throwing balls until the Metang flees or uncle Machete tells me to do something else. If I was catching Croagunk with its absurd flee rate, I'd probably just throw balls from the start.
 
-Now type what you see, one letter/number per turn (Except for the pokemon fleeing):
+After you choose an action, watch carefully: You'll type a letter or number into the input depending on the result of that action: one letter/number per turn (Except for the pokemon fleeing).
 
 | Type | Action                  | What you saw                        |
 | ---- | ----------------------- | ----------------------------------- |
@@ -150,13 +150,16 @@ Now type what you see, one letter/number per turn (Except for the pokemon fleein
 
 You can see this table in the Clayton app itself by opening the full guide, and there is a mini guide on it as well.
 
+To explain more clearly: If you throw a bait at a Metang, and get the message "Metang is eating!", you'll type a lowercase "b" into the input field. But if you throw a bait at the metang, and instead get the message "Metang is busy eating!", that is a critical bait, and you'll type a capital "B" instead (The difference is that on a critical bait, the pokemon's flee rate is lowered but the pokemon's capture rate is not lowered). Similarly if you throw mud, the normal message "Metang is angry" is a lowercase "m", while "Metang is beside itself with anger!" is a critical mud, and would be uppercase "M" (Critical mud raises capture rate without increasing flee rate). Finally, if throw a ball, you'll put 0-3 for the number of shakes the pokeball gives, which also correspond to different messages from the game. If you throw a ball and it catches, that a "C", and if Metang flees after your action, type the action and then an "F" afterwards. 
+
+If you make mistakes, you can type "u" to undo the last input, or hit the "change" button next to the observed path to move the whole thing to the input field.
+
 ![The Seed B panel: candidate seeds above, the observations input and its mini legend below](img/safari-compass-seed-b-general.png)
 
 *The candidate count at the top is what you are driving down. Every character you add filters
 the list; the legend under the input is the same table, abbreviated.*
 
 The pokemon might flee before you catch it. That's fine, and should be expected - If these pokemon were easy to catch, this tool wouldn't be here. Sometimes during calibration runs that's more than okay - It is just as good as a capture if you successfully narrowed it down to 1 seed.
-
 
 You can type as many letters as you want before hitting enter. Once you do, it will filter seeds that do not match from the results. Keep in mind the initial results are determined by the model, but your seed B might very well be outside it. If all the seeds are filtered out, do not despair, just widen the search until it finds a possible seed.
 
