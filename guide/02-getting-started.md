@@ -2,6 +2,7 @@
 
 ## Installing
 
+
 **Linux (Nix)** — the packaged build, with a launcher entry and icon:
 
 ```

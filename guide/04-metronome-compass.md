@@ -130,96 +130,112 @@ Open your expedition, then under the metronome Compass category choose "New Run"
 
 For best calibration, **vary Vector ms between runs**. A model fitted on six runs all at 300,000 ms
 knows one point on a line and has to guess the slope. Spread them — 180,000 / 240,000 /
-300,000 / 360,000 and so on — and the fit gets much better fast. Don't worry about times that are lower than you expect it will take you to get set up in the Safari Zone, or longer than you care to wait or. That said, it can be useful to have a few data points on the same Vector ms just for you to see how much your frame is varying between runs.
+300,000 / 360,000 and so on — and the fit gets much better fast. Don't worry about times that are lower than you expect it will take you to get set up in the Safari Zone, or longer than you care to wait or. That said, it can be useful to have a few data points on the same Vector ms just for you to see how much your frame is varying between runs. For your first run, feel free to make it a bit longer (~300,000?) so you can follow the guide without feeling rushed, but there is also merit to getting earlier results first so innacuracies in the model are less likely to affect you finding your seed.
 
 If you have already used Safari Chart and saved some targets from it, you can use those for the initial time/Vector ms field as well.
 
 Metronome Compass assumes that you are going to try and hit your key seed for Seed A. If you want to hit a different seed, you'll need to make a different expedition, but the calibration runs are saved to the profile so if you use the same profile the data is still useful.
 
+
+### Before attempting to hit your seed
+
+Before you attempt to hit your seed, prefill some of the data:
+* Put in the roamer starting positions you noted before. This field is numbers separated by spaces, assuming the roamer locations in R/E/L order. You can leave off numbers if you don't have those roamers, or use "-" to skip those roamers. If you have Raikou and Latios, you can do it like "35 - 14". If you have Raikou and Entei, you can do "39 38". If you don't have any roamers, you can leave the field blank
+* Put in the expected +/- second and delay. This should be familiar if you've used other RNG manipulation tools before. You also have a checkbox to filter out seeds on delays that do not match the target.
+* Hit enter or the "Generate" button to generate a list of seeds around your target
+
 ### Identify Seed A
 
-Run your timers 1 and 2, then tell Clayton what you observed:
+Run your timers! Once you load into the game, quickly open your menu and work to identify your seed before the third timer goes off. Clayton is built to help you identify your seed quickly.
 
-- **Roamer starting positions (R E L)** — the routes the three roamers *started* on, in
-  Raikou / Entei / Latias-or-Latios order. Use `-` for any that isn't roaming.
-- **± seconds / ± delays** — how wide to search. Start wide, tighten as you learn your setup.
-- **Observed roamer routes** — where they are *now*, same order. `.` matches any.
-- **Elm calls heard** — the phone calls as letters: `P`, `E`, `K`.
+First of all, open the pokegear and identify the routes of your pokemon. Since you're in a city, if you have both roamers but you see Raikou and not Entei, he's on the same route as Raikou. Type these into the "Observed Roamer routes", separated by spaces. It will narrow down the seed in real time. You can use "." to skip indicating the route for that particular roamer, or just not type the number in. You don't need to put all the roamers in - If all the remaining seeds have the same value for L after putting in R and E, just skip to the elm calls input, which you can do by hitting "enter".
 
-The candidate list narrows as you type. When one row is left, Seed A is identified.
+If you already only have 1 candidate seed remaining, just hit enter again and it will confirm that seed as your Seed A. If not, call professor elm and note his responses in the input field UNTIL there is only one result remaining. Blackthorn city has a decent number of roaming NPC's, so the match might be a little down the line. Once there is only one result, hit enter to lock in Seed A.
+
+
+If you know what seed you hit, you can just click the row in the table to select that seed, even if other candidates remain in the table.
+
+> It is fine if you don't hit your key seed exactly - It doesn't really matter for the purposes of our calibration. In fact, if you DO hit your key seed, maybe you want to abort the run and actually try to find a shiny pokemon?
+
+Now, back out of the pokegear, go to your pokemon screen and get ready to hit "Sweet scent" once that third timer goes off.
+
+
 
 > **Screenshot:** Seed A narrowing down to a single candidate.
 
 ### Identify Seed B
 
-Now run timer 3 and get into the Magikarp battle. Clayton asks about the battle one turn at a
-time — what Metronome called, what happened — and eliminates candidates as you answer.
+When Timer 3 goes off, hit A and trigger sweet-scent! Technically the seed won't generate until after the animation plays, but our model compensates for that. If you don't hit your timer with good timing, restart from the previous step - You don't want to put known sloppy timing into your calibrations.
 
-It searches around where **your active calibration model predicts Seed B lands** for the
-Vector ms you entered. On a fresh profile that prediction comes from the Standard model and
-may be some way off; widen **± delays** until you find it. This gets much tighter once you
-have your own model.
+Now before you can identify your seed, metronome compass needs to know what we're working with. Type in the details of the Magikarp, the level and gender, then hit enter and Clayton will generate the details of all our candidate seeds. By default it looks around 2000 frames from the center, and 2 seconds, but you can adjust these values if you wish to make the search more robust (larger) or faster (smaller).
+
+> Protip: While the magikarp level field is selected, you can type "m" or "f" to set magikarp's gender without using the mouse, and then hit enter. Convenient!
+
+
+Now the meat of Metronome Compass: The interview! This is a series of prompts that help determine our seed. For each step, you'll use the move "Metronome" in the game, and then take note of what happens in that turn of battle. The biggest piece is obviously what move metronome selected, but there's a lot of other things to track as well - Move misses, crits, etc. Status moves failing do not count as misses. If Magikarp is Lvl 15 or more, you need to note whether it tackles or splashes, and whether or not tackle hits or crits. If magikarp is confused, paralyzed, or otherwise prevented from moving. Does outrage end on turn 2 or 3? Does double slap hit 5 times, with a crit on the fourth hit? What stat does acupressure raise?
+
+This can be kinda a lot to track in some cases, so I recommend paying attention to what happens exactly, and not putting the inputs into metronome compass until the turn is over. For moves that last multiple turns or land multiple hits, this can be a little much, so being ready to take hasty notes into a word doc or piece of paper might be good too.
+
+
+As I mentioned before, it usually only takes a couple moves to identify the seed. There are also moves that might unfortunately end the run before identify the seed, such as if your metronome user explodes. You can still input these moves into the compass, it might be enough to narrow it down anyways, but if not you'll have to restart the run.
+
+There is an important limitation of metronome compass - It is not a battle simulator. It doesn't know the magikarp's IV's, or your pokemon's HP, etc. Unless you use a move that faints yourself or we can't predict, it won't know when magikarp or your pokemon faint.
+
+> You'll see little things like "KspM300h" in the UI. Internally, metronome compass uses little codewords like this to describe turns. This one says Magikarp (K) used splash (sp), then the metronome user selected move 300 (M300) and that it hit (h). There are lots of other codes.
+
+If you identify the seed, metronome compass will tell you what metronome moves it expects for the rest of the battle (up to 10 turns). You can use this to help verify that you actually hit the seed we think you did, assuming no pokemon have fainted by using metronome again. Or just for the fun of feeling like a true psychic trainer.
+
+We have a little bit of an ouroboros situation here: Metronome Compass is used to calibrate models, but it uses a model to determine what seed we expect to hit here. Your first few runs will likely be far from expected, but hopefully as time goes you'll hit closer to the expected target more consistently.
+
 
 > **Screenshot:** the Seed B narrowing questions.
 
 ### Save the run
 
-**Save Run.** Tag it — a tag groups a session, and you can exclude a whole bad session later
-in one click.
+Finally, save the run! It will prompt you for two fields: Tag, and note. Tag is basically a name that different runs can group under. Note is free-form note, so you can put notes about things you think might make the data unusable or other things. 
 
-Save **every** run, including ones where you missed badly. The fit wants to see your spread,
-not just your successes. Only leave out runs where something genuinely went wrong (you
-fumbled a press, the game did something unexpected) — and even then, prefer excluding it in
-Review Data over never saving it.
+Unless you feel like you didn't hit timer 3 very well (Like you hit on the wrong beep, or significantly after the last beep), you should probably save all runs. Even if you hit really off target, that might be the model's fault more than your own. You can always exclude runs for consideration in calibration, or delete them outright, and the code excludes some outliers automatically,
 
 ## How many runs?
 
-Rough guidance:
+Rough, ai-generated guidance:
 
-| Runs | What you get |
-|---|---|
-| under 6 | not really a fit — the model is guessing |
-| 6–15 | usable; expect targets to be approximate |
-| 15–30 | good; this is where most people should aim |
-| 30+ | diminishing returns unless you change hardware |
+| Runs    | What you get                                   |
+| ------- | ---------------------------------------------- |
+| under 6 | not really a fit — the model is guessing       |
+| 6–15    | usable; expect targets to be approximate       |
+| 15–30   | good; this is where most people should aim     |
+| 30+     | diminishing returns unless you change hardware |
 
 **Spread of Vector ms matters more than raw count.** Fifteen runs across a wide range beat
 thirty runs all at the same countdown.
 
-## Building the model
+## Metronome Compass - Review Data (Building the model)
 
-**Metronome Compass → Review Data → Calibrate Model.**
+On the expedition landing page, you can click "Review data" under metronome compass to view your runs! On the default page you see a table of runs, and you have the ability to review the key points and exclude runs you think are problematic.
 
-You'll see a live preview of the fit against your saved runs. Key numbers:
+| Column      | What it tells you                                       |
+| ----------- | ------------------------------------------------------- |
+| **Vms**     | the countdown you commanded                             |
+| **V delay** | the frame difference you actually got (Seed B − Seed A) |
+| **Δ delay** | how far that sits from what the active model predicted  |
 
-| Parameter | What it means |
-|---|---|
-| `beta` | frames per millisecond — should land near 0.0598 |
-| `alpha` | the intercept — your setup's fixed offset |
-| `jitter_c` | your scatter. Lower is better; it sets how wide every search has to be |
-| `rtc_offset_seconds` | how far the battle second sits from the countdown |
+Δ delay is the one to watch. Near zero means the model describes that run well. 
 
-The **reason** column flags runs left out of the fit — `manual` (you excluded it), `tag:...`
-(its whole tag is excluded), or `outlier` (automatically flagged as far off-trend).
+Most importantly, there is also a "Calibrate model" tab. This takes all the runs you have gathered and generates a model based on the ones that aren't excluded. *It does not consider the standard model or any data used to generate it*, so for best results use this after having done a handful of metronome compass runs. The model will not delete older models, and you can always switch which model is active in your project.
 
-> An `outlier` is worth a look rather than a shrug. One genuine misfire is fine. Several
-> suggests something systematic — the wrong Metronome user, a misread move, a timer stage set
-> wrong.
+You'll see a live preview of the new model against your current active model. While not necessarily important for you to know, these are generally what the numbers mean:
 
-Happy with it? **Save new model**, and tick *make active*. Every tool now scores against it.
+| Parameter            | What it means                                                          |
+| -------------------- | ---------------------------------------------------------------------- |
+| `beta`               | frames per millisecond — should land near 0.0598                       |
+| `alpha`              | the intercept — your setup's fixed offset                              |
+| `jitter_c`           | your scatter. Lower is better; it sets how wide every search has to be |
+| `rtc_offset_seconds` | how far the battle second sits from the countdown                      |
+
+Give the new model a name of some sort, then hit "Save". Make it active to use it for Metronome Compass as well as other tools!
 
 > **Screenshot:** the Calibrate Model preview with the parameter comparison.
-
-## Reading the Runs table
-
-| Column | What it tells you |
-|---|---|
-| **Vms** | the countdown you commanded |
-| **V delay** | the frame difference you actually got (Seed B − Seed A) |
-| **Δ delay** | how far that sits from what the active model predicted |
-
-**Δ delay is the one to watch.** Near zero means the model describes that run well. A value
-badged in amber is more than 2σ out — worth investigating before it drags the fit.
 
 ---
 

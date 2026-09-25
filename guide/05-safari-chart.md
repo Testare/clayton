@@ -6,123 +6,82 @@ timer 3 be?**
 It searches every datetime that produces your key seed, and for each one works out the best
 countdown and how likely that attempt is to end in a capture.
 
-## Before you start
-
-- Your own calibration model, active ([page 4](04-metronome-compass.md))
-- Key seed and key-seed advances set on the expedition
-- Block scores set, if you want the in-house frame search ([page 7](07-safari-blocks.md))
-
 ## Charts
 
-A **chart** is a strategy paired with a success condition. You can have several per
-expedition and compare them.
-
-**Safari Chart → Find Target → New chart.**
+A **chart** is a strategy paired with a success condition "criteria", and related data. We build out a chart using a model to generate probable seeds during a run, and then use the strategy and criteria to mark these seeds as "successful" or not. You can have several per expedition and compare them.
 
 ### Strategies — what you'll do each turn
 
-| Strategy | What it assumes |
-|---|---|
-| **Balls only** | Throw a ball every turn. Simplest |
-| **One mud, then balls** | One mud first (raises catch rate), then balls |
+Strategies describe what course of action you'll take in the safari zone until the criteria is met. Do you want to just throw balls? Do you want to reduce flee chances by throwing 6 bait first?
+
+| Strategy                 | What it assumes                                                |
+| ------------------------ | -------------------------------------------------------------- |
+| **Balls only**           | Throw a ball every turn. Simplest                              |
+| **One mud, then balls**  | One mud first (raises catch rate), then balls                  |
 | **Six bait, then balls** | Six bait first (suppresses fleeing while it lasts), then balls |
+
+These are the only strategies currently supported - If you want a different one, let me know, it shouldn't be too hard to implement. 
 
 ### Criteria — what counts as success
 
-| Criteria | Success means |
-|---|---|
-| **Captured** | You caught it. The obvious goal |
-| **Machete path after N balls** | A solved capture path exists after N balls |
-| **Lasted N turns** | Still on screen after N turns — not caught |
-| **Lasted N balls** | Caught, or N balls without fleeing |
+Criteria is what determines if the given strategy counts as successful.
 
-The last two are for **data gathering**, not catching. A long observed path identifies the
-seed precisely, which is what calibration wants. `Captured` is what you use for a real
-attempt.
+| Criteria                       | Success means                              |
+| ------------------------------ | ------------------------------------------ |
+| **Captured**                   | You caught it. The obvious goal.           |
+| **Machete path after N balls** | A solved capture path exists after N balls |
+| **Lasted N turns**             | Still on screen after N turns — not caught |
+| **Lasted N balls**             | Caught, or N balls without fleeing         |
+
+* **Captured** is the most straightforward - Just using the configured strategy, will this seed lead to a capture
+* **Lasted N turns/balls** is a little less straightforward - Instead of defining success as a capture alone, it defines success as a pokemon not fleeing for N turns/after N balls were thrown. This is not as useful when you're actually trying to catch a pokemon, but when using Safari Compass runs to calibrate the model, this is useful for that, since a pokemon that stick around longer means you are more likely to identify your seed.
+* Finally **Machete path after N balls** is probably the most useful/expensive "Criteria". **Machete** is a Safari Compass tool that simulates every possible action you take for a number of turns, looking for a series of actions that leads to a capture. It is very powerful, leading to many captures that would not be possible otherwise, but also computationally expensive, and it requires you to know exactly what Seed B you are on in order to work. So in general, you want to wait until a certain number of balls/random events have occurred, giving you a chance to identify the seed. This "Criteria" waits until N balls have been thrown (according to the given strategy), and then runs machete to see if there is a path to success. You can configure how far ahead machete looks, but the longer you configure it to look, it takes exponentially more time to actually check each seed.
 
 ### The window
+
+You want to configure a window of time to actually check. Sure there might be a great area of seeds after 10 minutes, but do you really want that over one that is 3 minutes away? The farther away, the more likely for the model to drift as well. You could be really fast with a minimum time of 150 seconds, but you'd better be really quick at getting into position.
+
+Additionally, while most of the charts are pretty quick to calculate, if you use the Machete path criteria, it can actually take quite a while. 
+
+Unlike Strategy/Criteria, you can adjust the window without having to recalculate the whole thing or create a new chart. You can start with a smaller window (200-220) to find a decent early target, then expand the window to find more juicy targets outside it while you continue working.
 
 `setup_delay_seconds` to `max_target_seconds` bounds the countdown. The lower bound must be
 long enough to actually do your setup — 180 s is a sensible floor.
 
 > **Screenshot:** the New chart form.
 
-## Computing
+## Computing the chart
 
-**Compute chart** builds the *canon map* — every seed reachable in your window, and what
-happens to each under this strategy.
+When the chart is created and the window is set, you can hit "Compute chart" to begin the process of finding candidate seeds and calculating whether they succeed or not. For most strategy and criteria, this is relatively fast, even over a window of several minutes, but for charts with the machete criteria configured, this can actually take hours to calculate.
 
-This takes a while and shows a progress bar with an ETA. You can navigate away; it keeps
-running and reports back.
+While you can't change strategy/criteria without needing a whole new chart, you CAN adjust the window. If you are creating a chart with the machete algorithm, I suggest starting with a narrow window (190-200, for example), and then once you have a target to test against you can increase this window drastically and run compute chart in the background while you use that initial target in Safari Compass. You are free to navigate between other tools while the chart is computing as well.
 
-It is **resumable and extendable**. Re-running after widening the window computes only the
-gap. It is also **model-independent**: refitting your calibration does not invalidate it.
+Compute chart is intelligently extendable - It won't recompute the seeds you've already calculated when you hit recompute. This is good not just for expanding the window, but for when the model is adjusted. A changed model changes which candidate seeds are considered likely, and often means generating more data for storing in the chart. The chart expands coverage for whatever the active model is, but does not need to recalculate the seeds it has already done. If the chart gets too big, you can always clear this saved data in the "Manage Data" tool. Shrinking the configured window for the chart does not delete data from here, but does affect the ranking of targets, which is nice if you want to find targets in a specific timeframe.
 
-> Charts with the same Pokémon, key seed, strategy and criteria **share** one canon map — the
-> `reuse` figure in Manage Data shows how much that saved.
+You can also try creating a chart with a low machete value and then one with a higher machete value, but that is not a pattern that is extensible and will maintain two separate charts.
 
-## Ranking
+> Charts with the same Pokémon, key seed, strategy and criteria **share** one dataset — the
+> `reuse` figure in Manage Data shows how much that saved. This means two expeditions can share
+> expensive-to-compute data without wasting disk space.
 
-**Rank targets** scores every candidate boot time.
+## Ranking and Choosing Targets
 
-The first run on a chart takes around 35 seconds and shows a progress bar. The result is then
-**cached to disk**, so ranking again is instant — including after restarting the app. The
-cache invalidates itself whenever anything that feeds it changes: the model, the chart, the
-advance count, the precomputed data.
+**Rank targets** scores every candidate boot time and time within the currently configured chart window.
 
-You get a table:
+This take some small amount of time, and ranks combinations of "initial times" (Seed A times) and vector ms on their likelihood of success given the chart and model. The report first generated shows top results over all the initial times, but you can also use "Find best target at specific time" if you want to find the best time for a specific date/time combination.
 
-| Column | Meaning |
-|---|---|
-| **initial time** | the DS clock datetime to aim Seed A at |
-| **Vector ms** | the countdown for timer 3 |
-| **target delay** | the frame Seed B is predicted to land on |
-| **P(capture)** | modelled chance this attempt ends in a capture |
-| **σ** | the spread of the landing frame. Smaller is tighter |
+In any case, you'll get tables with rows of different possible targets, which are combinations of initial times and vector ms. It gives a breakdown of how likely "success" is predicted to be at that location, and gives you the ability to examine the target to see the seeds that contribute to that number, broken up by RTC second and the calculated likelihood of hitting that seed.
+
+The most important button is "Save target." It saves this target to a collection on the expedition, and you can easily re-use it in the Compass tools.
 
 > **Screenshot:** the ranked targets table.
 
-### Reading the numbers
-
-**P(capture) is a real probability, not a score.** 28% means roughly one attempt in four.
-Safari Zone Pokémon flee; that is the game, not the tool.
-
-**σ is your own precision**, from your calibration. If it's wide, more calibration runs will
-do more for you than hunting for a better target.
-
-**Prefer a slightly worse target that you can actually hit.** A 30% target at an awkward
-datetime you'll rush is worse than a 27% one you can set up calmly.
-
-## Examining a target
-
-**Examine** breaks a target down by candidate RTC second — how likely each second is, and the
-capture chance within it. Click a second for the individual seeds behind it.
-
-This is how you see *why* a target is good: whether its probability rests on one second going
-right, or is spread across several.
-
-> **Screenshot:** the Examine breakdown.
-
-## Saving a target
-
-**Save target** keeps it on the expedition so both compasses can pick it up without retyping.
-
-The saved `P(success)*` is **frozen from when you saved it**. Re-examine to score it against
-your current model — after recalibrating, the live number will have moved.
-
-## Find best target at a specific time
-
-Already committed to a datetime? This ranks countdowns for that one boot time. It declusters
-by default, so you get genuinely different options rather than a clump of near-identical
-frames around one peak.
-
 ## Manage Data
 
-Charts, their computed data and its size on disk, and your saved targets.
+Charts, their computed data and its size on disk, and your saved targets are all saved data that be managed with the "Manage data" tool.
 
-- **Delete computed data** frees the canon map; the chart stays and can rebuild.
-- **Delete chart** also removes its computed data — unless another chart shares the map, in
-  which case the map survives.
+- **Delete computed data** deletes the computed data; the chart stays and can rebuild.
+- **Delete chart** also removes its computed data (unless another chart in Clayton shares it), and then deletes the chart itself from the expedition.
 
 ---
 

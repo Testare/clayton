@@ -4,22 +4,21 @@ Clayton is a toolkit for RNG manipulation in the **Pokémon HeartGold / SoulSilv
 
 ## Read in this order
 
-| | Page | What it covers |
-|---|---|---|
-| 1 | [Introduction](01-introduction.md) | What Clayton does, and the problem it solves |
-| 2 | [Getting started](02-getting-started.md) | Install, make a profile, make an expedition |
-| 3 | [Timers and hitting seeds](03-timers.md) | EonTimer, the three-timer process, Vector ms |
+|   | Page                                         | What it covers                                 |
+| - | -------------------------------------------- | ---------------------------------------------- |
+| 1 | [Introduction](01-introduction.md)           | What Clayton does, and the problem it solves   |
+| 2 | [Getting started](02-getting-started.md)     | Install, make a profile, make an expedition    |
+| 3 | [Timers and hitting seeds](03-timers.md)     | EonTimer, the three-timer process, Vector ms   |
 | 4 | [Metronome Compass](04-metronome-compass.md) | Calibrating to *your* hardware — do this first |
-| 5 | [Safari Chart](05-safari-chart.md) | Finding a target datetime worth attempting |
-| 6 | [Safari Compass](06-safari-compass.md) | Running the hunt and identifying what you hit |
-| 7 | [Safari blocks](07-safari-blocks.md) | Getting the right Pokémon to appear at all |
-| — | [Glossary](08-glossary.md) | Every term, in one place |
-| — | [Troubleshooting](09-troubleshooting.md) | When something doesn't work |
+| 5 | [Safari Chart](05-safari-chart.md)           | Finding a target datetime worth attempting     |
+| 6 | [Safari Compass](06-safari-compass.md)       | Running the hunt and identifying what you hit  |
+| - | [Safari blocks](07-safari-blocks.md)         | Getting the right Pokémon to appear at all     |
+| — | [Glossary](08-glossary.md)                   | Every term, in one place                       |
 
 ## What this guide assumes
 
 That you already RNG manipulate — you know what a seed is, you can hit an initial seed on
-your DS, and you can use **PokeFinder** or **RNG Reporter** to find the seed that produces the
+your DS, and you can use tools like PokeFinder or RNG Reporter to find the seed that produces the
 Pokémon you want. Clayton picks up from there.
 
 If none of that is familiar, start with a general HGSS RNG guide first; Clayton will make far
@@ -33,8 +32,3 @@ before it will give you good targets. Numbers quoted in this guide are illustrat
 will differ, and that is normal.
 
 ---
-
-> **Draft.** This guide was written alongside the tool rather than from a completed hunt, so
-> the workflow is right but the fine detail of what each screen looks like in practice hasn't
-> been checked against a real session yet. Screenshots are still to come — the
-> `> **Screenshot:**` markers show where.

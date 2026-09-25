@@ -1,142 +1,193 @@
 # 6. Safari Compass
 
-This is the tool you have open *during* a run. It tells you which seed you actually hit, walks
-you to the right advance frame, and once the battle starts, tells you what to throw.
+This is the reason the other tools exist - This is the tool that helps you actually perform the capture of the pokemon you want. It tells you which seed A you actually hit, walks
+you to the right advance frame, and once the battle starts, helps you identify what Seed B you hit and maybe even tells you how to catch it.
 
-## Before you start
+## What you'll need in game
 
-A target from Safari Chart, your timers set, and the app open on **Safari Compass → New Run**.
+* Set up Safari Blocks
+* 2 chatots
+* A custom "Chatter" message
+* Sweet-scent user
+* Surf user if you are hunting a pokemon caught in the water
+* Optional: Synchronize lead, cute charm lead, etc. if required to find your shiny
+* Optional: Position your safari area of choice in front of the entrance.
+* Optional: A repel
 
-## Set the target
+First of all, if you don't have the safari zone blocks set up correctly, you won't be able to encounter your pokemon at all, no matter what seeds you hit. Unfortunately, this might require you to wait for days, even months, for the block multipliers to become strong enough to capture your desired pokemon, though depending on available hardware you miiight be able to trick the game into thinking more time has passed than it has. I have a small guide here on the block multipliers
 
-**Choose from saved target**, or type the initial time and Vector ms by hand.
+You also need 2 chatots. These will help in rapidly advancing frames to your desired target. Technically, you couuuld do this without them, but there really isn't any reason to: They're easy enough to catch once you've gotten far enough along in the game. You'll need to record a custom "Chatter" message for them for the RNG to work.
+
+You obviously need a sweet scent user to trigger the encounter, and if you are hunting a pokemon on water you'll need a pokemon that knows surf. If your encounter requires a specific lead pokemon (Cute charm stuff, synchronize stuff), you can have that, and even though they won't come to the battle they'll still apply the usual effects.
+
+It is recommended to position your target area in front of the entrance to reduce RNG advances that can be caused by walking several steps. Since you can't save in the safari zone, you'll need to walk to the location. That's also what the repel is for - It can mess up your run if you trigger an encounter right when you walk into the grass.
+
+### SIDE NOTE: Fishing
+
+For the sake of simplicity, this guide is going to assume you are catching a pokemon in grass or surf. I have not tried this with fishing pokemon, but the animation is quite different from sweet scent, so I assume the timings will be quite different.
+
+My recommendatino would be that you do not use safari runs using sweet scent and safari runs using the fishing pole together on the same calibration. You can either manually exclude all safari fishing runs while calibrating normally, and only fishing runs while calibrating model for fishing (easy enough using tag exclusiions), or you can create an entirely different profile for use with fishing. I'll explain model calibrations later.
+
+## Safari Compass Run
+### Setting yourself up in game
+* Grab what pokemon you need out of the box. If you need a lead pokemon set them as the lead. Make sure you have your two chatot and that they are next to each other in your party.
+* Fly to the safari zone area. If you are there already, go south until you hit Route 48 and come back to make sure the roamers shuffle.
+* Go stand in front of the man who takes you into the safari zone.
+* Open pokegear and make note of the position of the roamers, and mark it down.
+* Use your repel if you are catching pokemon in grass.
+* Save, close the game, and get ready to go.
+
+### Get clayton ready
+
+Choose a target. You can choose from your saved targets, or manually enter the initial time and Vetor ms.
+
+Put the roamer starting positions from the previous step into their fields, adjust the delay/second config to your liking, and hit generate. It'll show you where the roamers need to be to indicate you might've hit your key seed.
+
+If your timers aren't set up yet to hit that initial seed and Vector ms, do it now.
+
+Once all of that is ready, you can begin!
 
 > **Screenshot:** the New Run header with a target chosen.
 
 ## Step 1 — Seed A
 
-Run timers 1 and 2. Then tell Clayton what you see — exactly as in Metronome Compass:
+Attempt to hit your key seed, just like you would with any other RNG attempt, only using the custom timer that has the 3rd phase. 
 
-- **Roamer starting positions (R E L)** — where the roamers started, in Raikou / Entei /
-  Latias-or-Latios order. `-` for any not roaming
-- **± seconds / ± delays** — the search window
-- **Observed roamer routes** — where they are now. `.` matches any
-- **Elm calls heard** — `P`, `E`, `K` as you hear them
+Once you've loaded into the game, you can open your pokegear really quick to check your roamers. If you are making a genuine attempt to catch your shiny pokemon and the roamers don't match what you expect, you can reset here and keep trying until they do, but I don't recommend doing the elm calls just yet. If you are doing a run to help calibrate the model (which is important to do), I recommend not bothering to check the roamers until you are in the grass.
 
-Candidates narrow as you type. One row left means Seed A is pinned.
+Talk to the man at the counter, and get through his text as quick as possible, then run into the safari zone and walk into the grass. NOW open your pokegear and confirm your roamers if you haven't already. Then do elm calls until the seed is identified. Again, if you are done calibrating and just want to find your pokemon, and you didn't hit your seed here, you can reset. Otherwise hit enter/click on the identified seed to lock it in and move to the next step.
 
-**If you hit your key seed exactly, Clayton says so** and skips straight to your configured
-advance count — no frame search needed. That is the good case.
 
 > **Screenshot:** Seed A identified, showing a key-seed hit.
 
 ## Step 2 — Seed A advances
 
-This section is the part that has no equivalent in an ordinary RNG hunt, and it is where runs
-are most often lost.
-
-You are not trying to reach a *time*. You are trying to reach an **advance frame** — a count
-of how many times the overworld RNG has ticked since your save loaded.
+The next step is to hit an advance that contains your target pokemon.
 
 ### Pinning where you are
 
-Type the Elm calls you've heard so far. Each call is one advance, so the calls pin your
-current frame exactly. Keep typing as more come in until Clayton reports a single frame.
+Type the Elm calls you've heard so far. By default this should already contain the calls you did to identify the seed. As you do this the program will narrow down what frame you are on. You can put multiple calls in the input line, but it doesn't narrow down until you hit enter.
 
-### The route
+If you didn't hit your key seed, there is also an optional field that says "look for <pokemon> near advance." This input is taken for the next step.
 
-Clayton then plans a route to your target frame:
+Once you have given enough calls for Clayton to identify your exact frame (Might not need to be any more than you already have for the Seed A identification), it moves on to planning your route to your pokemon.
+
+### The route - Choosing target frame
+
+Clayton then plans a route to your target frame. If you hit your key seed, it **always** plans to hit your key seed advances configured in the expedition. Otherwise, by default it looks for the nearest frame that would lead to a pokemon of the species you are targeting (Though it does some suitability filtering to make sure you can confirm your target, explained below).
+
+If you put a target in the optional field from the previous step, instead of just looking for the frame nearest you, it looks for the frame nearest the value you gave it. For example, if you gave it a value of 100, and you were on frame 15, it would plan to take you to the metang on frame 98 instead of one on frame 19.
+
+This in-house pokemon finder is optional. If you prefer to find it yourself, you can change that in preferences and use pokefinder or a tool like it to find a pokemon to hit. This gives you a little more leeway into finding pokemon holding items or with better stats, in case you catch it.
+
+### The route - Determining the route
+
+Once Clayton knows where you are and what advance frame it wants you to hit, it generates the route. The route usually looks something like this:
 
 ```
-34 chatot flip(s), then 3 Elm call(s) → frame 81, Sweet Scent there.
+33.5 chatot flip(s), then 3 Elm call(s) → frame 81, Sweet Scent there.
 ```
 
-- **Chatot flips** cover distance fast — two advances each
-- **Elm calls** are the final approach — one advance each, and *verifiable*, because you hear
-  them
-
-The guide string shows the calls you should hear on approach, with `!` marking where to Sweet
-Scent:
+It also produces a guide that looks something like this:
 
 ```
 PEEEP[KPE]!KEP
 ```
 
-Hear the bracketed calls, then Sweet Scent on the `!`.
+Let me explain: **Chatot flips** are used for advancing the game fast. To make it easier to count, a flip is actually 2 chatot screens. You look at the first chatot screen, then flip to the other, and that is 1 chattot flip. Then you go back to the other screen, and flip again, that's 2. It is a lot easier to quickly count to 33 instead of counting to 66 every time you alternate. Of course that means when the number of advances to do is odd, you'll end up with the .5 after the count, for which you just switch to the other chatot and then exist the summary screen.
 
-> **Sweet Scent while standing ON the target frame.** Pressing one frame early misses.
+This makes it easier to not mess up your count, but it is still not difficult to mess up. That's why we try to reserve a few elm calls at the end so you can be confident you counted correctly. It is usually 3, but if you are very close to your frame it might be less or more (If chatot flips would be 1 or less, we just let you do more elm calls). There is a setting preferences if you prefer more or less elm calls at the end.
+
+That is what the guide tells you: It shows the elm calls immediately preceding your target, then the elm calls it expects you to hear in the brackets, and then an exclaimation point to indicate you should use sweet scent before advancing further, and then also some calls after the sweet scent so you can know if you missed.
+
+For the example guide above, if you did chatot flips but thought you might be off by 1, then you call elm and you get his P response then his E response, you can reasonably determine that you probably did half a chatot flip too many and hit sweet scent here instead of doing that last elm call. Likewise, if you get PKP, you can guess that you actually did one chattot flip too little, and do that last extra elm call.
+
+Now that you've done this, back out of the pokgear, go to the pokemon summary screen and get ready to press sweet scent. This was a lot to do relatively quickly, and now you just have to wait for Timer 3 to go off!
 
 ### When the margin is ambiguous
 
-Clayton flags routes whose final Elm calls read the same a frame or two either side — a
-miscount would be invisible. Where it can, it picks a different target frame with an
-unambiguous approach instead.
+When picking a target frame, clayton filters routes whose final Elm calls read the same a frame or two either side — where a miscount would be invisible. For example, if the closest target frame would lead to a guide like this:
+> PEPKE[EEE]!EKP
 
-> **Screenshot:** the advance-frame guide with its route and guide string.
+How would the 3 elm calls let you know you hit your seed? If you get 3 E responses you could be one frame early OR late in this particular case.
 
-## Step 3 — Seed B
+Just thought you ought to know in case the frame it finds is further away than you would expected.
 
-Sweet Scent on the beep. The encounter fires.
+## Seed B - THE ENCOUNTER
 
-Now type what you see, one character per turn:
+Once timer 3 goes off fire off sweet scent! If you hit your key seed, your target pokemon should be staring at you now. If you didn't hit your key seed, another pokemon of the same species should be right there. If not, either your advances messed up, your blocks are messed up, or Clayton's code is messed up (oops!).
 
-| Type | Action | What you saw |
-|---|---|---|
-| `m` | Mud, no crit | *"X is angry!"* |
-| `M` | Mud, crit | *"X is beside itself with anger!"* |
-| `b` | Bait, no crit | *"X is eating!"* |
-| `B` | Bait, crit | *"X is busy eating!"* |
-| `0` | Ball, 0 shakes | *"Oh, no! The Pokémon broke free!"* |
-| `1` | Ball, 1 shake | *"Aww! It appeared to be caught!"* |
-| `2` | Ball, 2 shakes | *"Aargh! Almost had it!"* |
-| `3` | Ball, 3 shakes | *"Shoot! It was so close, too!"* |
-| `C` | Captured — ends the run | *"Gotcha!"* |
-| `F` | Fled — ends the run | *"X fled!"* |
-| `u` | Undo the last character | |
+Now we try to identify what seed B you hit. There is an input line that records what action you took and its outcome in a concise format - Each character basically corresponds to one outcome, one message.
 
-The **?** button opens this table for your species, with the exact messages.
+This part doesn't /yet/ recommend what you should do. You should likely use whatever strategy you used for the chart. For catching Metang, I prefer throwing six bait and then throwing balls.
 
-Candidates narrow with every character. Once one seed is left, Clayton shows the **machete
-path** — the exact sequence to catch it from here.
+Now type what you see, one letter/number per turn (Except for the pokemon fleeing):
+
+| Type | Action                  | What you saw                        |
+| ---- | ----------------------- | ----------------------------------- |
+| `m`  | Mud, no crit            | *"X is angry!"*                     |
+| `M`  | Mud, crit               | *"X is beside itself with anger!"*  |
+| `b`  | Bait, no crit           | *"X is eating!"*                    |
+| `B`  | Bait, crit              | *"X is busy eating!"*               |
+| `0`  | Ball, 0 shakes          | *"Oh, no! The Pokémon broke free!"* |
+| `1`  | Ball, 1 shake           | *"Aww! It appeared to be caught!"*  |
+| `2`  | Ball, 2 shakes          | *"Aargh! Almost had it!"*           |
+| `3`  | Ball, 3 shakes          | *"Shoot! It was so close, too!"*    |
+| `C`  | Captured — ends the run | *"Gotcha!"*                         |
+| `F`  | Fled — ends the run     | *"X fled!"*                         |
+| `u`  | Undo the last turn      |                                     |
+
+You can see this table in the Clayton app itself by opening the full guide, and there is a mini guide on it as well.
+
+The pokemon might flee before you catch it. That's fine, and should be expected - If these pokemon were easy to catch, this tool wouldn't be here. Sometimes during calibration runs that's more than okay - It is just as good as a capture if you successfully narrowed it down to 1 seed.
+
+
+You can type as many letters as you want before hitting enter. Once you do, it will filter seeds that do not match from the results. Keep in mind the initial results are determined by the model, but your seed B might very well might be outside it. If all the seeds are filtered out, do not despair, just widen the search until it finds a possible seed.
+
+### Wait I missed that...
+
+If you chose an action but forgot to watch for the outcome (You threw bait, but didn't remark if Metang was "easting" or "busy eating"), you can use a "?" character to precede your action to indicate you aren't sure the outcome was what you typed. In this example, you could type "?b" or "?B", both function the same. ?0 indicates a ball thrown with an uncertain outcome (though obviously not capture), ?m indicates mud thrown, etc. It won't narrow out many candidates (except ones where metang fled before you could throw), but it keeps the RNG state tracking on the right course as you make more observations.
+
+### Machete
+
+Once you have narrowed it down to only 1 possible seed, Clayton automatically starts using "Machete" to try and find a successful capture path. I mentioned it in the guide for Safari Chart, but this tool brute-forces every possible action you can take up to X turns and tries to find a way to capture this pokemon.
+
+The default is 50 turns. You can change this in preferences, but increasing it increases the time machete takes to run, while decreasing it obviously decreases its effective range.
+
+If machete finds a path, it will output that path for you, with the next action/outcome you should take highlighted. Congratulations, this *should* lead to a capture. If machete does not find a path, it will tell you. It could be that your metang is doomed to flee in 3 turns no matter what you do. It could be that 50 turns just isn't far enough to find the successful capture. Keep throwing balls or bait or mud and see what happens. One of my first captured non-shiny metangs, I didn't identify the seed until I was down to 20 safari balls, and machete didn't find the path until I was down to 5. Then I threw a crazy-long sequence of mud and bait, and caught the metang with my very last safari ball.
+
+Keep in mind this will not work if you didn't actually find your candidate seed. A false identification could lead to your pokemon fleeing while you follow the machete path, so use with caution and continue inputting the results you are seeing so that if you see an outcome different from the machete path you can expand your search. I have had it happen at least once that machete recommended a path to me that involved throwing mud right away, and then metang fled and I found out I found the wrong seed.
 
 > **Screenshot:** Seed B narrowed to one candidate, with a machete path.
 
 ### Flee flags
 
-Once you're down to a handful of candidates, each row is checked three turns ahead:
+Once you're down to a handful of candidates, each row is checked three turns ahead to see if the candidate will flee. The flags are a little terse in meaning, but hovering over them gives a better explanation.
 
-| Flag | Meaning |
-|---|---|
-| `F0` | flees **this turn** if you throw a ball |
-| `Fb2` | flees within 2 turns if you bait |
-| `F3` | flees within 3 turns **whatever** you do |
+| Flag     | Meaning                                                      |
+| -------- | ------------------------------------------------------------ |
+| `F0`     | flees **this turn** if you throw a ball                      |
+| `Fb2`    | flees within 2 turns if you bait                             |
+| `F3`     | flees within 3 turns **whatever** you do                     |
 | **`F!`** | this candidate has **already fled** — type `F` to confirm it |
 
-`F!` is shown in a different colour because it is not a prediction. It means the last thing
-you did already ended the run for that candidate, and Clayton is waiting for you to confirm.
+`F!` is shown in a different colour because it is not a prediction of your next turn. It means the last thing you did already ended the run for that candidate, and Clayton is waiting for you to confirm. If the pokemon did not flee, that means that is not a valid candidate and is eliminated on your next input.
 
-### If candidates run out
+These flee flags can be helpful to avoid terminating early. If you are on your key seed, sticking around longer gives machete more opportunities to find a path. If you are not, it can help you identify your seed better for calibration.
 
-Type a character and everything disappears? Either you mistyped, or you landed outside the
-search window. **Widen search window** grows it and drops the probability cap, which is
-usually enough. Your typed path is kept.
+### Save run
 
-## Step 4 — Save the run
-
-**Save Run**, win or lose.
-
-The **Advance recipe** fields — Elm calls, Chatot flips, advance frame — are prefilled from
-the route you planned. Leave them; they feed the calibration work on whether advance count
-affects timing.
-
-If you caught it on the key seed, Clayton offers to mark the expedition complete.
+If your run ended in a successful seed identification, if not a successful capture, then you can save the run. This is useful for calibrating the model. This is very similar to the metronome compass run save - It has a tag for grouping similar runs together, and a free-form notes field. Additionally, it collects some metadata about advances, chatot flips, and elm calls. This is prepopulated from what seed A recommended, but if actual results are different you can change this.
 
 ## Feeding calibration
+
+Metronome Compass generates most of the fields for the model, but the circumstances of metronome compass and safari compass are different. You don't have to load into the safari zone, or do a bunch of chatot flips. So we have a way to calibrate models using Safari Compass data as well.
+
 
 **Safari Compass → Review Data → Calibrate Model** fits the **safari offset** — how far the
 Safari Zone's extra loading screen pushes the frame compared to the metronome path.
 
-It works from a **base model** you choose (your metronome fit) and only adjusts the safari
+It works from a base model you choose (your metronome fit) and only adjusts the safari
 offset, leaving the trend alone. A safari run cannot determine the trend by itself.
 
 Two optional checkboxes:
@@ -146,6 +197,8 @@ Two optional checkboxes:
   *your* advance count; treat a wide interval as "keep collecting", not as a result.
 - **Use the safari runs' own spread** — measures scatter on the safari path rather than
   inheriting the metronome path's.
+
+These are included in the software, but their usefulness has not yet been determined.
 
 ---
 

@@ -4,16 +4,19 @@
 Driven by what you do, not by the clock: each Elm call is one advance, each Chatot flip is
 two. The encounter that fires when you Sweet Scent is decided by this number.
 
-**Canon map** — Safari Chart's precomputed table of every reachable seed in a chart's window
+**Canon map** — _archaic_ Safari Chart's precomputed table of every reachable seed in a chart's window
 and what happens to each under that chart's strategy. Model-independent, so refitting your
 calibration doesn't invalidate it. Shared between charts with the same Pokémon, key seed,
-strategy and criteria.
+strategy and criteria. This term is deprecated, we just refer to this as the computed data
+of the chart now.
 
 **Chart** — A strategy paired with a success condition, scoped to an expedition. What Safari
 Chart ranks targets against.
 
-**Chatot flip** — Playing back a recorded Chatot cry. Two RNG advances each, and fast — the
-bulk of any long approach. Not verifiable, which is why routes finish on Elm calls instead.
+**Chatot flip** — Looking at a chatot's summary screen so that it plays the recorded chattot
+cry, twice. We count it twice so that we can count quickly when flipping between two chatot 
+summary screens: Counting after pressing up AND down on the d-pad instead of pressing up, counting, pressing down, counting.
+Bulk of any long approach. Not verifiable, which is why routes finish on Elm calls instead.
 
 **Delay** — One tick of the DS frame counter, about 59.83 per second. **A delay is a game
 frame**; the two words mean the same thing here. Always absolute, counted from boot.
@@ -21,7 +24,7 @@ frame**; the two words mean the same thing here. Always absolute, counted from b
 **Delta delay (Δ delay)** — In the Runs tables: how far a run's realized Vector delay sits
 from what the active model predicted. Near zero is good. Badged amber past 2σ.
 
-**Elm call** — A phone call from Professor Elm. One RNG advance, and *audible*, which is what
+**Elm call** — A phone call from Professor Elm. One RNG advance, and *visible*, which is what
 makes it the verifiable part of an approach route. Written as `P`, `E`, `K`.
 
 **Expedition** — One hunt for one Pokémon. Holds the key seed, advance count, area and block
@@ -31,8 +34,8 @@ scores; owns charts and saved targets. Names are unique across all profiles.
 on a ball, `F3` flees within three turns whatever you do, and `F!` means it has **already**
 fled and is waiting for you to type `F`.
 
-**Initial time** — The DS clock datetime you aim to hit **Seed A** on. Not when you boot — the
-boot is earlier, on timer 1.
+**Initial time** — The DS clock datetime you aim to hit **Seed A** on. NOT the exact time 
+you boot the game on the DS, or set the time to, but exact time you should load the file.
 
 **Jitter (σ)** — The spread of the landing frame, in frames. Yours, from your calibration.
 Sets how wide every search has to be; smaller is better.
@@ -42,31 +45,31 @@ Sets how wide every search has to be; smaller is better.
 **Key-seed advances** — The advance frame your target sits on for the key seed. The count you
 advance to before Sweet Scenting.
 
-**Machete path** — Once Seed B is identified, the exact sequence of throws that catches it.
+**Machete path** — Once Seed B is identified, the exact sequence of throws that catches the pokemon.
 
 **mdmsh** — The hash identifying a seed's family: `(month × day + minute + second) & 0xFF`
 plus the hour. Many different datetimes collapse to the same value.
 
-**Metronome user** — The Pokémon used for calibration battles. Wants Metronome, no other
-moves, a Lagging Tail, and a non-interfering ability.
+**Metronome user** — The Pokémon used for calibration battles. Wants Metronome, maybe some
+other moves, a Lagging Tail, and a non-interfering ability.
 
 **Profile** — One game on one console. Owns runs and calibration models, because both are
 properties of the physical setup.
 
-**Reuse factor** — How many times the average seed in a canon map is shared across the boot
+**Reuse factor** — How many times the average seed in a chart is shared across the boot
 times it covers. High is good; it's why precompute is affordable.
 
 **RTC second** — The DS wall-clock second a seed was made on. One of the two coordinates that
-fix a seed; noisier than the frame, and misses independently of it.
+fix a seed;  Misses are independently of frame.
 
-**Safari offset** — How far the Safari Zone's extra loading screen pushes the landing frame
+**Safari offset** — How far the Safari Zone's extra loading screen and actions push the landing frame
 compared to the metronome path. Fit separately, in Safari Compass's Calibrate Model.
 
 **Seed A** — The initial seed, generated when your save loads (t2). Drives the overworld:
 encounters, roamers, Elm calls.
 
-**Seed B** — The battle seed, generated when the encounter fires (t3). Decides the Pokémon and
-everything that happens in the battle.
+**Seed B** — The battle seed, generated when the encounter fires (t3). Decides wild pokemon's
+actions and all random effects that happens in the battle.
 
 **Vector delay** — The realized difference in delays between Seed B and Seed A — what actually
 happened. Internally `dF`. This is the quantity the calibration model fits.
