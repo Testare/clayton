@@ -315,11 +315,22 @@ So the model reduces to: base power x SpA/SpD x type effectiveness x crit x roll
 weather, absorbing abilities and stat stages are **deferred** — real work, but not on the
 critical path for the first target.
 
-Incoming damage per party member [derived]:
+Two errors in earlier drafts of this document were caught by implementing
+`claytonlib/battle/types.py` and `stats.py` — exactly the check sec 17.3 predicted:
+
+- **Gust vs Magneton is x0.25, not x0.5.** Electric resists Flying *as well as* Steel, so the
+  two resistances stack. Magneton takes even less than documented, so its survive-a-crit
+  conclusion holds with more margin.
+- **Suicune's Attack is 69, not 80.** A scratch script used base 90 (its Sp. Atk) for Attack.
+  Harmless — all four of its moves are status or special, so its Attack is never read — but the
+  table was wrong.
+
+Incoming damage per party member [derived, now asserted in `tests/test_battle_stats.py` and
+`tests/test_battle_types.py`]:
 
 | Party member | HP | SpD | Aurora Beam | crit | Gust | crit |
 |---|---|---|---|---|---|---|
-| Magneton Lv30 (Steel/Electric, x0.5 both) | 79 | 56 | 16-19 | 33-39 | 10-12 | 20-24 |
+| Magneton Lv30 (Steel x0.5 Ice, x0.25 Flying) | 79 | 56 | 16-19 | 33-39 | **5-6** | **10-12** |
 | Smeargle Lv60 (Normal, x1.0) | 154 | 77 | 24-29 | 49-58 | 15-18 | 30-36 |
 | Mamoswine Lv90 (Ice/Ground, x1.0) | 325 | 140 | 13-16 | 27-32 | 9-11 | 18-22 |
 
@@ -817,11 +828,11 @@ still **[needs gdb]** (R7).
 
 ### 11.1 The scenario
 
-**Target:** Suicune, Lv 40, **Bold** nature, perfect IVs, 0 EVs (wild).
+**Target:** Suicune, Lv 40, **Bold** nature, perfect IVs, 0 EVs (wild). Verified by `claytonlib/battle/stats.py` and `tests/test_battle_stats.py`.
 
 | Stat | HP | Atk | Def | SpA | SpD | Spe |
 |---|---|---|---|---|---|---|
-| | **142** | 80 | 119 | 89 | 109 | **85** (-> **21** paralyzed) |
+| | **142** | 69 | 119 | 89 | 109 | **85** (-> **21** paralyzed) |
 
 **Party:**
 
@@ -849,8 +860,8 @@ any crit**. Evolving to **Lv 30 Magneton fixes this outright** [derived]:
 
 | Magneton | HP | Aurora Beam | **crit Aurora Beam** | Gust | crit Gust |
 |---|---|---|---|---|---|
-| perfect IVs | 79 | 16-19 | **33-39** | 10-12 | 20-24 |
-| 0 IVs | 70 | 19-23 | **39-46** | 11-14 | 24-29 |
+| perfect IVs | 79 | 16-19 | **33-39** | 5-6 | 10-12 |
+| 0 IVs | 70 | 19-23 | **39-46** | 6-7 | 12-14 |
 
 **Magneton survives a critical Aurora Beam with room to spare, even at 0 IVs.** Turn 1 is no
 longer a failure mode, and no Focus Sash is needed. It also fixes the speed margin (§11.4).
@@ -1719,6 +1730,9 @@ squarely a Phase 1.5 feature, and the `machete_jane` decision-tree pattern (§6.
 implementation.
 
 ### 15.4 App integration from the start
+
+**UI is in prototype scope, not after it** [user]: build Battle Compass and Hunts directly in the
+app, with no notebook or CLI interim layer. Every capability lands behind `app/facade.py` with UI.
 
 A new **Hunts** tab alongside Expeditions and Profiles — the Battle Compass equivalent of an
 Expedition. No chart equivalent; Metronome Compass remains available and unchanged. Runs are saved

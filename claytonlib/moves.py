@@ -29,11 +29,12 @@ CATEGORY_PHYSICAL, CATEGORY_SPECIAL, CATEGORY_STATUS = 0, 1, 2
 class Move:
     """Move metadata loaded from moves.json."""
     __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy',
-                 'type_id', 'category')
+                 'type_id', 'category', 'power', 'priority', 'pp')
 
     def __init__(self, number: int, name: str, metronome_usable: bool,
                  effect: int = 0, effect_chance: int = 0, accuracy: int = 0,
-                 type_id: int = 0, category: int = CATEGORY_STATUS):
+                 type_id: int = 0, category: int = CATEGORY_STATUS,
+                 power: int = 0, priority: int = 0, pp: int = 0):
         self.number = number
         self.name = name
         self.metronome_usable = metronome_usable
@@ -44,6 +45,11 @@ class Move:
         # 0 physical / 1 special / 2 status, as moves.json carries it. Defaults to status,
         # the inert choice: a Move built without one gains no physical-move behaviour.
         self.category = category
+        # Battle Compass needs these three; the Metronome tools never did, which is why they
+        # sat unread in moves.json until now (notes/battle_compass.md sec 17.3).
+        self.power = power        # base power; 0 for status moves, 1 for fixed-damage moves
+        self.priority = priority  # move-order bracket (Protect is +3, Roar -6)
+        self.pp = pp              # base PP, before PP Ups/Maxes
 
     @property
     def is_physical(self) -> bool:
@@ -88,6 +94,9 @@ def _load_moves() -> list[Move]:
                 accuracy=m["accuracy"],
                 type_id=m["type"],
                 category=m["category"],
+                power=m["power"],
+                priority=m["priority"],
+                pp=m["pp"],
             )
             for m in data
         ]
