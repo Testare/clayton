@@ -11,6 +11,7 @@ collides with a later module would be silently shadowed at `claytonlib.<name>`.
 """
 from claytonlib.battle.stats import (  # noqa: F401
     NATURES, StatKey, nature_multiplier, calc_stat, calc_hp, derive_stats,
+    species, derive_species_stats, has_fast_ball_bonus,
 )
 from claytonlib.battle.types import (  # noqa: F401
     TYPE_CHART, type_multiplier, effectiveness,

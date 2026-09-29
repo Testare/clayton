@@ -103,3 +103,55 @@ def _validate(base: int, iv: int, ev: int, level: int) -> None:
         raise ValueError(f"EV out of range: {ev}")
     if base < 1:
         raise ValueError(f"base stat out of range: {base}")
+
+
+# ---------------------------------------------------------------------------
+# Species base stats
+# ---------------------------------------------------------------------------
+
+_species_cache: dict[str, dict] | None = None
+
+
+def _load_species() -> dict[str, dict]:
+    global _species_cache
+    if _species_cache is None:
+        from claytonlib._resources import basedata_json
+        _species_cache = basedata_json("base_stats.json")
+    return _species_cache
+
+
+def species(name: str) -> dict:
+    """Base stats, types and weight for one species, from basedata/base_stats.json.
+
+    Only ever needed for *targets*: our own party's stats are entered directly (sec 15.4.1).
+    Regenerate or extend the file with `one-offs/populate_base_stats.py`.
+    """
+    key = name.strip().lower().replace(" ", "-")
+    data = _load_species()
+    if key in data:
+        return data[key]
+    # Forms are stored under their suffixed name (e.g. giratina-altered); accept the bare one.
+    matches = [k for k in data if k.split("-")[0] == key]
+    if len(matches) == 1:
+        return data[matches[0]]
+    raise KeyError(
+        f"no base stats for {name!r}"
+        + (f" (did you mean one of {matches}?)" if matches else
+           "; add it with one-offs/populate_base_stats.py")
+    )
+
+
+def derive_species_stats(name: str, level: int, nature: str = "Hardy",
+                         ivs: dict[str, int] | int = 31,
+                         evs: dict[str, int] | int = 0) -> dict[str, int]:
+    """`derive_stats` looked up by species name."""
+    return derive_stats(species(name)["base_stats"], level, nature, ivs, evs)
+
+
+def has_fast_ball_bonus(name: str) -> bool:
+    """Whether the Fast Ball's x4 applies: base Speed >= 100.
+
+    Suicune is 85 and Groudon 90, so both get a flat x1 — the case Battle Compass exists for
+    (notes/battle_compass.md sec 4.1).
+    """
+    return species(name)["base_stats"]["spe"] >= 100

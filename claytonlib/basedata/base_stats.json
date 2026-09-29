@@ -1,0 +1,333 @@
+{
+  "dialga": {
+    "name": "dialga",
+    "dex_no": 483,
+    "base_stats": {
+      "hp": 100,
+      "atk": 120,
+      "def": 120,
+      "spa": 150,
+      "spd": 100,
+      "spe": 90
+    },
+    "types": [
+      "Steel",
+      "Dragon"
+    ],
+    "weight_hg": 6830
+  },
+  "entei": {
+    "name": "entei",
+    "dex_no": 244,
+    "base_stats": {
+      "hp": 115,
+      "atk": 115,
+      "def": 85,
+      "spa": 90,
+      "spd": 75,
+      "spe": 100
+    },
+    "types": [
+      "Fire"
+    ],
+    "weight_hg": 1980
+  },
+  "giratina-altered": {
+    "name": "giratina-altered",
+    "dex_no": 487,
+    "base_stats": {
+      "hp": 150,
+      "atk": 100,
+      "def": 120,
+      "spa": 100,
+      "spd": 120,
+      "spe": 90
+    },
+    "types": [
+      "Ghost",
+      "Dragon"
+    ],
+    "weight_hg": 7500
+  },
+  "groudon": {
+    "name": "groudon",
+    "dex_no": 383,
+    "base_stats": {
+      "hp": 100,
+      "atk": 150,
+      "def": 140,
+      "spa": 100,
+      "spd": 90,
+      "spe": 90
+    },
+    "types": [
+      "Ground"
+    ],
+    "weight_hg": 9500
+  },
+  "ho-oh": {
+    "name": "ho-oh",
+    "dex_no": 250,
+    "base_stats": {
+      "hp": 106,
+      "atk": 130,
+      "def": 90,
+      "spa": 110,
+      "spd": 154,
+      "spe": 90
+    },
+    "types": [
+      "Fire",
+      "Flying"
+    ],
+    "weight_hg": 1990
+  },
+  "kyogre": {
+    "name": "kyogre",
+    "dex_no": 382,
+    "base_stats": {
+      "hp": 100,
+      "atk": 100,
+      "def": 90,
+      "spa": 150,
+      "spd": 140,
+      "spe": 90
+    },
+    "types": [
+      "Water"
+    ],
+    "weight_hg": 3520
+  },
+  "latias": {
+    "name": "latias",
+    "dex_no": 380,
+    "base_stats": {
+      "hp": 80,
+      "atk": 80,
+      "def": 90,
+      "spa": 110,
+      "spd": 130,
+      "spe": 110
+    },
+    "types": [
+      "Dragon",
+      "Psychic"
+    ],
+    "weight_hg": 400
+  },
+  "latios": {
+    "name": "latios",
+    "dex_no": 381,
+    "base_stats": {
+      "hp": 80,
+      "atk": 90,
+      "def": 80,
+      "spa": 130,
+      "spd": 110,
+      "spe": 110
+    },
+    "types": [
+      "Dragon",
+      "Psychic"
+    ],
+    "weight_hg": 600
+  },
+  "lugia": {
+    "name": "lugia",
+    "dex_no": 249,
+    "base_stats": {
+      "hp": 106,
+      "atk": 90,
+      "def": 130,
+      "spa": 90,
+      "spd": 154,
+      "spe": 110
+    },
+    "types": [
+      "Psychic",
+      "Flying"
+    ],
+    "weight_hg": 2160
+  },
+  "magnemite": {
+    "name": "magnemite",
+    "dex_no": 81,
+    "base_stats": {
+      "hp": 25,
+      "atk": 35,
+      "def": 70,
+      "spa": 95,
+      "spd": 55,
+      "spe": 45
+    },
+    "types": [
+      "Electric",
+      "Steel"
+    ],
+    "weight_hg": 60
+  },
+  "magneton": {
+    "name": "magneton",
+    "dex_no": 82,
+    "base_stats": {
+      "hp": 50,
+      "atk": 60,
+      "def": 95,
+      "spa": 120,
+      "spd": 70,
+      "spe": 70
+    },
+    "types": [
+      "Electric",
+      "Steel"
+    ],
+    "weight_hg": 600
+  },
+  "mamoswine": {
+    "name": "mamoswine",
+    "dex_no": 473,
+    "base_stats": {
+      "hp": 110,
+      "atk": 130,
+      "def": 80,
+      "spa": 70,
+      "spd": 60,
+      "spe": 80
+    },
+    "types": [
+      "Ice",
+      "Ground"
+    ],
+    "weight_hg": 2910
+  },
+  "mewtwo": {
+    "name": "mewtwo",
+    "dex_no": 150,
+    "base_stats": {
+      "hp": 106,
+      "atk": 110,
+      "def": 90,
+      "spa": 154,
+      "spd": 90,
+      "spe": 130
+    },
+    "types": [
+      "Psychic"
+    ],
+    "weight_hg": 1220
+  },
+  "palkia": {
+    "name": "palkia",
+    "dex_no": 484,
+    "base_stats": {
+      "hp": 90,
+      "atk": 120,
+      "def": 100,
+      "spa": 150,
+      "spd": 120,
+      "spe": 100
+    },
+    "types": [
+      "Water",
+      "Dragon"
+    ],
+    "weight_hg": 3360
+  },
+  "raikou": {
+    "name": "raikou",
+    "dex_no": 243,
+    "base_stats": {
+      "hp": 90,
+      "atk": 85,
+      "def": 75,
+      "spa": 115,
+      "spd": 100,
+      "spe": 115
+    },
+    "types": [
+      "Electric"
+    ],
+    "weight_hg": 1780
+  },
+  "rayquaza": {
+    "name": "rayquaza",
+    "dex_no": 384,
+    "base_stats": {
+      "hp": 105,
+      "atk": 150,
+      "def": 90,
+      "spa": 150,
+      "spd": 90,
+      "spe": 95
+    },
+    "types": [
+      "Dragon",
+      "Flying"
+    ],
+    "weight_hg": 2065
+  },
+  "smeargle": {
+    "name": "smeargle",
+    "dex_no": 235,
+    "base_stats": {
+      "hp": 55,
+      "atk": 20,
+      "def": 35,
+      "spa": 20,
+      "spd": 45,
+      "spe": 75
+    },
+    "types": [
+      "Normal"
+    ],
+    "weight_hg": 580
+  },
+  "snorlax": {
+    "name": "snorlax",
+    "dex_no": 143,
+    "base_stats": {
+      "hp": 160,
+      "atk": 110,
+      "def": 65,
+      "spa": 65,
+      "spd": 110,
+      "spe": 30
+    },
+    "types": [
+      "Normal"
+    ],
+    "weight_hg": 4600
+  },
+  "sudowoodo": {
+    "name": "sudowoodo",
+    "dex_no": 185,
+    "base_stats": {
+      "hp": 70,
+      "atk": 100,
+      "def": 115,
+      "spa": 30,
+      "spd": 65,
+      "spe": 30
+    },
+    "types": [
+      "Rock"
+    ],
+    "weight_hg": 380
+  },
+  "suicune": {
+    "name": "suicune",
+    "dex_no": 245,
+    "base_stats": {
+      "hp": 100,
+      "atk": 75,
+      "def": 115,
+      "spa": 90,
+      "spd": 115,
+      "spe": 85
+    },
+    "types": [
+      "Water"
+    ],
+    "weight_hg": 1870
+  }
+}
