@@ -13,6 +13,13 @@ Design points that come straight from ``notes/clayton_v1_draft2.md``:
 * Metronome users are **immutable** — there is deliberately no update method; to
   change one, add a new user and remove the old.
 * "Vector ms" is the term for the value that aims a run at a good Seed B.
+
+Battle Compass adds :class:`PartyPokemon` and :class:`Hunt` (see
+``notes/battle_compass.md`` sec 15.4).  The split there mirrors Expedition/Safari Compass: a
+**Hunt is configuration** — the party you plan to bring, their held items, the target and the
+ball — while the live encounter runs in Battle Compass and its mid-battle state is not
+persisted.  Party Pokemon live on the **profile** (they are reused across hunts, like metronome
+users); only the per-hunt held item belongs to the hunt.
 """
 from __future__ import annotations
 
@@ -39,6 +46,105 @@ HARD_ERROR_ABILITIES = unsupported_abilities()
 def _new_id() -> str:
     """A short, collision-resistant id for a profile or expedition document."""
     return uuid.uuid4().hex[:12]
+
+
+# The six stats, in the order the in-game summary screen shows them.
+STAT_KEYS = ("hp", "atk", "def", "spa", "spd", "spe")
+
+
+# ---------------------------------------------------------------------------
+# Party Pokemon (Battle Compass)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PartyPokemon:
+    """A Pokemon on the profile, available to any hunt.
+
+    Stats are **entered directly off the in-game summary screen** rather than derived from
+    IVs/EVs/nature: the game already shows the exact numbers, so asking for them is both
+    simpler and less error-prone than asking for a spread (notes/battle_compass.md sec 15.4.1).
+    Only *targets* have their stats derived, since their IVs come from RNG manipulation.
+
+    `max_pp` is per move slot and accounts for PP Ups/Maxes, so it can exceed the move's base
+    PP.  Held items are deliberately absent — they change per hunt and live on the Hunt.
+    """
+
+    id: int
+    name: str
+    species: str = ""
+    level: int | None = None
+    ability: str | None = None
+    gender: str | None = None
+    # Entered stats, keyed by STAT_KEYS.
+    stats: dict = field(default_factory=dict)
+    # Up to four move names, in slot order — the order the M1..M4 tokens refer to.
+    moveset: list[str] = field(default_factory=list)
+    # Slot index (as a string key, so it survives JSON) -> max PP for that move.
+    max_pp: dict = field(default_factory=dict)
+
+    def hard_errors(self) -> list[str]:
+        """Reasons this Pokemon can't be taken into a Hunt.
+
+        Battle Compass simulates the whole battle, so unlike a metronome user it cannot work
+        around missing numbers: turn order needs an exact Speed, and the damage model needs
+        the defences.  A Pokemon with no usable moves is *allowed* — Mamoswine's role in the
+        reference fixture is exactly that — because a move slot the Pokemon lacks simply isn't
+        an action the solver can choose (sec 12.5).
+        """
+        errors: list[str] = []
+        if not self.species:
+            errors.append("needs a species")
+        if self.level is None or not 1 <= self.level <= 100:
+            errors.append("needs a level between 1 and 100")
+        missing = [k for k in STAT_KEYS if not isinstance(self.stats.get(k), int)]
+        if missing:
+            errors.append(
+                "needs every stat entered from the summary screen (missing "
+                + ", ".join(missing) + ")")
+        if len(self.moveset) > 4:
+            errors.append(f"has {len(self.moveset)} moves; a Pokemon can hold at most 4")
+        return errors
+
+    def warnings(self) -> list[str]:
+        """Advisory notes — none of these block taking the Pokemon into a hunt."""
+        notes: list[str] = []
+        if not self.moveset:
+            notes.append(
+                "has no moves registered, so it can only use items, balls and switches. That "
+                "is a legitimate role (a wall to revive behind), but it cannot attack — and a "
+                "Pokemon with no usable moves is forced to Struggle if you ever pick Fight, "
+                "which would KO a target at 1 HP.")
+        for slot, move in enumerate(self.moveset, start=1):
+            if str(slot) not in self.max_pp and slot not in self.max_pp:
+                notes.append(f"move {slot} ({move}) has no max PP recorded; "
+                             f"PP cannot be budgeted for it")
+        if not self.ability:
+            notes.append("has no ability recorded; entry abilities and damage modifiers "
+                         "that depend on it will not be simulated")
+        return notes
+
+    @property
+    def speed(self) -> int | None:
+        value = self.stats.get("spe")
+        return value if isinstance(value, int) else None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PartyPokemon":
+        return cls(
+            id=int(d["id"]),
+            name=d["name"],
+            species=d.get("species", ""),
+            level=d.get("level"),
+            ability=d.get("ability"),
+            gender=d.get("gender"),
+            stats={k: v for k, v in dict(d.get("stats", {})).items()},
+            moveset=list(d.get("moveset", [])),
+            max_pp=dict(d.get("max_pp", {})),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +261,52 @@ class Profile:
     # Monotonic; assigns the next metronome-user id and never rewinds, so ids are
     # never reused even after a user is removed.
     next_metronome_user_id: int = 1
+    # Battle Compass party. Lives here rather than on the Hunt because the same Pokemon is
+    # reused across hunts; only its held item is per-hunt (notes/battle_compass.md sec 15.4.1).
+    party: list[PartyPokemon] = field(default_factory=list)
+    next_party_pokemon_id: int = 1
     # Tags excluded wholesale from calibration (Review Data → Tags). Distinct from a run's own
     # `excluded` flag: excluding a tag here does NOT toggle individual runs' flags — a run's
     # effective-excluded state is the OR of both, and the UI shows "tag:<name>" for this case.
     excluded_tags: list[str] = field(default_factory=list)
+
+    def get_party_pokemon(self, pokemon_id: int) -> PartyPokemon | None:
+        return next((p for p in self.party if p.id == pokemon_id), None)
+
+    def add_party_pokemon(self, name: str, **fields) -> PartyPokemon:
+        """Add a party Pokemon with the next id.
+
+        Unlike a metronome user, a party Pokemon IS editable — its stats change as it levels
+        and its max PP changes with PP Ups — so `update_party_pokemon` exists too.  Creation
+        only requires a name; anything `hard_errors()` reports instead blocks taking it into a
+        Hunt, so a half-entered Pokemon can be saved and finished later.
+        """
+        name = name.strip()
+        if not name:
+            raise ValueError("party pokemon needs a name")
+        pokemon = PartyPokemon(id=self.next_party_pokemon_id, name=name, **fields)
+        self.next_party_pokemon_id += 1
+        self.party.append(pokemon)
+        return pokemon
+
+    def update_party_pokemon(self, pokemon_id: int, **fields) -> PartyPokemon:
+        pokemon = self.get_party_pokemon(pokemon_id)
+        if pokemon is None:
+            raise ValueError(f"no party pokemon with id {pokemon_id} in this profile")
+        for key, value in fields.items():
+            if not hasattr(pokemon, key) or key == "id":
+                raise ValueError(f"cannot set {key!r} on a party pokemon")
+            setattr(pokemon, key, value)
+        return pokemon
+
+    def remove_party_pokemon(self, pokemon_id: int) -> PartyPokemon:
+        """Remove and return it. The id counter is not rewound, so hunts referencing a
+        removed Pokemon stay unambiguous — they just cannot resolve it any more."""
+        pokemon = self.get_party_pokemon(pokemon_id)
+        if pokemon is None:
+            raise ValueError(f"no party pokemon with id {pokemon_id} in this profile")
+        self.party.remove(pokemon)
+        return pokemon
 
     def get_metronome_user(self, user_id: int) -> MetronomeUser | None:
         return next((u for u in self.metronome_users if u.id == user_id), None)
@@ -216,6 +364,8 @@ class Profile:
             "metronome_users": [u.to_dict() for u in self.metronome_users],
             "next_metronome_user_id": self.next_metronome_user_id,
             "excluded_tags": self.excluded_tags,
+            "party": [p.to_dict() for p in self.party],
+            "next_party_pokemon_id": self.next_party_pokemon_id,
         }
 
     @classmethod
@@ -229,6 +379,9 @@ class Profile:
             metronome_users=[MetronomeUser.from_dict(u) for u in d.get("metronome_users", [])],
             excluded_tags=list(d.get("excluded_tags", [])),
             next_metronome_user_id=d.get("next_metronome_user_id", 1),
+            # Absent on profiles written before Battle Compass existed.
+            party=[PartyPokemon.from_dict(p) for p in d.get("party", [])],
+            next_party_pokemon_id=d.get("next_party_pokemon_id", 1),
         )
 
 
@@ -364,6 +517,166 @@ class Expedition:
             last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
             last_safari_compass_defaults=dict(d.get("last_safari_compass_defaults", {})),
             preferences={**_default_preferences(), **d.get("preferences", {})},
+            completed=bool(d.get("completed", False)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Hunt (Battle Compass)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HuntSlot:
+    """One party Pokemon brought on a hunt, plus the item it is holding for it."""
+
+    pokemon_id: int
+    held_item: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "HuntSlot":
+        return cls(pokemon_id=int(d["pokemon_id"]), held_item=d.get("held_item", ""))
+
+
+@dataclass
+class HuntTarget:
+    """The Pokemon being caught, as configured.
+
+    IVs and nature come from RNG manipulation and are entered by hand (Pokefinder), which is
+    what lets the incoming-damage filter run at all — an unknown Sp. Atk would make that filter
+    unsound rather than merely vague (notes/battle_compass.md sec 14.1).
+    """
+
+    species: str = ""
+    level: int | None = None
+    nature: str = ""
+    # Keyed by STAT_KEYS; 0-31 each.
+    ivs: dict = field(default_factory=dict)
+
+    def hard_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.species:
+            errors.append("target needs a species")
+        if self.level is None or not 1 <= self.level <= 100:
+            errors.append("target needs a level between 1 and 100")
+        if not self.nature:
+            errors.append("target needs a nature (from Pokefinder)")
+        missing = [k for k in STAT_KEYS if not isinstance(self.ivs.get(k), int)]
+        if missing:
+            errors.append("target needs every IV (missing " + ", ".join(missing) + ")")
+        out_of_range = [k for k in STAT_KEYS
+                        if isinstance(self.ivs.get(k), int) and not 0 <= self.ivs[k] <= 31]
+        if out_of_range:
+            errors.append("target IVs out of range: " + ", ".join(out_of_range))
+        return errors
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "HuntTarget":
+        return cls(species=d.get("species", ""), level=d.get("level"),
+                   nature=d.get("nature", ""), ivs=dict(d.get("ivs", {})))
+
+
+@dataclass
+class Hunt:
+    """Configuration for one Battle Compass capture attempt.
+
+    A Hunt is **configuration and planning only** — the party you intend to bring, their held
+    items, the target, the ball, and the seed targeting.  The live encounter runs in Battle
+    Compass and its mid-battle state is not persisted; finished attempts are saved as run
+    records instead.  That split mirrors Expedition/Safari Compass exactly
+    (notes/battle_compass.md sec 15.4).
+
+    There is no chart equivalent: nothing here needs to *hit* a seed, only to contain the true
+    one in its candidate window, so the seed targeting exists to centre that window rather than
+    to be optimised.
+    """
+
+    name: str
+    profile_id: str
+    id: str = field(default_factory=_new_id)
+    target: HuntTarget = field(default_factory=HuntTarget)
+    # The party for this hunt, in send-out order; references Profile.party ids.
+    party: list[HuntSlot] = field(default_factory=list)
+    # The single ball we intend to catch it in. No fallback -- the solver's goal set is one
+    # threshold throughout.
+    capture_ball: str = ""
+    # Seed targeting, as for an Expedition: these centre the candidate window (sec 17.1).
+    key_seed: int | None = None
+    key_seed_advances: int | None = None
+    initial_time: str = ""      # ISO-8601; chosen from the seed's possible times, not optimised
+    vector_ms: int | None = None
+    # Which calibration model the centre-seed calculation uses; picked in Review Data.
+    calibration_model_id: str = ""
+    # Candidate search window around the centre seed.
+    seconds_window: int = 2
+    delay_window: int = 60
+    completed: bool = False
+
+    def hard_errors(self, profile: "Profile | None" = None) -> list[str]:
+        """Reasons Battle Compass cannot start from this hunt."""
+        errors: list[str] = []
+        errors.extend(self.target.hard_errors())
+        if not self.capture_ball:
+            errors.append("needs a capture ball")
+        if not self.party:
+            errors.append("needs at least one party pokemon")
+        if self.key_seed is None:
+            errors.append("needs a key seed")
+        if not self.initial_time:
+            errors.append("needs an initial time")
+        if self.vector_ms is None:
+            errors.append("needs a Vector ms")
+        if not self.calibration_model_id:
+            errors.append("needs an active calibration model — pick one in Review Data")
+        if profile is not None:
+            for slot in self.party:
+                pokemon = profile.get_party_pokemon(slot.pokemon_id)
+                if pokemon is None:
+                    errors.append(f"party pokemon #{slot.pokemon_id} is no longer on the profile")
+                else:
+                    errors.extend(f"{pokemon.name}: {e}" for e in pokemon.hard_errors())
+        return errors
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "profile_id": self.profile_id,
+            "target": self.target.to_dict(),
+            "party": [s.to_dict() for s in self.party],
+            "capture_ball": self.capture_ball,
+            "key_seed": self.key_seed,
+            "key_seed_advances": self.key_seed_advances,
+            "initial_time": self.initial_time,
+            "vector_ms": self.vector_ms,
+            "calibration_model_id": self.calibration_model_id,
+            "seconds_window": self.seconds_window,
+            "delay_window": self.delay_window,
+            "completed": self.completed,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Hunt":
+        return cls(
+            name=d["name"],
+            profile_id=d["profile_id"],
+            id=d.get("id") or _new_id(),
+            target=HuntTarget.from_dict(d.get("target", {})),
+            party=[HuntSlot.from_dict(s) for s in d.get("party", [])],
+            capture_ball=d.get("capture_ball", ""),
+            key_seed=d.get("key_seed"),
+            key_seed_advances=d.get("key_seed_advances"),
+            initial_time=d.get("initial_time", ""),
+            vector_ms=d.get("vector_ms"),
+            calibration_model_id=d.get("calibration_model_id", ""),
+            seconds_window=d.get("seconds_window", 2),
+            delay_window=d.get("delay_window", 60),
             completed=bool(d.get("completed", False)),
         )
 
