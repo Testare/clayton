@@ -16,3 +16,11 @@ from claytonlib.battle.stats import (  # noqa: F401
 from claytonlib.battle.types import (  # noqa: F401
     TYPE_CHART, type_multiplier, effectiveness,
 )
+from claytonlib.battle.damage import (  # noqa: F401
+    DAMAGE_ROLLS, Attacker, Defender, damage, damage_range, damage_spread,
+    rolls_for_damage, stage_multiplier, unsupported_reason,
+)
+from claytonlib.battle.catch import (  # noqa: F401
+    capture_chance, capture_windows, captures, catch_value, rolls_consumed,
+    shake_threshold, shakes_for_rolls,
+)
