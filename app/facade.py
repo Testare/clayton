@@ -14,7 +14,10 @@ from __future__ import annotations
 from app import calibration as calibration_lib
 from app import chart as chart_lib
 from app import metronome
-from app.models import CalibrationModelDoc, Chart, Expedition, MetronomeUser, Profile, Run, Target
+from app.models import (
+    CalibrationModelDoc, Chart, Expedition, Hunt, MetronomeUser, PartyPokemon,
+    Profile, Run, Target,
+)
 from app.store import FileStore, Store
 
 _PROFILES = "profiles"
@@ -23,6 +26,7 @@ _RUNS = "runs"
 _CHARTS = "charts"
 _TARGETS = "targets"
 _CALIBRATION_MODELS = "calibration_models"
+_HUNTS = "hunts"
 
 
 class Facade:
@@ -82,6 +86,13 @@ class Facade:
             # Reasons this user can't be SELECTED in Metronome Compass specifically (e.g.
             # New Run's user picker) — distinct from `warnings`, which are advisory only.
             user_dict["hard_errors"] = user.hard_errors()
+        for pokemon_dict, pokemon in zip(doc.get("party", []), p.party):
+            errors = pokemon.hard_errors()
+            # Mirrors the metronome-user split: `warnings` is advisory, `hard_errors` is what
+            # stops the Pokemon being taken into a Hunt (a half-entered one is still saveable).
+            pokemon_dict["warnings"] = pokemon.warnings()
+            pokemon_dict["hard_errors"] = errors
+            pokemon_dict["is_hunt_ready"] = not errors
         doc["has_valid_metronome_user"] = p.has_valid_metronome_user
         return doc
 
@@ -258,6 +269,212 @@ class Facade:
         removed = p.remove_metronome_user(int(user_id))
         self._save_profile(p)
         return {"profile": self.get_profile(p.id), "removed": removed.to_dict()}
+
+    # -- party pokemon (Battle Compass) ------------------------------------
+
+    def add_party_pokemon(self, profile_id: str, fields: dict) -> dict:
+        """Add a party Pokemon to the profile; returns the profile plus its validation."""
+        p = self._load_profile(profile_id)
+        pokemon = p.add_party_pokemon(**self._party_fields(fields))
+        self._save_profile(p)
+        return {
+            "profile": self.get_profile(p.id),
+            "pokemon_id": pokemon.id,
+            "warnings": pokemon.warnings(),
+            "hard_errors": pokemon.hard_errors(),
+        }
+
+    def update_party_pokemon(self, profile_id: str, pokemon_id: int, fields: dict) -> dict:
+        """Party Pokemon are mutable, unlike metronome users — stats change as they level."""
+        p = self._load_profile(profile_id)
+        updates = self._party_fields(fields)
+        if not fields.get("name"):
+            # An edit form that doesn't send a name shouldn't blank the existing one.
+            updates.pop("name")
+        pokemon = p.update_party_pokemon(int(pokemon_id), **updates)
+        self._save_profile(p)
+        return {
+            "profile": self.get_profile(p.id),
+            "pokemon_id": pokemon.id,
+            "warnings": pokemon.warnings(),
+            "hard_errors": pokemon.hard_errors(),
+        }
+
+    def remove_party_pokemon(self, profile_id: str, pokemon_id: int) -> dict:
+        """Remove it. Hunts referencing its id report it as no longer on the profile."""
+        p = self._load_profile(profile_id)
+        removed = p.remove_party_pokemon(int(pokemon_id))
+        self._save_profile(p)
+        return {"profile": self.get_profile(p.id), "removed": removed.to_dict(),
+                "affected_hunts": [h["name"] for h in self.list_hunts(profile_id)
+                                   if removed.id in h["party_pokemon_ids"]]}
+
+    @staticmethod
+    def _party_fields(fields: dict) -> dict:
+        """Only the fields a party Pokemon actually has, so a stray key fails loudly."""
+        out = {
+            "name": (fields.get("name") or "").strip(),
+            "species": fields.get("species", ""),
+            "level": fields.get("level"),
+            "ability": fields.get("ability"),
+            "gender": fields.get("gender"),
+            "stats": dict(fields.get("stats", {})),
+            "moveset": list(fields.get("moveset", [])),
+            "max_pp": dict(fields.get("max_pp", {})),
+        }
+        return out
+
+    # -- hunts (Battle Compass) --------------------------------------------
+
+    def list_hunts(self, profile_id: str | None = None) -> list[dict]:
+        out = []
+        for hid in self._store.list_ids(_HUNTS):
+            doc = self._store.read(_HUNTS, hid)
+            if doc is None:
+                continue
+            h = Hunt.from_dict(doc)
+            if profile_id is not None and h.profile_id != profile_id:
+                continue
+            out.append({
+                "id": h.id,
+                "name": h.name,
+                "profile_id": h.profile_id,
+                "target": h.target.species,
+                "capture_ball": h.capture_ball,
+                "completed": h.completed,
+                "party_pokemon_ids": [s.pokemon_id for s in h.party],
+            })
+        out.sort(key=lambda d: (d["completed"], d["name"].lower()))
+        return out
+
+    def get_hunt(self, hunt_id: str) -> dict:
+        return self._load_hunt(hunt_id).to_dict()
+
+    def _load_hunt(self, hunt_id: str) -> Hunt:
+        doc = self._store.read(_HUNTS, hunt_id)
+        if doc is None:
+            raise ValueError(f"no hunt with id {hunt_id}")
+        return Hunt.from_dict(doc)
+
+    def _assert_hunt_name_free(self, name: str, except_id: str | None = None) -> None:
+        """Hunt names are unique globally, for the same reason expedition names are."""
+        for hid in self._store.list_ids(_HUNTS):
+            doc = self._store.read(_HUNTS, hid)
+            if doc is None or doc.get("id") == except_id:
+                continue
+            if (doc.get("name") or "").strip().lower() == name.lower():
+                owner = (self._store.read(_PROFILES, doc.get("profile_id")) or {}).get("name")
+                where = f" (in profile \"{owner}\")" if owner else ""
+                raise ValueError(
+                    f"A hunt named \"{doc['name']}\"{where} already exists. "
+                    "Hunt names have to be unique across every profile — pick another.")
+
+    def create_hunt(self, fields: dict) -> dict:
+        name = (fields.get("name") or "").strip()
+        if not name:
+            raise ValueError("a hunt needs a name")
+        profile_id = fields.get("profile_id")
+        if not profile_id:
+            raise ValueError("a hunt must reference a profile")
+        self._load_profile(profile_id)
+        self._assert_hunt_name_free(name)
+        h = Hunt.from_dict({**fields, "name": name})
+        self._store.write(_HUNTS, h.id, h.to_dict())
+        return h.to_dict()
+
+    def save_hunt(self, hunt: dict) -> dict:
+        """Upsert an existing hunt from its full document."""
+        if not hunt.get("id"):
+            raise ValueError("save_hunt needs a hunt id (use create_hunt for new)")
+        h = Hunt.from_dict(hunt)
+        self._load_profile(h.profile_id)
+        self._assert_hunt_name_free(h.name.strip(), except_id=h.id)
+        self._store.write(_HUNTS, h.id, h.to_dict())
+        return h.to_dict()
+
+    def set_hunt_completed(self, hunt_id: str, completed: bool) -> dict:
+        h = self._load_hunt(hunt_id)
+        h.completed = bool(completed)
+        self._store.write(_HUNTS, h.id, h.to_dict())
+        return h.to_dict()
+
+    def delete_hunt(self, hunt_id: str) -> bool:
+        """Deletes the hunt only. Party Pokemon live on the PROFILE and are untouched."""
+        return self._store.delete(_HUNTS, hunt_id)
+
+    def hunt_readiness(self, hunt_id: str) -> dict:
+        """Everything the configure screen needs to say whether this hunt can be run.
+
+        Three layers, deliberately distinct:
+
+        * ``hard_errors`` — Battle Compass cannot start at all.
+        * ``alphabet`` — it *can* start, but with how good a chance? A party with one distinct
+          per-turn RNG cost makes a capture reachable for ~36% of seeds against ~99% for three,
+          so this is advice worth giving before the encounter rather than after.
+        * ``speed`` — ties desynchronise the simulation rather than merely costing turns.
+
+        Only the first blocks; the other two are warnings the player may knowingly accept.
+        """
+        from claytonlib.battle.readiness import (
+            alphabet_report, speed_checks, speed_warnings,
+        )
+        from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.moves import resolve_move
+
+        h = self._load_hunt(hunt_id)
+        profile = self._load_profile(h.profile_id)
+        result: dict = {
+            "hunt_id": h.id,
+            "hard_errors": h.hard_errors(profile),
+            "alphabet": None,
+            "speed": None,
+            "target_stats": None,
+        }
+
+        movesets: dict[str, list] = {}
+        our_speeds: dict[str, int] = {}
+        for slot in h.party:
+            pokemon = profile.get_party_pokemon(slot.pokemon_id)
+            if pokemon is None:
+                continue
+            moves = [m for m in (resolve_move(name) for name in pokemon.moveset) if m]
+            if moves:
+                movesets[pokemon.name] = moves
+            if pokemon.speed is not None:
+                our_speeds[pokemon.name] = pokemon.speed
+
+        if movesets or our_speeds:
+            report = alphabet_report(movesets)
+            result["alphabet"] = {
+                "distinct_costs": sorted(report.distinct_costs),
+                "reachability_percent": report.reachability_percent,
+                "costs_by_action": report.costs_by_action,
+                "warnings": report.warnings,
+            }
+
+        # The target's stats are derived, not entered — its IVs come from RNG manipulation.
+        if not h.target.hard_errors():
+            try:
+                stats = derive_species_stats(
+                    h.target.species, h.target.level, h.target.nature, ivs=dict(h.target.ivs))
+            except KeyError as exc:
+                result["target_stats"] = {"error": str(exc)}
+            else:
+                result["target_stats"] = stats
+                if our_speeds:
+                    checks = speed_checks(our_speeds, stats["spe"])
+                    result["speed"] = {
+                        "target_speed": stats["spe"],
+                        "checks": [
+                            {"ours": c.ours, "our_speed": c.our_speed,
+                             "target_state": c.target_state, "target_speed": c.target_speed,
+                             "margin": c.margin, "is_tie": c.is_tie,
+                             "is_fragile": c.is_fragile}
+                            for c in checks
+                        ],
+                        "warnings": speed_warnings(checks),
+                    }
+        return result
 
     # -- expeditions ------------------------------------------------------
 
