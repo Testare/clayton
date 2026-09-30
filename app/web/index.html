@@ -3803,6 +3803,41 @@ function huntModelSummary(model){
 // every mutation returns a whole new snapshot, so the page never renders a half-updated view.
 let _huntRun = null, _huntSnap = null, _huntRunHunt = null;
 let _huntSetup = null, _huntWindow = null;
+// Advice ranks every surviving candidate against every action -- seconds at a few thousand
+// candidates -- so the page renders without it and fetches it after. _huntAdviceFor records the
+// turn number the pending request was issued for: a reply for any other turn is stale and gets
+// dropped, which is how a request still in flight is abandoned when a turn is reported.
+let _huntAdvice = null, _huntAdviceFor = null, _huntAdviceLoading = false;
+// True while a report/undo is in flight, so the controls can disable and show a spinner.
+let _hrBusy = false;
+
+// Any advice we hold describes the previous position, so drop it before the next load.
+function huntAdviceInvalidate(){
+  _huntAdvice = null;
+  _huntAdviceFor = null;
+  _huntAdviceLoading = false;
+}
+
+async function huntAdviceLoad(){
+  const snap = _huntSnap;
+  if (!snap || !snap.advice_pending || _huntAdviceLoading) return;
+  const forTurn = snap.turns.length;
+  _huntAdviceLoading = true;
+  _huntAdviceFor = forTurn;
+  renderHuntRun();
+  try {
+    const result = await api("hunt_session_advice", _huntRun);
+    // Stale: a turn was reported while this was computing. Showing it would advise on a
+    // position that no longer exists.
+    if (!_huntSnap || _huntSnap.turns.length !== forTurn) return;
+    _huntAdvice = result.advice;
+  } catch (e) {
+    _huntAdvice = null;
+  } finally {
+    if (_huntAdviceFor === forTurn) _huntAdviceLoading = false;
+    renderHuntRun();
+  }
+}
 
 // The page opens on the hunt's CONFIGURATION being sound -- nothing else. The seed is what the
 // run is for, so an empty or mis-centred candidate window is a thing to fix here, with the
@@ -3811,6 +3846,7 @@ async function huntRunStart(_owner, id){
   try {
     _huntRunHunt = id;
     _huntRun = _huntSnap = _huntWindow = null;
+    huntAdviceInvalidate();
     _huntSetup = await api("hunt_run_setup", id);
     renderHuntSetup();
   } catch (e) { toast(String(e.message || e)); }
@@ -3847,7 +3883,9 @@ async function huntRunBegin(){
     _huntRun = started.session_id;
     _huntSnap = started.snapshot;
     hrTurnReset();
+    huntAdviceInvalidate();
     renderHuntRun();
+    huntAdviceLoad();          // after the page is up, never before
   } catch (e) { toast(String(e.message || e)); }
 }
 
@@ -3925,11 +3963,18 @@ function renderHuntSetup(){
 }
 
 async function huntRunDo(method, ...args){
+  _hrBusy = true;
+  renderHuntRun();                  // show the spinner before the call blocks
   try {
     _huntSnap = await api(method, _huntRun, ...args);
     hrTurnReset();
-    renderHuntRun();
+    huntAdviceInvalidate();
   } catch (e) { toast(String(e.message || e)); }
+  finally {
+    _hrBusy = false;
+    renderHuntRun();
+    huntAdviceLoad();
+  }
 }
 
 // --- the per-turn interview -----------------------------------------------

@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import pathlib
+import re
 import unittest
 from pathlib import Path
 
@@ -154,6 +156,75 @@ class TestMarkupReferences(unittest.TestCase):
         handled = set(re.findall(r'view === "([a-z]+)"', _HTML))
         self.assertEqual(views - handled, set(),
                          "a nav button has no setView branch, so it would do nothing")
+
+
+class TestNoUndeclaredIdentifiers(unittest.TestCase):
+    """Catches the whole class of "X is not defined" errors at the first render.
+
+    A real one shipped: an edit script that added module state, its loader functions AND their
+    call sites hit an assertion partway through and wrote nothing, but a later script re-applied
+    only the call sites. The page referenced `_huntAdvice` with no declaration anywhere and threw
+    the moment a run started. The checks in place then only verified `onclick=` handler names, so
+    nothing noticed.
+    """
+
+    HTML = pathlib.Path(__file__).resolve().parent.parent / "app" / "web" / "index.html"
+
+    def setUp(self):
+        self.src = self.HTML.read_text()
+        self.script = self.src.split("</style>", 1)[-1]
+
+    def _declared(self):
+        """Every name the page declares: let/const/var, function, and function parameters."""
+        names = set()
+        names |= set(re.findall(r"\bfunction\s+([A-Za-z_$][\w$]*)", self.script))
+        for kw in ("let", "const", "var"):
+            # `let a = 1, b = 2;` -- take every name in the declaration list. No \b before the
+            # name: `$` is not a word character, so \b would skip `const $ = ...`.
+            for decl in re.findall(rf"(?<![\w$]){kw}\s+([^;\n]*)", self.script):
+                names |= set(re.findall(r"(?<![\w.$])([A-Za-z_$][\w$]*)\s*(?==|,|$|\))",
+                                        decl))
+        names |= set(re.findall(r"\b([A-Za-z_$][\w$]*)\s*=>", self.script))
+        names |= set(re.findall(r"\bfunction\s*\(([^)]*)\)", self.script) and [] or [])
+        # Parameters of every function, since they are in scope inside it.
+        for params in re.findall(r"function[^(]*\(([^)]*)\)", self.script):
+            names |= set(re.findall(r"[A-Za-z_$][\w$]*", params))
+        for params in re.findall(r"\(([^)]*)\)\s*=>", self.script):
+            names |= set(re.findall(r"[A-Za-z_$][\w$]*", params))
+        # catch(e), for(const x of ...), destructuring.
+        names |= set(re.findall(r"catch\s*\(\s*([A-Za-z_$][\w$]*)", self.script))
+        return names
+
+    def test_every_underscore_module_variable_is_declared(self):
+        """Project convention: module-level state is `_`-prefixed. Those are exactly the names a
+        partially-applied edit leaves dangling, and they are unambiguous to scan for."""
+        declared = self._declared()
+        # Not preceded by `.` (a property access) and not followed by `:` (an object-literal
+        # key) -- neither is a variable reference.
+        used = set(re.findall(r"(?<![\w.$])(_[A-Za-z][\w$]*)\s*(?!:)", self.script))
+        used = {n for n in used
+                if re.search(rf"(?<![\w.$]){re.escape(n)}\s*(?![\w$:])", self.script)}
+        undeclared = sorted(n for n in used if n not in declared)
+        self.assertEqual(undeclared, [],
+                         f"referenced but never declared: {undeclared}")
+
+    def test_the_check_would_notice_a_missing_declaration(self):
+        """Proves the scan has teeth rather than passing vacuously."""
+        declared = self._declared()
+        self.assertIn("_huntAdvice", declared)
+        self.assertNotIn("_huntAdviceThatDoesNotExist", declared)
+
+    def test_every_handler_the_markup_calls_is_defined(self):
+        """Inline handlers run in global scope, so a typo here is a runtime error too."""
+        declared = self._declared()
+        called = set()
+        for attr in ("onclick", "onchange", "oninput", "onkeydown", "onsubmit"):
+            for body in re.findall(rf'{attr}="([^"]*)"', self.src):
+                called |= set(re.findall(r"(?<![\w.$])([A-Za-z_$][\w$]*)\s*\(", body))
+        browser = {"return", "if", "event", "true", "false", "Number", "String", "alert",
+                   "confirm", "parseInt", "parseFloat", "this"}
+        missing = sorted(n for n in called if n not in declared and n not in browser)
+        self.assertEqual(missing, [], f"markup calls undefined: {missing}")
 
 
 if __name__ == "__main__":
