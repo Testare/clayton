@@ -75,8 +75,8 @@ class SolverConfig:
     #: bound holds without knowing which move is coming (sec 11.2). Bag actions resolve before
     #: moves, so a heal always lands before the incoming hit regardless of Speed.
     danger_floor: int = 0
-    #: Suicune's own PP caps the battle: past this it must Struggle, which at 1 HP kills it and
-    #: loses the legendary (sec 4.4).
+    #: A ceiling on the search. The target's own PP caps the battle well below this in practice
+    #: (see `struggle_deadline`), and the search is clamped to whichever is lower.
     max_turns: int = 120
     #: Guards a runaway search rather than the battle; exhausting the horizon above is the real
     #: stopping condition.
@@ -94,6 +94,21 @@ class SolverConfig:
     #: Standard balls are provably safe once the seed is known -- the capture ball failing
     #: implies a standard ball fails -- so they are free filler (sec 12.5).
     allow_standard_balls: bool = True
+
+
+def struggle_deadline(target) -> int:
+    """How many turns the search may use before the target runs out of PP.
+
+    Past this the target must Struggle, and at 1 HP the recoil kills it -- losing the legendary
+    outright (sec 4.4).  The simulator does not model Struggle at all: with no usable slot it
+    simply spends no roll, which would make those turns silently wrong rather than visibly
+    unsupported.  So the solver refuses to search there.
+
+    Total PP is a *conservative* bound in turns, because a fully-paralyzed turn costs the target
+    no PP -- the real deadline is later, and erring early is the safe direction.
+    """
+    return sum(target.pp_left(slot) for slot in range(len(target.moves))
+               if target.move(slot) is not None)
 
 
 @dataclass(frozen=True)
@@ -261,15 +276,17 @@ def solve(state: BattleState, hunt: HuntConfig,
                     f"paralyzed"),
             proven=False, states_explored=0)
 
+    deadline = struggle_deadline(state.target)
+    max_turns = min(config.max_turns, deadline)
     threshold = target_threshold(state, hunt)
     if is_guaranteed(threshold):
         pass  # any throw captures; the search will find it on turn one
-    horizon_advances = config.max_turns * turn_costs.max_turn_advances()
+    horizon_advances = max_turns * turn_costs.max_turn_advances()
     windows = capture_windows_in_horizon(state.rng, threshold, horizon_advances)
     if not windows:
         return Unreachable(
             reason=(f"no four consecutive rolls fall under b={threshold} within "
-                    f"{horizon_advances} advances -- an upper bound on what {config.max_turns} "
+                    f"{horizon_advances} advances -- an upper bound on what {max_turns} "
                     f"turns can spend -- so no action sequence can capture"),
             proven=True, states_explored=0, capture_windows=0)
 
@@ -292,7 +309,7 @@ def solve(state: BattleState, hunt: HuntConfig,
         if current.captured:
             return Solution(steps=list(path), total_distance=dist_so_far,
                             states_explored=explored)
-        if turns >= config.max_turns:
+        if turns >= max_turns:
             continue
 
         if config.collapse_offsets:
@@ -321,10 +338,11 @@ def solve(state: BattleState, hunt: HuntConfig,
 
     exhaustive = not config.collapse_offsets
     return Unreachable(
-        reason=(f"exhausted every action sequence within {config.max_turns} turns "
-                f"(the target's own PP caps the battle there), so this seed cannot be captured"
+        reason=(f"exhausted every action sequence within {max_turns} turns "
+                f"({'the target Struggles past there and dies to recoil' if max_turns == deadline
+                   else 'the configured ceiling'}), so this seed cannot be captured"
                 if exhaustive else
-                f"found no path within {config.max_turns} turns, visiting each RNG offset at "
+                f"found no path within {max_turns} turns, visiting each RNG offset at "
                 f"its cheapest arrival. Re-run with collapse_offsets=False for a complete "
                 f"search before concluding the seed is hopeless"),
         proven=exhaustive, states_explored=explored, capture_windows=len(windows))

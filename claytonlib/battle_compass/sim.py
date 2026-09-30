@@ -167,6 +167,12 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     One roll always, and the modulus shrinks as PP runs out — so its entropy decays from 2.00
     bits to 1.58 to 1.00 and then to nothing (sec 5.2 R4, verified). Returns (rng, slot), with
     slot None when nothing is usable and the target would have to Struggle.
+
+    **A None slot is outside the model.** Struggle is not simulated: no roll is spent, no damage
+    is dealt and no recoil is applied, so such a turn is silently wrong rather than visibly
+    unsupported. It also loses the run in reality, because Struggle recoil kills a 1 HP target.
+    The solver therefore never searches that far — see ``solver.struggle_deadline`` — and callers
+    that might should check for None themselves.
     """
     usable = target.usable_slots()
     if not usable:

@@ -607,6 +607,13 @@ This is the algorithm §1.1's table was produced with. It is fast because the st
 small (§2.2: at 1 HP + paralyzed the battle is nearly stateless) and because the horizon is
 intrinsically bounded (§6.3).
 
+**The Struggle deadline is enforced, not just noted [implementation].** The simulator does not
+model Struggle at all — `select_target_move` returns no slot, so the turn spends no roll and deals
+no damage, which would be silently wrong rather than visibly unsupported. The solver therefore
+clamps its search to `struggle_deadline(target)` = the target's total PP (90 for Suicune, against
+a configured ceiling of 120). Total PP is conservative in turns, because a fully-paralyzed turn
+costs the target no PP — the real deadline is later, and erring early is the safe direction.
+
 **Measured [implementation].** §1.1's reachability table was built from an illustrative cost
 model before any simulator existed. Re-measured against the real solver over 200 random seeds:
 

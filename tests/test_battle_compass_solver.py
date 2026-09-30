@@ -5,13 +5,15 @@ made from an illustrative cost model, against the real simulator.
 """
 import statistics
 import unittest
+from dataclasses import replace
 
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle.turn import max_turn_advances
 from claytonlib.battle_compass.sim import HuntConfig
 from claytonlib.battle_compass.solver import (
     BALL_PRICE, BASE_DISTANCE, COST_DIVISOR, ITEM_PRICES, Solution, SolverConfig, Unreachable,
-    capture_windows_in_horizon, choose_item, distance_of, solve, target_threshold,
+    capture_windows_in_horizon, choose_item, distance_of, solve, struggle_deadline,
+    target_threshold,
 )
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
@@ -253,6 +255,40 @@ class TestReachabilityMatchesTheDesignClaim(unittest.TestCase):
         """At a single-digit median, Suicune's ~120-turn Struggle deadline never binds."""
         turns = [r.turns for r in self._sample() if isinstance(r, Solution)]
         self.assertLess(max(turns), 120)
+
+
+class TestStruggleDeadline(unittest.TestCase):
+    """The simulator does not model Struggle -- with no usable slot it spends no roll and deals
+    no damage, so those turns would be silently wrong. And in reality Struggle recoil kills a
+    1 HP target, losing the legendary. So the search must stop short of it."""
+
+    def test_the_deadline_is_the_targets_total_pp(self):
+        self.assertEqual(struggle_deadline(_state().target), 90)
+
+    def test_the_deadline_clamps_a_larger_configured_ceiling(self):
+        """The default max_turns of 120 is past Suicune's 90 PP."""
+        result = solve(_state(), HUNT, _config(max_turns=120))
+        if isinstance(result, Solution):
+            self.assertLessEqual(result.turns, 90)
+
+    def test_a_lower_ceiling_still_wins(self):
+        result = solve(_state(), HUNT, _config(max_turns=4))
+        if isinstance(result, Solution):
+            self.assertLessEqual(result.turns, 4)
+
+    def test_exhaustion_at_the_deadline_names_it(self):
+        target = replace(_state().target, pp=(1, 0, 0, 0))
+        state = _state()
+        state.target = target
+        result = solve(state, HUNT, _config(collapse_offsets=False))
+        if isinstance(result, Unreachable) and result.capture_windows:
+            self.assertIn("Struggles", result.reason)
+
+    def test_a_target_with_no_pp_leaves_no_turns_to_search(self):
+        state = _state()
+        state.target = replace(state.target, pp=(0, 0, 0, 0))
+        self.assertEqual(struggle_deadline(state.target), 0)
+        self.assertIsInstance(solve(state, HUNT, _config()), Unreachable)
 
 
 if __name__ == "__main__":
