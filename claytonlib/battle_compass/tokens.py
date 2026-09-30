@@ -17,8 +17,23 @@ wrong state (sec 13.8).
 """
 from __future__ import annotations
 
-# Detail tokens for a status, keyed by the Status enum's value.
-STATUS_DETAIL = {"par": "par", "slp": "slp", "frz": "frz", "brn": "brn", "psn": "psn"}
+#: Markers that *replace* the slot, because no move happened at all. The three non-volatile
+#: ones carry the same spelling as ``Status``'s values; ``cfz`` (a confusion self-hit) and
+#: ``fln`` (a flinch) are volatile and have no ``Status`` member.
+PREVENTION_DETAIL = frozenset({"par", "slp", "frz", "cfz", "fln"})
+
+#: Markers that *precede* the slot, because the move goes ahead anyway.
+#:
+#: Only one exists, and it is the exception that earns the whole distinction. Sleep and freeze
+#: need no wearing-off marker: the move happening at all proves the status ended. Confusion is
+#: different -- a confused Pokemon can attack perfectly normally -- so "the move landed" says
+#: nothing about whether it is still confused, and snapping out has to be reported explicitly
+#: (sec 13.4). A number therefore always follows ``scfz``.
+RESOLUTION_DETAIL = frozenset({"scfz"})
+
+#: Every status marker the grammar knows. Longest-match matters: ``scfz`` must be tried before
+#: ``cfz``, or snapping out would parse as a self-hit.
+STATUS_MARKERS = tuple(sorted(PREVENTION_DETAIL | RESOLUTION_DETAIL, key=len, reverse=True))
 
 HIT = "h"
 CRIT = "!"
@@ -56,16 +71,39 @@ def target_move_token(slot: int) -> str:
 
 
 def prevented_token(actor: str, status: str) -> str:
-    """``Mpar`` / ``Epar`` — the actor was stopped by a status.
+    """``Mpar`` / ``Epar`` / ``Mcfz`` / ``Efln`` — the actor never got its move off.
 
     Chronological, so the status marker comes before any slot: the check happens before the move
-    would have executed.  A status that *resolves* and lets the move through renders as the slot
-    with no marker, because the move happening at all implies the status ended — except for
-    confusion, the one status a Pokemon can keep while still attacking (sec 13.4).
+    would have executed.  No slot follows, because there is no move to attribute — and for
+    ``cfz`` specifically the actor hit *itself*, so an HP token is required when that actor is
+    ours (:func:`turn_requires_hp`).
+
+    A status that resolves and lets the move through renders as the plain slot, because the move
+    happening at all implies the status ended — except confusion, which needs
+    :func:`resolved_token`.
     """
     if actor not in ("M", "E"):
         raise ValueError(f"actor must be M or E, got {actor!r}")
+    if status not in PREVENTION_DETAIL:
+        raise ValueError(f"{status!r} does not prevent a move; known: "
+                         f"{sorted(PREVENTION_DETAIL)}")
     return f"{actor}{status}"
+
+
+def resolved_token(actor: str, status: str, slot: int) -> str:
+    """``Mscfz2`` — snapped out of confusion, and the move in that slot then executed normally.
+
+    The slot is part of the token rather than a separate one because the move did happen: the
+    usual hit/crit/miss detail follows as it would after a plain ``M2``.
+    """
+    if actor not in ("M", "E"):
+        raise ValueError(f"actor must be M or E, got {actor!r}")
+    if status not in RESOLUTION_DETAIL:
+        raise ValueError(f"{status!r} is not a resolution marker; known: "
+                         f"{sorted(RESOLUTION_DETAIL)}")
+    if not 0 <= slot <= 3:
+        raise ValueError(f"move slot out of range: {slot}")
+    return f"{actor}{status}{slot + 1}"
 
 
 def ball_token(shakes: int, captured: bool = False, *, capture_ball: bool = False) -> str:
@@ -165,9 +203,12 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
     Phase 2 runs to a precomputed path and HP is how a desync is caught (sec 2.5).
     """
     for token in normalise(tokens):
+        # Our own confusion self-hit damages us with no E token in sight.
+        if token == "Mcfz":
+            return True
         if not token.startswith("E"):
             continue
-        # The target's move landing on us is the only thing in scope that can damage us.
+        # The target's move landing on us is the only other thing in scope that can damage us.
         if any(marker in token for marker in (HIT, CRIT)):
             return True
     return False
@@ -189,6 +230,18 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
             continue
         if token[0] in ("E", "M"):
             seen_move = True
+            detail = token[1:]
+            for marker in STATUS_MARKERS:
+                if not detail.startswith(marker):
+                    continue
+                rest = detail[len(marker):]
+                if marker in RESOLUTION_DETAIL and not rest[:1].isdigit():
+                    problems.append(f"{token!r} resolves a status, so the move went ahead and a "
+                                    f"slot must follow {marker!r}")
+                elif marker in PREVENTION_DETAIL and rest[:1].isdigit():
+                    problems.append(f"{token!r} prevented the move, so no slot may follow "
+                                    f"{marker!r}")
+                break
             continue
         if token[0] in ("I", "C", "P", "S") and seen_move:
             problems.append(

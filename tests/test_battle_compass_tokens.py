@@ -138,6 +138,61 @@ class TestValidation(unittest.TestCase):
         self.assertIsNone(tok.hp_from_token("M1"))
 
 
+class TestPreventionAndResolutionMarkers(unittest.TestCase):
+    """Sleep and freeze need no wearing-off marker -- the move happening proves the status
+    ended. Confusion breaks that inference, because a confused Pokemon can attack normally, so
+    snapping out is the one status change that must be reported explicitly (sec 13.4)."""
+
+    def test_a_prevented_move_carries_no_slot(self):
+        self.assertEqual(tok.prevented_token("M", "par"), "Mpar")
+        self.assertEqual(tok.prevented_token("E", "slp"), "Eslp")
+        self.assertEqual(tok.prevented_token("E", "fln"), "Efln")
+
+    def test_a_confusion_self_hit_is_a_prevention(self):
+        self.assertEqual(tok.prevented_token("M", "cfz"), "Mcfz")
+
+    def test_snapping_out_of_confusion_keeps_its_slot(self):
+        """The move completes, so a number always follows scfz."""
+        self.assertEqual(tok.resolved_token("M", "scfz", 1), "Mscfz2")
+
+    def test_a_resolution_token_takes_the_usual_move_detail(self):
+        turn = [tok.resolved_token("M", "scfz", 1), tok.CRIT, tok.target_move_token(2), tok.HIT, tok.hp_token(60)]
+        self.assertEqual(tok.render_turn(turn), "Mscfz2!E3hHP060")
+        self.assertEqual(tok.validate_turn(turn), [])
+
+    def test_longest_match_keeps_scfz_from_parsing_as_cfz(self):
+        self.assertEqual(tok.tokenise("Mscfz2h"), ["Mscfz2h"])
+        self.assertEqual(tok.STATUS_MARKERS[0], "scfz")
+
+    def test_a_status_that_cannot_prevent_a_move_is_rejected(self):
+        for status in ("brn", "psn", "scfz", "nonsense"):
+            with self.assertRaises(ValueError, msg=status):
+                tok.prevented_token("M", status)
+
+    def test_a_prevention_marker_is_not_a_resolution_marker(self):
+        with self.assertRaises(ValueError):
+            tok.resolved_token("M", "par", 0)
+
+    def test_a_prevention_with_a_slot_is_invalid(self):
+        self.assertTrue(any("no slot may follow" in p
+                            for p in tok.validate_turn(["Mpar2", tok.target_move_token(0)])))
+
+    def test_a_resolution_without_a_slot_is_invalid(self):
+        self.assertTrue(any("a slot must follow" in p
+                            for p in tok.validate_turn(["Mscfz", tok.target_move_token(0)])))
+
+    def test_our_confusion_self_hit_demands_an_hp_token(self):
+        """It damages us with no E token present, which the earlier rule keyed on."""
+        self.assertTrue(tok.turn_requires_hp(["Mcfz", tok.target_move_token(0)]))
+        self.assertIn("the target hit us, so this turn needs an HP token",
+                      tok.validate_turn(["Mcfz", tok.target_move_token(0)]))
+        self.assertEqual(tok.validate_turn(["Mcfz", tok.hp_token(88), tok.target_move_token(0)]), [])
+
+    def test_the_targets_confusion_self_hit_does_not(self):
+        """It damages the target, not us."""
+        self.assertFalse(tok.turn_requires_hp(["M1", tok.HIT, "Ecfz"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 
