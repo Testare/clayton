@@ -744,7 +744,10 @@ async function deleteExpeditionConfirmed(id){
 // --- Expedition home + tool pages -----------------------------------------
 async function openExpeditionHome(id){
   const e = await api("get_expedition", id);
-  // [emoji, label, full-title, handler?] — handler gets the expedition id; default is a placeholder.
+  // [emoji, label, full-title, handler?] — handler gets the expedition id; default is a
+  // placeholder. NB every category goes through this one call, Safari Chart and Safari Compass
+  // included, so it must pass a bare id. The metronome handlers accept either that or an
+  // explicit owner (see asOwner); the Safari ones only ever take an expedition id.
   const cats = [
     ["☝️🧭", "Metronome Compass", [["New Run","Metronome Compass — New Run","metronomeNewRun"],["Review Data","Metronome Compass — Review Data","metronomeReviewData"]]],
     ["⛺🗺️", "Safari Chart", [["Find Target","Safari Chart — Find Target","chartFindTarget"],["Manage Data","Safari Chart — Manage Data","chartManageData"]]],
@@ -754,7 +757,7 @@ async function openExpeditionHome(id){
     <div class="tool-cat"><h3>${emoji} ${esc(cat)}</h3>
       ${tools.map(([label, full, handler]) =>
         `<button class="btn" onclick="${handler
-          ? `${handler}('expedition','${esc(id)}')` : `toolPlaceholder('${esc(id)}','${esc(full)}')`}">${esc(label)}</button>`).join("")}
+          ? `${handler}('${esc(id)}')` : `toolPlaceholder('${esc(id)}','${esc(full)}')`}">${esc(label)}</button>`).join("")}
     </div>`).join("");
   mount(`<div class="head"><h2>${esc(e.name)}</h2>
       <div style="display:flex;gap:10px">
@@ -836,6 +839,14 @@ function currentUser(){
 // reach the same tools. `owner` is {kind:"expedition"|"hunt", id} -- the only things that
 // differ are which document defaults are stored on, and where "back" goes.
 function ownerOf(kind, id){ return {kind, id}; }
+// Accepts an owner object, an explicit (kind, id) pair, or a bare expedition id -- the last
+// because the expedition tools grid is shared with Safari Chart and Safari Compass and passes
+// only an id. Being tolerant here is what keeps that call site unchanged.
+function asOwner(kind, id){
+  if(kind && typeof kind === "object") return kind;
+  if(id === undefined) return ownerOf("expedition", kind);
+  return ownerOf(kind, id);
+}
 function ownerLabel(owner){ return owner.kind === "hunt" ? "Hunt" : "Expedition"; }
 function ownerHome(owner){
   return owner.kind === "hunt" ? openHuntHome(owner.id) : openExpeditionHome(owner.id);
@@ -848,7 +859,7 @@ function saveOwner(owner, doc){
 }
 
 async function metronomeNewRun(kind, id){
-  const owner = typeof kind === "object" ? kind : ownerOf(kind, id);
+  const owner = asOwner(kind, id);
   const e = await loadOwner(owner);
   const profile = await api("get_profile", e.profile_id);
   const lastDefaults = e.last_metronome_defaults || {};
@@ -1320,7 +1331,7 @@ function nrReset(){
 let review = null;
 
 async function metronomeReviewData(kind, id){
-  const owner = typeof kind === "object" ? kind : ownerOf(kind, id);
+  const owner = asOwner(kind, id);
   const e = await loadOwner(owner);
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "metronome"), api("get_profile", e.profile_id)]);
@@ -1348,7 +1359,7 @@ function reviewHasUnsaved(){
 
 function reviewLeavePage(owner){
   if(reviewHasUnsaved() && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
-  ownerHome(typeof owner === "object" ? owner : ownerOf("expedition", owner));
+  ownerHome(asOwner(owner));
 }
 
 async function reviewSwitchView(view){

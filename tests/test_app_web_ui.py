@@ -95,10 +95,33 @@ class TestHuntNavigation(unittest.TestCase):
         self.assertTrue("'hunt'" in body,
                         "the hunt tools grid does not pass 'hunt' as the owner kind")
 
-    def test_metronome_tools_are_still_reachable_from_an_expedition(self):
+    def test_the_expedition_tools_grid_passes_a_bare_id_to_every_handler(self):
+        """The regression this guards against: that grid is shared by Metronome Compass, Safari
+        Chart and Safari Compass, so injecting an owner kind for the metronome pair's benefit
+        handed 'expedition' to chartFindTarget as its expedition id and broke both Safari tools.
+        The metronome handlers tolerate a bare id instead (see asOwner)."""
         body = _function_body("openExpeditionHome")
-        self.assertTrue("'expedition'" in body,
-                        "the expedition tools grid no longer passes its owner kind")
+        self.assertIn("${handler}('${esc(id)}')", body,
+                      "the shared tools grid must pass only the expedition id")
+        self.assertNotIn("'expedition','", body,
+                         "the shared grid is injecting an owner kind again")
+
+    def test_safari_tools_are_never_handed_an_owner_kind(self):
+        """They are expedition-only concepts and take an id, not an owner."""
+        for handler in ("chartFindTarget", "chartManageData",
+                        "safariCompassNewRun", "safariReviewData"):
+            self.assertNotIn(f"{handler}('expedition'", _HTML,
+                             f"{handler} is being called with an owner kind")
+            self.assertNotIn(f"{handler}('hunt'", _HTML,
+                             f"{handler} is being called with an owner kind")
+
+    def test_owner_resolution_accepts_a_bare_id_an_explicit_pair_and_an_object(self):
+        """All three shapes are in use: the shared grid passes a bare id, the hunt page passes
+        (kind, id), and internal re-entry passes the owner it already has."""
+        body = _function_body("asOwner")
+        self.assertIn('typeof kind === "object"', body)
+        self.assertIn("id === undefined", body)
+        self.assertIn('"expedition"', body)
 
     def test_the_metronome_tools_take_an_owner_rather_than_an_expedition_id(self):
         """Generalised so one implementation serves both; the owner decides where back goes."""
