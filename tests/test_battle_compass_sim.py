@@ -46,8 +46,20 @@ def _state(seed=SEED, **overrides) -> BattleState:
 CONFIG = HuntConfig(target_catch_rate=3)
 
 
+def _bare_cost(move) -> int:
+    """The cost without any status-duration roll, for isolating that term."""
+    from claytonlib.moves import CATEGORY_STATUS
+    rolls = 1 if move.accuracy > 0 else 0
+    if move.category != CATEGORY_STATUS:
+        rolls += 2
+    if move.effect_chance > 0:
+        rolls += 1
+    return rolls
+
+
 class TestRollCosts(unittest.TestCase):
-    """R7 residual: derived from metronome_compass's pattern, not yet measured."""
+    """An UPPER BOUND on each move's cost, cross-checked against metronome_compass's verified
+    handlers in tests/test_battle_compass_effects_parity.py."""
 
     def test_the_nine_fixture_moves(self):
         self.assertEqual(
@@ -56,12 +68,21 @@ class TestRollCosts(unittest.TestCase):
             {"False Swipe": 3,      # crit + damage + accuracy
              "Mean Look": 0,        # always hits, no secondary
              "Sweet Scent": 1,      # accuracy only
-             "Spore": 1,
-             "Thunder Wave": 1,
+             # Accuracy, plus the hidden 2 + RAND%4 sleep-duration roll spent when sleep LANDS.
+             # This was 1 until the parity check against effects._eff_sleep found the duration
+             # roll; a successful Spore desynchronised every turn after it.
+             "Spore": 2,
+             "Thunder Wave": 1,     # paralysis is permanent, so no duration roll
              "Rain Dance": 0,
              "Mist": 0,
              "Gust": 3,
              "Aurora Beam": 4})    # + a proc roll for the 10% Attack drop
+
+    def test_sleep_is_the_only_fixture_move_with_a_duration_roll(self):
+        self.assertEqual(
+            {n for n in SMEARGLE_MOVES + SUICUNE_MOVES + ("Thunder Wave",)
+             if move_roll_cost(lookup(n)) > _bare_cost(lookup(n))},
+            {"Spore"})
 
     def test_a_secondary_effect_costs_one_more_than_the_same_move_without_one(self):
         self.assertEqual(move_roll_cost(lookup("Aurora Beam")) - move_roll_cost(lookup("Gust")), 1)

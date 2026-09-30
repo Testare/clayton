@@ -3,6 +3,7 @@ import re
 import pathlib
 import tempfile
 import unittest
+from dataclasses import replace
 
 from app.facade import Facade
 from app.hunt_session import HuntSessionRegistry
@@ -756,6 +757,77 @@ class TestGuaranteedFailureIsNotAsked(unittest.TestCase):
         for name in ("False Swipe", "Spore", "Sweet Scent"):
             if name in by_name:
                 self.assertFalse(by_name[name]["can_miss"], name)
+
+
+class TestZeroOptionsCountsAsAnswered(unittest.TestCase):
+    """A guaranteed failure leaves NO options -- not one, none. `hrAutoAnswer` tested
+    `options.length !== 1`, so zero fell through and rendered "What happened to Spore?" above an
+    empty row.
+
+    There is no JS engine here, so this pairs a static guard on the branch with a Python check
+    that the zero case is genuinely reachable. The previous test computed the offered set inside
+    the test, duplicating the page's logic instead of exercising it -- which is exactly why it
+    passed while the page was broken.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+        body = self.html[self.html.index("function hrAutoAnswer("):]
+        self.body = body[:body.index("\n}") + 2]
+
+    def test_it_auto_answers_zero_options(self):
+        self.assertIn("options.length > 1", self.body)
+
+    def test_it_no_longer_requires_exactly_one(self):
+        """The precise regression, pinned by its shape."""
+        self.assertNotIn("options.length !== 1", self.body)
+        self.assertNotIn("options.length != 1", self.body)
+
+    def test_both_outcome_questions_go_through_it(self):
+        """So neither side can render an empty question."""
+        self.assertIn("hrAutoAnswer(opts,", self.html)
+        self.assertIn("hrAutoAnswer(opts2,", self.html)
+
+    def test_a_guaranteed_failure_really_does_offer_nothing(self):
+        """Proves the static guard above protects a reachable case rather than a hypothetical.
+
+        Mirrors the page's option-building rules for a non-damaging, unmissable, guaranteed-fail
+        move with no prevention markers available.
+        """
+        from claytonlib.battle_compass.hunt_session import (
+            move_info, prevention_options, resolution_options,
+        )
+        from claytonlib.battle_compass.state import Status
+
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        session = facade._hunt_sessions.get(started["session_id"])
+        state = next(iter(session._session.states.values()))
+        # The reported situation: target already paralyzed, we are not statused.
+        target = replace(state.target, status=Status.PARALYSIS)
+        spore = {m["name"]: m for m in move_info(state.ours, target)}["Spore"]
+
+        self.assertTrue(spore["guaranteed_fail"])
+        self.assertFalse(spore["damaging"])
+        self.assertFalse(spore["can_miss"])
+        self.assertEqual(prevention_options(state.ours, target, actor_moves_first=True), [])
+        self.assertEqual(resolution_options(state.ours), [])
+
+        # Count what the page would build: no "it worked" (guaranteed_fail), no "missed"
+        # (can_miss false), no prevention, no resolution.
+        options = 0
+        if spore["damaging"]:
+            options += 2
+        elif not spore["guaranteed_fail"]:
+            options += 1
+        if spore["can_miss"] and not spore["guaranteed_fail"]:
+            options += 1
+        self.assertEqual(options, 0, "the zero-option case is unreachable, so the guard is moot")
+
+    def test_the_skipped_question_still_says_why(self):
+        """Silence where a question was would read as a page that forgot to ask."""
+        self.assertIn("had no", self.html)
+        self.assertIn("needs no reporting", self.html)
 
 
 if __name__ == "__main__":

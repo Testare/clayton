@@ -35,6 +35,13 @@ from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
 from claytonlib.safari import advance_rng
 
+#: Sleep lasts ``2 + RAND % 4`` turns, and the roll is spent when sleep is APPLIED -- one extra
+#: advance beyond the accuracy check, invisible to the player at the time. Cross-validated
+#: against ``metronome_compass.effects._eff_sleep``, which is where this was found: a successful
+#: Spore spent one roll here and two there, desynchronising every turn after it.
+SLEEP_DURATION_MIN = 2
+SLEEP_DURATION_SPAN = 4
+
 #: Move effect ids that can cause a flinch: 31 (the generic "may flinch"), 150 (Stomp) and
 #: 158 (Fake Out). Nothing in Suicune's moveset is among them, which is why "flinched" must not
 #: be offered as an outcome against it.
@@ -68,19 +75,29 @@ class MoveOutcome:
     successful: bool
     damage: int = 0
     applied_status: Status | None = None
+    #: Rolled sleep duration, when this move applied sleep. Zero otherwise.
+    sleep_turns: int = 0
     secondary: bool = False
 
 
 def move_roll_cost(move: Move) -> int:
-    """How many rolls executing `move` spends. R7 residual — derived, not yet measured.
+    """An UPPER BOUND on the rolls executing `move` spends.
 
     An accuracy roll when the move can miss, two more for a damaging move (crit and damage), one
-    more for a secondary effect's proc roll.
+    more for a secondary effect's proc roll, and one more when the move applies sleep.
+
+    A bound rather than a count, because the real cost depends on the outcome: a move that misses
+    spends no damage rolls, and sleep's duration roll happens only when the status actually lands.
+    ``execute_move`` returns the true figure in ``MoveOutcome.rolls``; nothing should use this to
+    advance an RNG stream. Cross-validated against ``metronome_compass.effects`` for all nine
+    fixture moves (tests/test_battle_compass_effects_parity.py).
     """
     rolls = 1 if move.accuracy > 0 else 0
     if move.category != CATEGORY_STATUS:
         rolls += 2
     if move.effect_chance > 0:
+        rolls += 1
+    if _status_for(move) is Status.SLEEP:
         rolls += 1
     return rolls
 
@@ -166,10 +183,19 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         status = _status_for(move)
         if status is not None and defender.status is not Status.NONE:
             # A status move against an already-statused target rolls accuracy and then fails,
-            # which is why Spore stays useful as filler after paralysis lands (sec 11.5).
+            # which is why Spore stays useful as filler after paralysis lands (sec 11.5). No
+            # duration roll here -- the status was never applied.
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
+        sleep_turns = 0
+        if status is Status.SLEEP:
+            # Applying sleep costs one more roll for its hidden duration. The cost of this move
+            # is therefore OUTCOME-dependent, which is why move_roll_cost can only be an upper
+            # bound for it.
+            rng, duration_roll = advance(rng)
+            used += 1
+            sleep_turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
         return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
-                                applied_status=status)
+                                applied_status=status, sleep_turns=sleep_turns)
 
     # Damaging.
     rng, crit_roll = advance(rng)

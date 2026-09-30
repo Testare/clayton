@@ -4131,7 +4131,11 @@ function hrChips(label, options, hint){
 // it anyway is noise, and the answer is deducible from the move -- so a single-option question
 // applies itself and renders nothing.
 function hrAutoAnswer(options, apply){
-  if (options.length !== 1) return false;
+  // ZERO options counts as answered, not as a question with nothing in it. A guaranteed failure
+  // leaves none -- Spore against an already-paralyzed target offers no "it worked", no "missed",
+  // and no prevention marker -- and `!== 1` rendered "What happened to Spore?" above an empty
+  // row. One option is settled by the move; none is settled by the game state.
+  if (options.length > 1) return false;
   apply();
   return true;
 }
