@@ -55,14 +55,19 @@ ACTUAL_INCOMING = [27, 26, 24]
 
 
 def _magneton():
-    return Battler(name="Magneton", level=30, types=("Electric", "Steel"),
-                   stats={"hp": 79, "atk": 50, "def": 70, "spa": 90, "spd": 60, "spe": 60},
+    """Level 31, stats straight off the summary screen."""
+    return Battler(name="Magneton", level=31, types=("Electric", "Steel"),
+                   stats={"hp": 79, "atk": 58, "def": 65, "spa": 84, "spd": 57, "spe": 50},
                    moves=("Thunder Wave", "Tackle"), pp=(20, 35))
 
 
 def _smeargle():
-    return Battler(name="Smeargle", level=60, types=("Normal",),
-                   stats={"hp": 153, "atk": 65, "def": 80, "spa": 60, "spd": 80, "spe": 160},
+    # Level 58, not the 60 the fixture was first written down as: the log's five False Swipes
+    # only reconcile at 58 (level term 25, not 26), and the HP read of 153 agrees. Stats are the
+    # real ones off the summary screen -- note Sp. Def 79 falls inside the 78-80 that solving the
+    # three recorded Aurora Beams independently produced.
+    return Battler(name="Smeargle", level=58, types=("Normal",),
+                   stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
                    moves=("False Swipe", "Mean Look", "Sweet Scent", "Spore"),
                    pp=(40, 5, 20, 15), ability="Technician", held_item="Silk Scarf")
 
@@ -184,6 +189,33 @@ class TestShakeCountsMatch(unittest.TestCase):
         """1-4 rolls, stopping at the first failed shake."""
         from claytonlib.battle.catch import rolls_consumed
         self.assertEqual([rolls_consumed(n) for n in (0, 1, 3)], [1, 2, 4])
+
+
+class TestTheTargetsHpMatchesExactly(unittest.TestCase):
+    """Outgoing damage, which reconciled only once Smeargle's level was corrected from the 60 the
+    fixture was written down as to the real 58. The level term is `(level*2/5)+2` in integer
+    arithmetic, so 58 and 59 both give 25 while 60 gives 26 -- one point of base damage, which
+    is the whole discrepancy.
+
+    Not needed for identification (the target's HP is never in the token stream) but it gates
+    Phase 2, which asserts the target is at exactly 1 HP.
+    """
+
+    def test_every_false_swipe_lands_the_recorded_damage(self):
+        replay = _replay()
+        got = [state.target.hp for _, _, state in replay[2:7]]
+        self.assertEqual(got, ACTUAL_TARGET_HP)
+
+    def test_false_swipe_never_takes_it_below_one(self):
+        replay = _replay()
+        for _, _, state in replay:
+            self.assertGreaterEqual(state.target.hp, 1)
+
+    def test_level_sixty_would_not_have_matched(self):
+        """Pinning why the level mattered, so it cannot quietly drift back."""
+        self.assertEqual((58 * 2) // 5 + 2, 25)
+        self.assertEqual((60 * 2) // 5 + 2, 26)
+        self.assertNotEqual((58 * 2) // 5 + 2, (60 * 2) // 5 + 2)
 
 
 class TestOurHpMatchesExactly(unittest.TestCase):

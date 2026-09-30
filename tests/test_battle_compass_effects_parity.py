@@ -59,8 +59,8 @@ def _metronome_advances(move_name: str, seed: int) -> int | None:
 
 
 def _ours(**kw) -> Battler:
-    fields = dict(name="Smeargle", level=60, types=("Normal",),
-                  stats={**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65},
+    fields = dict(name="Smeargle", level=58, types=("Normal",),
+                  stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
                   moves=FIXTURE_MOVES[:4], pp=(10,) * 4)
     fields.update(kw)
     return Battler(**fields)

@@ -330,22 +330,36 @@ output, and are here for the doc and the code to agree on rather than as measure
 
 | Party member | HP | SpD | Aurora Beam | crit | Gust | crit | provenance |
 |---|---|---|---|---|---|---|---|
-| Magneton Lv30 (Steel x0.5 Ice, x0.25 Flying) | 79 | 56 | 16-19 | 33-39 | **5-6** | **10-12** | derived |
-| Smeargle Lv60 (Normal, x1.0) | 154 | 77 | 24-29 | 49-58 | 15-18 | 30-36 | **Aurora Beam verified** |
+| **Magneton Lv31** (Steel x0.5 Ice, x0.25 Flying) | **79** | **57** | 16-19 | 32-38 | **5-6** | **10-12** | stats entered |
+| **Smeargle Lv58** (Normal, x1.0) | **153** | **79** | 23-28 | 47-56 | 15-18 | 30-36 | **verified** |
 | Mamoswine Lv90 (Ice/Ground, x1.0) | 325 | 140 | 12-16 | 26-32 | 9-11 | 18-22 | derived |
 
-**Verified:** three Aurora Beams landed on Smeargle in `data/battle_logs/test1.jsonl` for 27, 26
-and 24, every one of them reproduced exactly (§16.1). Nothing has ever been measured against
-Magneton or Mamoswine, so those rows are predictions.
+Entered stats, off the summary screen:
+
+| | HP | Atk | Def | SpA | SpD | Spe |
+|---|---|---|---|---|---|---|
+| Magneton Lv31 | 79 | 58 | 65 | 84 | 57 | 50 |
+| Smeargle Lv58 | 153 | 65 | 66 | 45 | 79 | 160 |
+
+Magneton is **level 31**, not the 30 first written down. **Only the Smeargle row is measured.** `data/battle_logs/test1.jsonl` landed three Aurora Beams
+on it for 27, 26 and 24, all reproduced exactly (§16.1), and its HP read as 153. Nothing has ever
+been recorded against Magneton or Mamoswine, so those rows are the model's own output — useful for
+keeping the doc and the code in step, and not evidence of anything.
+
+Two corrections to the fixture itself, both from that log:
+
+- **Smeargle is level 58, not 60.** It was first written down as 60. The level term is
+  `((level*2/5)+2)` in *integer* arithmetic, so 58 gives 25 where 60 gives 26 — one point of base
+  damage, which was the entire remaining discrepancy in outgoing damage. At 58 the log reconciles
+  completely, Suicune's HP included (113, 85, 58, 31, 4).
+- HP is **153**, not 154, and Sp. Def is **79** — inside the 78-80 that solving the three
+  recorded Aurora Beams produced independently, which is a pleasing cross-check of the formula
+  against a stat nobody fed it.
 
 Mamoswine's row moved from 13-16 to 12-16 when type effectiveness was corrected to apply once
 **per defender type** as the ROM does — Ice/Ground is `x0.5` then `x2`, and `DamageDivide`
 truncates between them, which a single combined `x1.0` does not. The mechanism is ROM-verified;
 the resulting Mamoswine figure is not.
-
-Two figures here disagree with the log and should be re-entered from the summary screen: it
-recorded Smeargle at **153** HP, not 154, and solving its three Aurora Beams for Sp. Def gives
-**78-80** rather than 77.
 
 Mamoswine still needs roughly **11 critical Aurora Beams** to fall, confirming its role as an
 untouchable wall — a conclusion robust to a point either way.
@@ -1065,7 +1079,7 @@ Two modes, matching the two information states:
   | Party member | HP | Worst single hit (crit Aurora Beam) | Heal at or below |
   |---|---|---|---|
   | Magneton Lv30 | 79 | 39 | 39 |
-  | **Smeargle Lv60** | **154** | **58** | **58** |
+  | **Smeargle Lv58** | **153** | **58** | **58** |
   | Mamoswine Lv90 | 325 | 32 | 32 |
 
 - **Seed identified** — the solver knows the next hit's move, crit and damage roll exactly, so
@@ -2206,12 +2220,14 @@ simulator kept taking turns at 0 HP and rendered hits that changed nothing — `
 token, which `validate_turn` correctly rejects. Found while chasing something else; the solver had
 always treated fainting as a hard constraint (§6.2), and the simulator now agrees.
 
-**Still open.** Outgoing damage does not reconcile. False Swipe dealt 28, 28, 27, 27, 27 with
-multipliers 91, 92, 87, 90, 90, and no single base damage fits — turn 5 needs 32 where the others
-need 31. Outgoing damage is not in the token stream, so this does not affect identification; it
-affects only the Phase 2 gate, and False Swipe's clamp reaches 1 HP regardless. The likeliest
-cause is the assumed Smeargle attack stat (recorded only as "about 65") rather than the formula.
-Needs the exact figure to settle.
+**Closed.** Outgoing damage reconciles too, once the fixture was corrected. The remaining
+discrepancy was never in the formula: **Smeargle is level 58, not the 60 first written down.** The
+level term is `((level*2/5)+2)` in integer arithmetic, so 58 gives 25 where 60 gives 26 — one
+point of base damage, and the entire gap. With the real entered stats (153/65/66/45/79/160 at
+Lv58, and Magneton at Lv31) the log reproduces **completely**: all 17 advance counts, every move
+Suicune chose, every shake count, our HP (126, 146, 120, 96) *and* Suicune's (113, 85, 58, 31, 4).
+
+Nothing in that replay is an assumed input any more.
 
 **Also noted.** The `gdb-battle-reader` stat override wrote every *stat* correctly (141/63/119/
 89/109/84 — exactly the configured Bold spread) but two of the six IV bitfields read back wrong

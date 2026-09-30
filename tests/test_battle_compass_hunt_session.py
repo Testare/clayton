@@ -24,8 +24,8 @@ HUNT = HuntConfig(target_catch_rate=3)
 
 
 def _ours(**kw):
-    stats = {**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65}
-    fields = dict(name="Smeargle", level=60, types=("Normal",), stats=stats,
+    stats = {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160}
+    fields = dict(name="Smeargle", level=58, types=("Normal",), stats=stats,
                   moves=("False Swipe", "Mean Look", "Sweet Scent", "Spore"),
                   pp=(40, 5, 20, 15))
     fields.update(kw)
@@ -65,12 +65,14 @@ class TestDangerFloor(unittest.TestCase):
     coming (sec 11.2)."""
 
     def test_it_is_the_worst_crit_hit_the_target_can_land(self):
-        self.assertEqual(worst_incoming_hit(_ours(), _target()), 58)
+        """56, a maximum-roll critical Aurora Beam. Was 58 when the damage range was applied
+        after STAB rather than before it, and with Smeargle's stats assumed rather than entered."""
+        self.assertEqual(worst_incoming_hit(_ours(), _target()), 56)
 
     def test_the_session_adopts_it_as_the_solver_floor(self):
         s = _session()
-        self.assertEqual(s.danger_floor, 58)
-        self.assertEqual(s.solver_config.danger_floor, 58)
+        self.assertEqual(s.danger_floor, 56)
+        self.assertEqual(s.solver_config.danger_floor, 56)
 
     def test_it_is_critical_because_a_crit_ignores_our_defensive_boosts(self):
         from claytonlib.battle.damage import Attacker, Defender, damage_range

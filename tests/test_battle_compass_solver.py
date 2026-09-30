@@ -19,8 +19,9 @@ from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
 SEED = 0xEC1504DC
 HUNT = HuntConfig(target_catch_rate=3)
-#: Smeargle's worst single incoming hit: a max-roll critical Aurora Beam (sec 11.2).
-DANGER_FLOOR = 58
+#: Smeargle's worst single incoming hit: a max-roll critical Aurora Beam (sec 11.2). 56 with the
+#: real stats and the ROM's modifier order; was 58 under the earlier order and assumed stats.
+DANGER_FLOOR = 56
 
 
 def _state(seed=SEED, **target_overrides) -> BattleState:
@@ -30,8 +31,8 @@ def _state(seed=SEED, **target_overrides) -> BattleState:
         moves=("Rain Dance", "Gust", "Aurora Beam", "Mist"), pp=(5, 35, 20, 30),
         hp=1, status=Status.PARALYSIS)
     target_fields.update(target_overrides)
-    stats = {**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65}
-    ours = Battler(name="Smeargle", level=60, types=("Normal",), stats=stats,
+    stats = {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160}
+    ours = Battler(name="Smeargle", level=58, types=("Normal",), stats=stats,
                    moves=("False Swipe", "Mean Look", "Sweet Scent", "Spore"),
                    pp=(40, 5, 20, 15))
     return BattleState(ours=ours, target=Battler(**target_fields), rng=seed, phase=2)

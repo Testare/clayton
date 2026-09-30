@@ -30,8 +30,8 @@ def _target(**overrides) -> Battler:
 
 
 def _ours(**overrides) -> Battler:
-    stats = {**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65}
-    fields = dict(name="Smeargle", level=60, types=("Normal",), stats=stats,
+    stats = {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160}
+    fields = dict(name="Smeargle", level=58, types=("Normal",), stats=stats,
                   moves=SMEARGLE_MOVES, pp=(40, 5, 20, 15))
     fields.update(overrides)
     return Battler(**fields)

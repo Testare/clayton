@@ -8,8 +8,8 @@ SMEARGLE_MOVES = ("False Swipe", "Mean Look", "Sweet Scent", "Spore")
 
 
 def _smeargle(**overrides) -> Battler:
-    stats = {**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65}
-    fields = dict(name="Smeargle", level=60, types=("Normal",), stats=stats,
+    stats = {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160}
+    fields = dict(name="Smeargle", level=58, types=("Normal",), stats=stats,
                   moves=SMEARGLE_MOVES, pp=(40, 5, 20, 15))
     fields.update(overrides)
     return Battler(**fields)
@@ -42,7 +42,7 @@ class TestAction(unittest.TestCase):
 
 class TestBattler(unittest.TestCase):
     def test_hp_defaults_to_max(self):
-        self.assertEqual(_smeargle().hp, 154)
+        self.assertEqual(_smeargle().hp, 153)
 
     def test_hp_is_clamped_to_the_range(self):
         mon = _smeargle()

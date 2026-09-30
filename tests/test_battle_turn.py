@@ -117,8 +117,8 @@ class TestTurnUpperBound(unittest.TestCase):
         rng = random.Random(11)
         worst = 0
         for _ in range(400):
-            stats = {**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65}
-            ours = Battler(name="Smeargle", level=60, types=("Normal",), stats=stats,
+            stats = {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160}
+            ours = Battler(name="Smeargle", level=58, types=("Normal",), stats=stats,
                            moves=("False Swipe", "Mean Look", "Sweet Scent", "Spore"),
                            pp=(40, 5, 20, 15))
             target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),

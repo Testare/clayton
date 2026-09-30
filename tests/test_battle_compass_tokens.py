@@ -227,8 +227,8 @@ class TestAHealingItemRequiresHp(unittest.TestCase):
 
         hunt = HuntConfig(target_catch_rate=3)
         moves = moveset("suicune")
-        ours = Battler(name="Smeargle", level=60, types=("Normal",),
-                       stats={**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65},
+        ours = Battler(name="Smeargle", level=58, types=("Normal",),
+                       stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
                        moves=("False Swipe",), pp=(40,), hp=100)
         target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
                          stats=derive_species_stats("suicune", 40, "Bold"), moves=moves,
