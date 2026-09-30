@@ -3959,6 +3959,20 @@ function hrActive(){
   return s.ours;
 }
 
+// Mirrors sim._we_move_first. A bag action or switch resolves before any move, so it always
+// leads; between two moves it is the priority bracket, then effective Speed (paralysis quartered).
+function hrWeActFirst(){
+  const s = _huntSnap, t = _hrTurn;
+  if (!t.action || !t.action.startsWith("M")) return true;
+  const ours = hrOurMoveInfo();
+  const theirSlot = t.target && !t.target.prevented ? t.target.slot : null;
+  const theirs = theirSlot === null ? null : s.target.move_info[theirSlot];
+  const ourP = ours ? ours.priority : 0;
+  const theirP = theirs ? theirs.priority : 0;
+  if (ourP !== theirP) return ourP > theirP;
+  return s.we_move_first;
+}
+
 function hrOurMoveInfo(){
   const slot = _hrTurn.action && _hrTurn.action.startsWith("M")
     ? Number(_hrTurn.action[1]) - 1 : null;
@@ -3967,14 +3981,20 @@ function hrOurMoveInfo(){
 
 // The token string the answers so far describe. Also what gets submitted, so what the player
 // sees confirmed is exactly what is applied.
+// The tokens the answers so far describe, in CHRONOLOGICAL order -- which is the grammar's only
+// ordering rule (sec 13.4). Built progressively so the preview shows "M1" the moment the move is
+// picked rather than staying blank until the whole turn is answered.
 function hrTokens(){
-  const t = _hrTurn, parts = [];
+  const t = _hrTurn;
   if (!t.action) return "";
+  const ourParts = [], targetParts = [];
+  const parts = ourParts;                      // the bag-action branch writes here
   if (t.action.startsWith("M")){
-    if (t.ours === null) return "";
-    if (t.ours.prevented) parts.push("M" + t.ours.prevented);
-    else if (t.ours.snapped) parts.push("Mscfz" + t.action[1] + (t.ours.result || ""));
-    else parts.push(t.action + (t.ours.result || "") + (t.ours.secondary ? "~" : ""));
+    if (t.ours && t.ours.prevented) parts.push("M" + t.ours.prevented);
+    else if (t.ours && t.ours.snapped)
+      parts.push("Mscfz" + t.action[1] + (t.ours.result || ""));
+    else parts.push(t.action + ((t.ours && t.ours.result) || "")
+                             + (t.ours && t.ours.secondary ? "~" : ""));
   } else {
     if (t.action === "I" || t.action === "Ic"){
       if (!t.ours?.item) return "";                 // which item is part of the action
@@ -3988,13 +4008,42 @@ function hrTokens(){
     if ((t.action === "C" || t.action === "P") && t.ours?.result) parts.push(t.ours.result);
   }
   if (t.target){
-    if (t.target.prevented) parts.push("E" + t.target.prevented);
+    if (t.target.prevented) targetParts.push("E" + t.target.prevented);
     else if (t.target.slot !== null && t.target.slot !== undefined)
-      parts.push("E" + (t.target.slot + 1) + (t.target.result || "")
-                     + (t.target.secondary ? "~" : ""));
+      targetParts.push("E" + (t.target.slot + 1) + (t.target.result || "")
+                           + (t.target.secondary ? "~" : ""));
   }
-  if (t.hp !== "" && t.hp !== null) parts.push("HP" + String(t.hp).padStart(3, "0"));
-  return parts.join("");
+  const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
+                                 : targetParts.concat(ourParts);
+  if (t.hp !== "" && t.hp !== null) ordered.push("HP" + String(t.hp).padStart(3, "0"));
+  return ordered.join("");
+}
+
+// Whether every question the interview would ask has an answer. Separate from hrTokens(), which
+// now renders partial turns for the preview.
+function hrTurnComplete(){
+  const t = _hrTurn, s = _huntSnap;
+  if (!t.action) return false;
+  if (t.action === "I" || t.action === "Ic") { if (!t.ours?.item) return false; }
+  else if (t.action === "S") { if (t.ours?.bench === undefined) return false; }
+  else if (t.action === "C" || t.action === "P") { if (!t.ours?.result) return false; }
+  else {
+    if (!t.ours) return false;
+    const info = hrOurMoveInfo();
+    if (info.has_secondary && (t.ours.result === "h" || t.ours.result === "!")
+        && t.ours.secondary === undefined) return false;
+  }
+  const caught = (t.action === "C" || t.action === "P") && t.ours?.result === "c";
+  if (!caught){
+    if (!t.target) return false;
+    if (!t.target.prevented){
+      const info = s.target.move_info[t.target.slot];
+      if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")
+          && t.target.secondary === undefined) return false;
+    }
+  }
+  if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
+  return true;
 }
 
 // Mirrors tokens.turn_requires_hp: the target landing a hit is the only thing in scope that
@@ -4009,6 +4058,7 @@ function hrNeedsHp(){
 function hrSet(path, value){
   const t = _hrTurn;
   if (path === "action"){
+    if (t.action === value) return;      // re-clicking the same action must not wipe answers
     t.action = value; t.ours = null; t.target = null; t.hp = "";
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
@@ -4042,6 +4092,91 @@ function hrChipOff(text, why){
   return `<button class="chip" type="button" disabled title="${esc(why)}">${esc(text)}</button>`;
 }
 
+// Our move's outcome: hit/crit/miss for a damaging move, "it worked" for a status one, plus
+// whatever the CURRENT STATE says could have stopped it. Returns null when nothing needs asking.
+function hrOurOutcomeBlock(){
+  const s = _huntSnap, t = _hrTurn, info = hrOurMoveInfo();
+  const opts = [];
+  if (info.damaging){
+    opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
+    opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
+  } else {
+    opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
+                     t.ours && t.ours.result === "" && !t.ours.prevented));
+  }
+  if (info.can_miss)
+    opts.push(hrChip("Missed / failed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
+  // Only what state allows: an unparalyzed Pokemon cannot be fully paralyzed, and it cannot
+  // flinch unless the other side has a flinching move and moved first.
+  (s.prevention.ours || []).forEach(o =>
+    opts.push(hrChip(o.label, `hrSet('ours',{prevented:'${o.code}'})`,
+                     t.ours?.prevented === o.code)));
+  (s.resolution.ours || []).forEach(o =>
+    opts.push(hrChip(o.label,
+      `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`,
+      !!t.ours?.snapped, "The move still went through")));
+  if (hrAutoAnswer(opts, () => { t.ours = {result: info.damaging ? "h" : ""}; })) return null;
+  return hrChips(`What happened to ${info.name}?`, opts);
+}
+
+function hrOurSecondaryBlock(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!info.has_secondary || !(t.ours?.result === "h" || t.ours?.result === "!")) return null;
+  return hrChips(`Did ${info.name}'s extra effect happen?`, [
+    hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
+           t.ours.secondary === false),
+    hrChip("Yes", `hrSet('ours',{result:'${t.ours.result}',secondary:true})`,
+           t.ours.secondary === true),
+  ], `${info.effect_chance}% chance`);
+}
+
+// Which move the target used, and how it went.
+function hrTargetBlocks(){
+  const s = _huntSnap, t = _hrTurn, out = [];
+  const opts = s.target.move_info.filter(m => m.known).map(m =>
+    hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
+           t.target && t.target.slot === m.slot && !t.target.prevented,
+           `${m.pp} PP left`));
+  (s.prevention.target || []).forEach(o =>
+    opts.push(hrChip(o.label, `hrSet('target',{prevented:'${o.code}'})`,
+                     t.target?.prevented === o.code)));
+  out.push(hrChips(`What did ${s.target.name} do?`, opts));
+  if (!t.target) return {blocks: out, done: false};
+
+  if (!t.target.prevented){
+    const info = s.target.move_info[t.target.slot];
+    const base = `{slot:${t.target.slot}`;
+    const opts2 = [];
+    if (info.damaging){
+      opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
+      opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
+                        t.target.result === "!"));
+    } else {
+      opts2.push(hrChip("It worked", `hrSet('target',${base},result:''})`,
+                        t.target.result === ""));
+    }
+    if (info.can_miss)
+      opts2.push(hrChip("Missed / failed", `hrSet('target',${base},result:'-'})`,
+                        t.target.result === "-"));
+    // Rain Dance cannot miss and deals no damage, so there is nothing to ask.
+    if (!hrAutoAnswer(opts2, () => {
+          t.target = {slot: t.target.slot, result: info.damaging ? "h" : ""};
+        })) out.push(hrChips(`What happened to ${info.name}?`, opts2));
+
+    if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")){
+      out.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
+        hrChip("No", `hrSet('target',${base},result:'${t.target.result}',secondary:false})`,
+               t.target.secondary === false),
+        hrChip(`Yes — ${esc(hrActive().name)}'s stat fell`,
+               `hrSet('target',${base},result:'${t.target.result}',secondary:true})`,
+               t.target.secondary === true),
+      ], `${info.effect_chance}% chance`));
+      if (t.target.secondary === undefined) return {blocks: out, done: false};
+    }
+  }
+  return {blocks: out, done: true};
+}
+
 function hrInterview(){
   const s = _huntSnap, t = _hrTurn;
   const blocks = [];
@@ -4069,57 +4204,22 @@ function hrInterview(){
   blocks.push(hrChips(`What did ${s.ours.name} do?`, actionChips));
   if (!t.action) return blocks.join("");
 
-  // Which item, and which Pokemon came in: part of the ACTION, not its outcome. The same item
-  // heals different amounts and the same switch brings in a different Pokemon, so the simulator
-  // needs these to predict the turn at all.
+  // 2. Which item / who came in — part of the ACTION, not its outcome.
   if (t.action === "I" || t.action === "Ic"){
-    const opts = s.items.map(i => hrChip(
+    blocks.push(hrChips("Which item?", s.items.map(i => hrChip(
       i.name, `hrSet('ours',{item:'${i.code}'})`, t.ours?.item === i.code,
       i.heal === null ? "Restores all HP" : i.heals ? `Restores ${i.heal} HP`
-        : i.cures_status ? "Cures status" : `₽${i.price}`));
-    blocks.push(hrChips("Which item?", opts));
+        : i.cures_status ? "Cures status" : `₽${i.price}`))));
     if (!t.ours?.item) return blocks.join("");
   } else if (t.action === "S"){
-    if (!s.bench.length){ blocks.push(`<div class="notice warn">Nobody to switch to.</div>`);
-      return blocks.join(""); }
-    const opts = s.bench.map(b => hrChip(
+    if (!s.bench.length){
+      blocks.push(`<div class="notice warn">Nobody to switch to.</div>`);
+      return blocks.join("");
+    }
+    blocks.push(hrChips("Who came in?", s.bench.map(b => hrChip(
       b.name, `hrSet('ours',{bench:${b.slot}})`, t.ours?.bench === b.slot,
-      `${b.hp}/${b.max_hp} HP`));
-    blocks.push(hrChips("Who came in?", opts));
+      `${b.hp}/${b.max_hp} HP`))));
     if (t.ours?.bench === undefined) return blocks.join("");
-  }
-
-  // 2. How did it go? Only the outcomes this move can actually have.
-  if (t.action.startsWith("M")){
-    const info = hrOurMoveInfo();
-    const opts = [];
-    if (info.damaging){
-      opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
-      opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
-    } else {
-      opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
-                       t.ours && t.ours.result === "" && !t.ours.prevented));
-    }
-    if (info.can_miss)
-      opts.push(hrChip("Missed / failed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
-    HR_PREVENTED.forEach(([code, label]) =>
-      opts.push(hrChip(label, `hrSet('ours',{prevented:'${code}'})`,
-                       t.ours?.prevented === code)));
-    opts.push(hrChip("Snapped out of confusion",
-      `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`, !!t.ours?.snapped,
-      "The move still went through"));
-    blocks.push(hrChips(`What happened to ${info.name}?`, opts));
-    if (!t.ours) return blocks.join("");
-    // The proc is its own observable and its own token, so it has to be asked, not assumed.
-    if (info.has_secondary && (t.ours.result === "h" || t.ours.result === "!")){
-      blocks.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
-        hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
-               t.ours.secondary === false),
-        hrChip("Yes", `hrSet('ours',{result:'${t.ours.result}',secondary:true})`,
-               t.ours.secondary === true),
-      ], `${info.effect_chance}% chance`));
-      if (t.ours.secondary === undefined) return blocks.join("");
-    }
   } else if (t.action === "C" || t.action === "P"){
     const opts = [0, 1, 2, 3].map(n => hrChip(`${n} shake${n === 1 ? "" : "s"}`,
       `hrSet('ours',{result:'${n}'})`, t.ours?.result === String(n)));
@@ -4129,55 +4229,35 @@ function hrInterview(){
     if (!t.ours?.result) return blocks.join("");
   }
 
-  // 3. What did the target do? A capture ends the battle, so nothing follows it.
   const caught = (t.action === "C" || t.action === "P") && t.ours?.result === "c";
   if (!caught){
-    const opts = s.target.move_info.filter(m => m.known).map(m =>
-      hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
-             t.target && t.target.slot === m.slot && !t.target.prevented,
-             `${m.pp} PP left`));
-    HR_PREVENTED.filter(([c]) => c !== "cfz").forEach(([code, label]) =>
-      opts.push(hrChip(label, `hrSet('target',{prevented:'${code}'})`,
-                       t.target?.prevented === code)));
-    blocks.push(hrChips(`What did ${s.target.name} do?`, opts));
-    if (!t.target) return blocks.join("");
-
-    // 3b. …and how did that go?
-    if (!t.target.prevented){
-      const info = s.target.move_info[t.target.slot];
-      const opts2 = [];
-      if (info.damaging){
-        opts2.push(hrChip("Hit us", `hrSet('target',{slot:${t.target.slot},result:'h'})`,
-                          t.target.result === "h"));
-        opts2.push(hrChip("Critical hit", `hrSet('target',{slot:${t.target.slot},result:'!'})`,
-                          t.target.result === "!"));
-      } else {
-        opts2.push(hrChip("It worked", `hrSet('target',{slot:${t.target.slot},result:''})`,
-                          t.target.result === ""));
+    // 3. Ask in the order things happened. A bag action or switch resolves before any move, so
+    // it is always first; between two moves it is priority, then effective Speed (sec 12.1).
+    // Getting this wrong produced tokens like "M1E1" for a turn the target actually opened.
+    if (hrWeActFirst()){
+      if (t.action.startsWith("M")){
+        const own = hrOurOutcomeBlock();
+        if (own){ blocks.push(own); if (!t.ours) return blocks.join(""); }
+        const sec = hrOurSecondaryBlock();
+        if (sec){ blocks.push(sec); if (t.ours.secondary === undefined) return blocks.join(""); }
       }
-      if (info.can_miss)
-        opts2.push(hrChip("Missed / failed",
-          `hrSet('target',{slot:${t.target.slot},result:'-'})`, t.target.result === "-"));
-      // One possible answer means the move itself settles it. Rain Dance cannot miss and deals no
-      // damage, so there is nothing to ask.
-      if (opts2.length > 1) blocks.push(hrChips(`What happened to ${info.name}?`, opts2));
-      if (!t.target.result && t.target.result !== "") return blocks.join("");
-      if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")){
-        const base = `{slot:${t.target.slot},result:'${t.target.result}'`;
-        blocks.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
-          hrChip("No", `hrSet('target',${base},secondary:false})`,
-                 t.target.secondary === false),
-          hrChip(`Yes — ${esc(s.ours.name)}'s stat fell`,
-                 `hrSet('target',${base},secondary:true})`, t.target.secondary === true),
-        ], `${info.effect_chance}% chance`));
-        if (t.target.secondary === undefined) return blocks.join("");
-      }
+      const tgt = hrTargetBlocks();
+      blocks.push(...tgt.blocks);
+      if (!tgt.done) return blocks.join("");
+    } else {
+      const tgt = hrTargetBlocks();
+      blocks.push(...tgt.blocks);
+      if (!tgt.done) return blocks.join("");
+      const own = hrOurOutcomeBlock();
+      if (own){ blocks.push(own); if (!t.ours) return blocks.join(""); }
+      const sec = hrOurSecondaryBlock();
+      if (sec){ blocks.push(sec); if (t.ours.secondary === undefined) return blocks.join(""); }
     }
   }
 
-  // 4. HP, asked only when something must have changed it.
+  // 4. HP, asked only when something must have changed it, and of whoever is actually out.
   if (hrNeedsHp()){
-    const who = hrActive();       // after a switch this is the Pokemon that came IN
+    const who = hrActive();
     blocks.push(`<div class="hr-q"><div class="hr-q-label">${esc(who.name)}'s HP now?
         <span class="muted hr-small">out of ${who.max_hp}</span></div>
       <input id="hrHp" type="number" min="0" max="${who.max_hp}" value="${esc(String(t.hp))}"
@@ -4186,18 +4266,21 @@ function hrInterview(){
   }
 
   const tokens = hrTokens();
-  const ready = tokens && (!hrNeedsHp() || (t.hp !== "" && t.hp !== null));
+  const ready = tokens && hrTurnComplete();
   blocks.push(`<div class="hr-confirm">
-    <div>Reporting <code id="hrPreview">${esc(tokens)}</code></div>
+    <div>Reporting <code id="hrPreview">${esc(tokens || "…")}</code>
+      ${_hrBusy ? `<span class="muted hr-small">— checking candidates…</span>` : ""}</div>
     <div class="chip-row">
-      <button class="btn primary" onclick="huntRunObserve()" ${ready ? "" : "disabled"}>
-        Report turn</button>
+      <button class="btn primary" onclick="huntRunObserve()" ${ready && !_hrBusy ? "" : "disabled"}>
+        ${_hrBusy ? "Checking…" : "Report turn"}</button>
       <button class="btn" onclick="hrTurnReset();renderHuntRun()">Start over</button>
       <button class="btn" onclick="huntRunDo('hunt_session_undo')"
-        ${s.turns.length ? "" : "disabled"}
+        ${s.turns.length && !_hrBusy ? "" : "disabled"}
         title="Rewind a MISREPORT. A misplay can't be undone -- the game has advanced, so report what actually happened instead."
       >Undo last turn</button>
-    </div></div>`);
+    </div>
+    ${_hrBusy ? `<div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`
+              : ""}</div>`);
   return blocks.join("");
 }
 
@@ -4280,13 +4363,23 @@ function renderHuntRun(){
           restart with a wider window.</div></div>`
     : "";
 
-  const advice = (!pinned && s.advice.length)
-    ? `<div class="panel"><div class="section-label">Best next action</div>
-        <div class="muted hr-small">Ranked by how much each would narrow the set — lower is better.</div>
-        <div class="candtable"><table><tr><th>action</th><th>expected survivors</th><th>outcomes</th></tr>
-        ${s.advice.slice(0, 5).map(a => `<tr><td><code>${esc(a.action)}</code></td>
-            <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div></div>`
-    : "";
+  // Three states, because this arrives after the page does: loading, loaded, or nothing to say.
+  const adviceRows = _huntAdvice || s.advice;
+  let advice = "";
+  if (!pinned && _huntAdviceLoading){
+    advice = `<div class="panel"><div class="section-label">Best next action</div>
+      <div class="muted hr-small">Ranking ${s.survivors} candidates…</div>
+      <div class="progress-wrap"><div class="progress-bar indeterminate"></div></div></div>`;
+  } else if (!pinned && adviceRows && adviceRows.length){
+    advice = `<div class="panel"><div class="section-label">Best next action</div>
+      <div class="muted hr-small">Ranked by how much each would narrow the set — lower is
+        better.</div>
+      <div class="candtable"><table><tr><th>action</th><th>expected survivors</th>
+          <th>outcomes</th></tr>
+        ${adviceRows.slice(0, 5).map(a => `<tr><td><code>${esc(a.action)}</code></td>
+            <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div>
+      </div>`;
+  }
 
   let solver = "";
   if (s.phase === 3 && s.solution && s.solution.found){

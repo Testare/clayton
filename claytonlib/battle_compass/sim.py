@@ -33,6 +33,18 @@ from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
 from claytonlib.safari import advance_rng
 
+#: Move effect ids that can cause a flinch: 31 (the generic "may flinch"), 150 (Stomp) and
+#: 158 (Fake Out). Nothing in Suicune's moveset is among them, which is why "flinched" must not
+#: be offered as an outcome against it.
+FLINCH_EFFECTS = frozenset({31, 150, 158})
+
+
+def can_flinch(battler) -> bool:
+    """Whether any of `battler`'s known moves can make the other side flinch."""
+    return any((m := battler.move(slot)) is not None and m.effect in FLINCH_EFFECTS
+               for slot in range(len(battler.moves)))
+
+
 #: Crit modifiers by stage; a crit lands when ``roll % modifier == 0``.
 CRIT_MODIFIERS = (16, 8, 4, 3, 2)
 #: Gen 4 damage variance: sixteen values, 85..100 percent.

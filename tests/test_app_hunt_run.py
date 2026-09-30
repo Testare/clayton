@@ -448,7 +448,9 @@ class TestTrivialQuestionsAreNotAsked(unittest.TestCase):
     deducible from the move, not something to ask about."""
 
     def test_a_single_option_question_is_skipped(self):
-        self.assertIn("opts2.length > 1", INDEX.read_text())
+        html = INDEX.read_text()
+        self.assertTrue("function hrAutoAnswer(" in html)
+        self.assertTrue("hrAutoAnswer(opts2" in html, "the target outcome must use it")
 
     def test_rain_dance_has_exactly_one_possible_outcome(self):
         """Which is what makes it skippable; Aurora Beam has several and must still be asked."""

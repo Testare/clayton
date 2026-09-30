@@ -7,11 +7,12 @@ from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.hunt_session import (
-    CANDIDATE_PREVIEW, HuntSession, TurnLog, move_info, worst_incoming_hit,
+    CANDIDATE_PREVIEW, HuntSession, TurnLog, move_info, prevention_options,
+    resolution_options, worst_incoming_hit,
 )
 from claytonlib.battle_compass.identify import Phase
-from claytonlib.battle_compass.sim import HuntConfig
-from claytonlib.battle_compass.state import Action, Battler, Status
+from claytonlib.battle_compass.sim import HuntConfig, effective_speed
+from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.targets import moveset
 from claytonlib.moves import resolve_move
@@ -310,10 +311,10 @@ class TestSnapshot(unittest.TestCase):
 
     def test_advice_is_empty_once_the_seed_is_pinned(self):
         """Nothing left to learn; Phase 2 optimises distance instead."""
-        self.assertEqual(_session(n=1).snapshot()["advice"], [])
+        self.assertEqual(_session(n=1).snapshot(include_advice=True)["advice"], [])
 
     def test_advice_ranks_actions_while_several_remain(self):
-        advice = _session().snapshot()["advice"]
+        advice = _session().snapshot(include_advice=True)["advice"]
         self.assertTrue(advice)
         self.assertEqual(advice, sorted(advice, key=lambda a: a["expected_survivors"]))
 
@@ -535,6 +536,151 @@ class TestItemsActuallyApply(unittest.TestCase):
         self.assertEqual({i["code"] for i in offered}, set(items.PRICES))
         for entry in offered:
             self.assertTrue(entry["name"])
+
+
+class TestTokenOrderIsChronological(unittest.TestCase):
+    """The grammar's only ordering rule is that tokens appear in the order events occurred
+    (sec 13.4). A Lv30 Magneton at Speed 60 does NOT outrun an unparalyzed Suicune at 85, so
+    that turn opens with E, not M -- and an interview that always emitted M first produced
+    "M1E1" for a turn no candidate could have predicted."""
+
+    def _pair(self, our_speed, target_status=Status.NONE):
+        ours = _ours(name="Us", level=30, types=("Electric", "Steel"),
+                     stats={"hp": 85, "atk": 50, "def": 70, "spa": 90, "spd": 60,
+                            "spe": our_speed},
+                     moves=("Thunder Wave", "Tackle"), pp=(20, 35))
+        return ours, _target(status=target_status)
+
+    def _first_actor(self, ours, target, seed=SEED):
+        from claytonlib.battle_compass.sim import simulate_turn
+        state = BattleState(ours=ours, target=target, rng=seed, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+        parts = [t for t in tok.tokenise(tok.render_turn(tok.normalise(nxt.log[-1])))
+                 if not t.startswith("HP")]
+        return parts[0][0] if parts else ""
+
+    def test_a_slower_pokemon_acts_second(self):
+        ours, target = self._pair(60)
+        self.assertLess(effective_speed(ours), effective_speed(target))
+        self.assertEqual(self._first_actor(ours, target), "E")
+
+    def test_a_faster_pokemon_acts_first(self):
+        ours, target = self._pair(200)
+        self.assertEqual(self._first_actor(ours, target), "M")
+
+    def test_paralysis_can_flip_the_order(self):
+        """Quartering 85 to 21 is what lets a Speed-60 Magneton move first."""
+        ours, target = self._pair(60, Status.PARALYSIS)
+        self.assertEqual(effective_speed(target), 21)
+        self.assertEqual(self._first_actor(ours, target), "M")
+
+    def test_the_snapshot_publishes_the_order_and_both_speeds(self):
+        """The page cannot derive it -- the rule and the numbers live here."""
+        session = HuntSession(_window(4), *self._pair(60), config=HUNT)
+        snap = session.snapshot()
+        self.assertFalse(snap["we_move_first"])
+        self.assertEqual(snap["ours"]["effective_speed"], 60)
+        self.assertEqual(snap["target"]["effective_speed"], 85)
+
+    def test_a_bag_action_always_resolves_before_any_move(self):
+        """Whatever the Speeds, so the order only matters when we use a move (sec 12.1)."""
+        ours, target = self._pair(60)
+        state = BattleState(ours=ours, target=target, rng=SEED, phase=1)
+        from claytonlib.battle_compass.sim import simulate_turn
+        for action, kwargs in ((Action.ITEM, {"item_code": "p"}),
+                               (Action.CAPTURE_BALL, {})):
+            nxt = simulate_turn(replace(state, phase=2), action, HUNT, **kwargs)
+            rendered = tok.render_turn(tok.normalise(nxt.log[-1]))
+            self.assertFalse(rendered.startswith("E"), f"{action.name}: {rendered}")
+
+    def test_the_order_holds_over_many_seeds(self):
+        import random
+        rng = random.Random(3)
+        for our_speed, expected in ((60, "E"), (200, "M")):
+            ours, target = self._pair(our_speed)
+            for _ in range(60):
+                self.assertEqual(self._first_actor(ours, target, rng.getrandbits(32)), expected)
+
+
+class TestOnlyPossibleOutcomesAreOffered(unittest.TestCase):
+    """Offering an impossible outcome invites a report no candidate could ever have predicted,
+    which is indistinguishable from a wrong model constant -- the one diagnosis that matters."""
+
+    def test_an_unparalyzed_pokemon_cannot_be_fully_paralyzed(self):
+        options = prevention_options(_ours(), _target(), actor_moves_first=False)
+        self.assertEqual([o["code"] for o in options], [])
+
+    def test_a_paralyzed_pokemon_can_be(self):
+        options = prevention_options(_ours(status=Status.PARALYSIS), _target(),
+                                     actor_moves_first=False)
+        self.assertEqual([o["code"] for o in options], ["par"])
+
+    def test_sleep_and_freeze_are_offered_only_when_present(self):
+        for status, code in ((Status.SLEEP, "slp"), (Status.FREEZE, "frz")):
+            options = prevention_options(_ours(status=status), _target(), actor_moves_first=False)
+            self.assertEqual([o["code"] for o in options], [code])
+
+    def test_confusion_is_offered_only_while_confused(self):
+        self.assertEqual(
+            [o["code"] for o in prevention_options(_ours(confused=True), _target(),
+                                                   actor_moves_first=False)], ["cfz"])
+        self.assertEqual(
+            [o["code"] for o in resolution_options(_ours(confused=True))], ["scfz"])
+        self.assertEqual(resolution_options(_ours()), [])
+
+    def test_flinch_needs_the_other_side_to_have_a_flinching_move(self):
+        """Nothing in Suicune's moveset flinches, so it must never be offered against it."""
+        from claytonlib.battle_compass.sim import can_flinch
+        self.assertFalse(can_flinch(_target()))
+        options = prevention_options(_ours(status=Status.PARALYSIS), _target(),
+                                     actor_moves_first=False)
+        self.assertNotIn("fln", [o["code"] for o in options])
+
+    def test_flinch_needs_the_other_side_to_move_first(self):
+        flincher = _target(moves=("Headbutt",), pp=(15,))
+        from claytonlib.battle_compass.sim import can_flinch
+        self.assertTrue(can_flinch(flincher))
+        second = prevention_options(_ours(), flincher, actor_moves_first=False)
+        first = prevention_options(_ours(), flincher, actor_moves_first=True)
+        self.assertIn("fln", [o["code"] for o in second])
+        self.assertNotIn("fln", [o["code"] for o in first])
+
+    def test_the_snapshot_carries_them_for_both_sides(self):
+        snap = _session(status=Status.PARALYSIS).snapshot()
+        self.assertEqual([o["code"] for o in snap["prevention"]["ours"]], [])
+        self.assertEqual([o["code"] for o in snap["prevention"]["target"]], ["par"])
+
+
+class TestAdviceIsSeparateFromTheSnapshot(unittest.TestCase):
+    """Ranking simulates every candidate against every action -- seconds at a few thousand
+    candidates, and the only slow part of a snapshot. A turn must never wait on it."""
+
+    def test_a_snapshot_omits_advice_by_default(self):
+        snap = _session().snapshot()
+        self.assertIsNone(snap["advice"])
+        self.assertTrue(snap["advice_pending"])
+
+    def test_it_can_still_be_asked_for_inline(self):
+        snap = _session().snapshot(include_advice=True)
+        self.assertTrue(snap["advice"])
+        self.assertFalse(snap["advice_pending"])
+
+    def test_nothing_is_pending_once_the_seed_is_pinned(self):
+        """There is nothing left to learn, so there is nothing to load."""
+        snap = _session(n=1).snapshot()
+        self.assertFalse(snap["advice_pending"])
+
+    def test_omitting_advice_is_much_cheaper(self):
+        import time
+        session = _session(n=200)
+        start = time.time()
+        session.snapshot()
+        without = time.time() - start
+        start = time.time()
+        session.snapshot(include_advice=True)
+        with_advice = time.time() - start
+        self.assertLess(without * 5, with_advice,
+                        "advice is supposed to dominate the cost of a snapshot")
 
 
 if __name__ == "__main__":

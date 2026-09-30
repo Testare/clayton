@@ -84,6 +84,10 @@ class Battler:
     #: Def/SpD stages only; nothing in scope touches the others.
     def_stage: int = 0
     spdef_stage: int = 0
+    #: Confusion is volatile, so it sits outside `status` -- it can coexist with paralysis, and
+    #: it is the one status a Pokemon can keep while still attacking (sec 13.4). Nothing in
+    #: Suicune's moveset inflicts it, so it stays False for the v1 fixture.
+    confused: bool = False
 
     def __post_init__(self):
         if self.hp is None:

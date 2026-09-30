@@ -29,9 +29,9 @@ from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
-from claytonlib.battle_compass.sim import HuntConfig
+from claytonlib.battle_compass.sim import HuntConfig, can_flinch, effective_speed
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
-from claytonlib.battle_compass.state import Action, Battler
+from claytonlib.battle_compass.state import Action, Battler, Status
 from claytonlib.moves import CATEGORY_STATUS, resolve_move
 
 #: How many candidate rows a snapshot carries. The full set can be 1,200 wide; the UI shows the
@@ -66,6 +66,45 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
 _MOVE_ACTIONS = (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4)
 
 
+#: Status -> the marker that prevents a move because of it.
+_PREVENTED_BY_STATUS = {Status.PARALYSIS: "par", Status.SLEEP: "slp", Status.FREEZE: "frz"}
+
+
+def prevention_options(actor: Battler, other: Battler, *, actor_moves_first: bool) -> list[dict]:
+    """What could legitimately have stopped `actor` from moving THIS turn.
+
+    Derived from state rather than offered as a fixed menu. An unparalyzed Magneton cannot be
+    fully paralyzed, and nothing in Suicune's moveset can make it flinch, so offering either as a
+    possible outcome invites a report that no candidate could ever have predicted -- which looks
+    exactly like a wrong model constant.
+
+    Flinching needs the *other* side to move first, since a flinch is inflicted by a hit that has
+    already landed.
+    """
+    options: list[dict] = []
+    marker = _PREVENTED_BY_STATUS.get(actor.status)
+    if marker:
+        options.append({"code": marker, "label": {
+            "par": "was fully paralyzed", "slp": "is asleep",
+            "frz": "is frozen solid"}[marker]})
+    if actor.confused:
+        options.append({"code": "cfz", "label": "hurt itself in confusion"})
+    if not actor_moves_first and can_flinch(other):
+        options.append({"code": "fln", "label": "flinched"})
+    return options
+
+
+def resolution_options(actor: Battler) -> list[dict]:
+    """Status changes that let the move through and so must be reported explicitly.
+
+    Only confusion: for sleep and freeze the move happening at all proves the status ended, but a
+    confused Pokemon can attack perfectly normally (sec 13.4).
+    """
+    if actor.confused:
+        return [{"code": "scfz", "label": "snapped out of confusion"}]
+    return []
+
+
 def move_info(battler: Battler) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
@@ -80,7 +119,7 @@ def move_info(battler: Battler) -> list[dict]:
         if move is None:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
                         "can_miss": False, "has_secondary": False, "effect_chance": 0,
-                        "pp": 0})
+                        "priority": 0, "pp": 0})
             continue
         out.append({
             "slot": slot,
@@ -92,6 +131,9 @@ def move_info(battler: Battler) -> list[dict]:
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
             "has_secondary": move.effect_chance > 0,
             "effect_chance": move.effect_chance,
+            #: Priority decides turn order before Speed does, so the page needs it to know
+            #: which side's tokens come first.
+            "priority": move.priority,
             "pp": battler.pp_left(slot),
         })
     return out
@@ -321,13 +363,19 @@ class HuntSession:
 
     # -- output ---------------------------------------------------------
 
-    def snapshot(self) -> dict:
+    def snapshot(self, *, include_advice: bool = False) -> dict:
         """Everything the UI needs, as plain JSON-safe data.
 
         One method rather than several so a caller cannot render a half-updated view, and so a
         recorded snapshot is a complete regression fixture.
+
+        `include_advice` is off by default because ranking actions simulates every candidate
+        against every action -- 8s at 6,000 candidates, and the *only* slow part of a snapshot.
+        The page renders without it and fetches it separately, so a turn is never waiting on
+        advice the player may not read.
         """
         state = next(iter(self._session.states.values()))
+        we_first = effective_speed(state.ours) > effective_speed(state.target)
         seed = self.identified
         out = {
             "phase": int(self.phase),
@@ -349,15 +397,32 @@ class HuntSession:
                 "second_window": self.window.second_window,
                 "size": len(self.window.candidates),
             },
+            # Who acts first when we use a MOVE. A bag action or switch always resolves before
+            # any move, so the page ignores this for those (sec 12.1).
+            "we_move_first": we_first,
+            "prevention": {
+                "ours": prevention_options(state.ours, state.target,
+                                           actor_moves_first=we_first),
+                "target": prevention_options(state.target, state.ours,
+                                             actor_moves_first=not we_first),
+            },
+            "resolution": {
+                "ours": resolution_options(state.ours),
+                "target": resolution_options(state.target),
+            },
             "ours": {"name": state.ours.name, "hp": state.ours.hp,
                      "max_hp": state.ours.max_hp,
                      "status": state.ours.status.value,
+                     "confused": state.ours.confused,
+                     "effective_speed": effective_speed(state.ours),
                      "pp": [state.ours.pp_left(i) for i in range(len(state.ours.moves))],
                      "moves": list(state.ours.moves),
                      "move_info": move_info(state.ours)},
             "target": {"name": state.target.name, "hp": state.target.hp,
                        "max_hp": state.target.max_hp,
                        "status": state.target.status.value,
+                       "confused": state.target.confused,
+                       "effective_speed": effective_speed(state.target),
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
                        "move_info": move_info(state.target)},
@@ -379,7 +444,9 @@ class HuntSession:
                       for i, t in enumerate(self.turns)],
             "path": tok.render_path([list(t.tokens) for t in self.turns]),
             "legal_actions": [a.value for a in self.legal_actions()],
-            "advice": self.advice(),
+            "advice": self.advice() if include_advice else None,
+            # True when advice exists to be fetched but was not computed here.
+            "advice_pending": not include_advice and self.identified is None,
             "ambiguity": self._session.ambiguity(),
             "solver_blockers": self.solver_blockers(),
             "contradiction": self.contradiction,

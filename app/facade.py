@@ -625,6 +625,18 @@ class Facade:
     def hunt_session_state(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).snapshot()
 
+    def hunt_session_advice(self, session_id: str) -> dict:
+        """Actions ranked by how much each would narrow the candidate set.
+
+        Split out of the snapshot because it is the only slow part of one: it simulates every
+        surviving candidate against every legal action, which is ~8s at 6,000 candidates. The
+        page renders first and asks for this afterwards, so reporting a turn never waits on
+        advice the player may not read.
+        """
+        session = self._hunt_sessions.get(session_id)
+        return {"session_id": session_id, "turns": len(session.turns),
+                "survivors": len(session.survivors), "advice": session.advice()}
+
     def hunt_session_observe(self, session_id: str, action: str, tokens: list,
                              item_code: str | None = None,
                              bench_slot: int | None = None) -> dict:
