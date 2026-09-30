@@ -33,7 +33,7 @@ def _configured_hunt(profile: Profile) -> Hunt:
         target=HuntTarget(species="suicune", level=40, nature="Bold", ivs=dict(PERFECT_IVS)),
         party=[HuntSlot(pokemon_id=p.id) for p in profile.party],
         key_seed=0xEC1504DC, initial_time="2026-09-28T12:00:00",
-        vector_ms=382791, calibration_model_id="model-1",
+        vector_ms=382791,
     )
 
 
@@ -177,7 +177,7 @@ class TestHunt(unittest.TestCase):
     def test_an_empty_hunt_reports_every_missing_piece(self):
         errors = " ".join(Hunt(name="New", profile_id=self.profile.id).hard_errors())
         for expected in ("species", "capture ball", "party pokemon", "key seed",
-                         "initial time", "Vector ms", "calibration model"):
+                         "initial time", "Vector ms"):
             self.assertIn(expected, errors)
 
     def test_seed_targeting_is_required_because_it_centres_the_candidate_window(self):
@@ -225,3 +225,36 @@ class TestHunt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCalibrationModelIsNotHuntConfiguration(unittest.TestCase):
+    """Calibration models are profile-scoped, with one marked active, and every profile is
+    seeded with a bundled "Standard" model active by default. So there is never a model for a
+    hunt to pick -- an Expedition carries no such field either. An earlier version of Hunt did,
+    which put an unreachable "pick one in Review Data" blocker on the configure screen.
+    """
+
+    def test_hunt_has_no_calibration_model_field(self):
+        self.assertNotIn("calibration_model_id", Hunt(name="x", profile_id="y").to_dict())
+
+    def test_a_missing_model_is_not_a_hard_error(self):
+        profile = Profile(name="Gold")
+        profile.add_party_pokemon("Smeargle", **SMEARGLE)
+        hunt = _configured_hunt(profile)
+        self.assertEqual(hunt.hard_errors(profile), [])
+
+    def test_documents_written_with_the_old_field_still_load(self):
+        hunt = Hunt.from_dict({"name": "legacy", "profile_id": "p",
+                               "calibration_model_id": "model-1"})
+        self.assertEqual(hunt.name, "legacy")
+        self.assertNotIn("calibration_model_id", hunt.to_dict())
+
+    def test_metronome_defaults_live_on_the_hunt_like_an_expedition(self):
+        """So the shared calibration tools can run against a hunt without retyping."""
+        hunt = Hunt(name="x", profile_id="y")
+        self.assertEqual((hunt.last_target, hunt.last_metronome_defaults), ({}, {}))
+        hunt.last_target = {"initial_time": "2026-09-29T12:00:00", "vector_ms": 382791}
+        hunt.last_metronome_defaults = {"seconds_window": 2}
+        restored = Hunt.from_dict(hunt.to_dict())
+        self.assertEqual(restored.last_target["vector_ms"], 382791)
+        self.assertEqual(restored.last_metronome_defaults["seconds_window"], 2)

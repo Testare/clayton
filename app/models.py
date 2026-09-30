@@ -611,8 +611,14 @@ class Hunt:
     key_seed_advances: int | None = None
     initial_time: str = ""      # ISO-8601; chosen from the seed's possible times, not optimised
     vector_ms: int | None = None
-    # Which calibration model the centre-seed calculation uses; picked in Review Data.
-    calibration_model_id: str = ""
+    # Last-used target and Metronome Compass defaults, exactly as an Expedition keeps them, so
+    # the shared calibration tools can run against a Hunt without retyping.
+    last_target: dict = field(default_factory=dict)
+    last_metronome_defaults: dict = field(default_factory=dict)
+    # NB: no calibration_model_id. Calibration models live on the PROFILE with one marked
+    # active, and every profile is seeded with a bundled "Standard" model active by default --
+    # so there is never a model to pick, and an Expedition does not carry one either. The Hunt
+    # simply uses whatever its profile has active; Review Data is where that gets changed.
     # Candidate search window around the centre seed.
     seconds_window: int = 2
     delay_window: int = 60
@@ -632,8 +638,6 @@ class Hunt:
             errors.append("needs an initial time")
         if self.vector_ms is None:
             errors.append("needs a Vector ms")
-        if not self.calibration_model_id:
-            errors.append("needs an active calibration model — pick one in Review Data")
         if profile is not None:
             for slot in self.party:
                 pokemon = profile.get_party_pokemon(slot.pokemon_id)
@@ -655,7 +659,8 @@ class Hunt:
             "key_seed_advances": self.key_seed_advances,
             "initial_time": self.initial_time,
             "vector_ms": self.vector_ms,
-            "calibration_model_id": self.calibration_model_id,
+            "last_target": self.last_target,
+            "last_metronome_defaults": self.last_metronome_defaults,
             "seconds_window": self.seconds_window,
             "delay_window": self.delay_window,
             "completed": self.completed,
@@ -674,7 +679,8 @@ class Hunt:
             key_seed_advances=d.get("key_seed_advances"),
             initial_time=d.get("initial_time", ""),
             vector_ms=d.get("vector_ms"),
-            calibration_model_id=d.get("calibration_model_id", ""),
+            last_target=dict(d.get("last_target", {})),
+            last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
             seconds_window=d.get("seconds_window", 2),
             delay_window=d.get("delay_window", 60),
             completed=bool(d.get("completed", False)),

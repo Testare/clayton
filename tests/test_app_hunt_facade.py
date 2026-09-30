@@ -44,7 +44,6 @@ class HuntFacadeCase(unittest.TestCase):
             "key_seed": 0xEC1504DC,
             "initial_time": "2026-09-29T12:00:00",
             "vector_ms": 382791,
-            "calibration_model_id": "model-1",
         }
         fields.update(overrides)
         return self.api.create_hunt(fields)
@@ -207,3 +206,38 @@ class TestHuntReadiness(HuntFacadeCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCalibrationModel(HuntFacadeCase):
+    """A hunt uses the profile's active calibration model. There is nothing to pick, which is
+    why readiness reports it rather than demanding it."""
+
+    def test_readiness_reports_the_active_model_without_blocking(self):
+        readiness = self.api.hunt_readiness(self._hunt()["id"])
+        self.assertIn("calibration_model", readiness)
+        self.assertEqual(
+            [e for e in readiness["hard_errors"] if "calibration" in e.lower()], [])
+
+    def test_a_fresh_profile_already_has_a_model_resolved(self):
+        """Profiles are seeded with a bundled Standard model active, so this is never empty."""
+        self.assertIsNotNone(self.api.hunt_readiness(self._hunt()["id"])["calibration_model"])
+
+
+class TestMetronomeToolsWorkFromAHunt(HuntFacadeCase):
+    """The Hunts UI offers Metronome Compass, because calibration belongs to the profile rather
+    than to one quest. The tools reach it through the owner document, so a hunt has tosupport the
+    same reads and writes an expedition does."""
+
+    def test_a_hunt_round_trips_the_metronome_defaults_the_tools_store(self):
+        hunt = self._hunt()
+        hunt["last_target"] = {"initial_time": "2026-09-29T12:00:00", "vector_ms": 382791}
+        hunt["last_metronome_defaults"] = {"seconds_window": 2, "delay_window": 10,
+                                           "startrel": "", "tag": "t"}
+        saved = self.api.save_hunt(hunt)
+        self.assertEqual(saved["last_target"]["vector_ms"], 382791)
+        reloaded = self.api.get_hunt(hunt["id"])
+        self.assertEqual(reloaded["last_metronome_defaults"]["delay_window"], 10)
+
+    def test_a_hunt_exposes_the_profile_id_the_tools_need(self):
+        self.assertEqual(self.api.get_hunt(self._hunt()["id"])["profile_id"],
+                         self.profile["id"])

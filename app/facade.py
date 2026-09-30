@@ -429,6 +429,10 @@ class Facade:
             "alphabet": None,
             "speed": None,
             "target_stats": None,
+            # Which calibration model the centre-seed maths will use. Never a blocker: models
+            # are profile-scoped and every profile is seeded with an active "Standard" one, so
+            # this is information plus a route to Review Data, not a thing to configure.
+            "calibration_model": self.calibration_model_summary(h.profile_id),
         }
 
         movesets: dict[str, list] = {}

@@ -16,6 +16,24 @@ from app.facade import Facade
 
 _INDEX = Path(__file__).resolve().parent.parent / "app" / "web" / "index.html"
 _HTML = _INDEX.read_text()
+
+
+def _function_body(name: str) -> str:
+    """Source of one top-level JS function, for assertions scoped to it.
+
+    Matching against the whole 4,000-line file both risks false positives and produces
+    unreadable failures, since assertIn puts the entire haystack in the message.
+    """
+    start = _HTML.index(f"function {name}(")
+    depth, i = 0, _HTML.index("{", start)
+    for j in range(i, len(_HTML)):
+        if _HTML[j] == "{":
+            depth += 1
+        elif _HTML[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return _HTML[start:j + 1]
+    raise AssertionError(f"unbalanced body for {name}")
 # api("method_name", ...) — the only way the UI calls Python.
 _API_CALLS = re.compile(r'\bapi\(\s*"([A-Za-z_][A-Za-z0-9_]*)"')
 
@@ -40,6 +58,11 @@ class TestApiCallsResolve(unittest.TestCase):
                        "add_party_pokemon", "update_party_pokemon", "remove_party_pokemon"):
             self.assertIn(method, called, f"{method} is never called from the UI")
 
+    def test_the_metronome_area_reaches_both_owner_kinds_through_the_facade(self):
+        called = set(_API_CALLS.findall(_HTML))
+        for method in ("get_hunt", "save_hunt", "get_expedition", "save_expedition"):
+            self.assertIn(method, called, f"{method} is never called from the UI")
+
 
 class TestScriptSyntax(unittest.TestCase):
     """Parse the inline script, so a malformed edit fails here rather than in the browser."""
@@ -56,14 +79,51 @@ class TestScriptSyntax(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
+class TestHuntNavigation(unittest.TestCase):
+    """A hunt needs a landing page and a configure page, like an expedition — and it needs
+    Metronome Compass, because calibration belongs to the profile rather than to one quest."""
+
+    def test_hunt_has_both_a_landing_and_a_configure_screen(self):
+        for fn in ("renderHuntHome", "renderHuntConfigure", "huntConfigure", "openHuntHome"):
+            self.assertTrue(f"function {fn}" in _HTML, f"{fn} is missing")
+
+    def test_metronome_tools_are_reachable_from_a_hunt(self):
+        body = _function_body("renderHuntHome")
+        for handler in ("metronomeNewRun", "metronomeReviewData"):
+            self.assertTrue(handler in body,
+                            f"{handler} is not offered on the hunt landing page")
+        self.assertTrue("'hunt'" in body,
+                        "the hunt tools grid does not pass 'hunt' as the owner kind")
+
+    def test_metronome_tools_are_still_reachable_from_an_expedition(self):
+        body = _function_body("openExpeditionHome")
+        self.assertTrue("'expedition'" in body,
+                        "the expedition tools grid no longer passes its owner kind")
+
+    def test_the_metronome_tools_take_an_owner_rather_than_an_expedition_id(self):
+        """Generalised so one implementation serves both; the owner decides where back goes."""
+        for fn in ("ownerHome", "ownerLabel", "loadOwner", "saveOwner"):
+            self.assertTrue(f"function {fn}" in _HTML, f"{fn} is missing")
+
+    def test_no_hardcoded_expedition_save_remains_in_the_metronome_area(self):
+        self.assertFalse('api("save_expedition", {...nr.e' in _HTML,
+                         "a metronome default-save still assumes an expedition")
+
+    def test_the_hunt_ui_does_not_ask_for_a_calibration_model(self):
+        """It is profile-scoped and always seeded, so asking would be an unreachable blocker."""
+        self.assertFalse("calibration_model_id" in _HTML,
+                         "the UI still references a per-hunt calibration model")
+
+
 class TestMarkupReferences(unittest.TestCase):
     """CSS classes used by the markup have to exist, or a panel renders unstyled."""
 
     def test_grid_and_panel_classes_used_are_defined(self):
         defined = set(re.findall(r"^\s*\.([a-z][a-z0-9-]*)\s*[,{]", _HTML, re.M))
         defined |= set(re.findall(r"\.([a-z][a-z0-9-]*)\{", _HTML))
-        for used in ("grid2", "grid3", "grid4", "grid6", "panel", "row-list", "empty",
-                     "section-label", "notice", "badge", "hint", "actions", "field"):
+        for used in ("grid2", "grid3", "grid4", "grid6", "panel", "panel-tight", "row-list",
+                     "empty", "section-label", "notice", "badge", "hint", "actions", "field",
+                     "tools", "tool-cat"):
             self.assertIn(used, defined, f".{used} is used but never defined")
 
     def test_nav_buttons_have_a_matching_branch_in_setview(self):

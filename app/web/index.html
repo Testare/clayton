@@ -754,7 +754,7 @@ async function openExpeditionHome(id){
     <div class="tool-cat"><h3>${emoji} ${esc(cat)}</h3>
       ${tools.map(([label, full, handler]) =>
         `<button class="btn" onclick="${handler
-          ? `${handler}('${esc(id)}')` : `toolPlaceholder('${esc(id)}','${esc(full)}')`}">${esc(label)}</button>`).join("")}
+          ? `${handler}('expedition','${esc(id)}')` : `toolPlaceholder('${esc(id)}','${esc(full)}')`}">${esc(label)}</button>`).join("")}
     </div>`).join("");
   mount(`<div class="head"><h2>${esc(e.name)}</h2>
       <div style="display:flex;gap:10px">
@@ -832,11 +832,27 @@ function currentUser(){
   return (nr.profile.metronome_users || []).find(u => u.id === nr.userId) || null;
 }
 
-async function metronomeNewRun(expId){
-  const e = await api("get_expedition", expId);
+// Metronome Compass calibrates the PROFILE, not one quest, so both Expeditions and Hunts
+// reach the same tools. `owner` is {kind:"expedition"|"hunt", id} -- the only things that
+// differ are which document defaults are stored on, and where "back" goes.
+function ownerOf(kind, id){ return {kind, id}; }
+function ownerLabel(owner){ return owner.kind === "hunt" ? "Hunt" : "Expedition"; }
+function ownerHome(owner){
+  return owner.kind === "hunt" ? openHuntHome(owner.id) : openExpeditionHome(owner.id);
+}
+function loadOwner(owner){
+  return api(owner.kind === "hunt" ? "get_hunt" : "get_expedition", owner.id);
+}
+function saveOwner(owner, doc){
+  return api(owner.kind === "hunt" ? "save_hunt" : "save_expedition", doc);
+}
+
+async function metronomeNewRun(kind, id){
+  const owner = typeof kind === "object" ? kind : ownerOf(kind, id);
+  const e = await loadOwner(owner);
   const profile = await api("get_profile", e.profile_id);
   const lastDefaults = e.last_metronome_defaults || {};
-  nr = { expId, e, profile,
+  nr = { owner, expId: owner.id, e, profile,
     userId: (profile.metronome_users.find(u => u.is_suitable) || profile.metronome_users[0] || {}).id ?? null,
     initialTime: e.last_target?.initial_time || "",
     vectorMs: e.last_target?.vector_ms ?? "",
@@ -890,7 +906,8 @@ function _pickTargetUse(id){
 }
 
 async function nrPickFromTarget(){
-  nr._targetsCache = await api("list_targets", nr.expId);
+  // Saved targets are a Safari Chart concept and belong to expeditions; a hunt has none.
+  nr._targetsCache = nr.owner.kind === "hunt" ? [] : await api("list_targets", nr.expId);
   _pickTargetModal(nr._targetsCache, nrApplyTarget);
 }
 function nrApplyTarget(targetId){
@@ -910,14 +927,14 @@ function renderNewRun(){
   const p = nr.profile;
   if(!p.has_valid_metronome_user){
     mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
-        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">← Expedition</button></div>
+        <button class="btn" onclick="ownerHome(nr.owner)">← ${esc(ownerLabel(nr.owner))}</button></div>
       <div class="notice warn">This profile has no valid metronome user. Add one (Chansey w/
         Natural Cure, Lagging Tail, Metronome) under Profiles before running.</div>`);
     return;
   }
   if(nr.e.key_seed == null){
     mount(`<div class="head"><h2>Metronome Compass — New Run</h2>
-        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">← Expedition</button></div>
+        <button class="btn" onclick="ownerHome(nr.owner)">← ${esc(ownerLabel(nr.owner))}</button></div>
       <div class="notice warn">Set a key seed in <b>Configure</b> first — Seed A search needs it.</div>`);
     return;
   }
@@ -937,7 +954,7 @@ function renderNewRun(){
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="nrReset()">Reset run</button>
         <button class="btn primary" ${canSave?"":"disabled"} onclick="openSaveRunModal()">Save Run</button>
-        <button class="btn" onclick="openExpeditionHome('${esc(nr.expId)}')">Cancel</button>
+        <button class="btn" onclick="ownerHome(nr.owner)">Cancel</button>
       </div></div>
 
     <form class="panel panel-tight" onsubmit="return false">
@@ -1063,7 +1080,7 @@ async function nrGenerateSeedA(){
   nr.matchParity = nr.seedAParams.match_parity;
   // Header + Roamer-search values are locked in now (per Seed A completing) — remember them
   // for next time, so repeat hunts on this expedition don't need retyping.
-  nr.e = await api("save_expedition", {...nr.e, last_target: {
+  nr.e = await saveOwner(nr.owner, {...nr.e, last_target: {
     initial_time: nr.initialTime, vector_ms: nr.vectorMs},
     last_metronome_defaults: {...nr.e.last_metronome_defaults, startrel: nr._startrel,
       seconds_window: nr.secondsWindow, delay_window: nr.delayWindow, match_parity: nr.matchParity}});
@@ -1206,7 +1223,7 @@ async function nrStartSeedB(){
   nr.seedBLoading = false;
   _appendSeedBLog(nr.seedBSession);
   if(nr.seedBSession.done && nr.seedBSession.result) nr.seedB = nr.seedBSession.result;
-  nr.e = await api("save_expedition", {...nr.e, last_metronome_defaults: {
+  nr.e = await saveOwner(nr.owner, {...nr.e, last_metronome_defaults: {
     ...nr.e.last_metronome_defaults,
     sb_seconds_window: nr.sbSecondsWindow, sb_delay_window: nr.sbDelayWindow}});
   renderNewRun();
@@ -1274,8 +1291,8 @@ function nrShowSavedPrompt(){
   openModal(`<h3>Run saved</h3>
     <p class="muted" style="margin:0 0 16px">Start another run, or head back to the expedition?</p>
     <div class="actions">
-      <button class="btn" type="button" onclick="closeModal();openExpeditionHome('${esc(nr.expId)}')">Done</button>
-      <button class="btn primary" type="button" onclick="closeModal();metronomeNewRun('${esc(nr.expId)}')">Start another run</button>
+      <button class="btn" type="button" onclick="closeModal();ownerHome(nr.owner)">Done</button>
+      <button class="btn primary" type="button" onclick="closeModal();metronomeNewRun(nr.owner)">Start another run</button>
     </div>`);
 }
 
@@ -1287,7 +1304,7 @@ async function nrSave(ev){
     tag, vector_ms: nr.vectorMs,
     notes: f.notes.value.trim(), metronome_user_id: nr.userId,
     a_seed: nr.seedA, b_seed: nr.seedB });
-  nr.e = await api("save_expedition", {...nr.e,
+  nr.e = await saveOwner(nr.owner, {...nr.e,
     last_metronome_defaults: {...nr.e.last_metronome_defaults, tag}});
   nrShowSavedPrompt();
   return false;
@@ -1302,11 +1319,13 @@ function nrReset(){
 // --- Metronome Compass: Review Data -----------------------------------------
 let review = null;
 
-async function metronomeReviewData(expId){
-  const e = await api("get_expedition", expId);
+async function metronomeReviewData(kind, id){
+  const owner = typeof kind === "object" ? kind : ownerOf(kind, id);
+  const e = await loadOwner(owner);
   const [runs, profile] = await Promise.all([
     api("list_runs", e.profile_id, "metronome"), api("get_profile", e.profile_id)]);
-  review = { expId, profileId: e.profile_id, runs, profile, tag: "", view: "runs", preview: null,
+  review = { owner, expId: owner.id, profileId: e.profile_id, runs, profile, tag: "",
+    view: "runs", preview: null,
     delayMetrics: null,
     dirty: {}, dirtyTags: {}, exportMode: false, exportSelected: {} };
   await reviewRefreshPreview();
@@ -1327,9 +1346,9 @@ function reviewHasUnsaved(){
   return Object.keys(review.dirty).length > 0 || Object.keys(review.dirtyTags).length > 0;
 }
 
-function reviewLeavePage(expId){
+function reviewLeavePage(owner){
   if(reviewHasUnsaved() && !confirm("You have unsaved exclusion changes. Leave and discard them?")) return;
-  openExpeditionHome(expId);
+  ownerHome(typeof owner === "object" ? owner : ownerOf("expedition", owner));
 }
 
 async function reviewSwitchView(view){
@@ -1352,7 +1371,7 @@ function renderReview(){
     : review.view === "calibrate" ? renderCalibrateModel()
     : renderReviewRuns();
   mount(`<div class="head"><h2>Metronome Compass — Review Data</h2>
-      <button class="btn" onclick="reviewLeavePage('${esc(review.expId)}')">← Expedition</button></div>
+      <button class="btn" onclick="reviewLeavePage(review.owner)">← ${esc(ownerLabel(review.owner))}</button></div>
     ${tabs}${body}`);
 }
 
@@ -3659,26 +3678,107 @@ async function huntFormSubmit(){
   openHuntHome(hunt.id);
 }
 
-let _hunt = null, _huntProfile = null;
+let _hunt = null, _huntProfile = null, _huntReadiness = null;
 
 async function openHuntHome(id){
   _hunt = await api("get_hunt", id);
   _huntProfile = await api("get_profile", _hunt.profile_id);
-  const readiness = await api("hunt_readiness", id);
-  renderHuntHome(readiness);
+  _huntReadiness = await api("hunt_readiness", id);
+  renderHuntHome();
 }
 
-// Re-read readiness after any edit: every field feeds it, so recomputing wholesale is both
-// simpler and cheaper than working out which check a given change invalidated.
+// Landing page: what you can DO, plus whether you can do it yet. Mirrors the expedition home,
+// and offers the same Metronome Compass, because calibration belongs to the profile rather
+// than to one quest -- a hunt needs an active model just as an expedition does.
+function renderHuntHome(){
+  const h = _hunt, r = _huntReadiness;
+  const blocked = r.hard_errors.length > 0;
+  const cats = [
+    ["☝️🧭", "Metronome Compass",
+      [["New Run", "metronomeNewRun"], ["Review Data", "metronomeReviewData"]]],
+    ["⚔️🧭", "Battle Compass",
+      [["Start", null]]],
+  ];
+  const grid = cats.map(([emoji, cat, tools]) => `
+    <div class="tool-cat"><h3>${emoji} ${esc(cat)}</h3>
+      ${tools.map(([label, handler]) => handler
+        ? `<button class="btn" onclick="${handler}('hunt','${esc(h.id)}')">${esc(label)}</button>`
+        : `<button class="btn" ${blocked ? "disabled title='Finish configuring the hunt first'" : ""}
+             onclick="toast('Battle Compass is not built yet — configuration only for now.')"
+           >${esc(label)}</button>`).join("")}
+    </div>`).join("");
+
+  const model = r.calibration_model;
+  mount(`<div class="head"><h2>${esc(h.name)}</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="huntConfigure('${esc(h.id)}')">Configure</button>
+        <button class="btn" onclick="huntSetCompleted(${h.completed ? "false" : "true"})">
+          ${h.completed ? "Mark incomplete" : "Mark complete"}</button>
+        <button class="btn danger" onclick="confirmDeleteHunt()">Delete</button>
+        <button class="btn" onclick="setView('hunts')">← All hunts</button>
+      </div></div>
+    <div class="muted">${esc(capName(h.target?.species) || "—")}${h.target?.level ? " Lv " + h.target.level : ""}
+      ${h.capture_ball ? " · " + esc(h.capture_ball) : ""}
+      · profile: ${esc(_huntProfile.name)}
+      ${h.key_seed != null ? " · Key seed: 0x" + h.key_seed.toString(16).toUpperCase() : ""}</div>
+
+    ${blocked ? `<div class="notice danger" style="margin-top:12px">
+      <b>Not ready to run yet.</b>
+      <ul style="margin:6px 0 0 18px">${r.hard_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+      <div style="margin-top:8px"><button class="btn small" onclick="huntConfigure('${esc(h.id)}')">
+        Configure this hunt</button></div></div>`
+      : `<div class="notice" style="margin-top:12px"><b>Ready to run.</b></div>`}
+
+    ${huntReadinessPanel(r)}
+
+    <div class="section-label">Calibration</div>
+    <div class="panel-tight panel">
+      ${model
+        ? `<div>Using this profile's active calibration model.
+             <span class="muted">${esc(huntModelSummary(model))}</span></div>`
+        : `<div class="muted">No calibration model resolved for this profile.</div>`}
+      <div class="hint muted">Models belong to the profile, not to a hunt, and every profile
+        starts with a bundled “Standard” one active — so there is nothing to pick here. Change
+        which model is active in <b>Metronome Compass → Review Data</b> below.</div>
+    </div>
+
+    <div class="section-label">Tools</div>
+    <div class="tools">${grid}</div>`);
+}
+
+// The summary shape comes from chart.summarize_models and varies by model set, so read it
+// defensively rather than assuming a schema.
+function huntModelSummary(model){
+  if(!model || typeof model !== "object") return "";
+  const bits = [];
+  for(const key of ["name", "label", "kind", "runs", "n", "sigma", "source"]){
+    if(model[key] !== undefined && model[key] !== null && typeof model[key] !== "object"){
+      bits.push(`${key}: ${model[key]}`);
+    }
+  }
+  return bits.length ? bits.join(" · ") : Object.keys(model).join(", ");
+}
+
+async function huntConfigure(id){
+  if(!_hunt || _hunt.id !== id){
+    _hunt = await api("get_hunt", id);
+    _huntProfile = await api("get_profile", _hunt.profile_id);
+  }
+  _huntReadiness = await api("hunt_readiness", id);
+  renderHuntConfigure();
+}
+
+// Every field feeds readiness, so recomputing wholesale after a change is both simpler and
+// cheaper than working out which check a given edit invalidated.
 async function huntSaveAndRefresh(){
   _hunt = await api("save_hunt", _hunt);
-  renderHuntHome(await api("hunt_readiness", _hunt.id));
+  _huntReadiness = await api("hunt_readiness", _hunt.id);
+  renderHuntConfigure();
 }
 
-function renderHuntHome(readiness){
-  const h = _hunt, t = h.target || {};
+function renderHuntConfigure(){
+  const h = _hunt, r = _huntReadiness, t = h.target || {};
   const ivs = t.ivs || {};
-  const blocked = readiness.hard_errors.length > 0;
 
   const partyRows = (_huntProfile.party || []).map(p => {
     const slot = (h.party || []).find(s => s.pokemon_id === p.id);
@@ -3708,22 +3808,13 @@ function renderHuntHome(readiness){
         <th title="Held items change per hunt, so they live here rather than on the profile.">Held item</th>
       </tr></thead><tbody>${partyRows}</tbody></table>`;
 
-  mount(`<div class="head"><h2>${esc(h.name)}</h2>
-      <div style="display:flex;gap:10px">
-        <button class="btn ${blocked?"":"primary"}" ${blocked?"disabled title='Fix the blockers below first'":""}
-          onclick="toast('Battle Compass is not built yet — configuration only for now.')">Start Battle Compass</button>
-        <button class="btn" onclick="huntSetCompleted(${h.completed ? "false" : "true"})">
-          ${h.completed ? "Mark incomplete" : "Mark complete"}</button>
-        <button class="btn danger" onclick="confirmDeleteHunt()">Delete</button>
-        <button class="btn" onclick="setView('hunts')">← All hunts</button>
-      </div></div>
-    <div class="muted">profile: ${esc(_huntProfile.name)}</div>
+  mount(`<div class="head"><h2>Configure — ${esc(h.name)}</h2>
+      <button class="btn" onclick="openHuntHome('${esc(h.id)}')">← Hunt</button></div>
 
-    ${blocked ? `<div class="notice danger" style="margin-top:12px">
-      <b>Not ready to run yet.</b><ul style="margin:6px 0 0 18px">
-      ${readiness.hard_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
-
-    ${huntReadinessPanel(readiness)}
+    ${r.hard_errors.length ? `<div class="notice danger">
+      <b>Still needed before Battle Compass can run.</b>
+      <ul style="margin:6px 0 0 18px">${r.hard_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+      </div>` : `<div class="notice"><b>Fully configured.</b></div>`}
 
     <div class="section-label">Target</div>
     <div class="panel">
@@ -3743,7 +3834,8 @@ function renderHuntHome(readiness){
           <select onchange="huntSetField('capture_ball', this.value)">
             <option value="">—</option>
             ${BALLS.map(b => `<option ${h.capture_ball===b?"selected":""}>${esc(b)}</option>`).join("")}
-          </select></div>
+          </select>
+          <div class="hint">One ball, no fallback — the solver aims at a single threshold.</div></div>
       </div>
       <div class="section-label" style="margin-top:14px">IVs
         <span class="muted" style="text-transform:none;font-weight:400">— from Pokéfinder.
@@ -3753,11 +3845,11 @@ function renderHuntHome(readiness){
           <input type="number" min="0" max="31" value="${ivs[k] ?? ""}"
             onchange="huntSetIv('${k}', this.value)"></div>`).join("")}
       </div>
-      ${readiness.target_stats && !readiness.target_stats.error ? `<div class="hint muted">
+      ${r.target_stats && !r.target_stats.error ? `<div class="hint muted">
         At Lv ${t.level}: ${STATS.map(k =>
-          `${STAT_LABEL[k]} <b>${readiness.target_stats[k]}</b>`).join(" · ")}</div>` : ""}
-      ${readiness.target_stats && readiness.target_stats.error
-        ? `<div class="notice warn">${esc(readiness.target_stats.error)}</div>` : ""}
+          `${STAT_LABEL[k]} <b>${r.target_stats[k]}</b>`).join(" · ")}</div>` : ""}
+      ${r.target_stats && r.target_stats.error
+        ? `<div class="notice warn">${esc(r.target_stats.error)}</div>` : ""}
     </div>
 
     <div class="section-label">Party</div>
@@ -3766,8 +3858,9 @@ function renderHuntHome(readiness){
     <div class="section-label">Seed targeting</div>
     <div class="panel">
       <div class="hint muted">These centre the window Battle Compass searches for your battle
-        seed. Nothing here needs to be hit exactly — the window just has to contain the seed
-        you actually land on — so a generous delay window costs very little.</div>
+        seed. Nothing here needs to be hit exactly — the window just has to contain the seed you
+        actually land on — so a generous delay window costs very little. The calibration model
+        the centring uses is the profile's active one; see the hunt page.</div>
       <div class="grid4">
         <div class="field"><label>Key seed</label>
           <input value="${h.key_seed != null ? "0x" + h.key_seed.toString(16).toUpperCase() : ""}"
@@ -3781,9 +3874,6 @@ function renderHuntHome(readiness){
         <div class="field"><label>Vector ms</label>
           <input type="number" min="0" value="${h.vector_ms ?? ""}"
             onchange="huntSetField('vector_ms', this.value ? +this.value : null)"></div>
-        <div class="field"><label>Calibration model</label>
-          <input value="${esc(h.calibration_model_id||"")}" placeholder="pick in Review Data"
-            onchange="huntSetField('calibration_model_id', this.value.trim())"></div>
         <div class="field"><label>Seconds window (±)</label>
           <input type="number" min="0" value="${h.seconds_window ?? 2}"
             onchange="huntSetField('seconds_window', +this.value)"></div>
@@ -3852,7 +3942,8 @@ function huntSetHeldItem(pokemonId, item){
 }
 async function huntSetCompleted(completed){
   _hunt = await api("set_hunt_completed", _hunt.id, completed);
-  renderHuntHome(await api("hunt_readiness", _hunt.id));
+  _huntReadiness = await api("hunt_readiness", _hunt.id);
+  renderHuntHome();
 }
 function confirmDeleteHunt(){
   openModal(`<h3>Delete “${esc(_hunt.name)}”?</h3>
