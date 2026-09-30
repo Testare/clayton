@@ -18,6 +18,9 @@ Modules:
 * ``sim`` — turn resolution over the emulator-verified skeleton in ``claytonlib.battle.turn``.
 * ``candidates`` — the uniform (frame x second) grid of possible battle seeds (sec 17.1).
 * ``identify`` — narrowing that grid against what the player reports, and the phase machine.
+* ``solver`` — Phase 2: the cheapest action sequence that lands the capture ball on a winning
+  set of shake rolls.  The Machete equivalent, and the reason the whole tool works: 99% of seeds
+  are steerable to a capture, at a median of 6 turns.
 
 **One finding worth knowing before using any of this.** The two axes of the candidate grid are
 not equally identifiable.  The frame is easy — 1,201 frame candidates narrow to one in three
@@ -39,6 +42,9 @@ from claytonlib.battle_compass.candidates import (  # noqa: F401
 )
 from claytonlib.battle_compass.identify import (  # noqa: F401
     Narrowing, Observation, Phase, Session,
+)
+from claytonlib.battle_compass.solver import (  # noqa: F401
+    Solution, SolverConfig, Step, Unreachable, distance_of, solve,
 )
 
 # `simulate` and `simulate_turn` are deliberately NOT re-exported here. claytonlib/__init__

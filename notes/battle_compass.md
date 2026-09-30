@@ -582,10 +582,21 @@ it:
 1. **Precompute capture windows.** Walk the identified seed's stream over the horizon and
    collect every offset `i` where `(rand[i+j] >> 16) < b` for `j = 0..3`. Cheap, and there are
    only ~50 per 4000 advances (§1).
-2. **Translate to arrival targets.** A turn beginning at RNG offset `x` spends its 4 BeforeTurn
-   rolls on `x..x+3`, so a ball thrown that turn has its shake rolls at `x+4..x+7`. The goal set
-   is therefore `{ w - 4 : w in windows }`, where the 4 is the standard BeforeTurn count every
-   turn pays — **not** a ball-specific offset (§12.1).
+2. **Use the windows to prune, not to define goals.** ~~A turn beginning at RNG offset `x`
+   spends its 4 BeforeTurn rolls on `x..x+3`, so a ball thrown that turn has its shake rolls at
+   `x+4..x+7`, and the goal set is `{ w - 4 : w in windows }`.~~ **[corrected — implementation]**
+   That formula is an oversimplification. The shake rolls do follow the 4 BeforeTurn advances
+   directly (the 4 is what every turn pays, **not** a ball-specific offset — §12.1 stands), but
+   they also follow the wild mon's **move-selection roll**, which is spent at the top of the turn
+   whether or not that mon ends up moving. So the arrival offset is `w - 5` when the target has a
+   move with PP left and `w - 4` when it does not — state-dependent, and for a full-PP Suicune it
+   is `w - 5` on every turn of the hunt.
+
+   Rather than case-split the goal set, the implementation treats the window set as a **necessary
+   condition only**: it prunes (no window anywhere in the horizon ⇒ no capture, a real proof of
+   unreachability), and every actual throw is settled by running the simulator. "Windows prune;
+   the simulator decides." See `battle.turn.shake_roll_offset`, whose `target_can_act` argument
+   deliberately has no default.
 3. **Solve reachability.** BFS/Dijkstra over nodes `(rng_offset, pp_state, our_hp)`, where choosing
    action `A` costs `overhead + cost(A) + cost(Suicune's move)`. Suicune's move is itself
    determined by the roll at the current offset, so **edge weights are position-dependent** — a
@@ -595,6 +606,32 @@ it:
 This is the algorithm §1.1's table was produced with. It is fast because the state space is
 small (§2.2: at 1 HP + paralyzed the battle is nearly stateless) and because the horizon is
 intrinsically bounded (§6.3).
+
+**Measured [implementation].** §1.1's reachability table was built from an illustrative cost
+model before any simulator existed. Re-measured against the real solver over 200 random seeds:
+
+| | §1.1 predicted | measured |
+|---|---|---|
+| seeds solved within 40 turns | ~98–99% | **99.0%** (198/200) |
+| median turns | ~8 | **6** |
+| mean turns | — | 8.1 |
+| worst | — | 37 |
+
+Cumulative: 31% within 4 turns, 62% within 8, 92% within 16. The deadline of §6.3 never binds at
+these counts. A representative solution, on a seed needing 9 turns:
+
+```
+M1hE3!HP103 M1hE2hHP086 M1hEpar M1hE4 M1!Epar M1hE4 M3E4 M2E3hHP060 C
+```
+
+One implementation note on performance. A plain Dijkstra over
+`(rng_offset, pp, hp, stages)` took 47s and 97,139 states. Since **whether a throw captures
+depends only on the RNG offset**, visiting each offset once at its cheapest arrival cuts that to
+0.16s and 642 states — a 300× reduction, verified to return identical distances on six seeds.
+It is a heuristic, though: reaching a *future* offset depends on PP and HP as well, so collapsing
+can in principle discard a state that would have led somewhere cheaper. `SolverConfig.
+collapse_offsets=False` runs the complete search, and only that search's exhaustion sets
+`Unreachable.proven` — the window-based pruning proof of step 2 is sound either way.
 
 ### 6.2 Sustainability as hard constraints, not warnings
 
