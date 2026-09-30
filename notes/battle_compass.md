@@ -2127,42 +2127,65 @@ the target's IVs come from hitting a Seed A advance frame.
 frames that generate the target species. A static legendary's species is fixed, so there is nothing
 to search for.
 
-### 17.1a The two grid axes are not equally identifiable — measured
+### 17.1a The two grid axes are not equally identifiable — measured, then **corrected**
 
-Section 17.1 said the window "can be generous to the point of carelessness". That is true of the
-**frame** and false of the **second**, and the difference is structural rather than a matter of
-degree [derived, and now asserted in `tests/test_battle_compass_identify.py`].
+Section 17.1 said the window "can be generous to the point of carelessness". That is comfortably
+true of the **frame** and much less true of the **second**.
 
 | Window | Candidates | Outcome |
 |---|---|---|
-| frame ±60, second ±0 | 121 | **identified in 2 turns** |
-| frame ±600, second ±0 | 1,201 | **identified in 3 turns** |
-| frame ±60, second ±2 | 605 | **stalls at 5 survivors, forever** |
+| frame ±60, second ±0 | 121 | identified in 2 turns |
+| frame ±600, second ±0 | 1,201 | identified in 3 turns |
+| frame ±60, second ±2 | 605 | ~~stalls at 5 survivors, forever~~ **median 19 turns** |
 
-**Why the second cannot be identified.** `calculate_seed` is
-`((mdms << 24) | (hour << 16)) + delay`, so the RTC second enters through `mdms` in the **top 8
-bits**. An LCRNG difference of `k · 2²⁴` stays in the top 8 bits for every subsequent advance.
-Every modulus the game takes — `% 4` for the wild move choice, `% 16` for crits and the damage
-roll, `% 100` for accuracy and secondary procs — reads only the *low* bits of a roll, which are
-identical across such candidates. Measured on four real survivors, the low byte of every roll
-agrees indefinitely, so no move ever separates them.
+> **Correction.** This section originally claimed the RTC second was *unidentifiable* — that no
+> move could ever separate second-siblings and the only remedy was a narrower window. **That was
+> wrong**, and it was wrong in the conclusion rather than the premise. Credit to the user for
+> challenging it; the arithmetic below is what it should have said.
 
-Only a **magnitude** comparison can, and the game has exactly one: the shake check `roll < b`. So
-a ball throw is the only observable sensitive to the second — and it is not a practical remedy.
-Measured on that same four-way ambiguity: one throw separates two of the four, **ten throws** are
-needed to separate all of them, and **two of those ten capture** — losing the run to the wrong
-ball.
+**What is true.** `calculate_seed` is `((mdms << 24) | (hour << 16)) + delay`, so the second
+enters through `mdms` in the **top 8 bits**, and an LCRNG difference of `k · 2²⁴` stays a multiple
+of `2²⁴` for every subsequent advance:
+
+```
+(2²⁴·c) · A  mod 2³²  =  2²⁴ · (c·A mod 2⁸)
+```
+
+**What does not follow.** A roll is `state >> 16`, so between second-siblings it differs by
+`256·c`. A modulus is therefore blind to the second **only if it divides 256**:
+
+| Modulus | Used for | 256 mod m | Sees the second? |
+|---|---|---|---|
+| `% 2` | move choice, 2 moves left | 0 | no |
+| `% 4` | wild move choice, 4 moves left | 0 | no |
+| `% 16` | crit, damage roll | 0 | no |
+| `% 3` | wild move choice, **3 moves left** | 1 | **yes** — differs on ~70% of rolls |
+| `% 100` | accuracy, secondary procs | 56 | **yes** — differs on almost every roll |
+| `roll < b` | shake check | — | **yes** (a magnitude comparison) |
+
+So the original claim held for the moduli that happen to be powers of two, and was generalised to
+all of them without checking. Two observables do see the second:
+
+* **Aurora Beam's 10% proc** (`% 100`). Its *verdict* differs on ~20% of rolls, and Aurora Beam
+  is one move of four, so about 5% of turns.
+* **The wild move choice, once the target is down to three usable moves.** Rain Dance has only 5
+  PP, so `% 4` becomes `% 3` early in a long battle — and `% 3` differs on ~70% of rolls, which
+  is far stronger than the proc.
+
+**Measured.** 120 second-apart pairs, False Swipe every turn: **all 120 separated. Median 19
+turns, mean 19.4, max 54.** Not one failed to separate.
 
 **Consequences.**
 
-- `candidates.generate` defaults `second_window` to **0**. Widening it does not add a safety
-  margin; it trades a pinned seed for a permanently ambiguous one.
-- The frame window can stay generous, so imprecision in Vector ms really is close to free — §1's
-  claim survives, but only on the axis observation can correct.
-- The second must come from the model and be trusted. That raises the stakes on
-  `rtc_offset_seconds` being right for a *static A-press* encounter, since §R1 noted its value is
-  fitted to the Sweet-Scent path. Previously that was "non-blocking"; it is now the one
-  calibration number a run genuinely depends on.
+- `candidates.generate` still defaults `second_window` to **0**, but for a plain cost reason: it
+  multiplies the candidate set fivefold and costs ~19 extra turns. That is a poor trade, not a
+  futile one, and a set stuck on seconds is waiting for turns rather than doomed.
+- The frame window can stay generous, so imprecision in Vector ms really is close to free.
+- `rtc_offset_seconds` matters less than 17.1a first claimed. Getting it wrong costs turns, not
+  the run — though it is still the number worth measuring for a *static A-press* encounter, since
+  §R1 fitted it to the Sweet-Scent path.
+- Balls remain the strongest second-discriminator, but throwing them in Phase 1 is still barred
+  for the unrelated reason in §2.3 (a standard ball that lands loses the run).
 - `identify.Session.ambiguity()` reports this situation explicitly rather than letting a stuck set
   look like one that needs more turns.
 

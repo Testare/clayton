@@ -29,6 +29,11 @@ from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
 
+#: Measured median turns for two seeds one RTC second apart to predict different tokens, playing
+#: False Swipe every turn against the section 11 fixture (120 pairs: all separated, max 54).
+SECOND_SIBLING_MEDIAN_TURNS = 19
+
+
 class Phase(IntEnum):
     SETUP = 1          # Phase 1
     PINNING = 2        # Phase 1.5
@@ -213,23 +218,33 @@ class Session:
     # -- ambiguity --------------------------------------------------------
 
     def ambiguity(self) -> dict:
-        """Why the surviving set has not collapsed, and whether play can collapse it.
+        """Why the surviving set has not collapsed, and how expensive collapsing it will be.
 
-        The distinction that matters: survivors differing only in the **RTC second** cannot be
-        separated by any move, ever.  ``calculate_seed`` puts the second in the seed's top 8
-        bits, an LCRNG difference of ``k * 2**24`` stays in the top 8 bits forever, and every
-        modulus the game takes (``% 4`` move choice, ``% 16`` crit and damage, ``% 100`` accuracy
-        and procs) reads only the low bits — which are identical.  Only a magnitude comparison
-        tells them apart, and the shake check ``roll < b`` is the game's only one.
+        **Corrected.** An earlier version of this claimed survivors differing only in the RTC
+        second could never be separated by any move. That is wrong, and the correction matters
+        because it changes the advice from "restart" to "keep playing".
 
-        And throwing balls is not a practical substitute.  Measured on a real four-second
-        ambiguity: a single throw separates only two of the four, ten throws are needed to
-        separate all of them, and **two of those ten throws capture** — losing the run to the
-        wrong ball.  So the only viable answer is a narrow second window, which is why
-        ``candidates.generate`` defaults ``second_window`` to 0.
+        What is true is the invariant: ``calculate_seed`` puts the second in the seed's top 8
+        bits, and an LCRNG difference of ``k * 2**24`` stays a multiple of ``2**24`` forever --
+        ``(2**24 * c) * A mod 2**32`` is ``2**24 * (c * A mod 2**8)``. What does *not* follow is
+        that the game cannot see it. A roll is ``state >> 16``, so it differs by ``256 * c``, and:
 
-        A set stuck on several seconds is therefore **not** waiting for more turns. Restart with
-        a tighter second window.
+        * ``% 4`` (the wild move choice) and ``% 16`` (crit and damage rolls) are **identical**,
+          because 256 is a multiple of both.
+        * ``% 100`` (accuracy checks and secondary-effect procs) **differs**, because 100 does
+          not divide 256.
+        * A magnitude comparison -- the shake check ``roll < b`` -- differs too.
+
+        So second-siblings are separable, just slowly, and slowly for a reason specific to this
+        matchup: no move in the fixture can miss (every accuracy is 100 or 0), so the accuracy
+        roll's verdict is invisible, and the only observable ``% 100`` left is Aurora Beam's 10%
+        Attack-drop proc. That needs Aurora Beam chosen (one move of four) *and* the two rolls to
+        straddle the 10 threshold (~20% of rolls), which is about 5% of turns.
+
+        Measured over 120 second-apart pairs playing False Swipe every turn: **all 120 separated,
+        median 19 turns, max 54.** So ``second_window`` still defaults to 0 -- five times the
+        candidates and ~19 extra turns is a poor trade when the second is usually known from
+        ``rtc_offset_seconds`` -- but a set stuck on seconds is waiting for turns, not doomed.
         """
         frames = {self.candidate_info[s].frame for s in self.states
                   if s in self.candidate_info}
@@ -242,14 +257,19 @@ class Session:
             "seconds": sorted(seconds),
             "frame_pinned": len(frames) <= 1,
             "second_only": second_only,
-            "separable_by_moves": not second_only and len(self.states) > 1,
+            # Second-siblings ARE separable -- see the docstring. Slowly, but separable, so this
+            # is no longer False for them.
+            "separable_by_moves": len(self.states) > 1,
+            "expected_turns": SECOND_SIBLING_MEDIAN_TURNS if second_only else None,
             "advice": (
                 "identified" if len(self.states) == 1 else
-                "The frame is pinned but several RTC seconds remain, and no move can ever "
-                "separate them — the second lives in the seed's top 8 bits, which every in-game "
-                "modulo discards. Playing on will not help. Balls are the only observable that "
-                "could, and they are not worth it: separating four seconds took ten throws in "
-                "testing, two of which captured. Restart with a narrower second window."
+                f"The frame is pinned; what remains differs only in the RTC second. That is "
+                f"slow to resolve, not impossible: the move choice and the crit and damage rolls "
+                f"are genuinely identical, but accuracy and proc rolls take % 100, which does "
+                f"see the difference. For this matchup nothing can miss, so it comes down to "
+                f"Aurora Beam's 10% Attack drop -- about one turn in twenty. Measured median "
+                f"{SECOND_SIBLING_MEDIAN_TURNS} turns to separate a pair. Keep playing, or "
+                f"restart with a narrower second window if you would rather not spend them."
                 if second_only else
                 "Keep playing: the survivors still differ in ways moves can reveal."),
         }

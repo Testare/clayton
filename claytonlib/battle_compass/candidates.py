@@ -7,21 +7,30 @@ nothing here needs to *hit* a seed, only to contain the true one, so ranking buy
 follows ``metronome_compass._generate_candidates``'s superset approach instead.
 
 **The two axes are not equally identifiable, and the defaults reflect that.**  The frame window
-can be generous — move observations pin it easily, and 1201 frame candidates narrow to one in
-three turns.  The *second* window cannot: candidates differing only in the RTC second are
-invisible to every modulo-based observable, so a second window of 2 stalls at five survivors and
-never resolves.  See ``identify.Session.ambiguity``, which explains why.
+can be generous -- move choices, crits and damage rolls all separate frames quickly.  The RTC
+second is far slower, for a reason worth spelling out because an earlier version of this file got
+the conclusion wrong.
 
-The reason is structural.  ``calculate_seed`` is ``((mdms << 24) | (hour << 16)) + delay``, so the
-second enters through ``mdms`` in the **top 8 bits**, and an LCRNG difference of ``k * 2**24``
-stays in the top 8 bits forever.  Every modulus the game takes — ``% 4`` for move choice, ``% 16``
-for crits and damage, ``% 100`` for accuracy and secondary procs — reads the *low* bits of the
-roll, which are identical across those candidates.  Only a magnitude comparison distinguishes
-them, and the shake check ``roll < b`` is the only one in the game.
+``calculate_seed`` builds the seed as ``((mdms << 24) | (hour << 16)) + delay``, so the frame
+lands in the low 16 bits while the second enters through ``mdms`` in the **top 8 bits**.  An
+LCRNG difference of ``k * 2**24`` then stays a multiple of ``2**24`` forever, since
+``(2**24 * c) * A mod 2**32 == 2**24 * (c * A mod 2**8)``.  That invariant is real.
 
-So ``second_window`` defaults to 0: the model derives the second from real elapsed time and no
-amount of play will correct it, which makes widening it a way to become permanently unsure rather
-than a safety margin.
+**What does not follow -- and what this file previously claimed -- is that the game cannot see
+it.**  A roll is ``state >> 16``, so it differs by ``256 * c``, and 256 is a multiple of 4 and 16
+but not of 100.  So the ``% 4`` move choice and the ``% 16`` crit and damage rolls genuinely are
+identical, but ``% 100`` accuracy checks and secondary-effect procs are not, and neither is the
+shake check's magnitude comparison ``roll < b``.
+
+Second-siblings therefore **do** separate.  Slowly, and slowly for a matchup-specific reason: no
+move in the section 11 fixture can miss (every accuracy is 100 or 0), so the accuracy verdict is
+invisible and it comes down to Aurora Beam's 10% Attack drop -- Aurora Beam chosen one turn in
+four, and the two rolls straddling the threshold about a fifth of the time.  Measured over 120
+second-apart pairs: all separated, **median 19 turns, max 54**.
+
+``second_window`` still defaults to 0, but for the honest reason: five times the candidates and
+~19 extra turns is a poor trade when ``rtc_offset_seconds`` normally pins the second already.  A
+set stuck on seconds is waiting for turns, not doomed.
 
 Two axes, kept independent:
 

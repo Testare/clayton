@@ -181,7 +181,15 @@ class BattleState:
 
     @property
     def over(self) -> bool:
-        return self.captured or self.captured_in_wrong_ball or self.target.fainted
+        """Whether the battle has stopped advancing.
+
+        Our own Pokemon fainting counts. Without it the simulator kept taking turns for a
+        Pokemon at 0 HP and rendered hits that changed nothing -- ``E2h`` with no ``HP`` token,
+        which ``tokens.validate_turn`` correctly rejects as ungrammatical. The solver already
+        treats fainting as a hard constraint (sec 6.2); this makes the simulator agree.
+        """
+        return (self.captured or self.captured_in_wrong_ball
+                or self.target.fainted or self.ours.fainted)
 
     def copy(self) -> "BattleState":
         return BattleState(

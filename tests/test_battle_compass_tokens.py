@@ -193,6 +193,58 @@ class TestPreventionAndResolutionMarkers(unittest.TestCase):
         self.assertFalse(tok.turn_requires_hp(["M1", tok.HIT, "Ecfz"]))
 
 
+class TestAHealingItemRequiresHp(unittest.TestCase):
+    """The rule has always read "present exactly when our HP changed, for ANY reason", but the
+    healing-item case was missing. Since items actually heal now, the simulator emitted
+    `IspEparHP150` while this said no HP was needed -- and the interview asks on the strength of
+    this, so a potion turn was reported without the token the simulator predicts."""
+
+    def test_a_potion_requires_it(self):
+        self.assertTrue(tok.turn_requires_hp(["Isp", "Epar"]))
+        self.assertTrue(tok.turn_requires_hp(["Ip", "Epar"]))
+        self.assertTrue(tok.turn_requires_hp(["Imp", "Epar"]))
+
+    def test_a_full_restore_requires_it(self):
+        self.assertTrue(tok.turn_requires_hp(["Ifr", "Epar"]))
+
+    def test_a_non_healing_item_does_not(self):
+        """Full Heal cures status without restoring HP; the X items touch neither."""
+        for code in ("fh", "xsd", "xd", "gs"):
+            self.assertFalse(tok.turn_requires_hp([f"I{code}", "Epar"]), code)
+
+    def test_an_unknown_item_code_does_not_crash(self):
+        self.assertFalse(tok.turn_requires_hp(["Izzz", "Epar"]))
+
+    def test_it_agrees_with_the_simulator_for_every_item(self):
+        """The invariant that was broken: what the simulator renders and what the rule demands
+        have to match, or a correct report is rejected or an incorrect one accepted."""
+        from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.battle_compass import items
+        from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+        from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.moves import resolve_move
+
+        hunt = HuntConfig(target_catch_rate=3)
+        moves = moveset("suicune")
+        ours = Battler(name="Smeargle", level=60, types=("Normal",),
+                       stats={**derive_species_stats("smeargle", 60, "Hardy"), "atk": 65},
+                       moves=("False Swipe",), pp=(40,), hp=100)
+        target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
+                         stats=derive_species_stats("suicune", 40, "Bold"), moves=moves,
+                         pp=tuple(resolve_move(m).pp for m in moves),
+                         hp=1, status=Status.PARALYSIS)
+        for entry in items.ITEMS:
+            state = BattleState(ours=ours, target=target, rng=0xEC1504DC, phase=2)
+            nxt = simulate_turn(state, Action.ITEM, hunt, item_code=entry.code)
+            fragments = list(nxt.log[-1])
+            emitted = any(t.startswith("HP") for t in tok.normalise(fragments))
+            required = tok.turn_requires_hp(fragments)
+            self.assertEqual(emitted, required,
+                             f"{entry.name}: simulator emits HP={emitted}, rule requires "
+                             f"{required}")
+
+
 if __name__ == "__main__":
     unittest.main()
 

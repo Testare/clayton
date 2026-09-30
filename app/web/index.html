@@ -3922,9 +3922,10 @@ function renderHuntSetup(){
         <tr><th>seed</th><th>frame</th><th>second</th></tr>
         ${w.preview.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
           <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}</table></div>
-      ${w.second_window > 0 ? `<div class="hr-small muted">A second window above 0 adds
-        candidates that no move can ever separate — the RTC second lives in the seed's top 8
-        bits, which every in-game modulo discards.</div>` : ""}</div>`;
+      ${w.second_window > 0 ? `<div class="hr-small muted">A second window above 0 multiplies
+        the set with candidates that take ~19 turns to separate — the move choice and the crit
+        and damage rolls are identical between seconds, so only accuracy and proc rolls tell
+        them apart. Use 0 unless the clock second itself is in doubt.</div>` : ""}</div>`;
   } else if (w){
     result = `<div class="notice warn"><b>No candidate seeds in that window.</b>
       <div class="hr-small">${esc(w.problem || "")}</div>
@@ -4070,7 +4071,11 @@ function hrTokens(){
   }
   const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
                                  : targetParts.concat(ourParts);
-  if (t.hp !== "" && t.hp !== null) ordered.push("HP" + String(t.hp).padStart(3, "0"));
+  // Gated on the RULE, not merely on the field being filled in. Changing the target's move from
+  // Gust to Rain Dance leaves an HP value that is no longer part of the turn, and emitting it
+  // produced a token the simulator would never render.
+  if (hrNeedsHp() && t.hp !== "" && t.hp !== null)
+    ordered.push("HP" + String(t.hp).padStart(3, "0"));
   return ordered.join("");
 }
 
@@ -4101,12 +4106,19 @@ function hrTurnComplete(){
   return true;
 }
 
-// Mirrors tokens.turn_requires_hp: the target landing a hit is the only thing in scope that
-// damages us, plus our own confusion self-hit. The facade re-checks, so this only decides
-// whether to ASK.
+// Mirrors tokens.turn_requires_hp. Three ways our HP changes in scope: the target lands a hit,
+// our own confusion self-hit, or we use a healing item -- the last of which was missing, so a
+// potion turn had the simulator emitting an HP token and the interview never asking for one.
+//
+// It decides whether to ASK *and* whether the token is emitted, so a stale value left behind by
+// a changed answer cannot survive into the report.
 function hrNeedsHp(){
-  const t = _hrTurn;
+  const t = _hrTurn, s = _huntSnap;
   if (t.ours && t.ours.prevented === "cfz") return true;
+  if ((t.action === "I" || t.action === "Ic") && t.ours && t.ours.item){
+    const entry = (s.items || []).find(i => i.code === t.ours.item);
+    if (entry && entry.heals) return true;
+  }
   return !!(t.target && !t.target.prevented && (t.target.result === "h" || t.target.result === "!"));
 }
 
@@ -4118,6 +4130,10 @@ function hrSet(path, value){
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
   else if (path === "hp"){ t.hp = value; }
+  // Dropping a value the turn no longer needs: changing the target's move from Gust to Rain
+  // Dance leaves an HP number that is not part of the turn any more, and showing it reads as the
+  // report being wrong rather than the answer having changed.
+  if (path !== "hp" && !hrNeedsHp()) t.hp = "";
   renderHuntRun();
 }
 
@@ -4379,6 +4395,38 @@ function huntForceSolving(){
   huntRunDo("hunt_session_enter_solving", true);
 }
 
+// Widening replays every accepted turn against the bigger set, so nothing reported is lost --
+// and those turns are what filter the newly admitted candidates, so it costs no information.
+async function huntWiden(){
+  await huntRunDo("hunt_session_widen");
+  huntReportWidening();
+}
+
+// Separate, and warned, because the second axis is not like the frame axis: the RTC second lives
+// in the seed's top 8 bits and every in-game modulo discards it, so candidates added here can
+// never be separated by play (sec 17.1). It buys permanent ambiguity, not coverage.
+async function huntWidenSeconds(){
+  if (!confirm("Widening the SECOND range is expensive: it multiplies the candidate set, and "
+             + "candidates one second apart take about 19 turns to tell apart (the move choice "
+             + "and the crit and damage rolls are identical between them — only accuracy and "
+             + "proc rolls differ).\n\n"
+             + "Worth it only if you think the clock second itself was wrong. Continue?")) return;
+  await huntRunDo("hunt_session_widen", null, (_huntSnap.window.second_window || 0) + 1);
+  huntReportWidening();
+}
+
+function huntReportWidening(){
+  const w = _huntSnap && _huntSnap.widened;
+  if (!w) return;
+  const last = (_huntSnap.widenings || []).slice(-1)[0];
+  const gained = last ? last.survivors_after - last.survivors_before : 0;
+  toast(gained > 0
+    ? `Widened to ${w.candidates} candidates — ${gained} more now explain every reported turn. `
+      + `Report the turn again.`
+    : `Widened to ${w.candidates} candidates, but none of the new ones explain the turns so far. `
+      + `The report is more likely mistyped than out of range.`);
+}
+
 function huntRunAbandon(){
   if (!confirm("End this run? The battle state is not saved.")) return;
   api("hunt_session_abandon", _huntRun).catch(() => {});
@@ -4445,7 +4493,7 @@ function renderHuntRun(){
   // instead of letting the player keep playing for information that will never arrive.
   const amb = s.ambiguity;
   const ambiguity = (!pinned && amb.second_only)
-    ? `<div class="notice warn"><b>This set cannot be narrowed further.</b>
+    ? `<div class="notice warn"><b>Only the RTC second is still in doubt — slow, not stuck.</b>
          <div class="hr-small">${esc(amb.advice)}</div>
          <div class="muted hr-small">Seconds still in play: ${amb.seconds.join(", ")}</div></div>`
     : "";
@@ -4458,8 +4506,17 @@ function renderHuntRun(){
         ${(s.contradiction.predicted || []).length ? `<div class="muted hr-small">Candidates
            predicted: ${s.contradiction.predicted.map(r =>
              `<code>${esc(r.predicted)}</code>`).join(", ")}</div>` : ""}
-        <div class="muted hr-small">The candidate set was left untouched — fix the report, or
-          restart with a wider window.</div></div>`
+        <div class="muted hr-small">The candidate set was left untouched. Two causes, needing
+          opposite fixes: a mistyped answer — correct it above and report again — or the true
+          seed was never in the window, which widening fixes without losing the
+          ${s.turns.length} turn${s.turns.length === 1 ? "" : "s"} already reported.</div>
+        <div class="chip-row">
+          <button class="btn" onclick="huntWiden()">Widen the search
+            (delay ±${s.window.frame_window} → ±${s.window.frame_window * 2})</button>
+          <button class="btn" onclick="huntWidenSeconds()"
+            title="Rarely the answer — see the warning before confirming.">
+            Add a second (±${s.window.second_window} → ±${s.window.second_window + 1})</button>
+        </div></div>`
     : "";
 
   // Three states, because this arrives after the page does: loading, loaded, or nothing to say.

@@ -201,11 +201,27 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
     The check that makes the grammar self-verifying. A player who takes damage and forgets to
     report HP produces an invalid turn rather than a silently wrong state, which matters because
     Phase 2 runs to a precomputed path and HP is how a desync is caught (sec 2.5).
+
+    Deliberately one-directional: `validate_turn` errors on a MISSING HP token but not on a
+    surplus one. Causes this does not know about -- a burn or poison tick, recoil -- would make
+    the converse reject correct reports, and none of them is modelled yet. The interview gates on
+    this function instead, so it cannot produce a surplus token in the first place.
     """
+    from claytonlib.battle_compass.items import BY_CODE
+
     for token in normalise(tokens):
         # Our own confusion self-hit damages us with no E token in sight.
         if token == "Mcfz":
             return True
+        # A healing item changes our HP as surely as a hit does. The rule has always said "for
+        # ANY reason", but this case was missing, so the simulator emitted an HP token after a
+        # potion while this said none was needed -- and the interview, which asks on the strength
+        # of this, never prompted for it.
+        if token.startswith("I"):
+            entry = BY_CODE.get(token[1:])
+            if entry is not None and entry.heals:
+                return True
+            continue
         if not token.startswith("E"):
             continue
         # The target's move landing on us is the only other thing in scope that can damage us.

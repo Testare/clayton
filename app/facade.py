@@ -686,6 +686,58 @@ class Facade:
         return {f"{seed:#010x}": pred
                 for seed, pred in session.predict(Action(action), **extra).items()}
 
+    def hunt_session_widen(self, session_id: str, frame_window: int | None = None,
+                           second_window: int | None = None) -> dict:
+        """Widen the candidate window mid-run and replay the turns so far against it.
+
+        The recovery path for "no candidate predicted that turn" when the cause was the window
+        rather than a mistyped answer. Only widening is allowed: the current candidates must stay
+        in the set, since a turn already accepted has to remain explicable.
+
+        Defaults double the frame range and leave the second range alone -- deliberately, because
+        widening the SECOND axis admits candidates no move can ever separate (sec 17.1), so it
+        buys ambiguity rather than coverage.
+        """
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import estimate_size, generate
+
+        session = self._hunt_sessions.get(session_id)
+        hunt_id = self._hunt_sessions.hunt_of(session_id)
+        h = self._load_hunt(hunt_id)
+
+        frames = int(frame_window if frame_window is not None
+                     else session.window.frame_window * 2)
+        seconds = int(second_window if second_window is not None
+                      else session.window.second_window)
+        if frames < session.window.frame_window or seconds < session.window.second_window:
+            raise ValueError(
+                f"this would narrow the window, not widen it "
+                f"(frame {session.window.frame_window}->{frames}, "
+                f"second {session.window.second_window}->{seconds})")
+
+        models = self._resolve_calibration_models(h.profile_id)
+        model = models.get("linear") or next(iter(models.values()), None)
+        if model is None:
+            raise ValueError("no calibration model available for this profile")
+
+        window = generate(
+            model, key_seed=int(h.key_seed),
+            initial_time=dt.datetime.fromisoformat(h.initial_time),
+            vector_ms=float(h.vector_ms),
+            frame_window=frames, second_window=seconds)
+
+        snapshot = session.rebase(window)
+        # Remember it, so a restart does not begin from the window that already failed.
+        h.delay_window, h.seconds_window = frames, seconds
+        self._store.write(_HUNTS, h.id, h.to_dict())
+        snapshot["widened"] = {
+            "frame_window": frames, "second_window": seconds,
+            "candidates": len(window.candidates),
+            "estimated": estimate_size(frames, seconds),
+        }
+        return snapshot
+
     def hunt_session_abandon(self, session_id: str) -> dict:
         return {"session_id": session_id, "closed": self._hunt_sessions.drop(session_id)}
 

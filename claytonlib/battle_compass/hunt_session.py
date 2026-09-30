@@ -204,6 +204,8 @@ class HuntSession:
         self.solution: Solution | Unreachable | None = None
         #: Why a forced Phase 2 could not produce a path, if it could not.
         self.forced_reason: str | None = None
+        #: Each mid-run widening, so a run record says the window was not what it started as.
+        self.widenings: list[dict] = []
         self._session = self._fresh()
 
     # -- construction / replay ------------------------------------------
@@ -249,6 +251,37 @@ class HuntSession:
         # A transition recorded after the last surviving turn has not happened yet.
         self.transitions = [(at, p) for at, p in self.transitions if at <= len(replayed)]
         self._apply_transitions_at(len(replayed))
+
+    def rebase(self, window: CandidateWindow) -> dict:
+        """Swap in a wider candidate window and replay the run against it.
+
+        Recovery for the case that matters: the reported turn matched nothing because the true
+        seed was never in the window. Restarting would throw away every turn already reported,
+        which is the expensive half of a run -- and those turns are exactly what filters the newly
+        admitted candidates, so replaying them costs nothing in information.
+
+        `window` must be a SUPERSET of the current one. A turn that was accepted once has to stay
+        accepted, or the history becomes unexplainable and `_replay` would (correctly) refuse; and
+        narrowing here would silently discard candidates the player never ruled out.
+        """
+        missing = {c.seed for c in self.window.candidates} - {c.seed for c in window.candidates}
+        if missing:
+            raise ValueError(
+                f"a wider window must still contain the current candidates; {len(missing)} of "
+                f"{len(self.window.candidates)} would be dropped. Widen the frame or second "
+                f"range rather than moving the centre.")
+        before = len(self.survivors)
+        self.window = window
+        self._replay(self.turns)
+        self.widenings.append({
+            "frame_window": window.frame_window,
+            "second_window": window.second_window,
+            "candidates": len(window.candidates),
+            "survivors_before": before,
+            "survivors_after": len(self.survivors),
+            "after_turn": len(self.turns),
+        })
+        return self.snapshot()
 
     # -- read-only state ------------------------------------------------
 
@@ -502,6 +535,7 @@ class HuntSession:
             "solver_blockers": self.solver_blockers(),
             "contradiction": self.contradiction,
             "forced_reason": self.forced_reason,
+            "widenings": list(self.widenings),
             "solution": None,
         }
         if isinstance(self.solution, Solution):

@@ -830,5 +830,124 @@ class TestZeroOptionsCountsAsAnswered(unittest.TestCase):
         self.assertIn("needs no reporting", self.html)
 
 
+class TestStaleHpCannotSurvive(unittest.TestCase):
+    """Reported: pick Gust (damaging), type an HP, then change the target's move to Rain Dance --
+    the HP token stayed in the report though the turn no longer has one. hrTokens pushed it
+    whenever the FIELD was filled in, rather than when the rule says the turn has one."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_token_is_gated_on_the_rule(self):
+        self.assertIn('hrNeedsHp() && t.hp !== ""', self.html)
+
+    def test_the_value_is_dropped_when_it_stops_applying(self):
+        self.assertIn('if (path !== "hp" && !hrNeedsHp()) t.hp = "";', self.html)
+
+    def test_changing_an_answer_re_evaluates_it(self):
+        """The clear has to sit in hrSet, which is what every chip goes through."""
+        body = self.html[self.html.index("function hrSet("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("hrNeedsHp()", body)
+
+    def test_a_healing_item_is_asked_about(self):
+        """The other half of the same hole: the simulator emits HP after a potion, so the
+        interview has to prompt for it or the report contradicts."""
+        body = self.html[self.html.index("function hrNeedsHp("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("entry.heals", body)
+        self.assertIn('t.action === "I"', body)
+
+    def test_the_snapshot_carries_the_heals_flag_the_page_needs(self):
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        by_code = {i["code"]: i for i in snap["items"]}
+        self.assertTrue(by_code["sp"]["heals"])
+        self.assertFalse(by_code["xsd"]["heals"])
+
+
+class TestWideningMidRun(unittest.TestCase):
+    """Recovery for "no candidate predicted that turn" when the cause was the window rather than
+    a mistyped answer. Restarting would discard every turn already reported -- and those turns are
+    exactly what filters the newly admitted candidates, so replaying them costs no information."""
+
+    def _run_with_a_narrow_window(self):
+        facade, hunt_id = _ready_hunt(delay_window=8, seconds_window=0)
+        started = facade.hunt_session_start(hunt_id)
+        return facade, hunt_id, started["session_id"], started["snapshot"]
+
+    def test_widening_keeps_the_turns_already_reported(self):
+        facade, _, sid, snap = self._run_with_a_narrow_window()
+        truth = snap["candidates"][0]["seed"]
+        predicted = facade.hunt_session_predict(sid, "M1")[truth]
+        facade.hunt_session_observe(sid, "M1", [predicted])
+        widened = facade.hunt_session_widen(sid)
+        self.assertEqual(len(widened["turns"]), 1)
+
+    def test_it_admits_candidates_that_explain_the_history(self):
+        facade, _, sid, snap = self._run_with_a_narrow_window()
+        truth = snap["candidates"][0]["seed"]
+        predicted = facade.hunt_session_predict(sid, "M1")[truth]
+        before = facade.hunt_session_observe(sid, "M1", [predicted])["survivors"]
+        after = facade.hunt_session_widen(sid)["survivors"]
+        self.assertGreaterEqual(after, before)
+
+    def test_the_frame_range_doubles_by_default(self):
+        """And the SECOND range is left alone, because widening it admits candidates no move can
+        ever separate (sec 17.1)."""
+        facade, _, sid, _ = self._run_with_a_narrow_window()
+        widened = facade.hunt_session_widen(sid)
+        self.assertEqual(widened["widened"]["frame_window"], 16)
+        self.assertEqual(widened["widened"]["second_window"], 0)
+
+    def test_it_clears_a_contradiction(self):
+        facade, _, sid, snap = self._run_with_a_narrow_window()
+        truth = snap["candidates"][0]["seed"]
+        facade.hunt_session_observe(sid, "M1", [facade.hunt_session_predict(sid, "M1")[truth]])
+        rejected = facade.hunt_session_observe(sid, "M1", ["M1hE3hHP001"])
+        self.assertIsNotNone(rejected["contradiction"])
+        self.assertIsNone(facade.hunt_session_widen(sid)["contradiction"])
+
+    def test_narrowing_is_refused(self):
+        """It would discard candidates the player never ruled out, and could make an accepted
+        turn unexplainable."""
+        facade, _, sid, _ = self._run_with_a_narrow_window()
+        with self.assertRaises(ValueError) as caught:
+            facade.hunt_session_widen(sid, frame_window=2)
+        self.assertIn("narrow", str(caught.exception))
+
+    def test_each_widening_is_recorded(self):
+        facade, _, sid, _ = self._run_with_a_narrow_window()
+        facade.hunt_session_widen(sid)
+        snap = facade.hunt_session_widen(sid)
+        self.assertEqual(len(snap["widenings"]), 2)
+        self.assertEqual([w["frame_window"] for w in snap["widenings"]], [16, 32])
+
+    def test_it_is_remembered_on_the_hunt(self):
+        """So a restart does not begin from the window that already failed."""
+        facade, hunt_id, sid, _ = self._run_with_a_narrow_window()
+        facade.hunt_session_widen(sid)
+        self.assertEqual(facade.get_hunt(hunt_id)["delay_window"], 16)
+
+    def test_a_second_can_be_added_explicitly(self):
+        facade, _, sid, _ = self._run_with_a_narrow_window()
+        widened = facade.hunt_session_widen(sid, second_window=1)
+        self.assertEqual(widened["widened"]["second_window"], 1)
+        self.assertGreater(widened["survivors"], 0)
+
+    def test_the_page_offers_both_and_prices_the_second_axis(self):
+        """The warning used to say seconds could NEVER be told apart. They can -- median 19
+        turns -- so it now states the cost instead of claiming impossibility."""
+        html = INDEX.read_text()
+        self.assertTrue("function huntWiden(" in html)
+        self.assertTrue("function huntWidenSeconds(" in html)
+        self.assertIn("19 turns", html)
+        self.assertFalse("no move can ever tell apart" in html)
+
+    def test_the_notice_no_longer_tells_you_to_restart(self):
+        html = INDEX.read_text()
+        self.assertFalse("restart with a wider window" in html)
+
+
 if __name__ == "__main__":
     unittest.main()

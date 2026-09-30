@@ -35,11 +35,14 @@ Modules:
 
 **One finding worth knowing before using any of this.** The two axes of the candidate grid are
 not equally identifiable.  The frame is easy — 1,201 frame candidates narrow to one in three
-turns.  The RTC second is *impossible*: it lives in the seed's top 8 bits, an LCRNG difference of
-``k * 2**24`` stays in the top 8 bits forever, and every modulus the game takes reads only the low
-bits.  A second window of 2 stalls at five survivors and never resolves, and balls are not a
-practical remedy — separating four seconds took ten throws in testing, two of which captured and
-would have lost the run.  Hence ``second_window`` defaults to 0, and
+turns.  The RTC second is much slower: it enters through the seed's top 8 bits, and an LCRNG
+difference of ``k * 2**24`` stays a multiple of ``2**24`` forever.  An earlier version of this
+concluded the second was therefore *unidentifiable* -- **that was wrong**.  A roll is
+``state >> 16``, so it differs by ``256 * c``: the ``% 4`` move choice and ``% 16`` crit/damage
+rolls really are identical, but ``% 100`` accuracy and proc rolls see the difference, as does the
+shake check.  Measured over 120 second-apart pairs, all separated, median 19 turns.  So
+``second_window`` still defaults to 0 -- five times the candidates for nineteen extra turns is a
+poor trade when ``rtc_offset_seconds`` usually pins the second -- and
 ``identify.Session.ambiguity`` explains the situation when a set is stuck.
 """
 from claytonlib.battle_compass.state import (  # noqa: F401

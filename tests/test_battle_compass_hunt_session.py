@@ -325,8 +325,8 @@ class TestSnapshot(unittest.TestCase):
 
 
 class TestSecondOnlyAmbiguityIsSurfaced(unittest.TestCase):
-    """A set differing only in the RTC second can never be separated by any move, so the UI has
-    to say so rather than inviting more turns (sec 17.1)."""
+    """A set differing only in the RTC second separates slowly -- median 19 turns -- so the UI
+    has to say that, not that it is hopeless (sec 17.1, corrected)."""
 
     def test_a_second_only_set_is_flagged(self):
         cands = tuple(Candidate(seed=SEED + (k << 24), frame=1000, second=30 + k)
@@ -335,17 +335,37 @@ class TestSecondOnlyAmbiguityIsSurfaced(unittest.TestCase):
         s = HuntSession(window, _ours(), _target(), HUNT)
         amb = s.snapshot()["ambiguity"]
         self.assertTrue(amb["second_only"])
-        self.assertFalse(amb["separable_by_moves"])
+        self.assertTrue(amb["separable_by_moves"])
         self.assertIn("narrower second window", amb["advice"])
+        self.assertIn("not impossible", amb["advice"])
 
-    def test_such_a_set_does_not_narrow_however_many_turns_are_played(self):
+    def test_such_a_set_narrows_rather_than_never(self):
+        """The old assertion was that no number of turns would do it.
+
+        Played from a Phase 2 position with an unkillable lead. Both conditions are deliberate:
+        Phase 2 is the state the claim was ever about, and 65 unhealed turns of Aurora Beam kill
+        a real Smeargle in about ten -- which is a fact about survival, not about whether the RNG
+        diverges. The mechanism itself is tested directly in
+        tests/test_battle_compass_identify.py.
+        """
         cands = tuple(Candidate(seed=SEED + (k << 24), frame=1000, second=30 + k)
                       for k in range(3))
-        s = HuntSession(replace(_window(), candidates=cands), _ours(), _target(), HUNT)
-        truth = s.survivors[0]
+        # 999 is the most an HP token can render (three digits), and huge defences floor each
+        # incoming hit at 1, so the lead survives the horizon without any healing turns muddying
+        # what is being measured.
+        tanky = _ours(stats={**_ours().stats, "hp": 999, "def": 999, "spd": 999})
+        session = HuntSession(replace(_window(), candidates=cands), tanky,
+                              _target(hp=1, status=Status.PARALYSIS), HUNT)
+        truth = session.survivors[0]
         for _ in range(5):
-            s.observe(Action.MOVE_1, [s.predict(Action.MOVE_1)[truth]])
-        self.assertEqual(len(s.survivors), 3)
+            session.observe(Action.MOVE_1, [session.predict(Action.MOVE_1)[truth]])
+        after_five = len(session.survivors)
+        for _ in range(60):
+            if session.identified:
+                break
+            session.observe(Action.MOVE_1, [session.predict(Action.MOVE_1)[truth]])
+        self.assertEqual(after_five, 3, "five turns should not have been enough")
+        self.assertIsNotNone(session.identified, "they should separate within 65 turns")
 
 
 class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
