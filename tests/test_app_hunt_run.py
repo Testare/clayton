@@ -565,5 +565,69 @@ class TestSwitchingThroughTheFacade(unittest.TestCase):
         self.assertIn("bench", html)
 
 
+class TestTheReportButtonRecovers(unittest.TestCase):
+    """Typing the HP is usually the LAST answer, and its oninput only refreshed the preview text
+    -- so with every question answered the button stayed disabled. A rejected turn hit this every
+    time, because the answers were cleared and HP had to be retyped."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_report_button_is_addressable(self):
+        self.assertIn('id="hrReport"', self.html)
+
+    def test_refreshing_the_preview_also_re_evaluates_the_button(self):
+        body = self.html[self.html.index("function hrRefreshPreview()"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("hrReport", body)
+        self.assertIn("disabled", body)
+        self.assertIn("hrTurnComplete()", body)
+
+    def test_the_hp_field_drives_that_refresh(self):
+        self.assertIn("hrRefreshPreview()", self.html)
+        hp_field = self.html[self.html.index('id="hrHp"'):]
+        hp_field = hp_field[:hp_field.index(">")]
+        self.assertIn("hrRefreshPreview", hp_field)
+
+    def test_it_updates_in_place_rather_than_re_rendering(self):
+        """A full re-render on each keystroke would steal focus from the HP field."""
+        body = self.html[self.html.index("function hrRefreshPreview()"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertNotIn("renderHuntRun", body)
+
+    def test_a_rejected_turn_keeps_the_answers(self):
+        self.assertIn("if (!_huntSnap.contradiction) hrTurnReset();", self.html)
+
+    def test_observing_no_longer_clears_before_the_call(self):
+        body = self.html[self.html.index("function huntRunObserve()"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertNotIn("hrTurnReset()", body)
+
+
+class TestSwitchHpThroughTheFacade(unittest.TestCase):
+    def test_a_no_damage_switch_reports_no_hp(self):
+        facade = Facade(FileStore(tempfile.mkdtemp()))
+        profile_id = facade.create_profile({"name": "T"})["id"]
+        mag = facade.add_party_pokemon(profile_id, dict(
+            LEAD, name="Magneton", species="magneton", level=30,
+            stats={"hp": 85, "atk": 50, "def": 70, "spa": 90, "spd": 60, "spe": 60},
+            moveset=["Thunder Wave", "Tackle"], max_pp={}))["pokemon_id"]
+        sme = facade.add_party_pokemon(profile_id, LEAD)["pokemon_id"]
+        hunt = facade.create_hunt({"name": "H", "profile_id": profile_id})
+        hunt.update({"target": TARGET,
+                     "party": [{"pokemon_id": mag}, {"pokemon_id": sme}],
+                     "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
+                     "initial_time": "2026-01-01T12:00:00", "vector_ms": 120000,
+                     "seconds_window": 0, "delay_window": 60})
+        facade.save_hunt(hunt)
+        started = facade.hunt_session_start(hunt["id"])
+        sid = started["session_id"]
+        predictions = facade.hunt_session_predict(sid, "S", bench_slot=0)
+        # Whatever each candidate predicts, an HP token may only appear with damage.
+        for rendered in predictions.values():
+            if "Epar" in rendered or "-" in rendered:
+                self.assertNotIn("HP", rendered, rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

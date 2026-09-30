@@ -683,5 +683,96 @@ class TestAdviceIsSeparateFromTheSnapshot(unittest.TestCase):
                         "advice is supposed to dominate the cost of a snapshot")
 
 
+class TestSwitchHpToken(unittest.TestCase):
+    """An HP token reports a CHANGE to one Pokemon. The baseline was captured before the switch,
+    so it compared the OUTGOING Pokemon's HP with the INCOMING one's and emitted a token for a
+    turn where nothing was damaged -- Magneton 85 against Smeargle 153 reads as a 68-point
+    change."""
+
+    def _switch(self, seed, target_status=Status.PARALYSIS, our_hp=None):
+        from claytonlib.battle_compass.sim import simulate_turn
+        incoming = _ours(hp=our_hp)
+        outgoing = _bench()
+        state = BattleState(ours=outgoing, target=_target(status=target_status),
+                            rng=seed, bench=(incoming,), phase=1)
+        nxt = simulate_turn(state, Action.SWITCH, HUNT, bench_slot=0)
+        return tok.render_turn(tok.normalise(nxt.log[-1])), nxt
+
+    def test_a_switch_where_nothing_hits_us_reports_no_hp(self):
+        """The reported glitch: switched in, target fully paralyzed, HP153 emitted anyway."""
+        found = False
+        for seed in range(0xEC1504DC, 0xEC1504DC + 400):
+            rendered, _ = self._switch(seed)
+            if "Epar" not in rendered:
+                continue
+            found = True
+            self.assertNotIn("HP", rendered, rendered)
+        self.assertTrue(found, "no fully-paralyzed switch turn in the sample")
+
+    def test_the_hp_baseline_follows_the_incoming_pokemon(self):
+        """So a token, when one IS emitted, is the incoming Pokemon's HP and not a difference
+        between two different Pokemon."""
+        for seed in range(0xEC1504DC, 0xEC1504DC + 200):
+            rendered, nxt = self._switch(seed)
+            hp = [t for t in tok.tokenise(rendered) if t.startswith("HP")]
+            if hp:
+                self.assertEqual(int(hp[0][2:]), nxt.ours.hp)
+                self.assertLessEqual(int(hp[0][2:]), nxt.ours.max_hp)
+
+    def test_a_switch_that_does_take_damage_still_reports_hp(self):
+        """The fix must not suppress a real change."""
+        reported = 0
+        for seed in range(0xEC1504DC, 0xEC1504DC + 400):
+            rendered, nxt = self._switch(seed, target_status=Status.NONE)
+            if nxt.ours.hp < nxt.ours.max_hp:
+                self.assertIn("HP", rendered, rendered)
+                reported += 1
+        self.assertGreater(reported, 10, "no damaging switch turn in the sample")
+
+    def test_the_grammar_agrees_that_no_hp_is_needed(self):
+        """turn_requires_hp and the simulator must not disagree, or a valid turn would be
+        rejected as ungrammatical."""
+        for seed in range(0xEC1504DC, 0xEC1504DC + 300):
+            rendered, _ = self._switch(seed)
+            self.assertEqual(tok.validate_turn(tok.tokenise(rendered)), [], rendered)
+
+    def test_switching_to_a_damaged_pokemon_keeps_its_own_hp(self):
+        """Its HP on the bench is the baseline, not its maximum."""
+        rendered, nxt = self._switch(0xEC1504DC, our_hp=100)
+        self.assertLessEqual(nxt.ours.hp, 100)
+
+
+class TestARejectedTurnIsRecoverable(unittest.TestCase):
+    """A contradiction leaves the candidate set untouched, so the run must be able to continue --
+    the likeliest cause is one mistyped answer, not a genuinely excluded set (sec 15.5)."""
+
+    def test_the_set_is_unchanged_and_the_turn_is_not_recorded(self):
+        session = _session()
+        before = session.survivors
+        session.observe(Action.MOVE_1, ["M1hE3hHP999"])
+        self.assertEqual(session.survivors, before)
+        self.assertEqual(session.turns, [])
+
+    def test_a_good_turn_straight_after_a_rejection_is_accepted(self):
+        """Nothing about a rejection may leave the session unable to accept the next report."""
+        session = _session()
+        session.observe(Action.MOVE_1, ["M1hE3hHP999"])
+        truth = session.survivors[0]
+        snap = session.observe(Action.MOVE_1, [session.predict(Action.MOVE_1)[truth]])
+        self.assertIsNone(snap["contradiction"])
+        self.assertEqual(len(snap["turns"]), 1)
+
+    def test_repeated_rejections_do_not_degrade_the_session(self):
+        session = _session()
+        before = session.survivors
+        for _ in range(5):
+            session.observe(Action.MOVE_1, ["M1hE3hHP999"])
+        self.assertEqual(session.survivors, before)
+        truth = session.survivors[0]
+        self.assertIsNone(
+            session.observe(Action.MOVE_1,
+                            [session.predict(Action.MOVE_1)[truth]])["contradiction"])
+
+
 if __name__ == "__main__":
     unittest.main()

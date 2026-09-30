@@ -306,7 +306,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     ours_first = action.is_bag_action or _we_move_first(new, action, target_slot)
 
     def act_ours() -> bool:
-        nonlocal rng
+        nonlocal rng, hp_before
         if action is Action.CAPTURE_BALL or action is Action.STANDARD_BALL:
             multiplier = (config.capture_ball_multiplier
                           if action is Action.CAPTURE_BALL else BALL_POKE)
@@ -336,6 +336,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             incoming = new.bench[bench_slot]
             new.bench = tuple(b for i, b in enumerate(new.bench) if i != bench_slot) + (new.ours,)
             new.ours = incoming
+            # The HP token reports a CHANGE to one Pokemon, so the baseline has to follow whoever
+            # is out at the end of the turn. Left as the outgoing Pokemon's HP it compared two
+            # different Pokemon and emitted a token for a switch that took no damage at all.
+            # Safe here because a switch always resolves before any move, so nothing has hit the
+            # incoming Pokemon yet.
+            hp_before = incoming.hp
             # Party slot is 1-based and counts the active Pokemon, which was slot 1.
             parts.append(tok.switch_token(bench_slot + 2))
             return False

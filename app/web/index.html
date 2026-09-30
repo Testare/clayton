@@ -3967,7 +3967,10 @@ async function huntRunDo(method, ...args){
   renderHuntRun();                  // show the spinner before the call blocks
   try {
     _huntSnap = await api(method, _huntRun, ...args);
-    hrTurnReset();
+    // Keep the answers when the turn was REJECTED: the set did not move, and the likeliest
+    // cause is one wrong chip, so clearing the form would make the player re-enter a turn they
+    // had almost right.
+    if (!_huntSnap.contradiction) hrTurnReset();
     huntAdviceInvalidate();
   } catch (e) { toast(String(e.message || e)); }
   finally {
@@ -4316,7 +4319,8 @@ function hrInterview(){
     <div>Reporting <code id="hrPreview">${esc(tokens || "…")}</code>
       ${_hrBusy ? `<span class="muted hr-small">— checking candidates…</span>` : ""}</div>
     <div class="chip-row">
-      <button class="btn primary" onclick="huntRunObserve()" ${ready && !_hrBusy ? "" : "disabled"}>
+      <button class="btn primary" id="hrReport" onclick="huntRunObserve()"
+        ${ready && !_hrBusy ? "" : "disabled"}>
         ${_hrBusy ? "Checking…" : "Report turn"}</button>
       <button class="btn" onclick="hrTurnReset();renderHuntRun()">Start over</button>
       <button class="btn" onclick="huntRunDo('hunt_session_undo')"
@@ -4330,8 +4334,12 @@ function hrInterview(){
 }
 
 function hrRefreshPreview(){
-  const el = $("hrPreview");
-  if (el) el.textContent = hrTokens();
+  const preview = $("hrPreview");
+  if (preview) preview.textContent = hrTokens() || "…";
+  // Updated in place rather than by re-rendering, which would steal focus from the HP field
+  // mid-keystroke. Without this the last answer never re-enabled the button.
+  const report = $("hrReport");
+  if (report) report.disabled = !(hrTurnComplete() && !_hrBusy);
 }
 
 function huntRunObserve(){
@@ -4340,7 +4348,6 @@ function huntRunObserve(){
   const t = _hrTurn, action = t.action;
   const itemCode = (action === "I" || action === "Ic") ? (t.ours?.item || null) : null;
   const bench = action === "S" ? t.ours?.bench : null;
-  hrTurnReset();
   huntRunDo("hunt_session_observe", action, [tokens], itemCode,
             bench === undefined ? null : bench);
 }
