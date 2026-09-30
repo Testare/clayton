@@ -69,9 +69,34 @@ class CandidateWindow:
     frame_window: int
     second_window: int
     candidates: tuple[Candidate, ...]
+    #: The key seed's own base delay. A battle seed cannot precede the initial seed it was
+    #: generated after, so frames below this are skipped.
+    base_delay: int = 0
+    #: How many frames that rule removed. Nonzero with an empty result is the whole explanation:
+    #: the window is centred before the run even started.
+    skipped_below_base_delay: int = 0
 
     def __len__(self) -> int:
         return len(self.candidates)
+
+    def why_empty(self) -> str | None:
+        """Why there are no candidates, in terms the player can act on. None if there are some.
+
+        Worth spelling out rather than reporting a bare zero, because the two causes need
+        opposite fixes: a window centred below the base delay needs a *later* target, while a
+        window that is merely too narrow needs a wider one.
+        """
+        if self.candidates:
+            return None
+        if self.skipped_below_base_delay:
+            return (
+                f"The model centres this window at frame {self.frame_centre}, but key seed "
+                f"{self.key_seed:#010x} does not start until frame {self.base_delay} — and a "
+                f"battle seed cannot precede the seed it was generated after, so all "
+                f"{self.skipped_below_base_delay} frames were skipped. Either the vector ms is "
+                f"too small for this key seed, or the wrong key seed is configured.")
+        return ("The window generated no seeds at all. Check the key seed, initial time and "
+                "vector ms — one of them is almost certainly not what you played.")
 
     @property
     def seeds(self) -> tuple[int, ...]:
@@ -109,8 +134,10 @@ def generate(model, *, key_seed: int, initial_time: dt.datetime, vector_ms: floa
 
     seen: set[int] = set()
     found: list[Candidate] = []
+    skipped = 0
     for frame in range(frame_centre - frame_window, frame_centre + frame_window + 1):
         if frame < base_delay:
+            skipped += 1
             continue
         for second in range(second_centre - second_window, second_centre + second_window + 1):
             if second < 0:
@@ -128,7 +155,7 @@ def generate(model, *, key_seed: int, initial_time: dt.datetime, vector_ms: floa
         key_seed=key_seed, initial_time=initial_time, vector_ms=vector_ms,
         frame_centre=frame_centre, second_centre=second_centre,
         frame_window=frame_window, second_window=second_window,
-        candidates=tuple(found))
+        candidates=tuple(found), base_delay=base_delay, skipped_below_base_delay=skipped)
 
 
 def estimate_size(frame_window: int, second_window: int) -> int:

@@ -441,16 +441,104 @@ class Facade:
             pp=tuple(resolve_move(name).pp for name in target_moves))
         return ours, target
 
-    def hunt_session_start(self, hunt_id: str) -> dict:
-        """Open a Battle Compass run for this hunt. Returns (session_id, snapshot).
+    def hunt_run_setup(self, hunt_id: str) -> dict:
+        """What the run page needs to open, before any seed has been looked for.
 
-        Refuses while ``hunt_readiness`` reports hard errors: every one of them is something the
-        simulation needs exactly, and starting without it would desynchronise rather than degrade.
+        Opening the page must not depend on the targeting being right. Every other compass works
+        this way -- you get the page, then search for candidates on it, then adjust and search
+        again -- and Battle Compass needs it more, not less: the seed is found *during* the run.
+        """
+        h = self._load_hunt(hunt_id)
+        profile = self._load_profile(h.profile_id)
+        return {
+            "hunt_id": h.id,
+            "name": h.name,
+            "hard_errors": h.hard_errors(profile),
+            "targeting": {
+                "key_seed": None if h.key_seed is None else f"{h.key_seed:#010x}",
+                "initial_time": h.initial_time,
+                "vector_ms": h.vector_ms,
+                "delay_window": h.delay_window,
+                "seconds_window": h.seconds_window,
+            },
+            "capture_ball": h.capture_ball,
+            "calibration_model": self.calibration_model_summary(h.profile_id),
+        }
+
+    def hunt_candidates(self, hunt_id: str, params: dict | None = None) -> dict:
+        """Build the candidate window, without starting a run.
+
+        Never raises for an empty result: an empty window is a normal thing to see on the way to
+        a good one, and it is the page's job to explain it and let the player try again.
+        """
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import generate
+
+        h = self._load_hunt(hunt_id)
+        params = params or {}
+        # A field PRESENT in params is used as given, blank included -- the page sends every
+        # field, so a blank one means the player cleared it and should be reported as missing,
+        # not silently replaced by the stored value it was meant to override. A field absent
+        # from params falls back to the hunt.
+        key_seed = params["key_seed"] if "key_seed" in params else h.key_seed
+        if isinstance(key_seed, str):
+            key_seed = int(key_seed, 0) if key_seed.strip() else None
+        initial_time = (params["initial_time"] if "initial_time" in params
+                        else h.initial_time) or ""
+        vector_ms = params["vector_ms"] if "vector_ms" in params else h.vector_ms
+        if isinstance(vector_ms, str):
+            vector_ms = float(vector_ms) if vector_ms.strip() else None
+        frame_window = int(params.get("delay_window") or h.delay_window or 0)
+        second_window = int(params.get("seconds_window") or h.seconds_window or 0)
+
+        missing = [name for name, value in (("key seed", key_seed),
+                                            ("initial time", initial_time),
+                                            ("vector ms", vector_ms)) if value in (None, "")]
+        if missing:
+            return {"ok": False, "candidates": 0,
+                    "problem": f"Seed targeting is incomplete: no {', no '.join(missing)}."}
+
+        models = self._resolve_calibration_models(h.profile_id)
+        model = models.get("linear") or next(iter(models.values()), None)
+        if model is None:
+            return {"ok": False, "candidates": 0,
+                    "problem": "This profile has no calibration model."}
+
+        window = generate(
+            model, key_seed=int(key_seed),
+            initial_time=dt.datetime.fromisoformat(initial_time),
+            vector_ms=float(vector_ms),
+            frame_window=frame_window, second_window=second_window)
+        return {
+            "ok": bool(len(window)),
+            "candidates": len(window),
+            "problem": window.why_empty(),
+            "frame_centre": window.frame_centre,
+            "second_centre": window.second_centre,
+            "base_delay": window.base_delay,
+            "skipped_below_base_delay": window.skipped_below_base_delay,
+            "frame_window": window.frame_window,
+            "second_window": window.second_window,
+            "preview": [{"seed": f"{c.seed:#010x}", "frame": c.frame, "second": c.second}
+                        for c in window.candidates[:12]],
+        }
+
+    def hunt_session_start(self, hunt_id: str, params: dict | None = None) -> dict:
+        """Open a run against the window `params` describes. Returns (session_id, snapshot).
+
+        `params` overrides the hunt's stored targeting and is saved back to it, so the window the
+        player actually searched is the one the hunt remembers next time.
+
+        Still refuses on ``hard_errors``: those are things the *simulation* needs exactly, and
+        starting without them would desynchronise rather than degrade. An empty window is not one
+        of them -- it comes back as a problem to fix on the page.
         """
         import datetime as dt
 
         from claytonlib.battle_compass.candidates import generate
         from claytonlib.battle_compass.hunt_session import HuntSession
+        from claytonlib.battle.stats import has_fast_ball_bonus, species as species_data
         from claytonlib.battle_compass.sim import HuntConfig
 
         h = self._load_hunt(hunt_id)
@@ -459,19 +547,25 @@ class Facade:
         if errors:
             raise ValueError("this hunt is not ready: " + "; ".join(errors))
 
+        params = params or {}
+        if params:
+            self._apply_hunt_targeting(h, params)
+            self._store.write(_HUNTS, h.id, h.to_dict())
+
+        probe = self.hunt_candidates(hunt_id)
+        if not probe["ok"]:
+            return {"session_id": None, "hunt_id": hunt_id, "window": probe,
+                    "problem": probe["problem"]}
+
         ours, target = self._hunt_battlers(h, profile)
         models = self._resolve_calibration_models(h.profile_id)
         model = models.get("linear") or next(iter(models.values()), None)
-        if model is None:
-            raise ValueError("no calibration model available for this profile")
-
         window = generate(
-            model, key_seed=h.key_seed,
+            model, key_seed=int(h.key_seed),
             initial_time=dt.datetime.fromisoformat(h.initial_time),
             vector_ms=float(h.vector_ms),
             frame_window=h.delay_window, second_window=h.seconds_window)
 
-        from claytonlib.battle.stats import has_fast_ball_bonus, species as species_data
         info = species_data(h.target.species)
         config = HuntConfig(
             target_catch_rate=int(info["catch_rate"]),
@@ -481,8 +575,25 @@ class Facade:
                                and has_fast_ball_bonus(h.target.species)))
         session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball)
         session_id = self._hunt_sessions.add(hunt_id, session)
-        return {"session_id": session_id, "hunt_id": hunt_id,
+        return {"session_id": session_id, "hunt_id": hunt_id, "window": probe,
                 "snapshot": session.snapshot()}
+
+    @staticmethod
+    def _apply_hunt_targeting(hunt, params: dict) -> None:
+        """Copy the page's targeting fields onto the hunt, ignoring blanks."""
+        key_seed = params.get("key_seed")
+        if isinstance(key_seed, str) and key_seed.strip():
+            hunt.key_seed = int(key_seed, 0)
+        elif isinstance(key_seed, int):
+            hunt.key_seed = key_seed
+        if params.get("initial_time"):
+            hunt.initial_time = params["initial_time"]
+        if params.get("vector_ms") not in (None, ""):
+            hunt.vector_ms = int(params["vector_ms"])
+        if params.get("delay_window") not in (None, ""):
+            hunt.delay_window = int(params["delay_window"])
+        if params.get("seconds_window") not in (None, ""):
+            hunt.seconds_window = int(params["seconds_window"])
 
     def hunt_session_state(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).snapshot()

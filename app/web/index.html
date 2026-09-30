@@ -3792,15 +3792,116 @@ function huntModelSummary(model){
 // transient (see models.Hunt). So _huntRun is the session id and _huntSnap the last snapshot --
 // every mutation returns a whole new snapshot, so the page never renders a half-updated view.
 let _huntRun = null, _huntSnap = null, _huntRunHunt = null;
+let _huntSetup = null, _huntWindow = null;
 
+// The page opens on the hunt's CONFIGURATION being sound -- nothing else. The seed is what the
+// run is for, so an empty or mis-centred candidate window is a thing to fix here, with the
+// targeting fields in front of you, not a locked door. Same shape as every other compass.
 async function huntRunStart(_owner, id){
   try {
-    const started = await api("hunt_session_start", id);
+    _huntRunHunt = id;
+    _huntRun = _huntSnap = _huntWindow = null;
+    _huntSetup = await api("hunt_run_setup", id);
+    renderHuntSetup();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function huntTargetingFromForm(){
+  return {
+    key_seed: $("hrKeySeed").value.trim(),
+    initial_time: $("hrInitialTime").value.trim(),
+    vector_ms: $("hrVectorMs").value.trim(),
+    delay_window: $("hrDelayWindow").value.trim(),
+    seconds_window: $("hrSecondsWindow").value.trim(),
+  };
+}
+
+async function huntFindCandidates(){
+  try {
+    _huntWindow = await api("hunt_candidates", _huntRunHunt, huntTargetingFromForm());
+    renderHuntSetup();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function huntRunBegin(){
+  try {
+    const started = await api("hunt_session_start", _huntRunHunt, huntTargetingFromForm());
+    _huntWindow = started.window || _huntWindow;
+    if (!started.session_id){ renderHuntSetup(); return; }
     _huntRun = started.session_id;
     _huntSnap = started.snapshot;
-    _huntRunHunt = id;
     renderHuntRun();
   } catch (e) { toast(String(e.message || e)); }
+}
+
+function renderHuntSetup(){
+  const s = _huntSetup;
+  if (!s) return;
+  const blocked = s.hard_errors.length > 0;
+  const t = s.targeting;
+  const w = _huntWindow;
+
+  // The ONLY thing that keeps you off this page: the simulation needs these numbers exactly, so
+  // a missing Speed or moveset would desynchronise rather than degrade.
+  const errors = blocked
+    ? `<div class="notice danger"><b>This hunt isn't configured yet.</b>
+        <ul>${s.hard_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>
+        <div class="hr-small">Battle Compass simulates the whole battle, so these are exact
+          requirements rather than warnings.</div></div>
+       <button class="btn primary" onclick="huntConfigure('${esc(s.hunt_id)}')">Configure hunt</button>`
+    : "";
+
+  let result = "";
+  if (w && w.ok){
+    result = `<div class="notice"><b>${w.candidates} candidate seed${w.candidates === 1 ? "" : "s"}.</b>
+      <div class="hr-small muted">frame ${w.frame_centre} ±${w.frame_window} ·
+        second ${w.second_centre} ±${w.second_window}</div>
+      <div class="candtable" style="max-height:160px"><table>
+        <tr><th>seed</th><th>frame</th><th>second</th></tr>
+        ${w.preview.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
+          <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}</table></div>
+      ${w.second_window > 0 ? `<div class="hr-small muted">A second window above 0 adds
+        candidates that no move can ever separate — the RTC second lives in the seed's top 8
+        bits, which every in-game modulo discards.</div>` : ""}</div>`;
+  } else if (w){
+    result = `<div class="notice warn"><b>No candidate seeds in that window.</b>
+      <div class="hr-small">${esc(w.problem || "")}</div>
+      <div class="hr-small muted">Adjust the targeting above and search again.</div></div>`;
+  }
+
+  mount(`<div class="head"><h2>${esc(s.name)} — Battle Compass</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="openHuntHome('${esc(s.hunt_id)}')">Back</button>
+        <button class="btn" onclick="huntConfigure('${esc(s.hunt_id)}')">Configure</button>
+      </div></div>
+    ${errors}
+    <div class="panel ${blocked ? "locked" : ""}">
+      <div class="section-label">Where to look for the battle seed</div>
+      <div class="hr-small muted" style="margin-bottom:10px">These centre the candidate window.
+        Nothing has to be right first time — search, look at what comes back, adjust.</div>
+      <div class="rel-row">
+        <div class="field"><label>Key seed</label>
+          <input id="hrKeySeed" value="${esc(t.key_seed || "")}" placeholder="0x…"></div>
+        <div class="field"><label>Vector ms</label>
+          <input id="hrVectorMs" value="${t.vector_ms ?? ""}"></div>
+        <div class="field"><label>Delay ±</label>
+          <input id="hrDelayWindow" value="${t.delay_window ?? 60}"></div>
+        <button class="btn" onclick="huntFindCandidates()">Search</button>
+      </div>
+      <div class="rel-row">
+        <div class="field"><label>Initial time</label>
+          <input id="hrInitialTime" value="${esc(t.initial_time || "")}"
+            placeholder="2026-01-01T12:00:00"></div>
+        <div class="field"><label>Seconds ±</label>
+          <input id="hrSecondsWindow" value="${t.seconds_window ?? 0}"></div>
+        <div class="field"></div>
+        <button class="btn primary" onclick="huntRunBegin()"
+          ${blocked ? "disabled" : ""}>Start run</button>
+      </div>
+      ${s.calibration_model ? `<div class="hr-small muted">Centred with calibration model
+        <b>${esc(s.calibration_model.name || "active")}</b>.</div>` : ""}
+    </div>
+    ${result}`);
 }
 
 async function huntRunDo(method, ...args){
@@ -3834,7 +3935,7 @@ function huntRunAbandon(){
   if (!confirm("End this run? The battle state is not saved.")) return;
   api("hunt_session_abandon", _huntRun).catch(() => {});
   _huntRun = _huntSnap = null;
-  openHuntHome(_huntRunHunt);
+  huntRunStart(null, _huntRunHunt);   // back to targeting, ready to search again
 }
 
 function hrBar(hp, max){
