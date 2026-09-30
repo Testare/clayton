@@ -3815,14 +3815,37 @@ let _huntSetup = null, _huntWindow = null;
 // turn number the pending request was issued for: a reply for any other turn is stale and gets
 // dropped, which is how a request still in flight is abandoned when a turn is reported.
 let _huntAdvice = null, _huntAdviceFor = null, _huntAdviceLoading = false;
+// How many surviving candidates a plain Poke Ball would CATCH. That loses the run (wrong ball),
+// so it is a risk gauge: 0% means a throw is free information.
+let _huntBallRisk = null;
 // True while a report/undo is in flight, so the controls can disable and show a spinner.
 let _hrBusy = false;
 
 // Any advice we hold describes the previous position, so drop it before the next load.
 function huntAdviceInvalidate(){
   _huntAdvice = null;
+  _huntBallRisk = null;
   _huntAdviceFor = null;
   _huntAdviceLoading = false;
+}
+
+// A plain Poke Ball is the same x1 as the Fast Ball on Suicune, so one that LANDS catches the
+// target in the wrong ball and the run is over (sec 2.3). This says how likely that is across the
+// candidates still alive -- the one number that decides whether a throw is free information or a
+// gamble.
+function huntBallRisk(){
+  const r = _huntBallRisk;
+  if (!r) return "";
+  if (r.safe)
+    return `<div class="notice ok-cta"><b>A Poké Ball is safe right now.</b>
+      <div class="hr-small muted">None of the ${r.candidates} surviving candidates would catch,
+        so a throw costs nothing but a ball — and it is the most informative action available.</div>
+      </div>`;
+  return `<div class="notice warn"><b>A Poké Ball would catch on ${r.percent}% of candidates
+      (${r.would_catch} of ${r.candidates}).</b>
+    <div class="hr-small">That many runs end here: a plain Poké Ball is the same ×1 as the
+      ${esc(_huntSnap.capture_ball || "capture ball")} on this target, so one that lands catches it
+      in the wrong ball.</div></div>`;
 }
 
 async function huntAdviceLoad(){
@@ -3838,8 +3861,10 @@ async function huntAdviceLoad(){
     // position that no longer exists.
     if (!_huntSnap || _huntSnap.turns.length !== forTurn) return;
     _huntAdvice = result.advice;
+    _huntBallRisk = result.standard_ball_risk;
   } catch (e) {
     _huntAdvice = null;
+    _huntBallRisk = null;
   } finally {
     if (_huntAdviceFor === forTurn) _huntAdviceLoading = false;
     renderHuntRun();
@@ -4532,9 +4557,9 @@ function renderHuntRun(){
         better.</div>
       <div class="candtable"><table><tr><th>action</th><th>expected survivors</th>
           <th>outcomes</th></tr>
-        ${adviceRows.slice(0, 5).map(a => `<tr><td><code>${esc(a.action)}</code></td>
+        ${adviceRows.slice(0, 5).map(a => `<tr><td>${esc(a.label || a.action)}</td>
             <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div>
-      </div>`;
+      ${huntBallRisk()}</div>`;
   }
 
   let solver = "";

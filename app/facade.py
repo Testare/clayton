@@ -638,7 +638,10 @@ class Facade:
         """
         session = self._hunt_sessions.get(session_id)
         return {"session_id": session_id, "turns": len(session.turns),
-                "survivors": len(session.survivors), "advice": session.advice()}
+                "survivors": len(session.survivors), "advice": session.advice(),
+                # Computed here rather than on the snapshot because it costs the same sweep over
+                # every candidate that the ranking does.
+                "standard_ball_risk": session.standard_ball_risk()}
 
     def hunt_session_observe(self, session_id: str, action: str, tokens: list,
                              item_code: str | None = None,

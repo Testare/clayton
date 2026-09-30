@@ -188,6 +188,37 @@ _BATTLE_MON_FIELDS = {
 
 _STAT_KEYS = ("hp", "atk", "def", "spa", "spd", "spe")
 
+#: Bit position of each IV inside BattleMon's packed u32, in the ROM's own field order --
+#: hp, atk, def, SPEED, spAtk, spDef -- followed by isEgg (30) and hasNickname (31).
+#: Note speed is third, not last.
+_IV_BITS = {"hp": 0, "atk": 5, "def": 10, "spe": 15, "spa": 20, "spd": 25}
+#: The two flags sharing that word, which a write must preserve.
+_IV_WORD_FLAG_MASK = 0b11 << 30
+#: Byte offset of the word from the start of ``moves[0]``: four u16 moves.
+_IV_WORD_OFFSET_FROM_MOVES = 8
+
+
+def pack_iv_word(ivs, existing=0):
+    """The 32-bit word BattleMon stores its six IVs in, preserving the two flag bits.
+
+    Written as one word rather than six bitfield assignments. GDB's per-bitfield writes did not
+    take reliably here -- in data/battle_logs/test1.jsonl four of the six landed and spAtkIV and
+    speedIV came back as 5 and 26 against a written 31 and 28 -- and there is no reason to depend
+    on how a debugger implements a read-modify-write when the whole word can be assembled here.
+    """
+    word = existing & _IV_WORD_FLAG_MASK
+    for key, shift in _IV_BITS.items():
+        value = ivs[key] if isinstance(ivs, dict) else ivs
+        if not 0 <= value <= 31:
+            raise ValueError(f"IV out of range for {key}: {value}")
+        word |= (value & 0x1F) << shift
+    return word
+
+
+def unpack_iv_word(word):
+    """The inverse, for checking a readback."""
+    return {key: (word >> shift) & 0x1F for key, shift in _IV_BITS.items()}
+
 
 def _fmt_spread(spread):
     """A spread in the project's display order, hp/atk/def/spa/spd/spe."""
@@ -315,14 +346,14 @@ def plan_override(snapshot, config=None, base=None):
     personality = pid_with_nature(snapshot["personality"], config["nature"])
 
     writes = {"personality": personality}
-    for key, (stat_field, iv_field) in _BATTLE_MON_FIELDS.items():
+    for key, (stat_field, _iv_field) in _BATTLE_MON_FIELDS.items():
         writes[stat_field] = stats[key]
-        writes[iv_field] = ivs[key]
     # A wild target is sent out at full HP, so full stays full. Otherwise keep the absolute
     # value and clamp -- scaling it would invent a damage figure that never happened.
     writes["hp"] = (stats["hp"] if before["hp"] == before["maxHp"]
                     else min(before["hp"], stats["hp"]))
     after = {
+        "iv_word": pack_iv_word(ivs),
         "nature": NATURES[nature_index(config["nature"])][0],
         "nature_index": nature_index(config["nature"]),
         "personality": personality,
@@ -686,22 +717,37 @@ if _IN_GDB:
                 _rec.add_override(plan)
             return plan
 
+        mon = f"((BattleContext *){ctx:#x})->battleMons[{battler}]"
         for field_name, value in plan["writes"].items():
-            gdb.execute(f"set ((BattleContext *){ctx:#x})->battleMons[{battler}]."
-                        f"{field_name} = {value}", to_string=True)
+            gdb.execute(f"set {mon}.{field_name} = {value}", to_string=True)
 
-        # Read the fields back rather than trusting the writes: a bitfield that silently
-        # truncated would otherwise look applied, and every damage figure in the log would be
-        # measured against a spread that was never in memory.
+        # The six IVs share one u32 with isEgg and hasNickname. Written as ONE word: GDB's
+        # per-bitfield assignment did not take reliably here (four of six landed), and the whole
+        # word can be assembled without depending on how a debugger read-modify-writes a bitfield.
+        # Addressed from moves[0], which is an ordinary array and so has a taker-of-address.
+        iv_addr = _eval_int(f"(unsigned)&{mon}.moves[0]") + _IV_WORD_OFFSET_FROM_MOVES
+        current = _eval_int(f"*(unsigned int *){iv_addr:#x}")
+        gdb.execute(f"set *(unsigned int *){iv_addr:#x} = "
+                    f"{pack_iv_word(plan['after']['ivs'], current)}", to_string=True)
+
+        # Read back rather than trusting any of it: a truncated write would otherwise look applied
+        # and every damage figure in the log would be measured against a spread never in memory.
         readback = _read_mon(ctx, battler)
         actual = dict(readback["stats"], hp=readback["maxHp"])
         mismatched = {k: (plan["after"]["stats"][k], actual[k])
                       for k in plan["after"]["stats"] if plan["after"]["stats"][k] != actual[k]}
         bad_ivs = {k: (plan["after"]["ivs"][k], readback["ivs"][k])
                    for k in plan["after"]["ivs"] if plan["after"]["ivs"][k] != readback["ivs"][k]}
+        # Severity is not the same for the two. The SIMULATION consumes the stats; the IVs only
+        # ever derived them, and the game will not re-derive mid-battle. So wrong stats invalidate
+        # the recording and wrong IVs are a note -- reporting both as "do not trust this" sent a
+        # sound run out with a scary warning on it.
+        plan["stats_verified"] = not mismatched
+        plan["ivs_verified"] = not bad_ivs
         plan["verified"] = not mismatched and not bad_ivs
         plan["readback"] = {"ivs": readback["ivs"], "stats": actual,
-                            "personality": readback["personality"]}
+                            "personality": readback["personality"],
+                            "iv_word": _eval_int(f"*(unsigned int *){iv_addr:#x}")}
         if _rec is not None:
             _rec.add_override(plan)
 
@@ -712,9 +758,14 @@ if _IN_GDB:
         print(f"            IVs    {_fmt_spread(before['ivs'])} -> {_fmt_spread(after['ivs'])}")
         print(f"            stats  {_fmt_spread(before['stats'])} -> "
               f"{_fmt_spread(after['stats'])}")
-        if not plan["verified"]:
-            print(f"[battlelog] WARNING: readback disagrees with the plan. "
-                  f"stats {mismatched} ivs {bad_ivs}. Do NOT trust this recording.")
+        if mismatched:
+            print(f"[battlelog] WARNING: the STATS did not take: {mismatched}. "
+                  f"Do NOT trust this recording -- every damage figure in it would be measured "
+                  f"against a spread that was never in memory.")
+        elif bad_ivs:
+            print(f"[battlelog] note: the stats are correct but these IVs read back differently: "
+                  f"{bad_ivs}. Harmless for the simulation, which consumes the stats, but worth "
+                  f"knowing.")
         return plan
 
     class _GetBattleMonFinish(gdb.FinishBreakpoint):

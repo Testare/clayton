@@ -1042,5 +1042,83 @@ class TestNoImpossibleMoveOutcomes(unittest.TestCase):
                                  f"{offered - emitted} which cannot happen")
 
 
+class TestStandardBallRisk(unittest.TestCase):
+    """A plain Poke Ball is the same x1 as the Fast Ball on Suicune, so one that LANDS catches the
+    target in the wrong ball and the run is over (sec 2.3). This is the gauge for whether a throw
+    is free information or a gamble -- and it is a RISK, so lower is better."""
+
+    def test_it_is_not_offered_during_setup(self):
+        """No balls in Phase 1 at all, so there is nothing to gauge."""
+        self.assertIsNone(_session().standard_ball_risk())
+
+    def test_a_full_hp_target_is_safe_to_throw_at(self):
+        session = _session(n=60)
+        session.enter_pinning()
+        risk = session.standard_ball_risk()
+        self.assertTrue(risk["safe"])
+        self.assertEqual(risk["would_catch"], 0)
+        self.assertEqual(risk["percent"], 0.0)
+
+    def test_a_one_hp_paralyzed_target_is_not(self):
+        """Which is the whole point of the warning: the target is at its most catchable exactly
+        when Phase 2 begins."""
+        session = _session(n=200, hp=1, status=Status.PARALYSIS)
+        session.enter_pinning()
+        risk = session.standard_ball_risk()
+        self.assertGreater(risk["would_catch"], 0)
+        self.assertFalse(risk["safe"])
+
+    def test_the_percentage_matches_the_count(self):
+        session = _session(n=60, hp=1, status=Status.PARALYSIS)
+        session.enter_pinning()
+        risk = session.standard_ball_risk()
+        self.assertAlmostEqual(risk["percent"],
+                               100.0 * risk["would_catch"] / risk["candidates"], places=1)
+        self.assertEqual(risk["candidates"], len(session.survivors))
+
+    def test_it_is_near_the_single_throw_capture_chance(self):
+        """A sanity check against the independent figure: a 1 HP paralyzed Suicune is ~1.2% per
+        throw (sec 2.2), so across many candidates the fraction should land near that."""
+        from claytonlib.battle.catch import capture_chance, catch_value, BALL_POKE, STATUS_PARALYSIS
+        session = _session(n=400, hp=1, status=Status.PARALYSIS)
+        session.enter_pinning()
+        risk = session.standard_ball_risk()
+        expected = 100 * capture_chance(catch_value(
+            3, ball_multiplier=BALL_POKE, cur_hp=1, max_hp=142,
+            status_bonus=STATUS_PARALYSIS))
+        self.assertAlmostEqual(risk["percent"], expected, delta=2.0)
+
+
+class TestActionLabels(unittest.TestCase):
+    """"Use False Swipe", not "M1". A ranking nobody can read is a ranking nobody acts on."""
+
+    def test_a_move_is_named(self):
+        session = _session()
+        self.assertEqual(session.action_label(Action.MOVE_1), "Use False Swipe")
+        self.assertEqual(session.action_label(Action.MOVE_4), "Use Spore")
+
+    def test_the_capture_ball_is_named(self):
+        session = HuntSession(_window(4), _ours(), _target(), HUNT, capture_ball="Fast Ball")
+        self.assertEqual(session.action_label(Action.CAPTURE_BALL), "Throw the Fast Ball")
+
+    def test_the_other_actions_read_as_english(self):
+        session = _session()
+        self.assertEqual(session.action_label(Action.ITEM), "Use an item")
+        self.assertEqual(session.action_label(Action.STANDARD_BALL), "Throw a Poke Ball")
+        self.assertEqual(session.action_label(Action.SWITCH), "Switch Pokemon")
+
+    def test_no_label_is_a_bare_code(self):
+        session = _session()
+        for action in Action:
+            label = session.action_label(action)
+            self.assertNotEqual(label, action.value, action.name)
+            self.assertGreater(len(label), 3, action.name)
+
+    def test_advice_rows_carry_the_label(self):
+        for row in _session().advice():
+            self.assertIn("label", row)
+            self.assertNotEqual(row["label"], row["action"])
+
+
 if __name__ == "__main__":
     unittest.main()

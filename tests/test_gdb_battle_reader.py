@@ -162,13 +162,16 @@ class TestPlanOverride(unittest.TestCase):
         self.assertEqual(plan["before"]["personality"], 0x12345678)
         self.assertEqual(plan["before"]["nature"], gbr.NATURES[0x12345678 % 25][0])
 
-    def test_it_writes_every_stat_and_iv_field(self):
-        writes = gbr.plan_override(SNAPSHOT)["writes"]
-        for stat_field, iv_field in gbr._BATTLE_MON_FIELDS.values():
+    def test_it_writes_every_stat_field(self):
+        """The IVs no longer appear here: they go as one packed word, because six separate
+        bitfield writes did not take (see TestTheIvWordIsWrittenAsOneWord)."""
+        plan = gbr.plan_override(SNAPSHOT)
+        writes = plan["writes"]
+        for stat_field, _iv_field in gbr._BATTLE_MON_FIELDS.values():
             self.assertIn(stat_field, writes)
-            self.assertIn(iv_field, writes)
         self.assertIn("personality", writes)
         self.assertIn("hp", writes)
+        self.assertIn("iv_word", plan["after"])
 
     def test_the_written_stats_reflect_the_new_ivs_and_nature(self):
         """The requirement: stats must not be left describing the old spread."""
@@ -180,18 +183,25 @@ class TestPlanOverride(unittest.TestCase):
         self.assertEqual(writes["spDef"], 109)
         self.assertEqual(writes["speed"], 84)
 
-    def test_the_iv_writes_use_the_roms_field_names(self):
-        writes = gbr.plan_override(SNAPSHOT)["writes"]
-        self.assertEqual(writes["hpIV"], 29)
-        self.assertEqual(writes["speedIV"], 28)
-        self.assertEqual(writes["spAtkIV"], 31)
+    def test_the_ivs_reach_the_packed_word(self):
+        plan = gbr.plan_override(SNAPSHOT)
+        unpacked = gbr.unpack_iv_word(plan["after"]["iv_word"])
+        self.assertEqual(unpacked["hp"], 29)
+        self.assertEqual(unpacked["spe"], 28)
+        self.assertEqual(unpacked["spa"], 31)
 
     def test_speed_is_not_confused_with_special_attack(self):
         """BattleMon orders its IV bitfields hp/atk/def/SPEED/spa/spd, so a positional reading
-        would swap Speed and SpAtk. The configured 28 is Speed and the 31 is SpAtk."""
-        writes = gbr.plan_override(SNAPSHOT)["writes"]
-        self.assertEqual(writes["speedIV"], 28)
-        self.assertNotEqual(writes["spAtkIV"], 28)
+        would swap Speed and SpAtk. The configured 28 is Speed and the 31 is SpAtk -- and now
+        that the word is packed here, the bit positions are where that could go wrong."""
+        plan = gbr.plan_override(SNAPSHOT)
+        unpacked = gbr.unpack_iv_word(plan["after"]["iv_word"])
+        self.assertEqual(unpacked["spe"], 28)
+        self.assertNotEqual(unpacked["spa"], 28)
+        # Speed occupies bits 15-19, Sp. Atk 20-24 -- the two that the old per-field write got
+        # wrong, and the reason the whole word is assembled rather than poked field by field.
+        self.assertEqual(gbr._IV_BITS["spe"], 15)
+        self.assertEqual(gbr._IV_BITS["spa"], 20)
 
     def test_the_nature_write_is_a_personality(self):
         writes = gbr.plan_override(SNAPSHOT)["writes"]
@@ -246,7 +256,7 @@ class TestPlanOverride(unittest.TestCase):
                       ivs={k: 31 for k in ("hp", "atk", "def", "spa", "spd", "spe")})
         plan = gbr.plan_override(SNAPSHOT, config)
         self.assertEqual(plan["after"]["nature"], "Timid")
-        self.assertEqual(plan["writes"]["hpIV"], 31)
+        self.assertEqual(gbr.unpack_iv_word(plan["after"]["iv_word"])["hp"], 31)
         self.assertEqual(plan["writes"]["maxHp"], 142)
         self.assertGreater(plan["writes"]["speed"], 84)
 
@@ -317,6 +327,63 @@ class TestBreakpointSymbolsExistInTheBuild(unittest.TestCase):
         self.assertTrue(
             {"BattleSystem_PrintBattleMessage", "ov12_0223C4E8"} & set(found),
             "no battle-message hook is named in the script")
+
+
+class TestTheIvWordIsWrittenAsOneWord(unittest.TestCase):
+    """Six 5-bit IVs share one u32 with isEgg and hasNickname. Writing them as six separate
+    bitfield assignments did not take reliably: in data/battle_logs/test1.jsonl four landed and
+    spAtkIV and speedIV came back as 5 and 26 against a written 31 and 28. Assembling the whole
+    word here removes the dependency on how a debugger read-modify-writes a bitfield."""
+
+    IVS = {"hp": 29, "atk": 15, "def": 31, "spa": 31, "spd": 31, "spe": 28}
+
+    def test_the_layout_puts_speed_third(self):
+        """BattleMon's order is hp/atk/def/SPEED/spAtk/spDef -- speed is NOT last."""
+        self.assertEqual(gbr._IV_BITS, {"hp": 0, "atk": 5, "def": 10,
+                                        "spe": 15, "spa": 20, "spd": 25})
+
+    def test_it_packs_to_the_word_the_log_expected(self):
+        """The exact word the failed per-field write should have produced."""
+        self.assertEqual(gbr.pack_iv_word(self.IVS), 0x3FFE7DFD)
+
+    def test_it_round_trips(self):
+        self.assertEqual(gbr.unpack_iv_word(gbr.pack_iv_word(self.IVS)), self.IVS)
+
+    def test_every_iv_survives_the_round_trip(self):
+        for value in range(32):
+            spread = {k: value for k in self.IVS}
+            self.assertEqual(gbr.unpack_iv_word(gbr.pack_iv_word(spread)), spread, value)
+
+    def test_the_two_flag_bits_are_preserved(self):
+        """isEgg and hasNickname share the word; clobbering them would corrupt the battler."""
+        for flags in (0x00000000, 0x40000000, 0x80000000, 0xC0000000):
+            word = gbr.pack_iv_word(self.IVS, existing=flags)
+            self.assertEqual(word & 0xC0000000, flags, hex(flags))
+            self.assertEqual(gbr.unpack_iv_word(word), self.IVS)
+
+    def test_an_out_of_range_iv_is_refused(self):
+        for bad in (-1, 32, 255):
+            with self.assertRaises(ValueError):
+                gbr.pack_iv_word(dict(self.IVS, spa=bad))
+
+    def test_the_word_sits_eight_bytes_past_the_moves_array(self):
+        """Four u16 moves, then the IV word. moves[0] is addressable; a bitfield is not."""
+        self.assertEqual(gbr._IV_WORD_OFFSET_FROM_MOVES, 8)
+
+    def test_the_plan_no_longer_writes_iv_fields_individually(self):
+        plan = gbr.plan_override(SNAPSHOT)
+        for field in ("hpIV", "atkIV", "defIV", "spAtkIV", "spDefIV", "speedIV"):
+            self.assertNotIn(field, plan["writes"], f"{field} should go via the packed word")
+
+    def test_the_plan_carries_the_packed_word(self):
+        plan = gbr.plan_override(SNAPSHOT)
+        self.assertEqual(plan["after"]["iv_word"], gbr.pack_iv_word(plan["after"]["ivs"]))
+
+    def test_the_stats_are_still_written_individually(self):
+        """They are ordinary u16 members, and those always took."""
+        writes = gbr.plan_override(SNAPSHOT)["writes"]
+        for field in ("maxHp", "atk", "def", "spAtk", "spDef", "speed", "personality"):
+            self.assertIn(field, writes)
 
 
 if __name__ == "__main__":

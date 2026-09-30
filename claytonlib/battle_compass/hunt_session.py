@@ -30,7 +30,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import (
-    HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed, will_fail,
+    HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed, simulate_turn,
+    will_fail,
 )
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler, Status
@@ -315,6 +316,52 @@ class HuntSession:
     def predict(self, action: Action, **extra) -> dict[int, str]:
         return self._session.predict(action, **extra)
 
+    def action_label(self, action: Action) -> str:
+        """What the action is, in words. "Use False Swipe", not "M1".
+
+        Built from the same move names the interview's chips use, because a ranking nobody can
+        read is a ranking nobody acts on.
+        """
+        state = next(iter(self._session.states.values()))
+        slot = action.move_slot
+        if slot is not None:
+            move = state.ours.move(slot)
+            return f"Use {move.name}" if move else f"Use move {slot + 1}"
+        return {
+            Action.ITEM: "Use an item",
+            Action.ITEM_CURE: "Use a status cure",
+            Action.CAPTURE_BALL: f"Throw the {self.capture_ball or 'capture ball'}",
+            Action.STANDARD_BALL: "Throw a Poke Ball",
+            Action.SWITCH: "Switch Pokemon",
+        }.get(action, action.value)
+
+    def standard_ball_risk(self) -> dict | None:
+        """How dangerous it is to throw a plain Poke Ball right now.
+
+        The fraction of surviving candidates on which a standard ball would **capture** -- which
+        loses the run, because the target ends up in the wrong ball (sec 2.3). So this is a risk
+        gauge, not a progress one: 0% means the throw is free information, and anything above that
+        is the chance of throwing the hunt away.
+
+        None when a ball is not a legal action, or once the seed is pinned -- with one candidate
+        the answer is not a percentage but a fact, and the solver decides it.
+        """
+        if not self.phase.balls_allowed:
+            return None
+        states = list(self._session.states.values())
+        if not states:
+            return None
+        caught = 0
+        for state in states:
+            nxt = simulate_turn(state, Action.STANDARD_BALL, self.config)
+            caught += bool(nxt.captured_in_wrong_ball)
+        return {
+            "candidates": len(states),
+            "would_catch": caught,
+            "percent": round(100.0 * caught / len(states), 1),
+            "safe": caught == 0,
+        }
+
     def advice(self) -> list[dict]:
         """Actions ranked by how much they would narrow the set, best first (Phase 1.5).
 
@@ -324,7 +371,8 @@ class HuntSession:
         if self.identified is not None:
             return []
         ranked = self._session.rank_actions(self.legal_actions())
-        return [{"action": a.value, "expected_survivors": round(score, 2),
+        return [{"action": a.value, "label": self.action_label(a),
+                 "expected_survivors": round(score, 2),
                  "groups": len(self._session.partition(a))} for a, score in ranked]
 
     # -- the loop -------------------------------------------------------

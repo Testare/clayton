@@ -949,5 +949,70 @@ class TestWideningMidRun(unittest.TestCase):
         self.assertFalse("restart with a wider window" in html)
 
 
+class TestTheAdvicePanelIsReadable(unittest.TestCase):
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_it_renders_the_label_not_the_code(self):
+        run = self.html[self.html.index("// --- Battle Compass: the live run"):]
+        run = run[:run.index("async function huntConfigure(id){")]
+        self.assertIn("a.label", run)
+        self.assertNotIn("<code>${esc(a.action)}</code>", run)
+
+    def test_the_facade_supplies_labels(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        facade.hunt_session_enter_pinning(sid)
+        rows = facade.hunt_session_advice(sid)["advice"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn("label", row)
+            self.assertNotEqual(row["label"], row["action"])
+        labels = {r["label"] for r in rows}
+        self.assertTrue(any(l.startswith("Use ") for l in labels), labels)
+
+
+class TestTheBallRiskGauge(unittest.TestCase):
+    """A plain Poke Ball that LANDS loses the run, so the percentage of candidates it would catch
+    is the gauge for whether throwing one is free information or a gamble."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_facade_reports_it_with_the_advice(self):
+        """Same sweep over every candidate, so it costs nothing extra."""
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        facade.hunt_session_enter_pinning(sid)
+        risk = facade.hunt_session_advice(sid)["standard_ball_risk"]
+        self.assertIn("percent", risk)
+        self.assertIn("would_catch", risk)
+        self.assertIn("candidates", risk)
+        self.assertIn("safe", risk)
+
+    def test_it_is_absent_during_setup(self):
+        """Balls are forbidden in Phase 1, so there is nothing to gauge."""
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        self.assertIsNone(facade.hunt_session_advice(sid)["standard_ball_risk"])
+
+    def test_the_page_renders_it(self):
+        self.assertTrue("function huntBallRisk(" in self.html)
+        self.assertIn("would catch on", self.html)
+
+    def test_it_says_safe_when_nothing_would_catch(self):
+        self.assertIn("Poké Ball is safe right now", self.html)
+
+    def test_it_explains_why_a_catch_is_bad(self):
+        """The counter-intuitive part: catching is the failure, not the success."""
+        self.assertIn("wrong ball", self.html)
+
+    def test_it_is_invalidated_with_the_advice(self):
+        """Or a stale percentage would describe the previous turn."""
+        body = self.html[self.html.index("function huntAdviceInvalidate()"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("_huntBallRisk", body)
+
+
 if __name__ == "__main__":
     unittest.main()
