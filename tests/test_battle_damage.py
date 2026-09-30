@@ -29,13 +29,24 @@ def _party(name: str, level: int) -> Defender:
 
 
 class TestFixtureTables(unittest.TestCase):
-    """These exact ranges appear in sec 3.1 and sec 11.2; the doc and the code must agree."""
+    """The ranges printed in sec 3.1 and sec 11.2, asserted so the doc and the code cannot drift.
+
+    **This is a consistency check, not a verification.** The values are the model's own output.
+    Only one row has ever been measured: Aurora Beam on Smeargle, which
+    tests/test_battle_compass_ground_truth.py checks against three real hits from
+    data/battle_logs/test1.jsonl. Nothing has been recorded against Magneton or Mamoswine, so
+    those rows are predictions and a change in them proves only that the model changed.
+    """
 
     EXPECTED = {
         # (party member, level): {move: (normal range, crit range)}
         ("magneton", 30): {"Aurora Beam": ((16, 19), (33, 39)), "Gust": ((5, 6), (10, 12))},
         ("smeargle", 60): {"Aurora Beam": ((24, 29), (49, 58)), "Gust": ((15, 18), (30, 36))},
-        ("mamoswine", 90): {"Aurora Beam": ((13, 16), (27, 32)), "Gust": ((9, 11), (18, 22))},
+        # Mamoswine is Ice/Ground, so Aurora Beam is x0.5 then x2. The ROM truncates BETWEEN
+        # the two -- `DamageDivide(damage * tenths, 10)` once per defender type -- which loses up
+        # to half a point that a single combined x1.0 keeps. Was (13, 16)/(27, 32) when the two
+        # matchups were multiplied together first.
+        ("mamoswine", 90): {"Aurora Beam": ((12, 16), (26, 32)), "Gust": ((9, 11), (18, 22))},
     }
 
     def test_incoming_damage_ranges(self):
@@ -207,11 +218,15 @@ class TestAbilityAndItemPowerModifiers(unittest.TestCase):
             self.assertEqual(effective_power(move, self._smeargle(item=spelling)), 48)
 
     def test_the_damage_actually_changes(self):
+        """The upper figure moved from (28, 33) to (27, 33) when the damage range was corrected
+        to apply BEFORE STAB, as the ROM does. False Swipe is Normal on a Normal Smeargle, so
+        STAB applies and the order is visible; Suicune's own Ice moves get no STAB, which is why
+        incoming damage was unaffected by the same change."""
         move = resolve_move("False Swipe")
         bare = damage_range(move, self._smeargle(), self._suicune())
         full = damage_range(move, self._smeargle("Technician", "Silk Scarf"), self._suicune())
         self.assertEqual(bare, (16, 19))
-        self.assertEqual(full, (28, 33))
+        self.assertEqual(full, (27, 33))
 
     def test_an_unmodelled_ability_is_reported_not_ignored(self):
         """Same discipline as unsupported_reason: for INCOMING damage an unnoticed multiplier
@@ -252,6 +267,80 @@ class TestTheLevelTermIsIntegerDivision(unittest.TestCase):
         self.assertIn(63, differing)
         self.assertNotIn(60, differing)
         self.assertNotIn(40, differing)
+
+
+class TestTheRomsModifierOrder(unittest.TestCase):
+    """The order is not a matter of taste -- each step truncates, so a different order is a
+    different number. Transcribed from src/battle/overlay_12_0224E4FC.c and battle_command.c:
+
+        CalcMoveDamage:      atk * power * ((level*2/5)+2) / def / 50, then + 2
+        DamageCalcDefault:   damage *= criticalMultiplier
+        BtlCmd_CalcDamage:   damage = ApplyDamageRange(damage)       <- the roll
+        (separate command):  damage = damage * 15 / 10               <- STAB
+                             damage = DamageDivide(damage * tenths, 10) per defender type
+
+    An earlier version applied STAB and type effectiveness BEFORE the roll, which disagreed with
+    the emulator on the third of five recorded False Swipe hits.
+    """
+
+    def _setup(self):
+        stats = derive_species_stats("suicune", 40, "Bold")
+        return (Attacker(level=60, attack=65, special_attack=60, types=("Normal",),
+                         ability="Technician", held_item="Silk Scarf"),
+                Defender(defence=stats["def"], special_defence=stats["spd"], types=("Water",)))
+
+    def test_the_range_comes_before_stab(self):
+        """Explicitly: applying STAB first gives a different answer for at least one roll."""
+        move = resolve_move("False Swipe")
+        attacker, defender = self._setup()
+        level_term = (60 * 2) // 5 + 2
+        base = 65 * effective_power(move, attacker) * level_term // defender.defence // 50 + 2
+        for roll in range(85, 101):
+            rom_order = base * roll // 100 * 15 // 10
+            other_order = base * 15 // 10 * roll // 100
+            if rom_order != other_order:
+                self.assertEqual(damage(move, attacker, defender, roll=roll), rom_order,
+                                 f"roll {roll}: the ROM order gives {rom_order}, the other "
+                                 f"gives {other_order}")
+                return
+        self.fail("no roll distinguishes the two orders, so this test proves nothing")
+
+    def test_the_level_term_truncates(self):
+        """`((level * 2 / 5) + 2)` in C."""
+        for level, expected in ((60, 26), (63, 27), (67, 28), (40, 18)):
+            self.assertEqual((level * 2) // 5 + 2, expected)
+
+    def test_the_base_divides_by_def_then_by_fifty(self):
+        """Two truncations, not one combined divide by (def * 50)."""
+        move = resolve_move("False Swipe")
+        attacker, defender = self._setup()
+        level_term = 26
+        power = effective_power(move, attacker)
+        stepwise = attacker.attack * power * level_term // defender.defence // 50
+        combined = attacker.attack * power * level_term // (defender.defence * 50)
+        # They agree here, but the ROM's form is the one implemented; assert the implemented one.
+        self.assertEqual(damage(move, attacker, defender, roll=100),
+                         (stepwise + 2) * 15 // 10)
+        self.assertIsInstance(combined, int)
+
+    def test_a_dual_type_truncates_once_per_type(self):
+        """x0.5 then x2 is not x1 when each step truncates."""
+        move = resolve_move("Aurora Beam")
+        stats = derive_species_stats("suicune", 40, "Bold")
+        attacker = Attacker(level=40, attack=stats["atk"],
+                            special_attack=stats["spa"], types=("Water",))
+        ice_ground = Defender(defence=100, special_defence=110, types=("Ice", "Ground"))
+        neutral = Defender(defence=100, special_defence=110, types=("Normal",))
+        halved_then_doubled = damage(move, attacker, ice_ground, roll=100)
+        untouched = damage(move, attacker, neutral, roll=100)
+        self.assertLessEqual(halved_then_doubled, untouched)
+
+    def test_a_zero_result_floors_to_one(self):
+        """ApplyDamageRange and DamageDivide both refuse to return 0 for a nonzero input."""
+        move = resolve_move("Gust")
+        weak = Attacker(level=1, attack=1, special_attack=1, types=("Flying",))
+        tanky = Defender(defence=999, special_defence=999, types=("Normal",))
+        self.assertGreaterEqual(damage(move, weak, tanky, roll=85), 1)
 
 
 if __name__ == "__main__":

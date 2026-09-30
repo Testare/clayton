@@ -325,17 +325,30 @@ Two errors in earlier drafts of this document were caught by implementing
   Harmless — all four of its moves are status or special, so its Attack is never read — but the
   table was wrong.
 
-Incoming damage per party member [derived, now asserted in `tests/test_battle_stats.py` and
-`tests/test_battle_types.py`]:
+Incoming damage per party member. **Only one row is verified** — the rest are the model's own
+output, and are here for the doc and the code to agree on rather than as measurements:
 
-| Party member | HP | SpD | Aurora Beam | crit | Gust | crit |
-|---|---|---|---|---|---|---|
-| Magneton Lv30 (Steel x0.5 Ice, x0.25 Flying) | 79 | 56 | 16-19 | 33-39 | **5-6** | **10-12** |
-| Smeargle Lv60 (Normal, x1.0) | 154 | 77 | 24-29 | 49-58 | 15-18 | 30-36 |
-| Mamoswine Lv90 (Ice/Ground, x1.0) | 325 | 140 | 13-16 | 27-32 | 9-11 | 18-22 |
+| Party member | HP | SpD | Aurora Beam | crit | Gust | crit | provenance |
+|---|---|---|---|---|---|---|---|
+| Magneton Lv30 (Steel x0.5 Ice, x0.25 Flying) | 79 | 56 | 16-19 | 33-39 | **5-6** | **10-12** | derived |
+| Smeargle Lv60 (Normal, x1.0) | 154 | 77 | 24-29 | 49-58 | 15-18 | 30-36 | **Aurora Beam verified** |
+| Mamoswine Lv90 (Ice/Ground, x1.0) | 325 | 140 | 12-16 | 26-32 | 9-11 | 18-22 | derived |
 
-Mamoswine needs **11 critical Aurora Beams** to fall, confirming its role as an untouchable
-wall.
+**Verified:** three Aurora Beams landed on Smeargle in `data/battle_logs/test1.jsonl` for 27, 26
+and 24, every one of them reproduced exactly (§16.1). Nothing has ever been measured against
+Magneton or Mamoswine, so those rows are predictions.
+
+Mamoswine's row moved from 13-16 to 12-16 when type effectiveness was corrected to apply once
+**per defender type** as the ROM does — Ice/Ground is `x0.5` then `x2`, and `DamageDivide`
+truncates between them, which a single combined `x1.0` does not. The mechanism is ROM-verified;
+the resulting Mamoswine figure is not.
+
+Two figures here disagree with the log and should be re-entered from the summary screen: it
+recorded Smeargle at **153** HP, not 154, and solving its three Aurora Beams for Sp. Def gives
+**78-80** rather than 77.
+
+Mamoswine still needs roughly **11 critical Aurora Beams** to fall, confirming its role as an
+untouchable wall — a conclusion robust to a point either way.
 
 **The soundness caveat is serious.** A damage filter that is wrong anywhere — modifier order, a
 rounding step, a missed ability — **eliminates the true seed** and silently breaks the run.
@@ -2129,7 +2142,43 @@ A Mist-blocked stat drop is *different*: turn 15's Sweet Scent was reported "pro
 and the turn still spent 8 skeleton rolls, not 6 — so the move executed and paid its post-move
 advances. Blocked effect, successful move.
 
-**Bug 2 — the damage roll was inverted.** `ApplyDamageRange` *subtracts*:
+**Bug 2 — the damage formula: two errors, both in how the multiplications are ordered.**
+
+*The roll was inverted.* `ApplyDamageRange` *subtracts*:
+
+```c
+damage *= (100 - (BattleSystem_Random(battleSystem) % 16));
+damage /= 100;
+```
+
+so `% 16 == 0` is 100% and `% 16 == 15` is 85%. This was implemented as `85 + roll % 16`, which
+spans the **same sixteen multipliers** and therefore passes any range check while getting every
+individual value wrong.
+
+*And the roll was applied in the wrong place.* Tracing the call chain
+(`battle_command.c:DamageCalcDefault` → `BtlCmd_CalcDamage`, and the STAB/type block in
+`overlay_12_0224E4FC.c`) gives the real order, and every step truncates, so the order **is** the
+result:
+
+```
+CalcMoveDamage:   atk * power * ((level*2/5)+2) / def / 50, then + 2
+                  damage *= criticalMultiplier
+BtlCmd_CalcDamage: damage = ApplyDamageRange(damage)              <- the roll
+(later command):  damage = damage * 15 / 10                       <- STAB
+                  damage = DamageDivide(damage * tenths, 10)      <- once PER defender type
+```
+
+This applied STAB and type effectiveness *before* the roll. Three consequences, all confirmed:
+
+* Power modifiers are on **base power**, Technician first, then a type-enhancing item at
+  `(100 + 20)/100` — the 20 read out of `files/itemtool/itemdata/item_data.narc`, where every
+  type-enhancing item carries the same param. For a Technician user with Silk Scarf, False Swipe
+  is `40 → 60 → 72`.
+* Type effectiveness truncates **once per defender type**. Ice on Ice/Ground is `x0.5` then `x2`,
+  which is not `x1`.
+* The level term is integer division, `((level * 2 / 5) + 2)`.
+
+*The inverted roll, in the data.* `ApplyDamageRange` *subtracts*:
 
 ```c
 damage *= (100 - (BattleSystem_Random(battleSystem) % 16));

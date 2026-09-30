@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from claytonlib.battle.types import effectiveness
+from claytonlib.battle.types import effectiveness, type_multiplier
 from claytonlib.moves import CATEGORY_PHYSICAL, CATEGORY_SPECIAL, Move
 
 # Gen 4 multiplies damage by one of sixteen values, 85..100 percent.
@@ -173,20 +173,70 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
 
     # The ROM's level term is INTEGER division -- `((level * 2 / 5) + 2)` in C -- so it differs
     # from a float form at any level where 2*level is not a multiple of 5 (63, 67, 71, 78...).
-    # Level 40 and 60 are exact, which is why the fixture never showed it.
     level_term = (attacker.level * 2) // 5 + 2
     power = effective_power(move, attacker)
-    base = math.floor(
-        math.floor(math.floor(level_term * power * attack / defence) / 50)
-    ) + 2
+
+    # CalcMoveDamage, transcribed from src/battle/overlay_12_0224E4FC.c. Integer division at each
+    # step, in this order -- `atk * power * levelterm`, then `/ def`, then `/ 50`:
+    #
+    #     dmg  = monAtk; dmg *= movePower; dmg *= ((level * 2 / 5) + 2);
+    #     dmg /= monDef; dmg /= 50;  ...  return dmg + 2;
+    value = attack * power * level_term // defence // 50 + 2
+
+    # DamageCalcDefault applies the crit multiplier straight after CalcMoveDamage returns.
     if critical:
-        base *= 2
+        value *= 2
+
+    # ApplyDamageRange, then STAB, then type effectiveness -- IN THAT ORDER. This is the part an
+    # earlier version had backwards: it applied STAB and type first and the roll last. The set of
+    # results is not the same, because each step truncates -- verified against
+    # data/battle_logs/test1.jsonl, where the two orders disagree on the third of five hits.
+    value = _apply_damage_range(value, roll)
+    value = _apply_stab(value, move, attacker)
+    value = _apply_effectiveness(value, move, defender)
+    return value
+
+
+def _apply_damage_range(value: int, roll: int) -> int:
+    """`ApplyDamageRange`: ``damage * roll / 100``, with a floor of 1.
+
+    `roll` is the 85..100 multiplier. Note that the ROM derives it by SUBTRACTING the RNG value
+    (``100 - rand % 16``), so a raw roll of 0 is 100% and 15 is 85%; callers that map an RNG
+    value to a multiplier must do it that way round (see ``battle_compass.sim``).
+    """
+    if not value:
+        return 0
+    value = value * roll // 100
+    return value or 1
+
+
+def _apply_stab(value: int, move: Move, attacker: Attacker) -> int:
+    """``damage * 15 / 10`` when the move matches one of the attacker's types.
+
+    Integer, and applied AFTER the damage range (overlay_12_0224E4FC.c, the STAB block).
+    """
     if move.type_name in attacker.types:
-        base = math.floor(base * 1.5)          # STAB
-    base = math.floor(base * effectiveness(move.type_name, defender.types))
-    if base == 0:
-        return 0                                # immune, or scaled away entirely
-    return max(1, math.floor(base * roll / 100))
+        return value * 15 // 10
+    return value
+
+
+def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
+    """Type effectiveness, applied once PER DEFENDER TYPE in tenths.
+
+    The ROM does ``damage = DamageDivide(damage * typeEffectiveness, 10)`` for each of the
+    defender's types in turn, where `typeEffectiveness` is a tenths figure (5, 10, 20) and
+    `DamageDivide` truncates but never returns 0 for a nonzero input. Multiplying the two
+    matchups together and dividing once is not the same thing: ``x * 5 / 10 * 5 / 10`` truncates
+    twice, which is what the game does against a dual type resisting twice over.
+    """
+    for defending in defender.types:
+        tenths = round(type_multiplier(move.type_name, defending) * 10)
+        if tenths == 0:
+            return 0                     # an immunity zeroes it outright
+        if value == 0:
+            return 0
+        value = (value * tenths) // 10 or 1
+    return value
 
 
 def damage_spread(move: Move, attacker: Attacker, defender: Defender, *,
