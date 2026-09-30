@@ -25,9 +25,16 @@ Usage (inside GDB, AFTER attaching to the emulator):
     (gdb) battlelog 0xEC1504DC      # force this battle seed and start recording
     (gdb) battlelog                 # record without forcing a seed
     ... play the battle ...
+    (gdb) battleoverride            # show the target IV/nature override (on by default)
     (gdb) battlemark phase2         # optional: drop a labelled marker into the log
     (gdb) battlestatus              # what has been captured so far
     (gdb) battlesave                # flush to data/battle_logs/<name>.jsonl and stop
+
+The target's IVs and nature are **overwritten** at every send-out, and its actual stats
+recomputed to match, so that every recording measures the same Suicune -- see the
+TARGET_OVERRIDE block below, which is the one thing in this file meant to be edited.  The
+original IVs, nature and stats are logged first, so a recording always says what the save
+state really held.
 
 Sourcing only registers the commands and installs breakpoints; it records nothing until
 `battlelog`.  Output is one JSON line per recorded battle, so repeated battles append.
@@ -114,6 +121,212 @@ def advance_rng(state):
 
 
 # ---------------------------------------------------------------------------
+# Target stat override -- EDIT THIS BLOCK
+# ---------------------------------------------------------------------------
+#
+# In a real attempt the target's IVs and nature are controlled by the RNG manipulation itself.
+# In the emulator they are whatever the save state happens to hold, and re-rolling them by hand
+# is impractical -- so the recorder overwrites them to a fixed spread, and recomputes the actual
+# stats to match, the moment the battler is built.  Every recording then measures the SAME
+# Suicune, which is what makes damage rolls comparable between runs.
+#
+# `ivs` is keyed by name on purpose.  The ROM's BattleMon lays its IV bitfields out in the order
+# hp/atk/def/SPEED/spa/spd -- speed third, not last -- while every display in this project and
+# in the games uses hp/atk/def/spa/spd/spe.  A bare six-tuple would silently mean two different
+# spreads depending on which order the reader had in mind, so there is no bare six-tuple.
+
+OVERRIDE_TARGET = True          # master switch; set False to record the save state as-is
+
+TARGET_OVERRIDE = {
+    #: Which battler to rewrite. 1 is the opponent in a single wild battle.
+    "battler": 1,
+    #: Refuse to write unless the battler really is this species, so a mistimed breakpoint
+    #: cannot silently rewrite our own Pokemon. None disables the guard.
+    "species": 245,             # SPECIES_SUICUNE
+    "nature": "Bold",
+    "ivs": {"hp": 29, "atk": 15, "def": 31, "spa": 31, "spd": 31, "spe": 28},
+    #: Wild Pokemon have none; here for completeness.
+    "evs": 0,
+}
+
+# Nature by index, in the ROM's order (include/constants/pokemon.h: NATURE_HARDY 0 .. QUIRKY 24)
+# -> (raised stat, lowered stat), None for the five neutral natures.
+NATURES = (
+    ("Hardy",   None),            ("Lonely",  ("atk", "def")),
+    ("Brave",   ("atk", "spe")),  ("Adamant", ("atk", "spa")),
+    ("Naughty", ("atk", "spd")),  ("Bold",    ("def", "atk")),
+    ("Docile",  None),            ("Relaxed", ("def", "spe")),
+    ("Impish",  ("def", "spa")),  ("Lax",     ("def", "spd")),
+    ("Timid",   ("spe", "atk")),  ("Hasty",   ("spe", "def")),
+    ("Serious", None),            ("Jolly",   ("spe", "spa")),
+    ("Naive",   ("spe", "spd")),  ("Modest",  ("spa", "atk")),
+    ("Mild",    ("spa", "def")),  ("Quiet",   ("spa", "spe")),
+    ("Bashful", None),            ("Rash",    ("spa", "spd")),
+    ("Calm",    ("spd", "atk")),  ("Gentle",  ("spd", "def")),
+    ("Sassy",   ("spd", "spe")),  ("Careful", ("spd", "spa")),
+    ("Quirky",  None),
+)
+
+#: project stat key -> BattleMon field names (stat, IV). Note `speed` sits third in the IV
+#: bitfield order but that does not matter here, because these are named writes.
+_BATTLE_MON_FIELDS = {
+    "hp":  ("maxHp", "hpIV"),
+    "atk": ("atk",   "atkIV"),
+    "def": ("def",   "defIV"),
+    "spa": ("spAtk", "spAtkIV"),
+    "spd": ("spDef", "spDefIV"),
+    "spe": ("speed", "speedIV"),
+}
+
+_STAT_KEYS = ("hp", "atk", "def", "spa", "spd", "spe")
+
+
+def _fmt_spread(spread):
+    """A spread in the project's display order, hp/atk/def/spa/spd/spe."""
+    return "/".join(str(spread[k]) for k in _STAT_KEYS)
+
+
+def nature_index(name):
+    """The ROM's nature index for `name`. Raises for an unknown nature."""
+    wanted = name.strip().capitalize()
+    for i, (nature, _) in enumerate(NATURES):
+        if nature == wanted:
+            return i
+    raise ValueError(f"unknown nature {name!r}")
+
+
+def nature_multiplier(name, stat):
+    """1.1 / 0.9 / 1.0. HP is never affected by nature."""
+    effect = NATURES[nature_index(name)][1]
+    if effect is None or stat == "hp":
+        return 1.0
+    raised, lowered = effect
+    return 1.1 if stat == raised else 0.9 if stat == lowered else 1.0
+
+
+def calc_stat(base, iv, ev, level, mult):
+    """A non-HP stat. Floors twice, as the game does."""
+    pre = (2 * base + iv + ev // 4) * level // 100 + 5
+    return int(pre * mult)
+
+
+def calc_hp(base, iv, ev, level):
+    return (2 * base + iv + ev // 4) * level // 100 + level + 10
+
+
+def derive_stats(base, level, nature, ivs, evs=0):
+    """Full spread from base stats, level, nature and IVs.
+
+    Duplicated from ``claytonlib.battle.stats`` rather than imported, for the same reason the
+    charmap above is duplicated: this file is sourced into GDB's own interpreter, where the
+    repo may not be importable, and a recorder that dies on an import is worse than six lines
+    of arithmetic.  ``tests/test_gdb_battle_reader.py`` asserts the two agree, so the copy
+    cannot drift.
+    """
+    ev_of = (lambda k: evs) if isinstance(evs, int) else evs.get
+    iv_of = (lambda k: ivs) if isinstance(ivs, int) else ivs.get
+    out = {}
+    for key in _STAT_KEYS:
+        iv, ev = iv_of(key) or 0, ev_of(key) or 0
+        out[key] = (calc_hp(base[key], iv, ev, level) if key == "hp"
+                    else calc_stat(base[key], iv, ev, level,
+                                   nature_multiplier(nature, key)))
+    return out
+
+
+def pid_with_nature(personality, nature):
+    """`personality` adjusted so ``pid % 25`` is `nature`, the game's own idiom
+    (src/pokemon.c: ``pid += nature - (pid % 25)``).
+
+    Keeping the high bits means gender, shininess and ability slot move as little as possible.
+    They can still change -- ability is ``pid & 1`` -- which is harmless for Suicune, whose only
+    ability is Pressure and which is genderless, but would not be for an arbitrary species.
+
+    One deviation from the ROM's line: rounding *up* to the requested nature can carry past
+    0xFFFFFFFF, and a wrapped PID has the wrong nature. The game never meets that case because
+    it clears the top byte first; here the PID comes from a save state, so it can. We step down
+    by 25 instead, which lands on the right nature and still moves the PID by under 50.
+    """
+    index = nature if isinstance(nature, int) else nature_index(nature)
+    candidate = personality - personality % 25 + index
+    if candidate > 0xFFFFFFFF:
+        candidate -= 25
+    return candidate
+
+
+def base_stats_for(species_id, path=None):
+    """Base stats by National Dex number, from claytonlib/basedata/base_stats.json.
+
+    Read as plain JSON off disk rather than through ``claytonlib``, so this works whether or not
+    the repo is importable from GDB's interpreter.  Returns None when the species is absent,
+    which the caller reports rather than guessing.
+    """
+    path = path or os.path.join(os.getcwd(), "claytonlib", "basedata", "base_stats.json")
+    try:
+        with open(path) as fh:
+            table = json.load(fh)
+    except Exception:
+        return None
+    for entry in table.values():
+        if entry.get("dex_no") == species_id:
+            return entry["base_stats"]
+    return None
+
+
+def plan_override(snapshot, config=None, base=None):
+    """What to write, and what was there before. Pure, so it is testable without an emulator.
+
+    Returns ``{"before": ..., "after": ..., "writes": {field: value}, "skipped": reason|None}``.
+    `snapshot` is a ``_read_mon`` result. `base` overrides the on-disk base-stat lookup.
+    """
+    config = config or TARGET_OVERRIDE
+    species_id = snapshot["species"]
+    expected = config.get("species")
+    before = {
+        "species": species_id,
+        "level": snapshot["level"],
+        "nature": NATURES[snapshot["personality"] % 25][0],
+        "nature_index": snapshot["personality"] % 25,
+        "personality": snapshot["personality"],
+        "ivs": dict(snapshot["ivs"]),
+        "stats": dict(snapshot["stats"], hp=snapshot["maxHp"]),
+        "hp": snapshot["hp"],
+        "maxHp": snapshot["maxHp"],
+    }
+    if expected is not None and species_id != expected:
+        return {"before": before, "after": None, "writes": {},
+                "skipped": f"battler is species {species_id}, not the configured {expected}"}
+    base = base or base_stats_for(species_id)
+    if base is None:
+        return {"before": before, "after": None, "writes": {},
+                "skipped": f"no base stats on file for species {species_id}"}
+
+    level = snapshot["level"]
+    ivs = dict(config["ivs"])
+    stats = derive_stats(base, level, config["nature"], ivs, config.get("evs", 0))
+    personality = pid_with_nature(snapshot["personality"], config["nature"])
+
+    writes = {"personality": personality}
+    for key, (stat_field, iv_field) in _BATTLE_MON_FIELDS.items():
+        writes[stat_field] = stats[key]
+        writes[iv_field] = ivs[key]
+    # A wild target is sent out at full HP, so full stays full. Otherwise keep the absolute
+    # value and clamp -- scaling it would invent a damage figure that never happened.
+    writes["hp"] = (stats["hp"] if before["hp"] == before["maxHp"]
+                    else min(before["hp"], stats["hp"]))
+    after = {
+        "nature": NATURES[nature_index(config["nature"])][0],
+        "nature_index": nature_index(config["nature"]),
+        "personality": personality,
+        "ivs": ivs,
+        "stats": stats,
+        "hp": writes["hp"],
+        "maxHp": stats["hp"],
+    }
+    return {"before": before, "after": after, "writes": writes, "skipped": None}
+
+
+# ---------------------------------------------------------------------------
 # Recording state (pure enough to reason about; no gdb needed to construct)
 # ---------------------------------------------------------------------------
 
@@ -127,6 +340,7 @@ class Recording:
         {"msg": "..."}                    a battle message
         {"hp": [{"battler","hp","max"}]}  emitted only when an HP value CHANGES
         {"mon": {...}}                    a full battler snapshot, at battle start
+        {"override": {...}}               the target's IVs/nature/stats, before and after
         {"mark": "label"}                 a manual marker you typed
     """
 
@@ -157,6 +371,17 @@ class Recording:
 
     def add_mon(self, snapshot):
         obj = {"mon": snapshot}
+        self.records.append(obj)
+        return obj
+
+    def add_override(self, plan):
+        """The stat override, both sides of it.
+
+        The `before` half is the point: a recording is only comparable to another if you can
+        see what the save state actually held, so the original IVs, nature and stats are logged
+        whether or not the write succeeded.
+        """
+        obj = {"override": plan}
         self.records.append(obj)
         return obj
 
@@ -279,6 +504,7 @@ def _read_mon(ctx, battler):
                 (("hp", "hpIV"), ("atk", "atkIV"), ("def", "defIV"),
                  ("spa", "spAtkIV"), ("spd", "spDefIV"), ("spe", "speedIV"))},
         "ability": field("ability"),
+        "personality": field("personality"),
         "types": [field("type1"), field("type2")],
         "moves": [int(gdb.parse_and_eval(
             f"((BattleContext *){ctx:#x})->battleMons[{battler}].moves[{i}]")) for i in range(4)],
@@ -415,6 +641,94 @@ if _IN_GDB:
             _MsgFinish(gdb.selected_frame(), _eval_int("$r0"))
             return False
 
+
+    # -- target stat override -------------------------------------------
+
+    def _apply_override(ctx, battler):
+        """Rewrite the target's IVs, nature and stats, and log both sides.
+
+        Called just after ``BattleSystem_GetBattleMon`` returns, which is where the ROM copies
+        every one of these fields out of the Pokemon struct -- so this is the first moment the
+        values exist and the last moment before anything reads them.  It runs on every send-out,
+        which is what keeps a switch from quietly restoring the save state's own spread.
+        """
+        try:
+            snapshot = _read_mon(ctx, battler)
+        except Exception as exc:
+            print(f"[battlelog] override SKIPPED: cannot read battler {battler}: {exc}")
+            return None
+        plan = plan_override(snapshot)
+        if plan["skipped"]:
+            print(f"[battlelog] override skipped for battler {battler}: {plan['skipped']}")
+            if _rec is not None:
+                _rec.add_override(plan)
+            return plan
+
+        for field_name, value in plan["writes"].items():
+            gdb.execute(f"set ((BattleContext *){ctx:#x})->battleMons[{battler}]."
+                        f"{field_name} = {value}", to_string=True)
+
+        # Read the fields back rather than trusting the writes: a bitfield that silently
+        # truncated would otherwise look applied, and every damage figure in the log would be
+        # measured against a spread that was never in memory.
+        readback = _read_mon(ctx, battler)
+        actual = dict(readback["stats"], hp=readback["maxHp"])
+        mismatched = {k: (plan["after"]["stats"][k], actual[k])
+                      for k in plan["after"]["stats"] if plan["after"]["stats"][k] != actual[k]}
+        bad_ivs = {k: (plan["after"]["ivs"][k], readback["ivs"][k])
+                   for k in plan["after"]["ivs"] if plan["after"]["ivs"][k] != readback["ivs"][k]}
+        plan["verified"] = not mismatched and not bad_ivs
+        plan["readback"] = {"ivs": readback["ivs"], "stats": actual,
+                            "personality": readback["personality"]}
+        if _rec is not None:
+            _rec.add_override(plan)
+
+        before, after = plan["before"], plan["after"]
+        print(f"[battlelog] battler {battler} (species {snapshot['species']}, "
+              f"Lv{snapshot['level']}) overridden")
+        print(f"            nature {before['nature']} -> {after['nature']}")
+        print(f"            IVs    {_fmt_spread(before['ivs'])} -> {_fmt_spread(after['ivs'])}")
+        print(f"            stats  {_fmt_spread(before['stats'])} -> "
+              f"{_fmt_spread(after['stats'])}")
+        if not plan["verified"]:
+            print(f"[battlelog] WARNING: readback disagrees with the plan. "
+                  f"stats {mismatched} ivs {bad_ivs}. Do NOT trust this recording.")
+        return plan
+
+    class _GetBattleMonFinish(gdb.FinishBreakpoint):
+        """Apply the override after the ROM has finished populating the battler."""
+
+        def __init__(self, frame, ctx, battler):
+            super().__init__(frame, internal=True)
+            self.silent = True
+            self.ctx = ctx
+            self.battler = battler
+
+        def stop(self):
+            if OVERRIDE_TARGET and self.battler == TARGET_OVERRIDE.get("battler", 1):
+                _apply_override(self.ctx, self.battler)
+            return False
+
+    class _GetBattleMonBreakpoint(gdb.Breakpoint):
+        """Entry to BattleSystem_GetBattleMon, to capture its arguments.
+
+        ARM EABI: r0 battleSystem, r1 ctx, r2 battlerId, r3 selectedMon. Read from registers
+        rather than frame arguments so a build without full DWARF still works.
+        """
+
+        def __init__(self):
+            super().__init__("BattleSystem_GetBattleMon")
+            self.silent = True
+
+        def stop(self):
+            if not OVERRIDE_TARGET:
+                return False
+            try:
+                _GetBattleMonFinish(gdb.selected_frame(), _eval_int("$r1"), _eval_int("$r2"))
+            except Exception as exc:
+                print(f"[battlelog] override hook failed: {exc}")
+            return False
+
     # -- commands -------------------------------------------------------
 
     class BattleLogCommand(gdb.Command):
@@ -447,6 +761,40 @@ if _IN_GDB:
             else:
                 print(f"[battlelog] will force {seed:#010x} at the next BattleSetup_New. "
                       f"Start the battle now.")
+
+    class BattleOverrideCommand(gdb.Command):
+        """battleoverride [on|off|show] — control the target stat override.
+
+        With no argument, shows the configured spread. `on`/`off` flip the master switch for
+        the rest of the session; edit TARGET_OVERRIDE at the top of this file to change the
+        spread itself. The override applies automatically at every send-out, so there is
+        normally nothing to run by hand."""
+
+        def __init__(self):
+            super().__init__("battleoverride", gdb.COMMAND_USER)
+
+        def invoke(self, arg, from_tty):
+            global OVERRIDE_TARGET
+            word = arg.strip().lower()
+            if word in ("on", "off"):
+                OVERRIDE_TARGET = word == "on"
+            elif word not in ("", "show"):
+                print(f"[battlelog] unknown argument {arg!r}; expected on, off or show.")
+                return
+            config = TARGET_OVERRIDE
+            print(f"[battlelog] override {'ON' if OVERRIDE_TARGET else 'OFF'} "
+                  f"for battler {config.get('battler', 1)}"
+                  + (f", species {config['species']} only" if config.get("species") else ""))
+            print(f"            nature {config['nature']}  "
+                  f"IVs {_fmt_spread(config['ivs'])}  (hp/atk/def/spa/spd/spe)")
+            base = base_stats_for(config.get("species")) if config.get("species") else None
+            if base is None:
+                print("            stats will be computed at send-out, once the level is known.")
+            else:
+                for level in (40,):
+                    spread = derive_stats(base, level, config["nature"], config["ivs"],
+                                          config.get("evs", 0))
+                    print(f"            at Lv{level}: {_fmt_spread(spread)}")
 
     class BattleMarkCommand(gdb.Command):
         """battlemark <label> — drop a labelled marker into the log at this point."""
@@ -504,6 +852,12 @@ if _IN_GDB:
 
     BattleSetupNewBreakpoint()
     _RandomBreakpoint()
+    try:
+        _GetBattleMonBreakpoint()
+    except Exception as _exc:
+        print(f"[battlelog] target override UNAVAILABLE: {_exc}\n"
+              f"            BattleSystem_GetBattleMon is in an overlay -- if it is not loaded "
+              f"yet, re-source this file once the battle overlay is in memory.")
     for _symbol in ("BattleSystem_SetCurrentMessage", "BattleMessage_Print"):
         try:
             _MsgBreakpoint(_symbol)
@@ -511,8 +865,13 @@ if _IN_GDB:
             # Message symbols vary by build; a missing one is not fatal, rolls still record.
             pass
     BattleLogCommand()
+    BattleOverrideCommand()
     BattleMarkCommand()
     BattleStatusCommand()
     BattleSaveCommand()
-    print("[battlelog] ready. Commands: battlelog [seed] [label], battlemark, "
-          "battlestatus, battlesave")
+    print("[battlelog] ready. Commands: battlelog [seed] [label], battleoverride, "
+          "battlemark, battlestatus, battlesave")
+    if OVERRIDE_TARGET:
+        print(f"[battlelog] target override ON: {TARGET_OVERRIDE['nature']}, IVs "
+              f"{_fmt_spread(TARGET_OVERRIDE['ivs'])} (hp/atk/def/spa/spd/spe). "
+              f"battleoverride off to disable.")
