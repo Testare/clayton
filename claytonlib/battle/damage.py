@@ -43,6 +43,38 @@ def stage_multiplier(stage: int) -> float:
     return _STAGE_NUM[stage + 6] / _STAGE_DEN[stage + 6]
 
 
+#: Type-enhancing held items -> the type they boost, from the ROM's `sTypeEnhancingItems`
+#: (src/battle/overlay_12_0224E4FC.c). All the Gen 4 classics; plates and incenses behave the
+#: same way and can be added here as needed.
+TYPE_ENHANCING_ITEMS: dict[str, str] = {
+    "silk scarf": "Normal",      "charcoal": "Fire",         "mystic water": "Water",
+    "magnet": "Electric",        "miracle seed": "Grass",    "never-melt ice": "Ice",
+    "nevermeltice": "Ice",       "black belt": "Fighting",   "poison barb": "Poison",
+    "soft sand": "Ground",       "sharp beak": "Flying",     "twisted spoon": "Psychic",
+    "silver powder": "Bug",      "hard stone": "Rock",       "spell tag": "Ghost",
+    "dragon fang": "Dragon",     "black glasses": "Dark",    "metal coat": "Steel",
+}
+#: Percent added by a matching type-enhancing item. The ROM reads this from the item's own
+#: ITEM_VAR_MODIFIER, which lives in a binary NARC -- 20 is the documented Gen 4 value for every
+#: item above, but unlike the ORDERING below it was not read out of the source.
+TYPE_ITEM_MODIFIER_PERCENT = 20
+
+#: Technician raises base power by half when the power is 60 or less (ABILITY_TECHNICIAN, and the
+#: ROM checks the power *after* earlier power modifiers, not the raw base power).
+TECHNICIAN_POWER_CAP = 60
+
+#: Abilities that change damage and are NOT modelled here. Listed so an unmodelled one is
+#: reported rather than silently ignored -- the same discipline `unsupported_reason` applies to
+#: moves, and for incoming damage an unnoticed modifier is unsound, not merely imprecise.
+UNMODELLED_DAMAGE_ABILITIES = frozenset({
+    "huge power", "pure power", "hustle", "guts", "blaze", "torrent", "overgrow", "swarm",
+    "flash fire", "thick fat", "heatproof", "levitate", "solid rock", "filter", "sniper",
+    "tinted lens", "rivalry", "slow start", "iron fist", "reckless", "sheer force",
+    "adaptability", "dry skin", "water absorb", "volt absorb", "flash fire", "wonder guard",
+    "marvel scale", "mold breaker",
+})
+
+
 @dataclass(frozen=True)
 class Attacker:
     """The opponent, as the damage formula sees it."""
@@ -52,6 +84,11 @@ class Attacker:
     types: tuple[str, ...]
     attack_stage: int = 0
     special_attack_stage: int = 0
+    #: Lowercase-insensitive; only Technician is modelled, and anything in
+    #: UNMODELLED_DAMAGE_ABILITIES is reported by `unsupported_attacker_reason`.
+    ability: str = ""
+    #: A type-enhancing item raises base power by TYPE_ITEM_MODIFIER_PERCENT.
+    held_item: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,6 +113,37 @@ def unsupported_reason(move: Move) -> str | None:
             return f"{move.name} has no fixed base power"
         return None
     return f"{move.name} is a status move and deals no damage"
+
+
+def effective_power(move: Move, attacker: Attacker) -> int:
+    """Base power after the attacker's ability and held item.
+
+    Order and arithmetic transcribed from the ROM (src/battle/overlay_12_0224E4FC.c): Technician
+    first as ``power * 15 / 10``, then a matching type-enhancing item as
+    ``power * (100 + mod) / 100``, both integer division. The order is not cosmetic -- for a
+    Technician user holding Silk Scarf, False Swipe goes 40 -> 60 -> 72, where applying the item
+    first would give 40 -> 48 -> 72 by luck here but differ elsewhere.
+    """
+    power = move.power
+    ability = attacker.ability.strip().lower()
+    if ability == "technician" and power <= TECHNICIAN_POWER_CAP:
+        power = power * 15 // 10
+    boosted = TYPE_ENHANCING_ITEMS.get(attacker.held_item.strip().lower())
+    if boosted is not None and boosted == move.type_name:
+        power = power * (100 + TYPE_ITEM_MODIFIER_PERCENT) // 100
+    return power
+
+
+def unsupported_attacker_reason(attacker: Attacker) -> str | None:
+    """Why this attacker's damage cannot be modelled, or None.
+
+    Mirrors `unsupported_reason` for moves: an ability we do not implement must be *reported*,
+    never assumed inert. For incoming damage an unnoticed multiplier eliminates the true seed.
+    """
+    ability = attacker.ability.strip().lower()
+    if ability in UNMODELLED_DAMAGE_ABILITIES:
+        return f"{attacker.ability} changes damage and is not modelled"
+    return None
 
 
 def damage(move: Move, attacker: Attacker, defender: Defender, *,
@@ -103,8 +171,13 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     if not (critical and attack_stage < 0):
         attack = max(1, math.floor(attack * stage_multiplier(attack_stage)))
 
+    # The ROM's level term is INTEGER division -- `((level * 2 / 5) + 2)` in C -- so it differs
+    # from a float form at any level where 2*level is not a multiple of 5 (63, 67, 71, 78...).
+    # Level 40 and 60 are exact, which is why the fixture never showed it.
+    level_term = (attacker.level * 2) // 5 + 2
+    power = effective_power(move, attacker)
     base = math.floor(
-        math.floor(math.floor((2 * attacker.level / 5 + 2) * move.power * attack / defence) / 50)
+        math.floor(math.floor(level_term * power * attack / defence) / 50)
     ) + 2
     if critical:
         base *= 2

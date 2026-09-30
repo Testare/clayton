@@ -26,7 +26,9 @@ from claytonlib.battle.catch import (
     BALL_POKE, SHAKES_TO_CAPTURE, catch_value, fast_ball_catch_rate, is_guaranteed,
     shake_threshold, shakes_for_rolls,
 )
-from claytonlib.battle.damage import Attacker, Defender, damage, unsupported_reason
+from claytonlib.battle.damage import (
+    Attacker, Defender, damage, unsupported_attacker_reason, unsupported_reason,
+)
 from claytonlib.battle.readiness import PARALYSIS_SPEED_FACTOR
 from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
@@ -83,14 +85,51 @@ def move_roll_cost(move: Move) -> int:
     return rolls
 
 
-def _effective_accuracy(move: Move, evasion_stage: int = 0) -> int:
-    """Accuracy after the target's evasion. 0 means the move bypasses the check entirely."""
+def accuracy_net_stage(attacker: "Battler", defender: "Battler") -> int:
+    """The single stage the accuracy check uses: the attacker's accuracy minus the defender's
+    evasion, clamped to -6..+6. Combining them is what the game does, and keeping it in one
+    function is what stops the simulator and the interview disagreeing about it.
+    """
+    return max(-6, min(6, attacker.accuracy_stage - defender.evasion_stage))
+
+
+def _effective_accuracy(move: Move, net_stage: int = 0) -> int:
+    """Accuracy after the combined accuracy/evasion stage.
+
+    0 means the move bypasses the check entirely. `net_stage` is the attacker's accuracy stage
+    minus the defender's evasion stage -- NOT evasion alone, since an accuracy drop on the
+    attacker makes a 100%-accuracy move missable just as a raised evasion does.
+    """
     if move.accuracy == 0:
         return 0
-    net = max(-6, min(6, -evasion_stage))
+    net = max(-6, min(6, net_stage))
     if net >= 0:
         return move.accuracy * (3 + net) // 3
     return move.accuracy * 3 // (3 - net)
+
+
+def can_miss(move: Move, net_stage: int = 0) -> bool:
+    """Whether an accuracy roll can actually fail.
+
+    Accuracy 0 bypasses the check, and accuracy 100 at a neutral or positive stage passes it
+    always -- ``roll % 100 < 100`` can never be false -- so neither can miss. But this is
+    stage-dependent, not a property of the move: Spore at 100% becomes missable as soon as our
+    accuracy is dropped or the target's evasion is raised, and reporting it as unmissable then
+    would suppress a legitimate "missed".
+    """
+    return 0 < _effective_accuracy(move, net_stage) < 100
+
+
+def will_fail(move: Move, defender: "Battler") -> bool:
+    """Whether this move is certain to do nothing, from state alone.
+
+    A status-inflicting move against an already-statused target rolls its accuracy and then fails
+    -- non-volatile statuses are mutually exclusive (sec 4.2). It is *not* rendered as a miss: the
+    simulator emits the bare slot token, so an interview that asked "did it miss?" and was told
+    yes produced a token no candidate could match.
+    """
+    status = _status_for(move)
+    return status is not None and defender.status is not Status.NONE
 
 
 def _status_for(move: Move) -> Status | None:
@@ -99,7 +138,7 @@ def _status_for(move: Move) -> Status | None:
 
 
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
-                 actor: str, slot: int, evasion_stage: int = 0,
+                 actor: str, slot: int, net_stage: int | None = None,
                  attack_stage: int = 0) -> tuple[int, MoveOutcome]:
     """Execute one move against the RNG, returning (new rng, outcome).
 
@@ -110,6 +149,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     (unobservable on its own, but readable from an HP change — sec 3.1), then accuracy.
     """
     used = 0
+    if net_stage is None:
+        net_stage = accuracy_net_stage(attacker, defender)
     slot_token = tok.our_move_token(slot) if actor == "M" else tok.target_move_token(slot)
     parts: list[str] = [slot_token]
 
@@ -118,7 +159,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         if move.accuracy > 0:
             rng, roll = advance(rng)
             used += 1
-            hit = roll % 100 < _effective_accuracy(move, evasion_stage)
+            hit = roll % 100 < _effective_accuracy(move, net_stage)
         if not hit:
             parts.append(tok.MISS)
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
@@ -139,20 +180,26 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     if move.accuracy > 0:
         rng, hit_roll = advance(rng)
         used += 1
-        hit = hit_roll % 100 < _effective_accuracy(move, evasion_stage)
+        hit = hit_roll % 100 < _effective_accuracy(move, net_stage)
     if not hit:
         parts.append(tok.MISS)
         return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
     parts.append(tok.CRIT if critical else tok.HIT)
 
     dealt = 0
-    if unsupported_reason(move) is None:
+    attacker_side = Attacker(
+        level=attacker.level, attack=attacker.stats["atk"],
+        special_attack=attacker.stats["spa"], types=attacker.types,
+        attack_stage=attack_stage, special_attack_stage=attack_stage,
+        ability=attacker.ability, held_item=attacker.held_item)
+    if unsupported_reason(move) is None and unsupported_attacker_reason(attacker_side) is None:
         physical = move.category != 1
         dealt = damage(
             move,
             Attacker(level=attacker.level, attack=attacker.stats["atk"],
                      special_attack=attacker.stats["spa"], types=attacker.types,
-                     attack_stage=attack_stage, special_attack_stage=attack_stage),
+                     attack_stage=attack_stage, special_attack_stage=attack_stage,
+                     ability=attacker.ability, held_item=attacker.held_item),
             Defender(defence=defender.stats["def"], special_defence=defender.stats["spd"],
                      types=defender.types, defence_stage=defender.def_stage,
                      special_defence_stage=defender.spdef_stage),

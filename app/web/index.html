@@ -216,6 +216,13 @@
   align-items:baseline }
 .hr-confirm { border-top:1px solid var(--line);margin-top:14px;padding-top:12px;font-size:13px }
 .hr-confirm code { font-family:ui-monospace,monospace }
+
+  .hr-bar{display:flex}
+  .hr-bar-sure{height:100%;background:var(--ok)}
+  .hr-bar-maybe{height:100%;background:color-mix(in srgb,var(--ok) 35%,var(--line))}
+  .hr-danger ~ .hr-bar .hr-bar-sure{background:var(--danger)}
+  .ok-cta{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));
+    background:color-mix(in srgb,var(--ok) 7%,var(--surface))}
 </style>
 </head>
 <body>
@@ -4148,11 +4155,13 @@ function hrOurOutcomeBlock(){
   if (info.damaging){
     opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
     opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
-  } else {
+  } else if (!info.guaranteed_fail){
     opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
                      t.ours && t.ours.result === "" && !t.ours.prevented));
   }
-  if (info.can_miss)
+  // A move certain to do nothing renders as the bare slot, NOT as a miss -- so there is nothing
+  // to ask, and offering "missed" produced a token no candidate could match.
+  if (info.can_miss && !info.guaranteed_fail)
     opts.push(hrChip("Missed / failed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
   // Only what state allows: an unparalyzed Pokemon cannot be fully paralyzed, and it cannot
   // flinch unless the other side has a flinching move and moved first.
@@ -4163,7 +4172,14 @@ function hrOurOutcomeBlock(){
     opts.push(hrChip(o.label,
       `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`,
       !!t.ours?.snapped, "The move still went through")));
-  if (hrAutoAnswer(opts, () => { t.ours = {result: info.damaging ? "h" : ""}; })) return null;
+  if (hrAutoAnswer(opts, () => { t.ours = {result: info.damaging ? "h" : ""}; })){
+    // Worth stating: the player watched it fail, so silence here looks like a missed question.
+    return info.guaranteed_fail
+      ? `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(info.name)} had no
+           effect — ${esc(_huntSnap.target.name)} is already
+           ${esc(_huntSnap.target.status)}, and that needs no reporting.</div></div>`
+      : null;
+  }
   return hrChips(`What happened to ${info.name}?`, opts);
 }
 
@@ -4199,11 +4215,11 @@ function hrTargetBlocks(){
       opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
       opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
                         t.target.result === "!"));
-    } else {
+    } else if (!info.guaranteed_fail){
       opts2.push(hrChip("It worked", `hrSet('target',${base},result:''})`,
                         t.target.result === ""));
     }
-    if (info.can_miss)
+    if (info.can_miss && !info.guaranteed_fail)
       opts2.push(hrChip("Missed / failed", `hrSet('target',${base},result:'-'})`,
                         t.target.result === "-"));
     // Rain Dance cannot miss and deals no damage, so there is nothing to ask.
@@ -4352,6 +4368,13 @@ function huntRunObserve(){
             bench === undefined ? null : bench);
 }
 
+function huntForceSolving(){
+  const blockers = (_huntSnap.solver_blockers || []).join("; ");
+  if (!confirm(`Our model says: ${blockers}.\n\nStart solving anyway? Do this only if the game `
+             + `itself shows the target at 1 HP and paralyzed.`)) return;
+  huntRunDo("hunt_session_enter_solving", true);
+}
+
 function huntRunAbandon(){
   if (!confirm("End this run? The battle state is not saved.")) return;
   api("hunt_session_abandon", _huntRun).catch(() => {});
@@ -4359,19 +4382,39 @@ function huntRunAbandon(){
   huntRunStart(null, _huntRunHunt);   // back to targeting, ready to search again
 }
 
-function hrBar(hp, max){
-  const pct = max ? Math.max(0, Math.min(100, Math.round(100 * hp / max))) : 0;
-  return `<div class="hr-bar"><div style="width:${pct}%"></div></div>`;
+// Green up to the HP every candidate agrees on, blue for the band they disagree over, track for
+// what is certainly gone. Candidates predict different damage rolls and different crits, so a
+// single figure would be one guess presented as fact.
+function hrBar(range, max){
+  if (!max) return `<div class="hr-bar"></div>`;
+  const clamp = (v) => Math.max(0, Math.min(100, v));
+  const low = clamp(100 * range.low / max);
+  const high = clamp(100 * range.high / max);
+  return `<div class="hr-bar">
+    <div class="hr-bar-sure" style="width:${low}%"></div>
+    <div class="hr-bar-maybe" style="width:${high - low}%"></div></div>`;
+}
+
+function hrHpText(range, max){
+  return range.certain ? `${range.low} / ${max}`
+                       : `${range.low}–${range.high} / ${max}`;
 }
 
 function hrSide(label, m, danger){
-  const low = danger && m.hp !== null && m.hp <= danger;
+  const range = m.hp_range || {low: m.hp, high: m.hp, certain: true};
+  // Danger is judged on the WORST case the candidates allow, not the best.
+  const low = danger && range.low !== null && range.low <= danger;
+  const extras = [];
+  if (m.ability) extras.push(esc(m.ability));
+  if (m.held_item) extras.push(esc(m.held_item));
   return `<div class="hr-side">
     <div class="hr-side-top"><b>${esc(label)}</b> ${esc(m.name)}
       ${m.status && m.status !== "none" ? `<span class="chip">${esc(m.status)}</span>` : ""}</div>
-    <div class="${low ? "hr-danger" : ""}">${m.hp === null ? "?" : m.hp} / ${m.max_hp}
-      ${low ? " — in range of one hit" : ""}</div>
-    ${hrBar(m.hp || 0, m.max_hp)}
+    <div class="${low ? "hr-danger" : ""}">${hrHpText(range, m.max_hp)}
+      ${low ? " — in range of one hit" : ""}
+      ${range.certain ? "" : `<span class="muted hr-small">candidates disagree</span>`}</div>
+    ${hrBar(range, m.max_hp)}
+    ${extras.length ? `<div class="muted hr-small">${extras.join(" · ")}</div>` : ""}
     <div class="muted hr-small">${m.moves.map((mv, i) =>
       `${esc(mv)} ${m.pp[i]}`).join(" · ")}</div>
   </div>`;
@@ -4459,10 +4502,21 @@ function renderHuntRun(){
          Target is at 1 HP → start pinning</button>`
     : s.phase === 2
       ? (s.solver_blockers.length
-          ? `<div class="panel"><div class="section-label">Before solving</div>
-             <ul class="hr-small">${s.solver_blockers.map(b => `<li>${esc(b)}</li>`).join("")}</ul></div>`
-          : `<button class="btn primary"
-               onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button>`)
+          // Still offered. The blockers are what the SIMULATION believes, and it can be wrong in
+          // ways the player can see -- an unmodelled damage modifier leaves the simulated target
+          // above 1 HP when the real one is there. Confirm, do not refuse.
+          ? `<div class="panel"><div class="section-label">Ready to solve?</div>
+             <div class="hr-small muted">By our model, not yet:</div>
+             <ul class="hr-small">${s.solver_blockers.map(b =>
+                 `<li>${esc(b)}</li>`).join("")}</ul>
+             <div class="hr-small muted">If the game disagrees, trust the game — our damage model
+               can lag reality.</div>
+             <button class="btn" onclick="huntForceSolving()">Start solving anyway</button></div>`
+          : `<div class="panel ok-cta"><div class="section-label">Suicune is at 1 HP and
+               paralyzed</div>
+             <div class="hr-small muted">Everything the solver needs is in place.</div>
+             <button class="btn primary"
+               onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button></div>`)
       : "";
 
   const history = s.turns.length

@@ -29,7 +29,9 @@ from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
-from claytonlib.battle_compass.sim import HuntConfig, can_flinch, effective_speed
+from claytonlib.battle_compass.sim import (
+    HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed, will_fail,
+)
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler, Status
 from claytonlib.moves import CATEGORY_STATUS, resolve_move
@@ -54,7 +56,8 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
         _, high = damage_range(
             move,
             Attacker(level=target.level, attack=target.stats["atk"],
-                     special_attack=target.stats["spa"], types=target.types),
+                     special_attack=target.stats["spa"], types=target.types,
+                     ability=target.ability, held_item=target.held_item),
             Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
                      types=ours.types),
             critical=True)
@@ -105,28 +108,39 @@ def resolution_options(actor: Battler) -> list[dict]:
     return []
 
 
-def move_info(battler: Battler) -> list[dict]:
+def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
     A damaging move renders a hit marker (``h``/``!``); a status move that lands renders the bare
-    slot, so asking "did it crit?" about Mean Look would be nonsense. A move with accuracy 0
-    cannot miss, so offering "missed" would be wrong too. Deriving this here rather than in the
-    page keeps one source of truth for it.
+    slot, so asking "did it crit?" about Mean Look would be nonsense. Deriving this here rather
+    than in the page keeps one source of truth for it.
+
+    Two flags exist to stop the interview offering impossible outcomes:
+
+    * ``can_miss`` -- only when an accuracy roll can actually fail. Accuracy 0 skips the check and
+      accuracy 100 always passes it, so Spore, False Swipe and Sweet Scent cannot miss.
+    * ``guaranteed_fail`` -- the move is certain to do nothing given `defender`'s state, and
+      renders as the bare slot rather than as a miss. Spore against an already-paralyzed Suicune
+      is the case: statuses are mutually exclusive, so it rolls accuracy and then fails.
     """
     out: list[dict] = []
     for slot in range(len(battler.moves)):
         move = battler.move(slot)
         if move is None:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
-                        "can_miss": False, "has_secondary": False, "effect_chance": 0,
-                        "priority": 0, "pp": 0})
+                        "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
+                        "effect_chance": 0, "priority": 0, "pp": 0})
             continue
         out.append({
             "slot": slot,
             "name": move.name,
             "known": True,
             "damaging": move.category != CATEGORY_STATUS,
-            "can_miss": move.accuracy > 0,
+            # Stage-dependent: a 100%-accuracy move becomes missable under an accuracy drop or
+            # a raised evasion, so this is computed against the real defender, not assumed.
+            "can_miss": can_miss(move, accuracy_net_stage(battler, defender)
+                                 if defender is not None else 0),
+            "guaranteed_fail": defender is not None and will_fail(move, defender),
             # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
             "has_secondary": move.effect_chance > 0,
@@ -188,6 +202,8 @@ class HuntSession:
         self.transitions: list[tuple[int, Phase]] = []
         self.contradiction: dict | None = None
         self.solution: Solution | Unreachable | None = None
+        #: Why a forced Phase 2 could not produce a path, if it could not.
+        self.forced_reason: str | None = None
         self._session = self._fresh()
 
     # -- construction / replay ------------------------------------------
@@ -347,10 +363,27 @@ class HuntSession:
     def solver_blockers(self) -> list[str]:
         return self._session.solver_blockers()
 
-    def enter_solving(self) -> dict:
-        self._session.enter_solving()
+    def enter_solving(self, *, force: bool = False) -> dict:
+        """Move to Phase 2 and solve.
+
+        `force` proceeds despite `solver_blockers`. The blockers are what the SIMULATION believes,
+        and it can be wrong in ways the player can see and it cannot -- an unmodelled damage
+        modifier, say, leaves the simulated target above 1 HP when the real one is there. The
+        player is looking at the game; refusing outright would make the tool unusable precisely
+        when its model is the thing at fault. The caller is expected to confirm first.
+        """
+        if force:
+            self._session.phase = Phase.SOLVING
+        else:
+            self._session.enter_solving()
         self.transitions.append((len(self.turns), Phase.SOLVING))
-        self.solve()
+        try:
+            self.solve()
+        except ValueError as exc:
+            # Forced past an unpinned seed: there is no single state to solve from. Say so
+            # instead of failing the transition the player asked for.
+            self.solution = None
+            self.forced_reason = str(exc)
         return self.snapshot()
 
     def solve(self) -> Solution | Unreachable:
@@ -362,6 +395,18 @@ class HuntSession:
         return self.solution
 
     # -- output ---------------------------------------------------------
+
+    def hp_range(self, side: str) -> dict:
+        """(low, high) HP across every surviving candidate, for one side.
+
+        The snapshot used to publish whichever candidate came first out of the dict, which showed
+        one guess as though it were fact -- and candidates genuinely disagree, because they
+        predict different damage rolls and different critical hits. A range says what is actually
+        known: HP is at least `low`, at most `high`, and equal to one of them only once the seed
+        is pinned.
+        """
+        values = [getattr(state, side).hp for state in self._session.states.values()]
+        return {"low": min(values), "high": max(values), "certain": min(values) == max(values)}
 
     def snapshot(self, *, include_advice: bool = False) -> dict:
         """Everything the UI needs, as plain JSON-safe data.
@@ -414,18 +459,24 @@ class HuntSession:
                      "max_hp": state.ours.max_hp,
                      "status": state.ours.status.value,
                      "confused": state.ours.confused,
+                     "hp_range": self.hp_range("ours"),
+                     "ability": state.ours.ability,
+                     "held_item": state.ours.held_item,
                      "effective_speed": effective_speed(state.ours),
                      "pp": [state.ours.pp_left(i) for i in range(len(state.ours.moves))],
                      "moves": list(state.ours.moves),
-                     "move_info": move_info(state.ours)},
+                     "move_info": move_info(state.ours, state.target)},
             "target": {"name": state.target.name, "hp": state.target.hp,
                        "max_hp": state.target.max_hp,
                        "status": state.target.status.value,
                        "confused": state.target.confused,
+                       "hp_range": self.hp_range("target"),
+                       "ability": state.target.ability,
+                       "held_item": state.target.held_item,
                        "effective_speed": effective_speed(state.target),
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
-                       "move_info": move_info(state.target)},
+                       "move_info": move_info(state.target, state.ours)},
             "bench": [{"slot": i, "name": b.name,
                        "hp": b.hp, "max_hp": b.max_hp,
                        "status": b.status.value,
@@ -450,6 +501,7 @@ class HuntSession:
             "ambiguity": self._session.ambiguity(),
             "solver_blockers": self.solver_blockers(),
             "contradiction": self.contradiction,
+            "forced_reason": self.forced_reason,
             "solution": None,
         }
         if isinstance(self.solution, Solution):

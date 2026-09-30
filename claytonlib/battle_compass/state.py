@@ -77,13 +77,20 @@ class Battler:
     #: Current PP per slot, same order.
     pp: tuple[int, ...] = ()
     ability: str = ""
+    #: Held item, per hunt rather than per Pokemon -- a type-enhancing one raises base power.
+    held_item: str = ""
     #: None means "start at full"; 0 is a real, distinct value (fainted), so a sentinel is
     #: required here -- defaulting on ``hp == 0`` silently healed a fainted Pokemon to full.
     hp: int | None = None
     status: Status = Status.NONE
-    #: Def/SpD stages only; nothing in scope touches the others.
+    #: Def/SpD stages, which affect damage.
     def_stage: int = 0
     spdef_stage: int = 0
+    #: Accuracy and evasion stages, which decide whether a move CAN miss. Nothing in Suicune's
+    #: moveset touches either, but a 100%-accuracy move becomes missable the moment our accuracy
+    #: is dropped or its evasion is raised -- so they are tracked rather than assumed neutral.
+    accuracy_stage: int = 0
+    evasion_stage: int = 0
     #: Confusion is volatile, so it sits outside `status` -- it can coexist with paralysis, and
     #: it is the one status a Pokemon can keep while still attacking (sec 13.4). Nothing in
     #: Suicune's moveset inflicts it, so it stays False for the v1 fixture.

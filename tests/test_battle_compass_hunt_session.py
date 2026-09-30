@@ -11,7 +11,9 @@ from claytonlib.battle_compass.hunt_session import (
     resolution_options, worst_incoming_hit,
 )
 from claytonlib.battle_compass.identify import Phase
-from claytonlib.battle_compass.sim import HuntConfig, effective_speed
+from claytonlib.battle_compass.sim import (
+    HuntConfig, accuracy_net_stage, can_miss, effective_speed, will_fail,
+)
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.targets import moveset
@@ -772,6 +774,250 @@ class TestARejectedTurnIsRecoverable(unittest.TestCase):
         self.assertIsNone(
             session.observe(Action.MOVE_1,
                             [session.predict(Action.MOVE_1)[truth]])["contradiction"])
+
+
+class TestHpIsARangeNotAGuess(unittest.TestCase):
+    """The snapshot used to publish whichever candidate came first out of the dict, presenting one
+    prediction as fact. Candidates genuinely disagree: they predict different damage rolls and
+    different critical hits, so after one False Swipe 61 candidates can hold six different HPs."""
+
+    def _advanced(self, n=40):
+        """Every candidate moved one turn WITHOUT filtering -- what the bar has to depict."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        session = _session(n=n)
+        session._session.states = {
+            seed: simulate_turn(state, Action.MOVE_1, session.config)
+            for seed, state in session._session.states.items()}
+        return session
+
+    def test_a_fresh_session_is_certain(self):
+        rng = _session().hp_range("target")
+        self.assertTrue(rng["certain"])
+        self.assertEqual(rng["low"], rng["high"])
+
+    def test_candidates_disagree_after_a_hit(self):
+        rng = self._advanced().hp_range("target")
+        self.assertFalse(rng["certain"])
+        self.assertLess(rng["low"], rng["high"])
+
+    def test_the_range_spans_every_candidate(self):
+        session = self._advanced()
+        hps = [st.target.hp for st in session._session.states.values()]
+        rng = session.hp_range("target")
+        self.assertEqual(rng["low"], min(hps))
+        self.assertEqual(rng["high"], max(hps))
+
+    def test_our_own_hp_is_a_range_too(self):
+        rng = self._advanced().hp_range("ours")
+        self.assertLessEqual(rng["low"], rng["high"])
+
+    def test_both_sides_carry_it_on_the_snapshot(self):
+        snap = self._advanced().snapshot()
+        for side in ("ours", "target"):
+            self.assertIn("hp_range", snap[side])
+            self.assertIn("certain", snap[side]["hp_range"])
+
+    def test_it_collapses_once_the_seed_is_pinned(self):
+        self.assertTrue(_session(n=1).snapshot()["target"]["hp_range"]["certain"])
+
+    def test_the_snapshot_publishes_ability_and_item(self):
+        """So the bar can show what the damage figures were computed from."""
+        session = HuntSession(_window(4), _ours(ability="Technician", held_item="Silk Scarf"),
+                              _target(), HUNT)
+        snap = session.snapshot()
+        self.assertEqual(snap["ours"]["ability"], "Technician")
+        self.assertEqual(snap["ours"]["held_item"], "Silk Scarf")
+
+
+class TestAbilityAndItemReachTheSimulation(unittest.TestCase):
+    def test_technician_and_silk_scarf_increase_the_damage_dealt(self):
+        from claytonlib.battle_compass.sim import simulate_turn
+        plain = _ours()
+        buffed = _ours(ability="Technician", held_item="Silk Scarf")
+        target = _target()
+        weak = strong = None
+        for seed in range(SEED, SEED + 60):
+            a = simulate_turn(BattleState(ours=plain, target=target, rng=seed, phase=1),
+                              Action.MOVE_1, HUNT)
+            b = simulate_turn(BattleState(ours=buffed, target=target, rng=seed, phase=1),
+                              Action.MOVE_1, HUNT)
+            if a.target.hp < target.max_hp and b.target.hp < target.max_hp:
+                weak = target.max_hp - a.target.hp
+                strong = target.max_hp - b.target.hp
+                break
+        self.assertIsNotNone(weak, "no damaging turn in the sample")
+        self.assertGreater(strong, weak)
+
+    def test_the_danger_floor_sees_the_targets_ability_and_item(self):
+        """It is computed from the TARGET as attacker, so its modifiers matter too."""
+        bare = worst_incoming_hit(_ours(), _target())
+        boosted = worst_incoming_hit(_ours(), _target(held_item="Mystic Water"))
+        self.assertGreaterEqual(boosted, bare)
+
+
+class TestPhaseTwoCanBeForced(unittest.TestCase):
+    """The blockers are what the SIMULATION believes. It can be wrong in ways the player can see
+    -- an unmodelled damage modifier leaves the simulated target above 1 HP when the real one is
+    there -- so refusing outright would lock the run out exactly when the model is at fault."""
+
+    def test_the_normal_path_still_refuses(self):
+        session = _session()
+        session.enter_pinning()
+        with self.assertRaises(ValueError):
+            session.enter_solving()
+
+    def test_forcing_enters_phase_two_anyway(self):
+        session = _session()
+        session.enter_pinning()
+        snap = session.enter_solving(force=True)
+        self.assertEqual(snap["phase"], int(Phase.SOLVING))
+
+    def test_forcing_past_an_unpinned_seed_explains_itself(self):
+        """There is no single state to solve from, so say so rather than failing the transition."""
+        session = _session()
+        session.enter_pinning()
+        snap = session.enter_solving(force=True)
+        self.assertIsNone(snap["solution"])
+        self.assertIn("pinned", snap["forced_reason"])
+
+    def test_forcing_a_pinned_ready_target_actually_solves(self):
+        session = _session(n=1, hp=1, status=Status.PARALYSIS)
+        session.enter_pinning()
+        snap = session.enter_solving(force=True)
+        self.assertIsNone(snap["forced_reason"])
+        self.assertIsNotNone(snap["solution"])
+
+    def test_a_forced_transition_survives_undo(self):
+        session = _session(n=1, hp=1, status=Status.PARALYSIS)
+        session.enter_pinning()
+        session.enter_solving(force=True)
+        self.assertEqual(session.undo()["phase"], int(Phase.SOLVING))
+
+
+class TestNoImpossibleMoveOutcomes(unittest.TestCase):
+    """Spore against an already-paralyzed Suicune is certain to fail, and the simulator renders
+    that as the BARE slot token. The interview offered "Missed / failed", the player picked it
+    truthfully, and the resulting M4- matched no candidate.
+
+    The same audit found accuracy 100 being treated as missable: `roll % 100 < 100` can never be
+    false, so Spore, False Swipe and Sweet Scent cannot miss either."""
+
+    def test_accuracy_one_hundred_cannot_miss(self):
+        for name in ("Spore", "False Swipe", "Sweet Scent"):
+            move = resolve_move(name)
+            self.assertEqual(move.accuracy, 100, name)
+            self.assertFalse(can_miss(move), name)
+
+    def test_accuracy_zero_cannot_miss_either(self):
+        """It bypasses the check entirely."""
+        move = resolve_move("Mean Look")
+        self.assertEqual(move.accuracy, 0)
+        self.assertFalse(can_miss(move))
+
+    def test_a_genuinely_missable_move_still_is(self):
+        self.assertTrue(can_miss(resolve_move("Hypnosis")))   # 60 accuracy
+
+    def test_an_accuracy_drop_makes_a_hundred_percent_move_missable(self):
+        """can_miss is a property of the SITUATION, not the move. Reporting Spore as unmissable
+        under an accuracy drop would suppress a legitimate "missed"."""
+        spore = resolve_move("Spore")
+        self.assertFalse(can_miss(spore, 0))
+        self.assertTrue(can_miss(spore, -1))
+        self.assertTrue(can_miss(spore, -6))
+
+    def test_a_raised_evasion_does_the_same(self):
+        self.assertTrue(can_miss(resolve_move("Spore"), -2))
+
+    def test_a_raised_accuracy_keeps_it_unmissable(self):
+        self.assertFalse(can_miss(resolve_move("Spore"), 3))
+
+    def test_the_stage_is_the_net_of_accuracy_and_evasion(self):
+        ours = _ours(accuracy_stage=-1)
+        target = _target(evasion_stage=2)
+        self.assertEqual(accuracy_net_stage(ours, target), -3)
+        self.assertEqual(accuracy_net_stage(_ours(), _target()), 0)
+
+    def test_the_net_stage_is_clamped(self):
+        self.assertEqual(accuracy_net_stage(_ours(accuracy_stage=6),
+                                            _target(evasion_stage=-6)), 6)
+        self.assertEqual(accuracy_net_stage(_ours(accuracy_stage=-6),
+                                            _target(evasion_stage=6)), -6)
+
+    def test_move_info_computes_it_against_the_real_defender(self):
+        neutral = {m["name"]: m for m in move_info(_ours(), _target())}
+        evasive = {m["name"]: m for m in move_info(_ours(), _target(evasion_stage=2))}
+        self.assertFalse(neutral["Spore"]["can_miss"])
+        self.assertTrue(evasive["Spore"]["can_miss"])
+
+    def test_the_simulator_uses_the_same_net_stage(self):
+        """Or the interview would offer outcomes the simulator cannot produce, and vice versa."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        target = _target(evasion_stage=6)
+        missed = False
+        for seed in range(SEED, SEED + 400):
+            nxt = simulate_turn(BattleState(ours=_ours(), target=target, rng=seed, phase=1),
+                                Action.MOVE_4, HUNT)
+            if "-" in tok.render_turn(tok.normalise(nxt.log[-1])).split("E")[0]:
+                missed = True
+                break
+        self.assertTrue(missed, "a heavily evasive target should sometimes dodge Spore")
+
+    def test_a_status_move_fails_against_an_already_statused_target(self):
+        spore = resolve_move("Spore")
+        self.assertTrue(will_fail(spore, _target(status=Status.PARALYSIS)))
+        self.assertTrue(will_fail(spore, _target(status=Status.SLEEP)))
+        self.assertFalse(will_fail(spore, _target(status=Status.NONE)))
+
+    def test_a_damaging_move_never_guaranteed_fails(self):
+        self.assertFalse(will_fail(resolve_move("False Swipe"),
+                                   _target(status=Status.PARALYSIS)))
+
+    def test_move_info_reports_it_against_the_actual_defender(self):
+        against_healthy = {m["name"]: m for m in move_info(_ours(), _target())}
+        against_para = {m["name"]: m
+                        for m in move_info(_ours(), _target(status=Status.PARALYSIS))}
+        self.assertFalse(against_healthy["Spore"]["guaranteed_fail"])
+        self.assertTrue(against_para["Spore"]["guaranteed_fail"])
+
+    def test_the_simulator_renders_it_bare_and_never_as_a_miss(self):
+        """The invariant the interview has to match."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        target = _target(status=Status.PARALYSIS)
+        for seed in range(SEED, SEED + 250):
+            nxt = simulate_turn(BattleState(ours=_ours(), target=target, rng=seed, phase=1),
+                                Action.MOVE_4, HUNT)
+            ours = tok.render_turn(tok.normalise(nxt.log[-1])).split("E")[0]
+            self.assertEqual(ours, "M4", ours)
+
+    def test_the_offered_outcomes_match_what_the_simulator_emits(self):
+        """Offer a superset and the player can report something impossible; offer a subset and a
+        real turn becomes unreportable."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        for status in (Status.NONE, Status.PARALYSIS):
+            target = _target(status=status)
+            info = {m["slot"]: m for m in move_info(_ours(), target)}
+            for slot, action in ((0, Action.MOVE_1), (3, Action.MOVE_4)):
+                entry = info[slot]
+                emitted = set()
+                for seed in range(SEED, SEED + 200):
+                    nxt = simulate_turn(
+                        BattleState(ours=_ours(), target=target, rng=seed, phase=1),
+                        action, HUNT)
+                    ours = tok.render_turn(tok.normalise(nxt.log[-1])).split("E")[0]
+                    emitted.add(ours[2:] or "")
+                offered = set()
+                if entry["damaging"]:
+                    offered |= {"h", "!"}
+                else:
+                    offered |= {""}
+                if entry["can_miss"] and not entry["guaranteed_fail"]:
+                    offered |= {"-"}
+                self.assertEqual(emitted - offered, set(),
+                                 f"{entry['name']} vs {status.value}: simulator can emit "
+                                 f"{emitted - offered} which the interview does not offer")
+                self.assertEqual(offered - emitted - {"!"}, set(),
+                                 f"{entry['name']} vs {status.value}: interview offers "
+                                 f"{offered - emitted} which cannot happen")
 
 
 if __name__ == "__main__":

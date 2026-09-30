@@ -1,9 +1,12 @@
 """Incoming damage, checked against notes/battle_compass.md's fixture tables."""
+import math
 import unittest
 
 from claytonlib.battle.damage import (
     DAMAGE_ROLLS, Attacker, Defender, damage, damage_range, damage_spread,
     rolls_for_damage, stage_multiplier, unsupported_reason,
+    TECHNICIAN_POWER_CAP, TYPE_ITEM_MODIFIER_PERCENT, effective_power,
+    unsupported_attacker_reason,
 )
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.moves import resolve_move
@@ -149,6 +152,106 @@ class TestScopeGuards(unittest.TestCase):
 
     def test_rolls_are_the_sixteen_gen4_values(self):
         self.assertEqual(DAMAGE_ROLLS, tuple(range(85, 101)))
+
+
+class TestAbilityAndItemPowerModifiers(unittest.TestCase):
+    """Order and arithmetic transcribed from src/battle/overlay_12_0224E4FC.c: Technician as
+    `power * 15 / 10` when power <= 60, THEN a matching type-enhancing item as
+    `power * (100 + mod) / 100`, both integer division.
+
+    Neither was modelled, so Smeargle's False Swipe was computed at base power 40 instead of 72 --
+    under-damaging by roughly 1.7x, which is what made the run's target HP bar wrong.
+    """
+
+    def _smeargle(self, ability="", item=""):
+        return Attacker(level=60, attack=65, special_attack=60, types=("Normal",),
+                        ability=ability, held_item=item)
+
+    def _suicune(self):
+        stats = derive_species_stats("suicune", 40, "Bold")
+        return Defender(defence=stats["def"], special_defence=stats["spd"], types=("Water",))
+
+    def test_technician_raises_a_weak_move_by_half(self):
+        move = resolve_move("False Swipe")
+        self.assertEqual(move.power, 40)
+        self.assertEqual(effective_power(move, self._smeargle("Technician")), 60)
+
+    def test_technician_stops_above_sixty(self):
+        self.assertEqual(TECHNICIAN_POWER_CAP, 60)
+        strong = resolve_move("Surf")          # power 90
+        self.assertEqual(effective_power(strong, self._smeargle("Technician")), strong.power)
+
+    def test_technician_applies_at_exactly_sixty(self):
+        """The ROM's condition is `movePower <= 60`, inclusive."""
+        move = resolve_move("Aurora Beam")     # power 65 -- just above
+        self.assertEqual(effective_power(move, self._smeargle("Technician")), 65)
+
+    def test_a_type_item_raises_a_matching_move(self):
+        move = resolve_move("False Swipe")
+        self.assertEqual(effective_power(move, self._smeargle(item="Silk Scarf")), 48)
+
+    def test_a_type_item_ignores_a_mismatched_move(self):
+        water = resolve_move("Surf")
+        self.assertEqual(effective_power(water, self._smeargle(item="Silk Scarf")), water.power)
+
+    def test_technician_applies_before_the_item(self):
+        """Not cosmetic: the ROM orders them this way and both floor."""
+        move = resolve_move("False Swipe")
+        self.assertEqual(effective_power(move, self._smeargle("Technician", "Silk Scarf")), 72)
+        # 40 -> x15/10 = 60 -> x120/100 = 72
+        self.assertEqual(40 * 15 // 10 * (100 + TYPE_ITEM_MODIFIER_PERCENT) // 100, 72)
+
+    def test_item_names_are_matched_case_and_space_insensitively(self):
+        move = resolve_move("False Swipe")
+        for spelling in ("Silk Scarf", "silk scarf", "  SILK SCARF  "):
+            self.assertEqual(effective_power(move, self._smeargle(item=spelling)), 48)
+
+    def test_the_damage_actually_changes(self):
+        move = resolve_move("False Swipe")
+        bare = damage_range(move, self._smeargle(), self._suicune())
+        full = damage_range(move, self._smeargle("Technician", "Silk Scarf"), self._suicune())
+        self.assertEqual(bare, (16, 19))
+        self.assertEqual(full, (28, 33))
+
+    def test_an_unmodelled_ability_is_reported_not_ignored(self):
+        """Same discipline as unsupported_reason: for INCOMING damage an unnoticed multiplier
+        eliminates the true seed, so it must be refused rather than silently skipped."""
+        self.assertIsNone(unsupported_attacker_reason(self._smeargle("Technician")))
+        self.assertIsNone(unsupported_attacker_reason(self._smeargle("Pressure")))
+        for ability in ("Huge Power", "Guts", "Blaze", "Sniper", "Adaptability"):
+            self.assertIsNotNone(unsupported_attacker_reason(self._smeargle(ability)),
+                                 f"{ability} changes damage and must be flagged")
+
+    def test_no_ability_and_no_item_is_unchanged(self):
+        move = resolve_move("False Swipe")
+        self.assertEqual(effective_power(move, self._smeargle()), move.power)
+
+
+class TestTheLevelTermIsIntegerDivision(unittest.TestCase):
+    """The ROM computes `((level * 2 / 5) + 2)` in C -- integer division. A float form differs at
+    any level where 2*level is not a multiple of 5. Level 40 and 60 are exact, which is why the
+    section 11 fixture never revealed it."""
+
+    def test_it_matches_the_rom_at_every_level(self):
+        move = resolve_move("Gust")
+        defender = Defender(defence=80, special_defence=80, types=("Normal",))
+        for level in range(1, 101):
+            attacker = Attacker(level=level, attack=100, special_attack=100, types=("Flying",))
+            rom_term = (level * 2) // 5 + 2
+            expected = math.floor(math.floor(math.floor(
+                rom_term * move.power * 100 / 80) / 50)) + 2
+            expected = math.floor(expected * 1.5)          # STAB
+            expected = math.floor(expected * 1.0)          # Flying vs Normal
+            self.assertEqual(damage(move, attacker, defender, roll=100), max(1, expected),
+                             f"level {level}")
+
+    def test_the_two_forms_really_do_diverge(self):
+        """So the test above is not vacuous."""
+        differing = [L for L in range(1, 101) if (L * 2) // 5 + 2 != 2 * L / 5 + 2]
+        self.assertTrue(differing)
+        self.assertIn(63, differing)
+        self.assertNotIn(60, differing)
+        self.assertNotIn(40, differing)
 
 
 if __name__ == "__main__":

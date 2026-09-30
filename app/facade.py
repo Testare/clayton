@@ -438,7 +438,7 @@ class Facade:
         if not hunt.party:
             raise ValueError("this hunt has no party configured")
 
-        def battler_for(pokemon):
+        def battler_for(pokemon, held_item=""):
             moves = tuple(pokemon.moveset)
             return Battler(
                 name=pokemon.name, level=pokemon.level or 1,
@@ -447,13 +447,16 @@ class Facade:
                 stats=dict(pokemon.stats), moves=moves,
                 pp=tuple(_configured_pp(pokemon, i, name)
                          for i, name in enumerate(moves)),
-                ability=pokemon.ability or "")
+                # Both feed the damage model: Technician raises base power, and a type-enhancing
+                # held item raises it again. Held items are per HUNT, so they come off the slot.
+                ability=pokemon.ability or "", held_item=held_item)
 
-        members = [profile.get_party_pokemon(slot.pokemon_id) for slot in hunt.party]
-        if members[0] is None:
+        members = [(profile.get_party_pokemon(slot.pokemon_id), slot.held_item)
+                   for slot in hunt.party]
+        if members[0][0] is None:
             raise ValueError("the hunt's lead Pokemon is no longer on the profile")
-        ours = battler_for(members[0])
-        bench = tuple(battler_for(m) for m in members[1:] if m is not None)
+        ours = battler_for(*members[0])
+        bench = tuple(battler_for(m, item) for m, item in members[1:] if m is not None)
 
         from claytonlib.battle_compass.targets import moveset
         from claytonlib.moves import resolve_move
@@ -661,8 +664,13 @@ class Facade:
     def hunt_session_enter_pinning(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).enter_pinning()
 
-    def hunt_session_enter_solving(self, session_id: str) -> dict:
-        return self._hunt_sessions.get(session_id).enter_solving()
+    def hunt_session_enter_solving(self, session_id: str, force: bool = False) -> dict:
+        """Start Phase 2. `force` proceeds despite the blockers the simulation reports.
+
+        Those blockers are what the model believes, and the player can see things it cannot -- so
+        this stays available rather than locking the run out when the model is the thing at fault.
+        """
+        return self._hunt_sessions.get(session_id).enter_solving(force=bool(force))
 
     def hunt_session_predict(self, session_id: str, action: str,
                              item_code: str | None = None,

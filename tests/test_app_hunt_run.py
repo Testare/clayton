@@ -629,5 +629,134 @@ class TestSwitchHpThroughTheFacade(unittest.TestCase):
                 self.assertNotIn("HP", rendered, rendered)
 
 
+class TestTheHpBarShowsARange(unittest.TestCase):
+    """Green to the HP every candidate agrees on, blue for the band they disagree over, track for
+    what is certainly gone."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_bar_takes_a_range_rather_than_a_single_value(self):
+        body = self.html[self.html.index("function hrBar("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("range.low", body)
+        self.assertIn("range.high", body)
+
+    def test_it_renders_two_sections(self):
+        self.assertIn("hr-bar-sure", self.html)
+        self.assertIn("hr-bar-maybe", self.html)
+
+    def test_both_sections_are_styled(self):
+        css = self.html.split("</style>")[0]
+        self.assertIn(".hr-bar-sure", css)
+        self.assertIn(".hr-bar-maybe", css)
+        self.assertIn(".hr-bar{display:flex}", css.replace(" ", ""))
+
+    def test_an_uncertain_range_is_labelled(self):
+        self.assertIn("candidates disagree", self.html)
+
+    def test_danger_is_judged_on_the_worst_case(self):
+        """Using the best case would under-warn exactly when it matters."""
+        body = self.html[self.html.index("function hrSide("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("range.low <= danger", body)
+
+
+class TestPhaseTwoIsEmphasisedAndForceable(unittest.TestCase):
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_ready_target_gets_an_emphasised_call_to_action(self):
+        self.assertIn("ok-cta", self.html)
+        self.assertIn("at 1 HP and", self.html)
+        self.assertIn(".ok-cta", self.html.split("</style>")[0])
+
+    def test_solving_stays_available_when_the_model_objects(self):
+        self.assertIn("Start solving anyway", self.html)
+        self.assertTrue("function huntForceSolving(" in self.html)
+
+    def test_it_confirms_first(self):
+        body = self.html[self.html.index("function huntForceSolving("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("confirm(", body)
+        self.assertIn("hunt_session_enter_solving", body)
+        self.assertIn("true", body)
+
+    def test_the_facade_accepts_the_force_flag(self):
+        import inspect
+        self.assertIn("force", inspect.signature(Facade.hunt_session_enter_solving).parameters)
+
+    def test_forcing_works_through_the_facade(self):
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        sid = started["session_id"]
+        facade.hunt_session_enter_pinning(sid)
+        snap = facade.hunt_session_enter_solving(sid, True)
+        self.assertEqual(snap["phase"], 3)
+
+    def test_not_forcing_still_refuses(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        facade.hunt_session_enter_pinning(sid)
+        with self.assertRaises(ValueError):
+            facade.hunt_session_enter_solving(sid)
+
+
+class TestHeldItemsReachTheSimulation(unittest.TestCase):
+    """Held items live on the HuntSlot, not the party Pokemon, because they change per hunt."""
+
+    def test_the_slots_item_is_used(self):
+        facade = Facade(FileStore(tempfile.mkdtemp()))
+        profile_id = facade.create_profile({"name": "T"})["id"]
+        lead = facade.add_party_pokemon(profile_id, LEAD)["pokemon_id"]
+        hunt = facade.create_hunt({"name": "H", "profile_id": profile_id})
+        hunt.update({"target": TARGET,
+                     "party": [{"pokemon_id": lead, "held_item": "Silk Scarf"}],
+                     "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
+                     "initial_time": "2026-01-01T12:00:00", "vector_ms": 120000,
+                     "seconds_window": 0, "delay_window": 10})
+        facade.save_hunt(hunt)
+        snap = facade.hunt_session_start(hunt["id"])["snapshot"]
+        self.assertEqual(snap["ours"]["held_item"], "Silk Scarf")
+        self.assertEqual(snap["ours"]["ability"], "Technician")
+
+
+class TestGuaranteedFailureIsNotAsked(unittest.TestCase):
+    """Spore against an already-paralyzed Suicune renders as the bare slot token, so there is
+    nothing to ask -- and "Missed / failed" produced a token no candidate could match."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_guaranteed_failure_offers_no_outcome(self):
+        self.assertIn("!info.guaranteed_fail", self.html)
+
+    def test_it_is_checked_on_both_sides(self):
+        self.assertGreaterEqual(self.html.count("guaranteed_fail"), 4)
+
+    def test_missed_is_gated_on_both_flags(self):
+        self.assertIn("info.can_miss && !info.guaranteed_fail", self.html)
+
+    def test_the_skipped_step_explains_itself(self):
+        """Silence would read as a question the page forgot to ask."""
+        self.assertIn("had no", self.html)
+        self.assertIn("needs no reporting", self.html)
+
+    def test_the_facade_reports_the_flags(self):
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        for entry in snap["ours"]["move_info"]:
+            self.assertIn("guaranteed_fail", entry)
+            self.assertIn("can_miss", entry)
+
+    def test_a_hundred_accuracy_move_is_not_offered_a_miss(self):
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        by_name = {m["name"]: m for m in snap["ours"]["move_info"] if m["known"]}
+        for name in ("False Swipe", "Spore", "Sweet Scent"):
+            if name in by_name:
+                self.assertFalse(by_name[name]["can_miss"], name)
+
+
 if __name__ == "__main__":
     unittest.main()

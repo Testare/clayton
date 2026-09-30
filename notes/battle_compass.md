@@ -1478,6 +1478,71 @@ Design is the user's; this section records it with the fixes noted below. It fol
 `metronome_compass`: a string of tokens, **spaces separating turns**, tokens concatenated with
 no delimiter inside a turn.
 
+### 12.10 The interview must offer exactly what the simulator can emit [implementation]
+
+Stated as an invariant because three separate bugs were the same violation of it, and each looked
+like a wrong model constant rather than a UI fault:
+
+* Every prevention marker was offered regardless of state, so an unparalyzed Magneton could be
+  reported as fully paralyzed.
+* `M`-then-`E` was emitted unconditionally, so a turn a faster target opened rendered backwards.
+* Spore against an already-paralyzed Suicune renders as the **bare** slot token — statuses are
+  mutually exclusive, so it rolls accuracy and then fails — but "Missed / failed" was offered,
+  and a truthful report produced `M4-`, matching nothing.
+
+Offer a **superset** and the player can report something impossible; offer a **subset** and a real
+turn becomes unreportable. Both are tested directly, by comparing the offered outcome set against
+what the simulator emits over a few hundred seeds.
+
+A related trap: `can_miss` is a property of the **situation**, not the move. Accuracy 0 bypasses
+the check and accuracy 100 always passes it, so Spore and False Swipe cannot miss — *until* our
+accuracy is dropped or the target's evasion is raised. The check uses the net of the attacker's
+accuracy stage and the defender's evasion stage, and `accuracy_net_stage` exists so the simulator
+and the interview cannot disagree about it.
+
+### 12.11 Abilities and held items are part of the damage model [implementation]
+
+`damage.py` originally declared itself one-directional — "damage we deal is never modelled" — but
+`sim.execute_move` used it for both actors, so the target's HP was computed by a model that did
+not claim to support the direction it was being used in. Smeargle's False Swipe came out at base
+power 40 instead of 72, under-damaging by ~1.7×, which showed up as a wrong HP bar and would have
+blocked Phase 2: `solver_blockers` gates on the *simulated* target HP reaching 1.
+
+Order and arithmetic are transcribed from the ROM (`src/battle/overlay_12_0224E4FC.c`):
+
+```
+Technician:           power = power * 15 / 10     when power <= 60
+type-enhancing item:  power = power * (100 + mod) / 100
+```
+
+both integer division, **Technician first**. For a Technician user holding Silk Scarf, False Swipe
+is `40 -> 60 -> 72`. The ×1.2 magnitude is the documented Gen 4 value; unlike the ordering it was
+not read out of the source, because item modifiers live in a binary NARC.
+
+Reading that code also turned up a latent bug of its own: the ROM's level term is `((level * 2 /
+5) + 2)` in **integer** division, and a float form diverges at any level where `2*level` is not a
+multiple of 5 (63, 67, 71, 78…). Levels 40 and 60 are exact, which is why the §11 fixture never
+showed it.
+
+`unsupported_attacker_reason` extends the existing discipline to abilities: an ability that
+changes damage and is not implemented is *reported*, never assumed inert. For incoming damage an
+unnoticed multiplier eliminates the true seed.
+
+### 12.12 Uncertainty is displayed, not collapsed [implementation]
+
+The run page showed HP from whichever candidate came first out of the dict — one prediction
+presented as fact, when candidates genuinely disagree about damage rolls and critical hits (after
+one False Swipe, 61 candidates held six different HPs). Both HP bars now show a range: solid to
+the value every candidate agrees on, a lighter band across the span they disagree over, and empty
+for what is certainly gone. Danger is judged on the **low** end, since the best case would
+under-warn exactly when it matters.
+
+The same principle applies to the Phase 2 transition. When the preconditions hold the button is
+emphasised; when they do not it stays **enabled** behind a confirmation, because `solver_blockers`
+reports what the *simulation* believes and the player can see things it cannot — an unmodelled
+damage modifier leaves the simulated target above 1 HP when the real one is at 1. Refusing outright
+would lock the run out precisely when the model is the thing at fault.
+
 ### 12.9 Reporting is an interview, not a token string [implementation]
 
 The grammar of §13 is how the tool *stores* and *compares* turns. It is not how a turn should be
