@@ -4,12 +4,13 @@ The roll accounting is checked against claytonlib.battle.turn's emulator-verifie
 drift in either shows up here rather than as a desynchronised run.
 """
 import unittest
+from dataclasses import replace
 
 from claytonlib.battle import turn as turn_costs
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass.sim import (
-    HuntConfig, advance, execute_move, move_roll_cost, select_target_move, simulate,
-    simulate_turn, throw_ball,
+    HuntConfig, advance, effective_speed, execute_move, move_roll_cost, select_target_move,
+    simulate, simulate_turn, throw_ball,
 )
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.battle_compass.tokens import normalise, render_path, turn_requires_hp
@@ -230,6 +231,36 @@ class TestCandidateDivergence(unittest.TestCase):
         a = render_path(simulate(_state(), [Action.MOVE_1] * 5, CONFIG).log)
         b = render_path(simulate(_state(), [Action.MOVE_1] * 5, CONFIG).log)
         self.assertEqual(a, b)
+
+
+class TestTurnOrder(unittest.TestCase):
+    """Paralysis -- not Lagging Tail -- is the sanctioned tie-avoidance (sec 4.2). Lagging Tail
+    would guarantee we move last, which is exactly wrong."""
+
+    def test_paralysis_quarters_the_targets_speed(self):
+        state = _state()
+        self.assertEqual(effective_speed(state.target), state.target.stats["spe"] // 4)
+
+    def test_an_unparalyzed_battler_keeps_its_speed(self):
+        state = _state()
+        self.assertEqual(effective_speed(state.ours), state.ours.stats["spe"])
+
+    def test_paralysis_is_what_opens_the_speed_gap(self):
+        """Smeargle outspeeds Suicune anyway, but the factor is what makes the gap wide enough
+        that no party member can land in a tie."""
+        state = _state()
+        healthy = replace(state.target, status=Status.NONE)
+        self.assertLess(effective_speed(state.target), effective_speed(healthy))
+
+    def test_we_move_first_against_the_paralyzed_target(self):
+        state = _state()
+        self.assertGreater(effective_speed(state.ours), effective_speed(state.target))
+
+    def test_a_higher_priority_bracket_beats_speed(self):
+        """Priority is consulted before Speed, so a slower mon with a priority move still leads.
+        No fixture move uses it, which is why an ordering bug here would have gone unseen."""
+        self.assertEqual(lookup("False Swipe").priority, 0)
+        self.assertEqual(lookup("Protect").priority, 3)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import Attacker, Defender, damage, unsupported_reason
+from claytonlib.battle.readiness import PARALYSIS_SPEED_FACTOR
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
@@ -230,6 +231,35 @@ class HuntConfig:
         return fast_ball_catch_rate(self.target_catch_rate, 100 if self.fast_ball_matched else 0)
 
 
+def effective_speed(battler: Battler) -> int:
+    """Speed after paralysis. Gen 4 quarters it, which is the whole reason paralysis is the
+    sanctioned tie-avoidance: it takes Suicune to ~21, so anything outspeeds it and no speed-tie
+    roll occurs anywhere in the search (sec 4.2).
+
+    Lagging Tail would be actively harmful here -- it guarantees we move *last*.
+    """
+    speed = battler.stats["spe"]
+    if battler.status is Status.PARALYSIS:
+        speed = int(speed * PARALYSIS_SPEED_FACTOR)
+    return speed
+
+
+def _we_move_first(state: BattleState, action: Action, target_slot: int | None) -> bool:
+    """Turn order: the higher priority bracket, then the higher effective Speed.
+
+    A tie would cost an extra roll (notes/ss_rng/speed.md), so the solver's contract is that one
+    cannot arise: paralysis guarantees a Speed gap. `speed_warnings` in ``battle.readiness`` is
+    what checks that before a hunt starts.
+    """
+    ours = state.ours.move(action.move_slot) if action.move_slot is not None else None
+    theirs = state.target.move(target_slot) if target_slot is not None else None
+    our_priority = ours.priority if ours is not None else 0
+    their_priority = theirs.priority if theirs is not None else 0
+    if our_priority != their_priority:
+        return our_priority > their_priority
+    return effective_speed(state.ours) > effective_speed(state.target)
+
+
 def simulate_turn(state: BattleState, action: Action, config: HuntConfig) -> BattleState:
     """One turn, advancing `state` and appending its rendered tokens to ``state.log``.
 
@@ -257,9 +287,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig) -> Bat
     new.rng_offset += turn_costs.BEFORE_TURN_ADVANCES
 
     # Bag actions resolve before any move, so we always act first when using one. Otherwise
-    # paralysis has quartered the target's Speed and we outspeed it (sec 4.2), which is what
-    # removes speed ties from the search entirely.
-    ours_first = action.is_bag_action or new.ours.stats["spe"] > new.target.stats["spe"]
+    # priority brackets first, then effective Speed -- paralysis quarters the target's, which is
+    # what removes speed ties from the search entirely (sec 4.2).
+    ours_first = action.is_bag_action or _we_move_first(new, action, target_slot)
 
     def act_ours() -> bool:
         nonlocal rng
