@@ -14,7 +14,8 @@
       "Steel",
       "Dragon"
     ],
-    "weight_hg": 6830
+    "weight_hg": 6830,
+    "catch_rate": 3
   },
   "entei": {
     "name": "entei",
@@ -30,7 +31,8 @@
     "types": [
       "Fire"
     ],
-    "weight_hg": 1980
+    "weight_hg": 1980,
+    "catch_rate": 3
   },
   "giratina-altered": {
     "name": "giratina-altered",
@@ -47,7 +49,8 @@
       "Ghost",
       "Dragon"
     ],
-    "weight_hg": 7500
+    "weight_hg": 7500,
+    "catch_rate": 3
   },
   "groudon": {
     "name": "groudon",
@@ -63,7 +66,8 @@
     "types": [
       "Ground"
     ],
-    "weight_hg": 9500
+    "weight_hg": 9500,
+    "catch_rate": 3
   },
   "ho-oh": {
     "name": "ho-oh",
@@ -80,7 +84,8 @@
       "Fire",
       "Flying"
     ],
-    "weight_hg": 1990
+    "weight_hg": 1990,
+    "catch_rate": 3
   },
   "kyogre": {
     "name": "kyogre",
@@ -96,7 +101,8 @@
     "types": [
       "Water"
     ],
-    "weight_hg": 3520
+    "weight_hg": 3520,
+    "catch_rate": 3
   },
   "latias": {
     "name": "latias",
@@ -113,7 +119,8 @@
       "Dragon",
       "Psychic"
     ],
-    "weight_hg": 400
+    "weight_hg": 400,
+    "catch_rate": 3
   },
   "latios": {
     "name": "latios",
@@ -130,7 +137,8 @@
       "Dragon",
       "Psychic"
     ],
-    "weight_hg": 600
+    "weight_hg": 600,
+    "catch_rate": 3
   },
   "lugia": {
     "name": "lugia",
@@ -147,7 +155,8 @@
       "Psychic",
       "Flying"
     ],
-    "weight_hg": 2160
+    "weight_hg": 2160,
+    "catch_rate": 3
   },
   "magnemite": {
     "name": "magnemite",
@@ -164,7 +173,8 @@
       "Electric",
       "Steel"
     ],
-    "weight_hg": 60
+    "weight_hg": 60,
+    "catch_rate": 190
   },
   "magneton": {
     "name": "magneton",
@@ -181,7 +191,8 @@
       "Electric",
       "Steel"
     ],
-    "weight_hg": 600
+    "weight_hg": 600,
+    "catch_rate": 60
   },
   "mamoswine": {
     "name": "mamoswine",
@@ -198,7 +209,8 @@
       "Ice",
       "Ground"
     ],
-    "weight_hg": 2910
+    "weight_hg": 2910,
+    "catch_rate": 50
   },
   "mewtwo": {
     "name": "mewtwo",
@@ -214,7 +226,8 @@
     "types": [
       "Psychic"
     ],
-    "weight_hg": 1220
+    "weight_hg": 1220,
+    "catch_rate": 3
   },
   "palkia": {
     "name": "palkia",
@@ -231,7 +244,8 @@
       "Water",
       "Dragon"
     ],
-    "weight_hg": 3360
+    "weight_hg": 3360,
+    "catch_rate": 3
   },
   "raikou": {
     "name": "raikou",
@@ -247,7 +261,8 @@
     "types": [
       "Electric"
     ],
-    "weight_hg": 1780
+    "weight_hg": 1780,
+    "catch_rate": 3
   },
   "rayquaza": {
     "name": "rayquaza",
@@ -264,7 +279,8 @@
       "Dragon",
       "Flying"
     ],
-    "weight_hg": 2065
+    "weight_hg": 2065,
+    "catch_rate": 45
   },
   "smeargle": {
     "name": "smeargle",
@@ -280,7 +296,8 @@
     "types": [
       "Normal"
     ],
-    "weight_hg": 580
+    "weight_hg": 580,
+    "catch_rate": 45
   },
   "snorlax": {
     "name": "snorlax",
@@ -296,7 +313,8 @@
     "types": [
       "Normal"
     ],
-    "weight_hg": 4600
+    "weight_hg": 4600,
+    "catch_rate": 25
   },
   "sudowoodo": {
     "name": "sudowoodo",
@@ -312,7 +330,8 @@
     "types": [
       "Rock"
     ],
-    "weight_hg": 380
+    "weight_hg": 380,
+    "catch_rate": 65
   },
   "suicune": {
     "name": "suicune",
@@ -328,6 +347,7 @@
     "types": [
       "Water"
     ],
-    "weight_hg": 1870
+    "weight_hg": 1870,
+    "catch_rate": 3
   }
 }

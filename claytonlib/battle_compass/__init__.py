@@ -18,6 +18,11 @@ Modules:
 * ``sim`` — turn resolution over the emulator-verified skeleton in ``claytonlib.battle.turn``.
 * ``candidates`` — the uniform (frame x second) grid of possible battle seeds (sec 17.1).
 * ``identify`` — narrowing that grid against what the player reports, and the phase machine.
+* ``targets`` — known static-encounter movesets, in slot order (not derivable from base stats:
+  a moveset belongs to the encounter, not the species).
+* ``hunt_session`` — the layer the app drives: one run from first turn to capture, joining
+  narrowing and solving behind a single snapshot. Undo is replay, and Phase 2 re-solves every
+  turn so a misplay costs nothing.
 * ``solver`` — Phase 2: the cheapest action sequence that lands the capture ball on a winning
   set of shake rolls.  The Machete equivalent, and the reason the whole tool works: 99% of seeds
   are steerable to a capture, at a median of 6-7 turns.  Read ``Unreachable``'s docstring before
@@ -44,6 +49,12 @@ from claytonlib.battle_compass.candidates import (  # noqa: F401
 )
 from claytonlib.battle_compass.identify import (  # noqa: F401
     Narrowing, Observation, Phase, Session,
+)
+from claytonlib.battle_compass.targets import (  # noqa: F401
+    STATIC_ENCOUNTERS, encounter_level, moveset,
+)
+from claytonlib.battle_compass.hunt_session import (  # noqa: F401
+    HuntSession, TurnLog, worst_incoming_hit,
 )
 from claytonlib.battle_compass.solver import (  # noqa: F401
     Solution, SolverConfig, Step, Unreachable, distance_of, remaining_target_pp, solve,

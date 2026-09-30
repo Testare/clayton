@@ -189,6 +189,23 @@
   .chip{border:1px solid var(--line);background:var(--surface);border-radius:20px;
     padding:6px 13px;font-size:12.5px;font-weight:550;cursor:pointer}
   .chip.active{background:var(--grass);color:var(--grass-ink);border-color:transparent}
+
+/* Battle Compass run page. The two-sided HP panel has no existing equivalent -- every other
+   screen is a form or a table -- so these are new rather than reused. */
+.hr-phase { font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-soft);margin-bottom:12px;display:flex;gap:8px;align-items:center }
+.hr-small { font-size:12px }
+.hr-sides { display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px }
+.hr-side { background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:12px 14px }
+.hr-side-top { display:flex;gap:8px;align-items:center;margin-bottom:6px }
+.hr-bar { height:6px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:6px 0 }
+.hr-bar > div { height:100%;background:var(--ok);transition:width .2s }
+.hr-danger { color:var(--danger);font-weight:600 }
+.hr-danger ~ .hr-bar > div { background:var(--danger) }
+.hr-pinned { font-family:ui-monospace,monospace }
+.hr-next { margin:6px 0;font-size:14px }
+@media (max-width:720px){ .hr-sides { grid-template-columns:1fr } }
 </style>
 </head>
 <body>
@@ -1186,7 +1203,7 @@ function renderSeedB(){
       <div class="field"><label>± seconds</label><input id="nr-sb-secwin" type="number" min="0" value="${nr.sbSecondsWindow}"></div>
       <div class="field"><label>± delays</label><input id="nr-sb-delaywin" type="number" min="0" value="${nr.sbDelayWindow}"></div>
     </div>
-    <div class="hint muted">Walks the real battle turn by turn — answer what you see; candidates narrow to one seed.
+    <div class="hr-small muted">Walks the real battle turn by turn — answer what you see; candidates narrow to one seed.
       With the level field focused: M/F picks gender, Enter starts.</div>
     <button class="btn primary" onclick="nrStartSeedB()">Start narrowing</button>`;
 }
@@ -1658,7 +1675,7 @@ function renderCalibrateModel(){
       <div class="info-line">metronome: fit from ${pv.n_runs} run(s) (${pv.n_pre_excluded} excluded
         before fitting) · ${pv.n_fit} used in the fit · ${pv.n_outliers} outlier(s) ·
         ${pv.n_contaminated} contaminated</div>
-      <div class="hint muted">Safari Compass runs aren't used here — see Safari Compass →
+      <div class="hr-small muted">Safari Compass runs aren't used here — see Safari Compass →
         Review Data → Calibrate Model to fit the safari load-path offset.</div>
       <div class="candtable" style="max-height:none"><table><thead><tr>
           <th title="A fitted calibration-model parameter.">parameter</th><th title="The value in the model this profile is scoring against right now.">current active</th><th title="The value this re-fit would save, if you keep it.">new preview</th></tr></thead>
@@ -1994,7 +2011,7 @@ function ctOpenEditWindow(){
         <div class="field"><label>Search to (seconds)</label>
           <input name="max_target_seconds" type="number" min="1" value="${chart.max_target_seconds}"></div>
       </div>
-      <div class="hint muted">Safe to change any time — widening just extends the next
+      <div class="hr-small muted">Safe to change any time — widening just extends the next
         Compute chart into the newly-uncovered range; narrowing doesn't delete anything
         already computed.</div>
       <div class="actions">
@@ -2258,7 +2275,7 @@ async function ctShowSecondBreakdown(second){
   openModal(`<h3>Second ${br.second} — Individual Seeds</h3>
     <div class="info-line">P(second)=${(br.p_second*100).toFixed(1)}% · cp=${(br.cp*100).toFixed(2)}%
       · mdmsh=[${br.mdmsh.join(", ")}] · F=${br.F.toFixed(1)} · σ=${br.sigma.toFixed(1)}</div>
-    ${br.truncated ? `<div class="hint muted">Showing ${br.rows.length} of ${br.total_frames}
+    ${br.truncated ? `<div class="hr-small muted">Showing ${br.rows.length} of ${br.total_frames}
         frames, centered on the mean — weight%/cumulative% are still exact over the full
         window.</div>` : ""}
     <div class="candtable" style="max-height:360px"><table><thead><tr>
@@ -2617,7 +2634,7 @@ function renderFrameGuideSection(){
       <div class="hint muted" style="margin-bottom:8px">Needed for calibration — pin which
         advance frame Seed A is on right now.</div>
       ${_sacAimAdvanceField()}
-      ${sac.frameObservedElm ? `<div class="hint muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code>
+      ${sac.frameObservedElm ? `<div class="hr-small muted">Elm calls so far: <code>${esc(sac.frameObservedElm)}</code>
         <button class="btn small" type="button" onclick="sacChangeFrameElm()">Change</button></div>` : ""}
       <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
         <input id="sac-frame-elm-new" value="${esc(sac.frameElmPrefill || "")}" placeholder="PEKE…" autocomplete="off"
@@ -2646,7 +2663,7 @@ function renderFrameGuideSection(){
   return `<h3>Seed A advances</h3>
     <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
     <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, Sweet Scent there.</div>
-    ${r && !r.error ? `<div class="hint muted">Found in-house: frame ${r.frame} (L${r.level})
+    ${r && !r.error ? `<div class="hr-small muted">Found in-house: frame ${r.frame} (L${r.level})
         ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
           : r.skipped_ambiguous ? `(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)` : ""}</div>` : ""}
     <div class="status">Guide: <code>${esc(g.guide)}</code> (Sweet scent at the "!")
@@ -2917,7 +2934,7 @@ function renderSeedBSafari(){
     table = renderCandBSafari(r);
     if(r.path_valid && r.identified_seed){
       const mpath = r.machete_path;
-      message = `${mpath ? `<div class="hint muted">Machete predicts a capture path — the bold action is next.</div>`
+      message = `${mpath ? `<div class="hr-small muted">Machete predicts a capture path — the bold action is next.</div>`
           : `<div class="notice warn">Seed identified, but Machete found no capture path from here.</div>`}
         <button class="btn small primary" onclick="sacAcceptSeedB()">Use this seed</button>`;
       // overflow-wrap/word-break so a long path wraps instead of overflowing the panel.
@@ -2951,7 +2968,7 @@ function renderSeedBSafari(){
     <div class="field">
       <input id="sac-path-new" placeholder="bbbBbb0321" autocomplete="off"
         onkeydown="if(event.key==='Enter'){event.preventDefault();sacAppendPath();}"></div>
-    <div class="hint muted">Enter what you actually see, turn by turn, one character per turn
+    <div class="hr-small muted">Enter what you actually see, turn by turn, one character per turn
       (a ball throw is its shake count, 0-3) — press Enter to apply it and narrow.</div>`;
 }
 
@@ -3547,7 +3564,7 @@ function renderSafariCalibrateModel(){
       #${m.number} ${esc(m.name || "—")}${m.active ? " (active)" : ""}</option>`).join("");
   let content = `<div class="field" style="max-width:360px"><label>Base model</label>
       <select onchange="sreviewSelectBaseModel(this.value)">${baseOpts}</select></div>
-    <div class="hint muted">The base model's own trend (beta/alpha) is held fixed — only
+    <div class="hr-small muted">The base model's own trend (beta/alpha) is held fixed — only
       safari_offset is fit here. Metronome Compass's Calibrate Model never sees this value.</div>
     <div class="field check"><input type="checkbox" id="sr-cal-per-advance"
         ${sreview.calPerAdvance ? "checked" : ""}
@@ -3672,7 +3689,7 @@ function huntForm(){
     <div class="field"><label>Name</label>
       <input id="hf-name" placeholder="Fast Ball Suicune" autofocus></div>
     <div class="field"><label>Profile</label><select id="hf-profile">${profileOpts}</select></div>
-    <div class="hint muted">Everything else — the target, your party and the seed you're
+    <div class="hr-small muted">Everything else — the target, your party and the seed you're
       aiming at — is set up on the hunt's own page.</div>
     <div class="actions">
       <button class="btn primary" onclick="huntFormSubmit()">Create</button>
@@ -3708,15 +3725,13 @@ function renderHuntHome(){
     ["☝️🧭", "Metronome Compass",
       [["New Run", "metronomeNewRun"], ["Review Data", "metronomeReviewData"]]],
     ["⚔️🧭", "Battle Compass",
-      [["Start", null]]],
+      [["Start Run", "huntRunStart"]]],
   ];
   const grid = cats.map(([emoji, cat, tools]) => `
     <div class="tool-cat"><h3>${emoji} ${esc(cat)}</h3>
-      ${tools.map(([label, handler]) => handler
-        ? `<button class="btn" onclick="${handler}('hunt','${esc(h.id)}')">${esc(label)}</button>`
-        : `<button class="btn" ${blocked ? "disabled title='Finish configuring the hunt first'" : ""}
-             onclick="toast('Battle Compass is not built yet — configuration only for now.')"
-           >${esc(label)}</button>`).join("")}
+      ${tools.map(([label, handler]) =>
+        `<button class="btn" ${blocked ? "disabled title='Finish configuring the hunt first'" : ""}
+           onclick="${handler}('hunt','${esc(h.id)}')">${esc(label)}</button>`).join("")}
     </div>`).join("");
 
   const model = r.calibration_model;
@@ -3748,7 +3763,7 @@ function renderHuntHome(){
         ? `<div>Using this profile's active calibration model.
              <span class="muted">${esc(huntModelSummary(model))}</span></div>`
         : `<div class="muted">No calibration model resolved for this profile.</div>`}
-      <div class="hint muted">Models belong to the profile, not to a hunt, and every profile
+      <div class="hr-small muted">Models belong to the profile, not to a hunt, and every profile
         starts with a bundled “Standard” one active — so there is nothing to pick here. Change
         which model is active in <b>Metronome Compass → Review Data</b> below.</div>
     </div>
@@ -3768,6 +3783,198 @@ function huntModelSummary(model){
     }
   }
   return bits.length ? bits.join(" · ") : Object.keys(model).join(", ");
+}
+
+// --- Battle Compass: the live run ----------------------------------------
+//
+// The run is held in memory by the facade, not persisted: a Hunt stores configuration and a
+// finished attempt becomes a run record, but mid-battle state in between is deliberately
+// transient (see models.Hunt). So _huntRun is the session id and _huntSnap the last snapshot --
+// every mutation returns a whole new snapshot, so the page never renders a half-updated view.
+let _huntRun = null, _huntSnap = null, _huntRunHunt = null;
+
+async function huntRunStart(_owner, id){
+  try {
+    const started = await api("hunt_session_start", id);
+    _huntRun = started.session_id;
+    _huntSnap = started.snapshot;
+    _huntRunHunt = id;
+    renderHuntRun();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function huntRunDo(method, ...args){
+  try {
+    _huntSnap = await api(method, _huntRun, ...args);
+    renderHuntRun();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function huntRunObserve(){
+  const action = $("hrAction").value;
+  const text = $("hrTokens").value.trim();
+  if (!text) return toast("Type what happened, e.g. M1hE3hHP130");
+  huntRunDo("hunt_session_observe", action, [text]);
+}
+
+// Fill the report box with what the pinned seed predicts. Only offered once ONE candidate
+// remains: before that there is no single prediction, and offering the centre candidate's guess
+// would invite reporting a prediction instead of an observation -- which would confirm the wrong
+// seed and desynchronise everything after it.
+async function huntRunPrefill(){
+  try {
+    const preds = await api("hunt_session_predict", _huntRun, $("hrAction").value);
+    const seeds = Object.keys(preds);
+    if (seeds.length !== 1) return toast("Only available once the seed is pinned.");
+    $("hrTokens").value = preds[seeds[0]];
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function huntRunAbandon(){
+  if (!confirm("End this run? The battle state is not saved.")) return;
+  api("hunt_session_abandon", _huntRun).catch(() => {});
+  _huntRun = _huntSnap = null;
+  openHuntHome(_huntRunHunt);
+}
+
+function hrBar(hp, max){
+  const pct = max ? Math.max(0, Math.min(100, Math.round(100 * hp / max))) : 0;
+  return `<div class="hr-bar"><div style="width:${pct}%"></div></div>`;
+}
+
+function hrSide(label, m, danger){
+  const low = danger && m.hp !== null && m.hp <= danger;
+  return `<div class="hr-side">
+    <div class="hr-side-top"><b>${esc(label)}</b> ${esc(m.name)}
+      ${m.status && m.status !== "none" ? `<span class="chip">${esc(m.status)}</span>` : ""}</div>
+    <div class="${low ? "hr-danger" : ""}">${m.hp === null ? "?" : m.hp} / ${m.max_hp}
+      ${low ? " — in range of one hit" : ""}</div>
+    ${hrBar(m.hp || 0, m.max_hp)}
+    <div class="muted hr-small">${m.moves.map((mv, i) =>
+      `${esc(mv)} ${m.pp[i]}`).join(" · ")}</div>
+  </div>`;
+}
+
+function renderHuntRun(){
+  const s = _huntSnap;
+  if (!s) return;
+  const pinned = s.identified !== null;
+
+  const candidates = pinned
+    ? `<div class="hr-pinned">Seed pinned: <code>${esc(s.identified)}</code></div>`
+    : `<div><b>${s.survivors}</b> candidate seeds remain
+         <span class="muted hr-small">(window: ${s.window.size} ·
+         frame ${s.window.frame_centre}±${s.window.frame_window} ·
+         second ${s.window.second_centre}±${s.window.second_window})</span></div>
+       <div class="candtable"><table><tr><th>seed</th><th>frame</th><th>second</th></tr>
+       ${s.candidates.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
+           <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}
+       ${s.candidates_truncated ? `<tr><td colspan="3" class="muted">
+           …and ${s.candidates_truncated} more</td></tr>` : ""}</table></div>`;
+
+  // A set stuck on several RTC seconds cannot be separated by any move, ever -- so say so
+  // instead of letting the player keep playing for information that will never arrive.
+  const amb = s.ambiguity;
+  const ambiguity = (!pinned && amb.second_only)
+    ? `<div class="notice warn"><b>This set cannot be narrowed further.</b>
+         <div class="hr-small">${esc(amb.advice)}</div>
+         <div class="muted hr-small">Seconds still in play: ${amb.seconds.join(", ")}</div></div>`
+    : "";
+
+  const contra = s.contradiction
+    ? `<div class="notice danger"><b>That turn matches no candidate.</b>
+        <div class="hr-small">Reported <code>${esc(s.contradiction.observed || "")}</code></div>
+        <ul class="hr-small">${(s.contradiction.problems || []).map(x =>
+            `<li>${esc(x)}</li>`).join("")}</ul>
+        ${(s.contradiction.predicted || []).length ? `<div class="muted hr-small">Candidates
+           predicted: ${s.contradiction.predicted.map(r =>
+             `<code>${esc(r.predicted)}</code>`).join(", ")}</div>` : ""}
+        <div class="muted hr-small">The candidate set was left untouched — fix the report, or
+          restart with a wider window.</div></div>`
+    : "";
+
+  const advice = (!pinned && s.advice.length)
+    ? `<div class="panel"><div class="section-label">Best next action</div>
+        <div class="muted hr-small">Ranked by how much each would narrow the set — lower is better.</div>
+        <div class="candtable"><table><tr><th>action</th><th>expected survivors</th><th>outcomes</th></tr>
+        ${s.advice.slice(0, 5).map(a => `<tr><td><code>${esc(a.action)}</code></td>
+            <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div></div>`
+    : "";
+
+  let solver = "";
+  if (s.phase === 3 && s.solution && s.solution.found){
+    const sol = s.solution;
+    solver = `<div class="panel">
+      <div class="section-label">Solved — ${sol.turns} turn${sol.turns === 1 ? "" : "s"} to the capture</div>
+      <div class="hr-next">Next: <code>${esc(sol.next.action)}</code>
+        ${sol.next.item ? `<span class="chip">${esc(sol.next.item)}</span>` : ""}
+        <span class="muted">expect <code>${esc(sol.next.expect)}</code></span></div>
+      <div class="muted hr-small">Full path: <code>${esc(sol.rendered)}</code></div>
+      ${Object.keys(sol.items).length ? `<div class="hr-small">Items needed:
+        ${Object.entries(sol.items).map(([k, n]) => `${esc(k)} ×${n}`).join(", ")}</div>` : ""}
+      <div class="muted hr-small">Re-solved after every turn, so a misplay costs nothing — just
+        report what actually happened.</div></div>`;
+  } else if (s.phase === 3 && s.solution){
+    solver = `<div class="notice danger"><b>No path found from here.</b>
+      <div class="hr-small">${esc(s.solution.reason)}</div>
+      <div class="muted hr-small">${s.solution.capture_windows} capture window(s) exist in range —
+        but a window is a <i>target</i>, not a reachable one, so that count is not a measure of
+        how close this is.</div></div>`;
+  }
+
+  const phaseButtons = s.phase === 1
+    ? `<button class="btn" onclick="huntRunDo('hunt_session_enter_pinning')">
+         Target is at 1 HP → start pinning</button>`
+    : s.phase === 2
+      ? (s.solver_blockers.length
+          ? `<div class="panel"><div class="section-label">Before solving</div>
+             <ul class="hr-small">${s.solver_blockers.map(b => `<li>${esc(b)}</li>`).join("")}</ul></div>`
+          : `<button class="btn primary"
+               onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button>`)
+      : "";
+
+  const history = s.turns.length
+    ? `<div class="candtable"><table><tr><th>#</th><th>action</th><th>reported</th><th>seeds</th></tr>
+       ${s.turns.map(t => `<tr><td>${t.n}</td><td><code>${esc(t.action)}</code></td>
+          <td><code>${esc(t.rendered)}</code></td>
+          <td class="muted">${t.survivors_before} → ${t.survivors_after}</td></tr>`).join("")}
+       </table></div>`
+    : `<div class="muted hr-small">No turns reported yet.</div>`;
+
+  mount(`<div class="head"><h2>Battle Compass</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn" onclick="huntRunAbandon()">End run</button>
+      </div></div>
+    <div class="hr-phase">${esc(s.phase_label)}
+      ${!s.balls_allowed ? `<span class="chip">no balls yet</span>` : ""}</div>
+    ${ambiguity}${contra}
+    <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor)}${hrSide("Target:", s.target, 0)}</div>
+    ${solver}
+    <div class="panel">
+      <div class="section-label">Report the turn you just played</div>
+      <div class="chip-row">
+        <select id="hrAction">${s.legal_actions.map(a =>
+          `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>
+        <input id="hrTokens" placeholder="e.g. M1hE3hHP130" style="flex:1"
+          onkeydown="if(event.key==='Enter')huntRunObserve()">
+        <button class="btn primary" onclick="huntRunObserve()">Report</button>
+        <button class="btn" onclick="huntRunDo('hunt_session_undo')"
+          ${s.turns.length ? "" : "disabled"} title="Rewind a MISREPORT. A misplay can't be
+undone — the game has advanced, so report what actually happened instead.">Undo</button>
+        ${pinned ? `<button class="btn" onclick="huntRunPrefill()"
+          title="Fill in what the pinned seed predicts">Predict</button>` : ""}
+      </div>
+      <div class="hr-small muted">Tokens in the order things happened: our move, then the target's,
+        then <code>HP###</code> whenever our HP changed for any reason.
+        <code>h</code> hit · <code>!</code> crit · <code>-</code> missed ·
+        <code>Epar</code> fully paralyzed.</div>
+    </div>
+    ${phaseButtons}
+    ${advice}
+    <div class="panel"><div class="section-label">Candidates</div>${candidates}</div>
+    <div class="panel"><div class="section-label">Turns so far</div>${history}
+      ${s.path ? `<div class="muted hr-small" style="margin-top:8px">Path:
+        <code>${esc(s.path)}</code></div>` : ""}</div>`);
 }
 
 async function huntConfigure(id){
@@ -3856,7 +4063,7 @@ function renderHuntConfigure(){
           <input type="number" min="0" max="31" value="${ivs[k] ?? ""}"
             onchange="huntSetIv('${k}', this.value)"></div>`).join("")}
       </div>
-      ${r.target_stats && !r.target_stats.error ? `<div class="hint muted">
+      ${r.target_stats && !r.target_stats.error ? `<div class="hr-small muted">
         At Lv ${t.level}: ${STATS.map(k =>
           `${STAT_LABEL[k]} <b>${r.target_stats[k]}</b>`).join(" · ")}</div>` : ""}
       ${r.target_stats && r.target_stats.error
@@ -3868,7 +4075,7 @@ function renderHuntConfigure(){
 
     <div class="section-label">Seed targeting</div>
     <div class="panel">
-      <div class="hint muted">These centre the window Battle Compass searches for your battle
+      <div class="hr-small muted">These centre the window Battle Compass searches for your battle
         seed. Nothing here needs to be hit exactly — the window just has to contain the seed you
         actually land on — so a generous delay window costs very little. The calibration model
         the centring uses is the profile's active one; see the hunt page.</div>
@@ -3907,7 +4114,7 @@ function huntReadinessPanel(r){
       <div><span class="badge ${tone}">~${a.reachability_percent}% of seeds winnable</span>
         <span class="muted"> · ${a.distinct_costs.length} distinct per-turn RNG cost(s)</span></div>
       ${a.warnings.map(w => `<div class="notice warn" style="margin-top:8px">${esc(w)}</div>`).join("")}
-      <div class="hint muted">Battle Compass steers the RNG by choosing actions that cost
+      <div class="hr-small muted">Battle Compass steers the RNG by choosing actions that cost
         different numbers of rolls, so what matters is that your moves' costs <i>differ</i> —
         not what they are.</div></div>`;
   }
@@ -4363,7 +4570,7 @@ async function openProfile(id){
       <div class="notice danger" id="mw-errors" hidden></div>
       <div class="notice warn" id="mw-warnings" hidden></div>
       <div class="actions"><button class="btn primary" type="submit" id="uf-submit">Add user</button></div>
-      <div class="hint muted">Metronome users can't be edited after adding — to change one, add a new user and remove the old.</div>
+      <div class="hr-small muted">Metronome users can't be edited after adding — to change one, add a new user and remove the old.</div>
     </form>`);
   onSpeciesChange();
 }
@@ -4405,7 +4612,7 @@ function partyForm(profileId, pokemonId){
         <input id="pf-pp${i}" type="number" min="0" value="${pp(i)}" placeholder="max PP"
           style="margin-top:4px"></div>`).join("")}
     </div>
-    <div class="hint muted">A Pokémon with no moves is fine — it can still take hits, use items
+    <div class="hr-small muted">A Pokémon with no moves is fine — it can still take hits, use items
       and throw balls. Leave it half-filled if you like; you just can't bring it on a hunt
       until the stats are in.</div>
     <div class="actions">

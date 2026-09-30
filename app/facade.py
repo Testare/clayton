@@ -35,7 +35,9 @@ class Facade:
         from app.metronome_session import SessionRegistry
         self._sessions = SessionRegistry()
         from app.progress_session import ProgressRegistry
+        from app.hunt_session import HuntSessionRegistry
         self._chart_sessions = ProgressRegistry()
+        self._hunt_sessions = HuntSessionRegistry()
 
     # -- internal loaders -------------------------------------------------
 
@@ -401,6 +403,117 @@ class Facade:
     def delete_hunt(self, hunt_id: str) -> bool:
         """Deletes the hunt only. Party Pokemon live on the PROFILE and are untouched."""
         return self._store.delete(_HUNTS, hunt_id)
+
+    # -- Battle Compass: the live run --------------------------------------
+
+    def _hunt_battlers(self, hunt, profile):
+        """(ours, target) as ``battle_compass`` Battlers, from stored configuration.
+
+        Our side's stats are entered off the summary screen; the target's are derived from the
+        IVs and nature the RNG manipulation fixed (sec 15.4.1). The first party slot is the
+        active Pokemon -- switching is a Phase 1 action and the solver never needs it.
+        """
+        from claytonlib.battle.stats import derive_species_stats, species as species_data
+        from claytonlib.battle_compass.state import Battler
+
+        if not hunt.party:
+            raise ValueError("this hunt has no party configured")
+        lead = profile.get_party_pokemon(hunt.party[0].pokemon_id)
+        if lead is None:
+            raise ValueError("the hunt's lead Pokemon is no longer on the profile")
+
+        moves = tuple(lead.moveset)
+        ours = Battler(
+            name=lead.name, level=lead.level or 1,
+            types=tuple(species_data(lead.species)["types"]) if lead.species else ("Normal",),
+            stats=dict(lead.stats), moves=moves,
+            pp=tuple(int(lead.max_pp.get(str(i), 0)) for i in range(len(moves))))
+
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.moves import resolve_move
+        target_moves = moveset(hunt.target.species)
+        target = Battler(
+            name=hunt.target.species.title(), level=hunt.target.level,
+            types=tuple(species_data(hunt.target.species)["types"]),
+            stats=derive_species_stats(hunt.target.species, hunt.target.level,
+                                       hunt.target.nature, ivs=dict(hunt.target.ivs)),
+            moves=target_moves,
+            pp=tuple(resolve_move(name).pp for name in target_moves))
+        return ours, target
+
+    def hunt_session_start(self, hunt_id: str) -> dict:
+        """Open a Battle Compass run for this hunt. Returns (session_id, snapshot).
+
+        Refuses while ``hunt_readiness`` reports hard errors: every one of them is something the
+        simulation needs exactly, and starting without it would desynchronise rather than degrade.
+        """
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import generate
+        from claytonlib.battle_compass.hunt_session import HuntSession
+        from claytonlib.battle_compass.sim import HuntConfig
+
+        h = self._load_hunt(hunt_id)
+        profile = self._load_profile(h.profile_id)
+        errors = h.hard_errors(profile)
+        if errors:
+            raise ValueError("this hunt is not ready: " + "; ".join(errors))
+
+        ours, target = self._hunt_battlers(h, profile)
+        models = self._resolve_calibration_models(h.profile_id)
+        model = models.get("linear") or next(iter(models.values()), None)
+        if model is None:
+            raise ValueError("no calibration model available for this profile")
+
+        window = generate(
+            model, key_seed=h.key_seed,
+            initial_time=dt.datetime.fromisoformat(h.initial_time),
+            vector_ms=float(h.vector_ms),
+            frame_window=h.delay_window, second_window=h.seconds_window)
+
+        from claytonlib.battle.stats import has_fast_ball_bonus, species as species_data
+        info = species_data(h.target.species)
+        config = HuntConfig(
+            target_catch_rate=int(info["catch_rate"]),
+            # A Fast Ball only gets its x4 above base Speed 100, and Suicune's 85 misses it --
+            # which is the whole reason this target is the hard case (sec 2.2).
+            fast_ball_matched=(h.capture_ball.strip().lower() == "fast ball"
+                               and has_fast_ball_bonus(h.target.species)))
+        session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball)
+        session_id = self._hunt_sessions.add(hunt_id, session)
+        return {"session_id": session_id, "hunt_id": hunt_id,
+                "snapshot": session.snapshot()}
+
+    def hunt_session_state(self, session_id: str) -> dict:
+        return self._hunt_sessions.get(session_id).snapshot()
+
+    def hunt_session_observe(self, session_id: str, action: str, tokens: list) -> dict:
+        """Report one played turn. `tokens` may be a list or one already-rendered string."""
+        from claytonlib.battle_compass.state import Action
+        session = self._hunt_sessions.get(session_id)
+        if isinstance(tokens, str):
+            tokens = [tokens]
+        return session.observe(Action(action), [str(t) for t in tokens])
+
+    def hunt_session_undo(self, session_id: str) -> dict:
+        """Rewind one reported turn (a misreport). A misplay is reported, not undone."""
+        return self._hunt_sessions.get(session_id).undo()
+
+    def hunt_session_enter_pinning(self, session_id: str) -> dict:
+        return self._hunt_sessions.get(session_id).enter_pinning()
+
+    def hunt_session_enter_solving(self, session_id: str) -> dict:
+        return self._hunt_sessions.get(session_id).enter_solving()
+
+    def hunt_session_predict(self, session_id: str, action: str) -> dict:
+        """What each surviving candidate would emit for `action`, without committing to it."""
+        from claytonlib.battle_compass.state import Action
+        session = self._hunt_sessions.get(session_id)
+        return {f"{seed:#010x}": pred
+                for seed, pred in session.predict(Action(action)).items()}
+
+    def hunt_session_abandon(self, session_id: str) -> dict:
+        return {"session_id": session_id, "closed": self._hunt_sessions.drop(session_id)}
 
     def hunt_readiness(self, hunt_id: str) -> dict:
         """Everything the configure screen needs to say whether this hunt can be run.

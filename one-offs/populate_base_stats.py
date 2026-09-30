@@ -31,6 +31,8 @@ from pathlib import Path
 
 OUTPUT = Path(__file__).resolve().parent.parent / "claytonlib" / "basedata" / "base_stats.json"
 API = "https://pokeapi.co/api/v2/pokemon/{}"
+# capture_rate lives on the SPECIES resource, not the pokemon one.
+SPECIES_API = "https://pokeapi.co/api/v2/pokemon-species/{}"
 # PokeAPI 403s without one.
 HEADERS = {"User-Agent": "clayton/0.1 (+https://github.com/Testare/clayton)"}
 
@@ -75,37 +77,52 @@ DEFAULT_SPECIES = [
 ]
 
 
-def fetch(name: str, retries: int = 3) -> dict:
-    """One species, normalised.  Retries politely; PokeAPI rate-limits aggressive clients."""
-    url = API.format(name.lower())
+def _get(url: str, name: str, retries: int = 3) -> dict | None:
+    """One GET, retried politely; PokeAPI rate-limits aggressive clients.
+
+    None on a 404, so a form that needs its suffix is reported rather than discarding everything
+    fetched so far.
+    """
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(
                 urllib.request.Request(url, headers=HEADERS), timeout=20
             ) as response:
-                payload = json.load(response)
-            break
+                return json.load(response)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
-                # Forms need their suffix (e.g. "giratina-altered").  Report and carry on
-                # rather than discarding everything fetched so far.
                 print(f"  ! no such species: {name} (a form suffix may be needed)")
-                return {}
+                return None
             if attempt == retries - 1:
                 raise
             time.sleep(2 ** attempt)
+    return None
+
+
+def fetch(name: str, retries: int = 3) -> dict:
+    """One species, normalised.  Two requests: stats/types/weight, then the capture rate."""
+    payload = _get(API.format(name.lower()), name, retries)
+    if payload is None:
+        return {}
     stats = {_STAT_MAP[s["stat"]["name"]]: s["base_stat"] for s in payload["stats"]}
     missing = [k for k in _STAT_KEYS if k not in stats]
     if missing:
         raise SystemExit(f"{name}: PokeAPI returned no {missing}")
     types = [t["type"]["name"].capitalize()
              for t in sorted(payload["types"], key=lambda t: t["slot"])]
+    # The catch rate the capture formula needs (battle.catch). Unchanged since Gen 3 for
+    # everything in scope, so Gen 9 data is safe here for the same reason the stats are.
+    species = _get(SPECIES_API.format(payload["species"]["name"]), name, retries) or {}
+    catch_rate = species.get("capture_rate")
+    if not isinstance(catch_rate, int) or not 1 <= catch_rate <= 255:
+        raise SystemExit(f"{name}: PokeAPI returned capture_rate {catch_rate!r}")
     return {
         "name": payload["name"],
         "dex_no": payload["id"],
         "base_stats": {k: stats[k] for k in _STAT_KEYS},
         "types": types,
         "weight_hg": payload["weight"],
+        "catch_rate": catch_rate,
     }
 
 
@@ -122,13 +139,16 @@ def check(entries: dict[str, dict]) -> int:
     """Validate the stored file without hitting the network.  Returns an exit code."""
     problems = []
     for key, entry in sorted(entries.items()):
-        for field in ("name", "dex_no", "base_stats", "types", "weight_hg"):
+        for field in ("name", "dex_no", "base_stats", "types", "weight_hg", "catch_rate"):
             if field not in entry:
                 problems.append(f"{key}: missing {field}")
         for stat in _STAT_KEYS:
             value = entry.get("base_stats", {}).get(stat)
             if not isinstance(value, int) or not 1 <= value <= 255:
                 problems.append(f"{key}: base {stat} is {value!r}")
+        rate = entry.get("catch_rate")
+        if not isinstance(rate, int) or not 1 <= rate <= 255:
+            problems.append(f"{key}: catch_rate is {rate!r}")
         if not 1 <= len(entry.get("types", [])) <= 2:
             problems.append(f"{key}: {len(entry.get('types', []))} types")
         if "Fairy" in entry.get("types", []):
