@@ -259,7 +259,9 @@ class TestSecondAmbiguity(unittest.TestCase):
         identical = sum(
             len(set(session.predict(a).values())) == 1
             for a in (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4, Action.ITEM))
-        self.assertGreaterEqual(identical, 4)
+        # Most, not all: modelling field conditions gave the target's failing moves their own
+        # offsets, so a couple of actions now distinguish seconds where none used to.
+        self.assertGreaterEqual(identical, 3)
 
     def test_the_default_window_identifies_where_a_second_window_cannot(self):
         window = _window(frame_window=60)

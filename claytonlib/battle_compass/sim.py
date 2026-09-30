@@ -56,9 +56,18 @@ def can_flinch(battler) -> bool:
 
 #: Crit modifiers by stage; a crit lands when ``roll % modifier == 0``.
 CRIT_MODIFIERS = (16, 8, 4, 3, 2)
-#: Gen 4 damage variance: sixteen values, 85..100 percent.
+#: Gen 4 damage variance, transcribed from ApplyDamageRange (src/battle/overlay_12_0224E4FC.c):
+#:
+#:     damage *= (100 - (BattleSystem_Random(battleSystem) % 16));
+#:     damage /= 100;
+#:
+#: Sixteen multipliers spanning 85..100 percent -- but note the direction. The RNG value is
+#: SUBTRACTED, so ``% 16 == 0`` is a 100% roll and ``% 16 == 15`` is 85%. This was implemented as
+#: ``85 + roll % 16``, which spans the same set and is therefore invisible to any range check,
+#: while getting all sixteen individual values wrong. Caught by data/battle_logs/test1.jsonl,
+#: where a roll of ``% 16 == 13`` dealt LESS damage than one of ``% 16 == 9``.
 DAMAGE_ROLL_COUNT = 16
-DAMAGE_ROLL_BASE = 85
+DAMAGE_ROLL_MAX_PERCENT = 100
 
 
 def advance(rng: int) -> tuple[int, int]:
@@ -78,6 +87,13 @@ class MoveOutcome:
     #: Rolled sleep duration, when this move applied sleep. Zero otherwise.
     sleep_turns: int = 0
     secondary: bool = False
+    #: Field conditions this move set. Applied by `simulate_turn`, which owns the state.
+    sets_rain: bool = False
+    sets_mist: bool = False
+    traps: bool = False
+    #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
+    #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
+    blocked_by_mist: bool = False
 
 
 def move_roll_cost(move: Move) -> int:
@@ -137,16 +153,47 @@ def can_miss(move: Move, net_stage: int = 0) -> bool:
     return 0 < _effective_accuracy(move, net_stage) < 100
 
 
-def will_fail(move: Move, defender: "Battler") -> bool:
+def will_fail(move: Move, defender: "Battler", field=None) -> bool:
     """Whether this move is certain to do nothing, from state alone.
 
-    A status-inflicting move against an already-statused target rolls its accuracy and then fails
-    -- non-volatile statuses are mutually exclusive (sec 4.2). It is *not* rendered as a miss: the
-    simulator emits the bare slot token, so an interview that asked "did it miss?" and was told
-    yes produced a token no candidate could match.
+    Three families, all verified against data/battle_logs/test1.jsonl, and all of them costing
+    the turn its two post-successful-move advances when they fire:
+
+    * A status-inflicting move against an already-statused target -- non-volatile statuses are
+      mutually exclusive (sec 4.2). "But it failed!"
+    * A field-condition move whose condition is already up: Rain Dance while raining, Mist while
+      misted. Suicune re-used both repeatedly in the log.
+    * Mean Look against an already-trapped target.
+
+    None of these renders as a miss: the simulator emits the bare slot token.
     """
     status = _status_for(move)
-    return status is not None and defender.status is not Status.NONE
+    if status is not None and defender.status is not Status.NONE:
+        return True
+    if field is None:
+        return False
+    if move.effect == EFFECT_RAIN_DANCE and field.rain_turns > 0:
+        return True
+    if move.effect == EFFECT_MIST and field.mist_turns > 0:
+        return True
+    if move.effect == EFFECT_MEAN_LOOK and field.target_trapped:
+        return True
+    return False
+
+
+#: Effect ids whose move fails outright when the condition it sets is already in place. Every
+#: such failure costs the turn its two post-successful-move advances, which is exactly how the
+#: emulator log (data/battle_logs/test1.jsonl) diverged from this simulator on turn 3: Suicune
+#: re-used Rain Dance while it was already raining, the game spent 17 advances, and this spent 19.
+EFFECT_RAIN_DANCE = 136
+EFFECT_MIST = 46
+EFFECT_MEAN_LOOK = 106
+EFFECT_LOWER_EVASION = 24
+
+#: Both last five turns, counted inclusive of the turn they are set [verified: test1.jsonl, where
+#: rain set on turn 1 stops on turn 5 and mist set on turn 4 wears off on turn 8].
+RAIN_TURNS = 5
+MIST_TURNS = 5
 
 
 def _status_for(move: Move) -> Status | None:
@@ -156,7 +203,7 @@ def _status_for(move: Move) -> Status | None:
 
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
-                 attack_stage: int = 0) -> tuple[int, MoveOutcome]:
+                 attack_stage: int = 0, field=None) -> tuple[int, MoveOutcome]:
     """Execute one move against the RNG, returning (new rng, outcome).
 
     Named ``execute_move`` rather than ``resolve_move`` so it cannot be confused with — or
@@ -180,12 +227,12 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         if not hit:
             parts.append(tok.MISS)
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
-        status = _status_for(move)
-        if status is not None and defender.status is not Status.NONE:
-            # A status move against an already-statused target rolls accuracy and then fails,
-            # which is why Spore stays useful as filler after paralysis lands (sec 11.5). No
-            # duration roll here -- the status was never applied.
+        # Every failure below spends the accuracy roll and then stops, so it costs the turn its
+        # two post-successful-move advances. Getting this wrong is what desynchronised the
+        # simulator from data/battle_logs/test1.jsonl at turn 3.
+        if will_fail(move, defender, field):
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
+        status = _status_for(move)
         sleep_turns = 0
         if status is Status.SLEEP:
             # Applying sleep costs one more roll for its hidden duration. The cost of this move
@@ -194,8 +241,18 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             rng, duration_roll = advance(rng)
             used += 1
             sleep_turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
-        return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
-                                applied_status=status, sleep_turns=sleep_turns)
+        # Mist guards its own side's stats. The move still executed, so it stays SUCCESSFUL and
+        # still spends the post-move advances [verified: test1.jsonl turn 15 spent 8 skeleton
+        # rolls, not 6, on a Sweet Scent the game reported as "protected by Mist"].
+        blocked = (move.effect == EFFECT_LOWER_EVASION and field is not None
+                   and field.mist_turns > 0)
+        return rng, MoveOutcome(
+            rolls=used, tokens=tuple(parts), successful=True,
+            applied_status=status, sleep_turns=sleep_turns,
+            sets_rain=move.effect == EFFECT_RAIN_DANCE,
+            sets_mist=move.effect == EFFECT_MIST,
+            traps=move.effect == EFFECT_MEAN_LOOK,
+            blocked_by_mist=blocked)
 
     # Damaging.
     rng, crit_roll = advance(rng)
@@ -229,7 +286,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             Defender(defence=defender.stats["def"], special_defence=defender.stats["spd"],
                      types=defender.types, defence_stage=defender.def_stage,
                      special_defence_stage=defender.spdef_stage),
-            roll=DAMAGE_ROLL_BASE + damage_roll % DAMAGE_ROLL_COUNT,
+            roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
             critical=critical)
         # False Swipe cannot knock out: it leaves the target on 1 HP.
         if move.effect == 101:
@@ -378,6 +435,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     # what removes speed ties from the search entirely (sec 4.2).
     ours_first = action.is_bag_action or _we_move_first(new, action, target_slot)
 
+    def apply_field(outcome) -> None:
+        """Field conditions the move just set. Applied here because the state lives here."""
+        if outcome.sets_rain:
+            new.rain_turns = RAIN_TURNS
+        if outcome.sets_mist:
+            new.mist_turns = MIST_TURNS
+        if outcome.traps:
+            new.target_trapped = True
+
     def act_ours() -> bool:
         nonlocal rng, hp_before
         if action is Action.CAPTURE_BALL or action is Action.STANDARD_BALL:
@@ -452,11 +518,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 parts.append(tok.prevented_token("M", "par"))
                 return False
         rng, outcome = execute_move(
-            rng, move, new.ours, new.target, actor="M", slot=slot,
+            rng, move, new.ours, new.target, actor="M", slot=slot, field=new,
             attack_stage=new.our_attack_stage)
         new.rng_offset += outcome.rolls
         parts.extend(outcome.tokens)
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
+        apply_field(outcome)
         if outcome.damage:
             new.target = new.target.with_hp(new.target.hp - outcome.damage)
         if outcome.applied_status is not None:
@@ -477,10 +544,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if move is None:
             return False
         rng, outcome = execute_move(
-            rng, move, new.target, new.ours, actor="E", slot=target_slot)
+            rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new)
         new.rng_offset += outcome.rolls
         parts.extend(outcome.tokens)
         new.target = new.target.spend_pp(target_slot, 1)
+        apply_field(outcome)
         if outcome.damage:
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
         if outcome.secondary and move.effect == 68:
@@ -503,6 +571,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         for _ in range(turn_costs.END_OF_TURN_ADVANCES):
             rng = advance_rng(rng)
         new.rng_offset += turn_costs.END_OF_TURN_ADVANCES
+
+    # Durations tick at end of turn: rain set this turn shows "Rain continues to fall" on the
+    # same turn and stops four turns later [verified: test1.jsonl].
+    if not new.over:
+        new.rain_turns = max(0, new.rain_turns - 1)
+        new.mist_turns = max(0, new.mist_turns - 1)
 
     if new.ours.hp != hp_before:
         parts.append(tok.hp_token(new.ours.hp))

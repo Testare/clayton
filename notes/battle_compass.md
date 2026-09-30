@@ -2093,6 +2093,83 @@ Worth making it one of the first things the loop answers.
 
 ---
 
+## 16.1 Ground truth: the first real emulator run [verified]
+
+`data/battle_logs/test1.jsonl` — a hand-played Bell Tower Suicune battle with the battle seed
+forced to `0xC5011C6B`, 17 turns, captured by `utils/gdb-battle-reader.py`. It settles R2, R7 and
+the identification half of R10, and it found three bugs that no amount of reasoning had.
+
+**What it confirmed.** After the fixes below, the simulator reproduces all 17 turns exactly:
+every advance count, every move Suicune chose, every ball's shake count, and **every one of our
+HP values** (126, 146, 120, 96) — the last being the whole identification signal.
+
+| Quantity | Value | Note |
+|---|---|---|
+| R2 battle-start advances | **6** | 4 `bellShimmerReplaceGraphics` + 2 for Pressure — the same figure `metronome_compass` verified for Blackthorn |
+| Wild move-selection roll | **1 per turn** | caller unresolved (`??`), present on every turn |
+| BeforeTurn | **4 per turn** | `BattleControllerPlayer_BeforeTurn` |
+| Paralysis check | **1 per turn while paralyzed** | `ov12_0224B528`, absent on turn 1 before Thunder Wave landed |
+| Post-successful-move | **2, per move that succeeded** | so the skeleton is 10 / 8 / 6 for two, one or no successes |
+| Between-turn + end-of-turn | **2 + 4** | inside the same skeleton figure |
+| Secondary-effect proc | **1** | `ov12_02250490`, on the three Aurora Beam turns only |
+| Ball shakes | **`min(shakes+1, 4)`** | 3 shakes→4 rolls, 0→1, 1→2 |
+
+**Bug 1 — moves that fail because their condition is already up.** This is what made the run
+diverge at turn 3, after matching turns 1 and 2 exactly. Suicune re-used Rain Dance while it was
+already raining, the game reported "But it failed!" and skipped the **two post-successful-move
+advances**; the simulator spent them. 17 advances against a simulated 19, and every offset after
+that was wrong. Same for Mist while misted (turns 6, 7, 8, 16) and Mean Look on an already-trapped
+target (turn 12). `rain_turns`, `mist_turns` and `target_trapped` existed on `BattleState` and had
+never been wired to anything.
+
+Durations, both verified from the log: **rain 5 turns** (set turn 1, stopped turn 5), **mist 5
+turns** (set turn 4, wore off turn 8).
+
+A Mist-blocked stat drop is *different*: turn 15's Sweet Scent was reported "protected by Mist"
+and the turn still spent 8 skeleton rolls, not 6 — so the move executed and paid its post-move
+advances. Blocked effect, successful move.
+
+**Bug 2 — the damage roll was inverted.** `ApplyDamageRange` *subtracts*:
+
+```c
+damage *= (100 - (BattleSystem_Random(battleSystem) % 16));
+damage /= 100;
+```
+
+so `% 16 == 0` is 100% and `% 16 == 15` is 85%. This was implemented as `85 + roll % 16`, which
+spans the **same sixteen multipliers** and therefore passes any range check while getting every
+individual value wrong. The log is unambiguous: a roll of `% 16 == 13` dealt *less* than one of
+`% 16 == 9`, which the ascending form cannot produce. Against the three Aurora Beam hits:
+
+| | turn 5 | turn 13 | turn 17 |
+|---|---|---|---|
+| actual | 27 | 26 | 24 |
+| corrected (`100 - r`) | **27** | **26** | **24** |
+| as implemented (`85 + r`) | 24 | 25 | 27 |
+
+All three wrong, from a single base damage of 28. This is the §3.1 signal — ~2.5 bits per hit, the
+richest observable there is — so the effect was not imprecision but *eliminating the true seed on
+the first damaging turn*. Solving the three hits for Smeargle's Sp. Def gives 78–80, which matches
+the 80 assumed, so the formula itself was right and only the roll mapping was backwards.
+
+**Bug 3 — our own fainting was not terminal.** `BattleState.over` ignored `ours.fainted`, so the
+simulator kept taking turns at 0 HP and rendered hits that changed nothing — `E2h` with no `HP`
+token, which `validate_turn` correctly rejects. Found while chasing something else; the solver had
+always treated fainting as a hard constraint (§6.2), and the simulator now agrees.
+
+**Still open.** Outgoing damage does not reconcile. False Swipe dealt 28, 28, 27, 27, 27 with
+multipliers 91, 92, 87, 90, 90, and no single base damage fits — turn 5 needs 32 where the others
+need 31. Outgoing damage is not in the token stream, so this does not affect identification; it
+affects only the Phase 2 gate, and False Swipe's clamp reaches 1 HP regardless. The likeliest
+cause is the assumed Smeargle attack stat (recorded only as "about 65") rather than the formula.
+Needs the exact figure to settle.
+
+**Also noted.** The `gdb-battle-reader` stat override wrote every *stat* correctly (141/63/119/
+89/109/84 — exactly the configured Bold spread) but two of the six IV bitfields read back wrong
+(`spa` 31→5, `spe` 28→26), so it reported `verified: false`. Since the stats are what the
+simulation consumes and they were right, this run is sound; the IV write needs looking at, and
+the verification should distinguish "stats wrong" from "IVs cosmetically off".
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

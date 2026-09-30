@@ -85,12 +85,15 @@ class SolverConfig:
     #: stopping condition.
     max_states: int = 200_000
     #: Visit each RNG offset once, at its cheapest arrival. Whether a throw captures depends
-    #: ONLY on the offset -- HP, PP and stat stages never change that, they only constrain which
-    #: actions are legal -- so collapsing an offset to its cheapest arrival is a very strong
-    #: reduction. It is a heuristic rather than a proof: a dearer arrival could in principle
-    #: carry resources a later turn needs. In practice the cheapest arrival used fewer and
-    #: cheaper actions and so tends to be the better-resourced one too. Set False for the
-    #: complete search, which is exponentially slower; `Unreachable.proven` reflects which ran.
+    #: ONLY on the offset, so the goal test is exact under this reduction.
+    #:
+    #: It remains a heuristic for *reaching* offsets, and more so since field conditions were
+    #: modelled: a dearer arrival can carry resources a later turn needs, and two arrivals at one
+    #: offset can disagree about rain, mist or the target's PP -- which decides whether the
+    #: target's next move fails, and so which offset the next turn lands on. The exhaustive path
+    #: (`collapse_offsets=False`) keys those into `_dominance_key` instead. In practice the
+    #: cheapest arrival used fewer and cheaper actions and tends to be better-resourced too.
+    #: `Unreachable.proven` reflects which search ran.
     collapse_offsets: bool = True
     #: Which of our move slots the solver may use as filler.
     allowed_moves: tuple[int, ...] = (0, 1, 2, 3)
@@ -285,8 +288,16 @@ def _dominance_key(state: BattleState) -> tuple:
 
     Keyed on the offset because it increases monotonically and is the dominant coordinate; the
     rest is what a later turn's cost depends on (sec 12.8).
+
+    The field conditions and the target's PP belong here, not in `_dominates`: they are not
+    better-or-worse, they change which of the target's moves *fail*, and a failing move costs the
+    turn two fewer advances. Two states at the same offset that disagree about rain are therefore
+    not interchangeable at all -- one of them will reach a different offset next turn. Verified
+    against data/battle_logs/test1.jsonl, where exactly this cost Suicune's Rain Dance its
+    post-move advances on turns 3 and 12.
     """
-    return (state.rng_offset,)
+    return (state.rng_offset, state.rain_turns > 0, state.mist_turns > 0,
+            state.target_trapped, state.target.pp)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:
