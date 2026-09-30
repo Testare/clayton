@@ -22,10 +22,11 @@ divergence (sec 2.5).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from claytonlib.battle.damage import Attacker, Defender, damage_range, unsupported_reason
 from claytonlib.battle_compass import tokens as tok
+from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import HuntConfig
@@ -103,6 +104,18 @@ class TurnLog:
     tokens: tuple[str, ...]
     survivors_before: int
     survivors_after: int
+    #: Which item, or which bench slot -- part of the action, so replay needs them.
+    item_code: str | None = None
+    bench_slot: int | None = None
+
+    @property
+    def extra(self) -> dict:
+        out = {}
+        if self.item_code is not None:
+            out["item_code"] = self.item_code
+        if self.bench_slot is not None:
+            out["bench_slot"] = self.bench_slot
+        return out
 
     @property
     def rendered(self) -> str:
@@ -114,11 +127,12 @@ class HuntSession:
 
     def __init__(self, window: CandidateWindow, ours: Battler, target: Battler,
                  config: HuntConfig, *, solver_config: SolverConfig | None = None,
-                 capture_ball: str = ""):
+                 capture_ball: str = "", bench: tuple[Battler, ...] = ()):
         if not window.candidates:
             raise ValueError("no candidate seeds: widen the window or check the seed targeting")
         self.window = window
         self.ours = ours
+        self.bench = tuple(bench)
         self.target = target
         self.config = config
         self.capture_ball = capture_ball
@@ -137,8 +151,12 @@ class HuntSession:
     # -- construction / replay ------------------------------------------
 
     def _fresh(self) -> Session:
-        return Session(list(self.window.candidates), self.ours, self.target, self.config,
-                       phase=Phase.SETUP)
+        session = Session(list(self.window.candidates), self.ours, self.target, self.config,
+                          phase=Phase.SETUP)
+        if self.bench:
+            session.states = {seed: replace(state, bench=self.bench)
+                              for seed, state in session.states.items()}
+        return session
 
     def _apply_transitions_at(self, boundary: int) -> None:
         """Re-enter any phase recorded at this turn boundary, in the order it happened."""
@@ -158,7 +176,7 @@ class HuntSession:
         for index, turn in enumerate(turns):
             self._apply_transitions_at(index)
             before = len(self._session.survivors)
-            result = self._session.observe(turn.action, turn.tokens)
+            result = self._session.observe(turn.action, turn.tokens, **turn.extra)
             if result.contradiction:
                 # Only reachable if the model changed under us; a turn that was accepted once
                 # must be accepted again. Stop rather than silently dropping it.
@@ -167,7 +185,8 @@ class HuntSession:
                     f"candidate; the simulation has changed since it was recorded")
             replayed.append(TurnLog(action=turn.action, tokens=turn.tokens,
                                     survivors_before=before,
-                                    survivors_after=len(self._session.survivors)))
+                                    survivors_after=len(self._session.survivors),
+                                    item_code=turn.item_code, bench_slot=turn.bench_slot))
         self.turns = replayed
         # A transition recorded after the last surviving turn has not happened yet.
         self.transitions = [(at, p) for at, p in self.transitions if at <= len(replayed)]
@@ -198,12 +217,12 @@ class HuntSession:
         actions.extend([Action.ITEM, Action.ITEM_CURE])
         if self.phase.balls_allowed:
             actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
-        if self.phase is Phase.SETUP:
+        if self.phase is Phase.SETUP and state.bench:
             actions.append(Action.SWITCH)
         return actions
 
-    def predict(self, action: Action) -> dict[int, str]:
-        return self._session.predict(action)
+    def predict(self, action: Action, **extra) -> dict[int, str]:
+        return self._session.predict(action, **extra)
 
     def advice(self) -> list[dict]:
         """Actions ranked by how much they would narrow the set, best first (Phase 1.5).
@@ -219,7 +238,8 @@ class HuntSession:
 
     # -- the loop -------------------------------------------------------
 
-    def observe(self, action: Action, tokens: tuple[str, ...] | list[str]) -> dict:
+    def observe(self, action: Action, tokens: tuple[str, ...] | list[str],
+                item_code: str | None = None, bench_slot: int | None = None) -> dict:
         """Accept one reported turn. Returns the new snapshot.
 
         A contradiction does **not** advance the turn or shrink the set: it is surfaced on the
@@ -233,8 +253,13 @@ class HuntSession:
                                   "observed": tok.render_turn(tok.normalise(list(tokens)))}
             return self.snapshot()
 
+        extra = {}
+        if item_code is not None:
+            extra["item_code"] = item_code
+        if bench_slot is not None:
+            extra["bench_slot"] = bench_slot
         before = len(self._session.survivors)
-        result = self._session.observe(action, tokens)
+        result = self._session.observe(action, tokens, **extra)
         if result.contradiction:
             self.contradiction = {
                 "kind": "no_match",
@@ -250,7 +275,8 @@ class HuntSession:
         self.contradiction = None
         self.turns.append(TurnLog(action=action, tokens=tuple(tokens),
                                   survivors_before=before,
-                                  survivors_after=len(self._session.survivors)))
+                                  survivors_after=len(self._session.survivors),
+                                  item_code=item_code, bench_slot=bench_slot))
         if self.phase is Phase.SOLVING:
             self.solve()
         return self.snapshot()
@@ -335,6 +361,15 @@ class HuntSession:
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
                        "move_info": move_info(state.target)},
+            "bench": [{"slot": i, "name": b.name,
+                       "hp": b.hp, "max_hp": b.max_hp,
+                       "status": b.status.value,
+                       "moves": list(b.moves)}
+                      for i, b in enumerate(state.bench)],
+            "items": [{"code": i.code, "name": i.name, "price": i.price,
+                       "heals": i.heals, "cures_status": i.cures_status,
+                       "heal": i.heal}
+                      for i in items.ITEMS],
             "capture_ball": self.capture_ball,
             "danger_floor": self.danger_floor,
             "in_danger": state.ours.hp is not None and state.ours.hp <= self.danger_floor,

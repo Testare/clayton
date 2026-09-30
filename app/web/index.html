@@ -186,9 +186,13 @@
   .progress-bar.indeterminate{width:35%;animation:progress-slide 1.1s ease-in-out infinite}
   @keyframes progress-slide{0%{margin-left:0}50%{margin-left:65%}100%{margin-left:0}}
   .chip-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
-  .chip{border:1px solid var(--line);background:var(--surface);border-radius:20px;
-    padding:6px 13px;font-size:12.5px;font-weight:550;cursor:pointer}
+  /* color and font are explicit because .chip is used on <button> as well as <span>: the UA
+     resets a button's color to black, which on the dark surface was black on dark grey. */
+  .chip{border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;
+    padding:6px 13px;font-size:12.5px;font-weight:550;cursor:pointer;border-radius:20px}
   .chip.active{background:var(--grass);color:var(--grass-ink);border-color:transparent}
+  .chip:hover:not(:disabled){background:var(--surface-2)}
+  .chip:disabled{opacity:.5;cursor:not-allowed}
 
 /* Battle Compass run page. The two-sided HP panel has no existing equivalent -- every other
    screen is a form or a table -- so these are new rather than reused. */
@@ -3946,6 +3950,15 @@ const HR_PREVENTED = [
   ["cfz", "hurt itself in confusion"], ["fln", "flinched"],
 ];
 
+// After a switch it is the INCOMING Pokemon that takes the hit and whose HP is reported --
+// asking about the one that left was simply wrong.
+function hrActive(){
+  const t = _hrTurn, s = _huntSnap;
+  if (t.action === "S" && t.ours && t.ours.bench !== undefined)
+    return s.bench[t.ours.bench] || s.ours;
+  return s.ours;
+}
+
 function hrOurMoveInfo(){
   const slot = _hrTurn.action && _hrTurn.action.startsWith("M")
     ? Number(_hrTurn.action[1]) - 1 : null;
@@ -3963,10 +3976,15 @@ function hrTokens(){
     else if (t.ours.snapped) parts.push("Mscfz" + t.action[1] + (t.ours.result || ""));
     else parts.push(t.action + (t.ours.result || "") + (t.ours.secondary ? "~" : ""));
   } else {
-    parts.push(t.action === "I" ? "I" + (t.ours?.item || "p")
-             : t.action === "Ic" ? "Ifh"
-             : t.action === "S" ? "S" + (t.ours?.slot || 2)
-             : t.action);            // C / P carry their shake count below
+    if (t.action === "I" || t.action === "Ic"){
+      if (!t.ours?.item) return "";                 // which item is part of the action
+      parts.push("I" + t.ours.item);
+    } else if (t.action === "S"){
+      if (t.ours?.bench === undefined) return "";   // as is which Pokemon came in
+      parts.push("S" + (t.ours.bench + 2));         // party slot: the active one was 1
+    } else {
+      parts.push(t.action);                          // C / P carry their shake count below
+    }
     if ((t.action === "C" || t.action === "P") && t.ours?.result) parts.push(t.ours.result);
   }
   if (t.target){
@@ -3992,8 +4010,6 @@ function hrSet(path, value){
   const t = _hrTurn;
   if (path === "action"){
     t.action = value; t.ours = null; t.target = null; t.hp = "";
-    // A bag action resolves before any move and needs no result of its own.
-    if (!value.startsWith("M") && value !== "C" && value !== "P") t.ours = {};
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
   else if (path === "hp"){ t.hp = value; }
@@ -4006,9 +4022,24 @@ function hrChips(label, options, hint){
     <div class="chip-row">${options.join("")}</div></div>`;
 }
 
+// Rain Dance cannot miss and deals no damage, so "did it work?" has exactly one answer. Asking
+// it anyway is noise, and the answer is deducible from the move -- so a single-option question
+// applies itself and renders nothing.
+function hrAutoAnswer(options, apply){
+  if (options.length !== 1) return false;
+  apply();
+  return true;
+}
+
 function hrChip(text, onclick, active, title){
   return `<button class="chip ${active ? "active" : ""}" type="button"
     ${title ? `title="${esc(title)}"` : ""} onclick="${onclick}">${esc(text)}</button>`;
+}
+
+// Shown but unavailable, with the reason. An action that simply vanishes reads as a missing
+// feature -- balls during Phase 1 are forbidden on purpose (sec 2.3), not absent by accident.
+function hrChipOff(text, why){
+  return `<button class="chip" type="button" disabled title="${esc(why)}">${esc(text)}</button>`;
 }
 
 function hrInterview(){
@@ -4020,17 +4051,43 @@ function hrInterview(){
     .filter(m => m.known && m.pp > 0 && s.legal_actions.includes("M" + (m.slot + 1)))
     .map(m => hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
                      t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
-  if (s.legal_actions.includes("I"))
-    actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
-  if (s.legal_actions.includes("C"))
-    actionChips.push(hrChip(`Threw the ${s.capture_ball || "capture ball"}`,
-      "hrSet('action','C')", t.action === "C"));
-  if (s.legal_actions.includes("P"))
+  actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
+  const ballLabel = `Threw the ${s.capture_ball || "capture ball"}`;
+  if (s.legal_actions.includes("C")){
+    actionChips.push(hrChip(ballLabel, "hrSet('action','C')", t.action === "C"));
     actionChips.push(hrChip("Threw a Poké Ball", "hrSet('action','P')", t.action === "P"));
+  } else {
+    const why = "No balls during setup: a plain Poké Ball is also ×1 here, so a practice throw "
+              + "that lands catches the target in the WRONG ball and the run is lost.";
+    actionChips.push(hrChipOff(ballLabel, why));
+    actionChips.push(hrChipOff("Threw a Poké Ball", why));
+  }
   if (s.legal_actions.includes("S"))
     actionChips.push(hrChip("Switched", "hrSet('action','S')", t.action === "S"));
+  else if (s.phase === 1)
+    actionChips.push(hrChipOff("Switched", "Nobody else on the hunt's party to switch to."));
   blocks.push(hrChips(`What did ${s.ours.name} do?`, actionChips));
   if (!t.action) return blocks.join("");
+
+  // Which item, and which Pokemon came in: part of the ACTION, not its outcome. The same item
+  // heals different amounts and the same switch brings in a different Pokemon, so the simulator
+  // needs these to predict the turn at all.
+  if (t.action === "I" || t.action === "Ic"){
+    const opts = s.items.map(i => hrChip(
+      i.name, `hrSet('ours',{item:'${i.code}'})`, t.ours?.item === i.code,
+      i.heal === null ? "Restores all HP" : i.heals ? `Restores ${i.heal} HP`
+        : i.cures_status ? "Cures status" : `₽${i.price}`));
+    blocks.push(hrChips("Which item?", opts));
+    if (!t.ours?.item) return blocks.join("");
+  } else if (t.action === "S"){
+    if (!s.bench.length){ blocks.push(`<div class="notice warn">Nobody to switch to.</div>`);
+      return blocks.join(""); }
+    const opts = s.bench.map(b => hrChip(
+      b.name, `hrSet('ours',{bench:${b.slot}})`, t.ours?.bench === b.slot,
+      `${b.hp}/${b.max_hp} HP`));
+    blocks.push(hrChips("Who came in?", opts));
+    if (t.ours?.bench === undefined) return blocks.join("");
+  }
 
   // 2. How did it go? Only the outcomes this move can actually have.
   if (t.action.startsWith("M")){
@@ -4101,7 +4158,9 @@ function hrInterview(){
       if (info.can_miss)
         opts2.push(hrChip("Missed / failed",
           `hrSet('target',{slot:${t.target.slot},result:'-'})`, t.target.result === "-"));
-      blocks.push(hrChips(`What happened to ${info.name}?`, opts2));
+      // One possible answer means the move itself settles it. Rain Dance cannot miss and deals no
+      // damage, so there is nothing to ask.
+      if (opts2.length > 1) blocks.push(hrChips(`What happened to ${info.name}?`, opts2));
       if (!t.target.result && t.target.result !== "") return blocks.join("");
       if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")){
         const base = `{slot:${t.target.slot},result:'${t.target.result}'`;
@@ -4118,9 +4177,10 @@ function hrInterview(){
 
   // 4. HP, asked only when something must have changed it.
   if (hrNeedsHp()){
-    blocks.push(`<div class="hr-q"><div class="hr-q-label">${esc(s.ours.name)}'s HP now?
-        <span class="muted hr-small">out of ${s.ours.max_hp}</span></div>
-      <input id="hrHp" type="number" min="0" max="${s.ours.max_hp}" value="${esc(String(t.hp))}"
+    const who = hrActive();       // after a switch this is the Pokemon that came IN
+    blocks.push(`<div class="hr-q"><div class="hr-q-label">${esc(who.name)}'s HP now?
+        <span class="muted hr-small">out of ${who.max_hp}</span></div>
+      <input id="hrHp" type="number" min="0" max="${who.max_hp}" value="${esc(String(t.hp))}"
         style="max-width:120px" oninput="_hrTurn.hp = this.value; hrRefreshPreview()"
         onkeydown="if(event.key==='Enter')huntRunObserve()"></div>`);
   }
@@ -4149,9 +4209,12 @@ function hrRefreshPreview(){
 function huntRunObserve(){
   const tokens = hrTokens();
   if (!tokens) return toast("Answer the questions above first.");
-  const action = _hrTurn.action;
+  const t = _hrTurn, action = t.action;
+  const itemCode = (action === "I" || action === "Ic") ? (t.ours?.item || null) : null;
+  const bench = action === "S" ? t.ours?.bench : null;
   hrTurnReset();
-  huntRunDo("hunt_session_observe", action, [tokens]);
+  huntRunDo("hunt_session_observe", action, [tokens], itemCode,
+            bench === undefined ? null : bench);
 }
 
 function huntRunAbandon(){

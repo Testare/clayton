@@ -29,6 +29,24 @@ _CALIBRATION_MODELS = "calibration_models"
 _HUNTS = "hunts"
 
 
+
+def _configured_pp(pokemon, slot: int, move_name: str) -> int:
+    """Max PP for `slot`, which is also its PP at battle start.
+
+    The configured value IS the maximum -- PP Ups are already in it -- so a battle begins with
+    every move full. When it was never recorded, fall back to the move's own base PP rather than
+    to zero: zero makes the move unusable, which silently removed every move from the run's
+    action list and left only "use an item" and "switch". It is only a warning on the party
+    Pokemon, so the hunt still reported itself ready.
+    """
+    recorded = pokemon.max_pp.get(str(slot))
+    if isinstance(recorded, int) and recorded > 0:
+        return recorded
+    from claytonlib.moves import resolve_move
+    move = resolve_move(move_name)
+    return move.pp if move else 0
+
+
 class Facade:
     def __init__(self, store: Store | None = None):
         self._store = store or FileStore()
@@ -407,27 +425,35 @@ class Facade:
     # -- Battle Compass: the live run --------------------------------------
 
     def _hunt_battlers(self, hunt, profile):
-        """(ours, target) as ``battle_compass`` Battlers, from stored configuration.
+        """(ours, target, bench) as ``battle_compass`` Battlers, from stored configuration.
 
         Our side's stats are entered off the summary screen; the target's are derived from the
         IVs and nature the RNG manipulation fixed (sec 15.4.1). The first party slot is the
-        active Pokemon -- switching is a Phase 1 action and the solver never needs it.
+        active Pokemon and the rest are the bench it can switch to -- a Phase 1 action, which is
+        why the solver never weighs it.
         """
         from claytonlib.battle.stats import derive_species_stats, species as species_data
         from claytonlib.battle_compass.state import Battler
 
         if not hunt.party:
             raise ValueError("this hunt has no party configured")
-        lead = profile.get_party_pokemon(hunt.party[0].pokemon_id)
-        if lead is None:
-            raise ValueError("the hunt's lead Pokemon is no longer on the profile")
 
-        moves = tuple(lead.moveset)
-        ours = Battler(
-            name=lead.name, level=lead.level or 1,
-            types=tuple(species_data(lead.species)["types"]) if lead.species else ("Normal",),
-            stats=dict(lead.stats), moves=moves,
-            pp=tuple(int(lead.max_pp.get(str(i), 0)) for i in range(len(moves))))
+        def battler_for(pokemon):
+            moves = tuple(pokemon.moveset)
+            return Battler(
+                name=pokemon.name, level=pokemon.level or 1,
+                types=(tuple(species_data(pokemon.species)["types"])
+                       if pokemon.species else ("Normal",)),
+                stats=dict(pokemon.stats), moves=moves,
+                pp=tuple(_configured_pp(pokemon, i, name)
+                         for i, name in enumerate(moves)),
+                ability=pokemon.ability or "")
+
+        members = [profile.get_party_pokemon(slot.pokemon_id) for slot in hunt.party]
+        if members[0] is None:
+            raise ValueError("the hunt's lead Pokemon is no longer on the profile")
+        ours = battler_for(members[0])
+        bench = tuple(battler_for(m) for m in members[1:] if m is not None)
 
         from claytonlib.battle_compass.targets import moveset
         from claytonlib.moves import resolve_move
@@ -439,7 +465,7 @@ class Facade:
                                        hunt.target.nature, ivs=dict(hunt.target.ivs)),
             moves=target_moves,
             pp=tuple(resolve_move(name).pp for name in target_moves))
-        return ours, target
+        return ours, target, bench
 
     def hunt_run_setup(self, hunt_id: str) -> dict:
         """What the run page needs to open, before any seed has been looked for.
@@ -557,7 +583,7 @@ class Facade:
             return {"session_id": None, "hunt_id": hunt_id, "window": probe,
                     "problem": probe["problem"]}
 
-        ours, target = self._hunt_battlers(h, profile)
+        ours, target, bench = self._hunt_battlers(h, profile)
         models = self._resolve_calibration_models(h.profile_id)
         model = models.get("linear") or next(iter(models.values()), None)
         window = generate(
@@ -573,7 +599,8 @@ class Facade:
             # which is the whole reason this target is the hard case (sec 2.2).
             fast_ball_matched=(h.capture_ball.strip().lower() == "fast ball"
                                and has_fast_ball_bonus(h.target.species)))
-        session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball)
+        session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball,
+                              bench=bench)
         session_id = self._hunt_sessions.add(hunt_id, session)
         return {"session_id": session_id, "hunt_id": hunt_id, "window": probe,
                 "snapshot": session.snapshot()}
@@ -598,13 +625,22 @@ class Facade:
     def hunt_session_state(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).snapshot()
 
-    def hunt_session_observe(self, session_id: str, action: str, tokens: list) -> dict:
-        """Report one played turn. `tokens` may be a list or one already-rendered string."""
+    def hunt_session_observe(self, session_id: str, action: str, tokens: list,
+                             item_code: str | None = None,
+                             bench_slot: int | None = None) -> dict:
+        """Report one played turn. `tokens` may be a list or one already-rendered string.
+
+        `item_code` and `bench_slot` complete the action rather than describing its outcome: the
+        same ITEM heals different amounts and the same SWITCH brings in a different Pokemon.
+        """
         from claytonlib.battle_compass.state import Action
         session = self._hunt_sessions.get(session_id)
         if isinstance(tokens, str):
             tokens = [tokens]
-        return session.observe(Action(action), [str(t) for t in tokens])
+        return session.observe(
+            Action(action), [str(t) for t in tokens],
+            item_code=item_code or None,
+            bench_slot=None if bench_slot in (None, "") else int(bench_slot))
 
     def hunt_session_undo(self, session_id: str) -> dict:
         """Rewind one reported turn (a misreport). A misplay is reported, not undone."""
@@ -616,12 +652,19 @@ class Facade:
     def hunt_session_enter_solving(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).enter_solving()
 
-    def hunt_session_predict(self, session_id: str, action: str) -> dict:
+    def hunt_session_predict(self, session_id: str, action: str,
+                             item_code: str | None = None,
+                             bench_slot: int | None = None) -> dict:
         """What each surviving candidate would emit for `action`, without committing to it."""
         from claytonlib.battle_compass.state import Action
         session = self._hunt_sessions.get(session_id)
+        extra = {}
+        if item_code:
+            extra["item_code"] = item_code
+        if bench_slot not in (None, ""):
+            extra["bench_slot"] = int(bench_slot)
         return {f"{seed:#010x}": pred
-                for seed, pred in session.predict(Action(action)).items()}
+                for seed, pred in session.predict(Action(action), **extra).items()}
 
     def hunt_session_abandon(self, session_id: str) -> dict:
         return {"session_id": session_id, "closed": self._hunt_sessions.drop(session_id)}

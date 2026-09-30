@@ -18,6 +18,10 @@ Modules:
 * ``sim`` — turn resolution over the emulator-verified skeleton in ``claytonlib.battle.turn``.
 * ``candidates`` — the uniform (frame x second) grid of possible battle seeds (sec 17.1).
 * ``identify`` — narrowing that grid against what the player reports, and the phase machine.
+* ``items`` — the bag items, in one place. Three consumers needed to agree about them and
+  didn't: the solver priced them, the simulator hardcoded two token codes, and the run page
+  offered none. Items cost zero RNG advances but are not inert -- a potion that healed nothing
+  made the predicted HP diverge and contradicted every candidate.
 * ``targets`` — known static-encounter movesets, in slot order (not derivable from base stats:
   a moveset belongs to the encounter, not the species).
 * ``hunt_session`` — the layer the app drives: one run from first turn to capture, joining
@@ -49,6 +53,9 @@ from claytonlib.battle_compass.candidates import (  # noqa: F401
 )
 from claytonlib.battle_compass.identify import (  # noqa: F401
     Narrowing, Observation, Phase, Session,
+)
+from claytonlib.battle_compass.items import (  # noqa: F401
+    ITEMS, Item, heal_amount, smallest_heal_covering,
 )
 from claytonlib.battle_compass.targets import (  # noqa: F401
     STATIC_ENCOUNTERS, encounter_level, moveset,

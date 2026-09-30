@@ -406,5 +406,162 @@ class TestPartyOrdering(unittest.TestCase):
         self.assertEqual(snap["ours"]["name"], "Slowpoke")
 
 
+class TestTheUiIsReadable(unittest.TestCase):
+    """.chip is used on <button> here, and a button's UA color is black -- which on the dark
+    surface was black on dark grey. .btn always set color explicitly; .chip never did, because
+    every prior use was on a <span>, which inherits it."""
+
+    def setUp(self):
+        self.css = INDEX.read_text().split("</style>")[0]
+
+    def test_chips_set_their_own_colour(self):
+        import re
+        rule = re.search(r"\.chip\{([^}]*)\}", self.css).group(1)
+        self.assertIn("color:var(--ink)", rule.replace(" ", ""))
+
+    def test_chips_do_not_inherit_a_button_ua_font(self):
+        import re
+        rule = re.search(r"\.chip\{([^}]*)\}", self.css).group(1)
+        self.assertIn("font:inherit", rule.replace(" ", ""))
+
+    def test_a_disabled_chip_looks_disabled(self):
+        self.assertIn(".chip:disabled", self.css)
+
+
+class TestNoActionSilentlyVanishes(unittest.TestCase):
+    """An action that is simply absent reads as a missing feature. Balls during setup are
+    forbidden on purpose (sec 2.3), so they are shown disabled with the reason."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_forbidden_actions_are_shown_with_a_reason(self):
+        self.assertTrue("function hrChipOff(" in self.html)
+        self.assertIn("WRONG ball", self.html)
+
+    def test_an_empty_bench_explains_why_switching_is_unavailable(self):
+        self.assertIn("Nobody else on the hunt's party", self.html)
+
+
+class TestTrivialQuestionsAreNotAsked(unittest.TestCase):
+    """Rain Dance cannot miss and deals no damage, so 'did it work?' has one answer -- which is
+    deducible from the move, not something to ask about."""
+
+    def test_a_single_option_question_is_skipped(self):
+        self.assertIn("opts2.length > 1", INDEX.read_text())
+
+    def test_rain_dance_has_exactly_one_possible_outcome(self):
+        """Which is what makes it skippable; Aurora Beam has several and must still be asked."""
+        from claytonlib.battle_compass.hunt_session import move_info
+        from claytonlib.battle_compass.state import Battler
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.moves import resolve_move
+        moves = moveset("suicune")
+        target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
+                         stats=derive_species_stats("suicune", 40, "Bold"), moves=moves,
+                         pp=tuple(resolve_move(m).pp for m in moves))
+        info = {m["name"]: m for m in move_info(target)}
+        rain = info["Rain Dance"]
+        self.assertFalse(rain["damaging"])
+        self.assertFalse(rain["can_miss"])
+        beam = info["Aurora Beam"]
+        self.assertTrue(beam["damaging"] or beam["can_miss"])
+
+
+class TestThePpFallback(unittest.TestCase):
+    """Unrecorded max PP became 0, which made every move unusable -- so the run offered only
+    'use an item' and 'switch'. It is only a WARNING on the party Pokemon, so the hunt still
+    reported itself ready and the failure appeared at the worst moment."""
+
+    def _hunt_with_pp(self, max_pp):
+        facade = Facade(FileStore(tempfile.mkdtemp()))
+        profile_id = facade.create_profile({"name": "T"})["id"]
+        fields = dict(LEAD, moveset=["Thunder Wave", "Tackle"])
+        if max_pp is None:
+            fields.pop("max_pp", None)
+        else:
+            fields["max_pp"] = max_pp
+        lead = facade.add_party_pokemon(profile_id, fields)["pokemon_id"]
+        hunt = facade.create_hunt({"name": "H", "profile_id": profile_id})
+        hunt.update({"target": TARGET, "party": [{"pokemon_id": lead}],
+                     "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
+                     "initial_time": "2026-01-01T12:00:00", "vector_ms": 120000,
+                     "seconds_window": 0, "delay_window": 10})
+        facade.save_hunt(hunt)
+        return facade, hunt["id"]
+
+    def test_unrecorded_pp_falls_back_to_the_moves_base_pp(self):
+        facade, hunt_id = self._hunt_with_pp(None)
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["pp"], [20, 35])   # Thunder Wave 20, Tackle 35
+
+    def test_the_moves_are_therefore_offered(self):
+        facade, hunt_id = self._hunt_with_pp(None)
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertIn("M1", snap["legal_actions"])
+        self.assertIn("M2", snap["legal_actions"])
+
+    def test_a_recorded_value_still_wins(self):
+        """It is the max, PP Ups included, so it can exceed the move's base PP."""
+        facade, hunt_id = self._hunt_with_pp({"0": 32, "1": 35})
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["pp"], [32, 35])
+
+    def test_zero_is_treated_as_unrecorded_rather_than_as_no_pp(self):
+        """A configured 0 cannot mean 'this move is unusable' -- it means nobody filled it in."""
+        facade, hunt_id = self._hunt_with_pp({"0": 0, "1": 0})
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["pp"], [20, 35])
+
+
+class TestSwitchingThroughTheFacade(unittest.TestCase):
+    def _two_member_hunt(self):
+        facade = Facade(FileStore(tempfile.mkdtemp()))
+        profile_id = facade.create_profile({"name": "T"})["id"]
+        mag = facade.add_party_pokemon(profile_id, dict(
+            LEAD, name="Magneton", species="magneton", level=30,
+            moveset=["Thunder Wave", "Tackle"], max_pp={}))["pokemon_id"]
+        sme = facade.add_party_pokemon(profile_id, LEAD)["pokemon_id"]
+        hunt = facade.create_hunt({"name": "H", "profile_id": profile_id})
+        hunt.update({"target": TARGET,
+                     "party": [{"pokemon_id": mag}, {"pokemon_id": sme}],
+                     "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
+                     "initial_time": "2026-01-01T12:00:00", "vector_ms": 120000,
+                     "seconds_window": 0, "delay_window": 10})
+        facade.save_hunt(hunt)
+        return facade, hunt["id"]
+
+    def test_the_bench_reaches_the_snapshot(self):
+        facade, hunt_id = self._two_member_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["name"], "Magneton")
+        self.assertEqual([b["name"] for b in snap["bench"]], ["Smeargle"])
+        self.assertIn("S", snap["legal_actions"])
+
+    def test_switching_changes_who_is_active(self):
+        facade, hunt_id = self._two_member_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        sid, snap = started["session_id"], started["snapshot"]
+        truth = snap["candidates"][0]["seed"]
+        predicted = facade.hunt_session_predict(sid, "S", bench_slot=0)[truth]
+        after = facade.hunt_session_observe(sid, "S", [predicted], bench_slot=0)
+        self.assertEqual(after["ours"]["name"], "Smeargle")
+
+    def test_an_item_code_reaches_the_token(self):
+        facade, hunt_id = self._two_member_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        sid, snap = started["session_id"], started["snapshot"]
+        truth = snap["candidates"][0]["seed"]
+        predicted = facade.hunt_session_predict(sid, "I", item_code="sp")[truth]
+        self.assertTrue(predicted.startswith("Isp"), predicted)
+
+    def test_the_page_sends_both_choices(self):
+        html = INDEX.read_text()
+        self.assertIn("hunt_session_observe", html)
+        self.assertIn("itemCode", html)
+        self.assertIn("bench", html)
+
+
 if __name__ == "__main__":
     unittest.main()

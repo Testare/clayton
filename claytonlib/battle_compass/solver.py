@@ -34,6 +34,7 @@ from claytonlib.battle.catch import (
 )
 from claytonlib.battle.catch import capture_windows as _capture_windows
 from claytonlib.battle import turn as turn_costs
+from claytonlib.battle_compass import items
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.sim import HuntConfig, advance, simulate_turn
 from claytonlib.battle_compass.state import Action, BattleState, Status
@@ -45,17 +46,9 @@ COST_DIVISOR = 50
 
 #: HGSS prices, in pokedollars. Placeholders where the real table is not yet captured — the
 #: distance function only needs their relative order to behave sensibly.
-ITEM_PRICES = {
-    "p": 300,      # Potion
-    "sp": 700,     # Super Potion
-    "hp": 1200,    # Hyper Potion
-    "mp": 2500,    # Max Potion
-    "fh": 600,     # Full Heal
-    "fr": 3000,    # Full Restore
-    "xsd": 350,    # X Sp. Def
-    "xd": 550,     # X Defend
-    "gs": 700,     # Guard Spec.
-}
+#: Prices from the shared item table, so the solver, the simulator and the run page cannot
+#: disagree about what an item is or does (see ``battle_compass.items``).
+ITEM_PRICES = items.PRICES
 BALL_PRICE = 200
 
 

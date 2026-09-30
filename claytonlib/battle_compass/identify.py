@@ -49,9 +49,16 @@ class Phase(IntEnum):
 
 @dataclass
 class Observation:
-    """What the player reported for one turn, as tokens."""
+    """What the player reported for one turn, as tokens.
+
+    `item_code` and `bench_slot` are part of the action, not of the outcome: the same ITEM action
+    heals different amounts and the same SWITCH brings in different Pokemon, so replaying without
+    them would reproduce a different turn.
+    """
     action: Action
     tokens: tuple[str, ...]
+    item_code: str | None = None
+    bench_slot: int | None = None
 
     @property
     def rendered(self) -> str:
@@ -113,7 +120,7 @@ class Session:
 
     # -- the loop -------------------------------------------------------
 
-    def predict(self, action: Action) -> dict[int, str]:
+    def predict(self, action: Action, **extra) -> dict[int, str]:
         """What each survivor would emit if the player took `action` — without committing.
 
         This is the display for Phase 1.5: it shows what a given action would distinguish, so
@@ -121,11 +128,12 @@ class Session:
         """
         out: dict[int, str] = {}
         for seed, state in self.states.items():
-            advanced = simulate_turn(state, action, self.config)
+            advanced = simulate_turn(state, action, self.config, **extra)
             out[seed] = tok.render_turn(tok.normalise(advanced.log[-1]))
         return out
 
-    def observe(self, action: Action, tokens: tuple[str, ...] | list[str]) -> Narrowing:
+    def observe(self, action: Action, tokens: tuple[str, ...] | list[str],
+                **extra) -> Narrowing:
         """Apply one reported turn, keeping only the candidates that predicted it.
 
         A contradiction leaves the surviving set **unchanged** rather than empty: an impossible
@@ -144,7 +152,7 @@ class Session:
         advanced: dict[int, BattleState] = {}
         predictions: dict[int, str] = {}
         for seed, state in self.states.items():
-            nxt = simulate_turn(state, action, self.config)
+            nxt = simulate_turn(state, action, self.config, **extra)
             predictions[seed] = tok.render_turn(tok.normalise(nxt.log[-1]))
             advanced[seed] = nxt
 
@@ -155,7 +163,9 @@ class Session:
 
         before = len(self.states)
         self.states = {s: advanced[s] for s in matched}
-        self.history.append(Observation(action=action, tokens=tuple(tokens)))
+        self.history.append(Observation(action=action, tokens=tuple(tokens),
+                                        item_code=extra.get("item_code"),
+                                        bench_slot=extra.get("bench_slot")))
         result = Narrowing(survivors=self.survivors, eliminated=before - len(matched),
                            predictions={s: predictions[s] for s in matched},
                            rejected={s: p for s, p in predictions.items() if s not in matched})
@@ -246,10 +256,24 @@ class Session:
 
     # -- information gain (Phase 1.5) -----------------------------------
 
+    def ranking_extra(self, action: Action) -> dict:
+        """Parameters an action needs before it can be simulated at all, for ranking purposes.
+
+        A switch needs to know who came in and an item needs to know which item. Neither choice
+        can affect information gain: both cost zero RNG advances, so every candidate consumes the
+        same stream whichever is picked, and the partition is identical. So ranking may default
+        them, where actually *observing* the turn must not.
+        """
+        if action is Action.SWITCH:
+            state = next(iter(self.states.values()), None)
+            if state is not None and state.bench:
+                return {"bench_slot": 0}
+        return {}
+
     def partition(self, action: Action) -> dict[str, tuple[int, ...]]:
         """Survivors grouped by what `action` would make them predict."""
         groups: dict[str, list[int]] = {}
-        for seed, pred in self.predict(action).items():
+        for seed, pred in self.predict(action, **self.ranking_extra(action)).items():
             groups.setdefault(pred, []).append(seed)
         return {pred: tuple(seeds) for pred, seeds in groups.items()}
 
@@ -272,8 +296,10 @@ class Session:
         setup.
         """
         allowed = [a for a in actions
-                   if self.phase.balls_allowed
-                   or a not in (Action.CAPTURE_BALL, Action.STANDARD_BALL)]
+                   if (self.phase.balls_allowed
+                       or a not in (Action.CAPTURE_BALL, Action.STANDARD_BALL))
+                   and (a is not Action.SWITCH
+                        or any(st.bench for st in self.states.values()))]
         scored = [(a, self.expected_survivors(a)) for a in allowed]
         scored.sort(key=lambda pair: (pair[1], pair[0].value))
         return scored

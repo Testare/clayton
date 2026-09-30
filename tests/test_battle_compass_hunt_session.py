@@ -5,12 +5,14 @@ from dataclasses import replace
 
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
+from claytonlib.battle_compass import items
 from claytonlib.battle_compass.hunt_session import (
     CANDIDATE_PREVIEW, HuntSession, TurnLog, move_info, worst_incoming_hit,
 )
 from claytonlib.battle_compass.identify import Phase
 from claytonlib.battle_compass.sim import HuntConfig
 from claytonlib.battle_compass.state import Action, Battler, Status
+from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.targets import moveset
 from claytonlib.moves import resolve_move
 
@@ -32,6 +34,14 @@ def _target(**kw):
     fields = dict(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
                   stats=derive_species_stats("suicune", 40, "Bold"), moves=moves,
                   pp=tuple(resolve_move(m).pp for m in moves))
+    fields.update(kw)
+    return Battler(**fields)
+
+
+def _bench(**kw):
+    fields = dict(name="Magneton", level=30, types=("Electric", "Steel"),
+                  stats={"hp": 85, "atk": 50, "def": 70, "spa": 90, "spd": 60, "spe": 60},
+                  moves=("Thunder Wave", "Tackle"), pp=(20, 35))
     fields.update(kw)
     return Battler(**fields)
 
@@ -345,8 +355,10 @@ class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
     """
 
     #: The token shapes the interview's chips can produce, per app/web/index.html's hrTokens().
+    #: Item codes are enumerated rather than [a-z]+ so a code the page cannot offer fails here.
     OURS = (r"(?:M[1-4][h!\-]?~?|M(?:par|slp|frz|cfz|fln)|Mscfz[1-4][h!\-]?~?"
-            r"|I[a-z]+|S[1-6]|C[0-3]?|Pc?[0-3]?)")
+            r"|I(?:" + "|".join(i.code for i in items.ITEMS) + r")"
+            r"|S[1-6]|C[0-3]?|Pc?[0-3]?)")
     TARGET = r"(?:E[1-4][h!\-]?~?|E(?:par|slp|frz|fln))"
     TURN = None  # built in setUpClass
 
@@ -356,28 +368,35 @@ class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
         cls.TURN = re.compile(rf"^{cls.OURS}(?:{cls.TARGET})?(?:HP\d{{3}})?$")
 
     def _renderings(self):
+        """Every turn shape reachable from the fixture, switches and items included."""
         import random
+        from claytonlib.battle_compass import tokens as tk
         from claytonlib.battle_compass.sim import simulate_turn
         rng = random.Random(9)
+        codes = [i.code for i in items.ITEMS]
         seen = set()
-        for _ in range(400):
+        for _ in range(200):
             for extra in ({}, {"hp": 1, "status": Status.PARALYSIS}):
-                state = _session(n=1, **extra)._session.states
-                base = next(iter(state.values()))
-                base = replace(base, rng=rng.getrandbits(32))
-                for action in Action:
-                    if action is Action.SWITCH:
-                        continue
-                    try:
-                        nxt = simulate_turn(base, action, HUNT)
-                    except Exception:
-                        continue
-                    from claytonlib.battle_compass import tokens as tk
-                    seen.add(tk.render_turn(tk.normalise(nxt.log[-1])))
+                for our_hp in (None, 90, 40):
+                    base = next(iter(_session(n=1, **extra)._session.states.values()))
+                    base = replace(base, rng=rng.getrandbits(32),
+                                   ours=base.ours.with_hp(our_hp or base.ours.max_hp),
+                                   bench=(_bench(),))
+                    for action in Action:
+                        kwargs = {}
+                        if action is Action.SWITCH:
+                            kwargs["bench_slot"] = 0
+                        if action in (Action.ITEM, Action.ITEM_CURE):
+                            kwargs["item_code"] = rng.choice(codes)
+                        try:
+                            nxt = simulate_turn(base, action, HUNT, **kwargs)
+                        except Exception:
+                            continue
+                        seen.add(tk.render_turn(tk.normalise(nxt.log[-1])))
         return seen
 
     def test_the_sample_is_broad_enough_to_mean_something(self):
-        self.assertGreater(len(self._renderings()), 200)
+        self.assertGreater(len(self._renderings()), 600)
 
     def test_every_predictable_turn_matches_the_interviews_vocabulary(self):
         unreportable = sorted(r for r in self._renderings() if not self.TURN.match(r))
@@ -408,6 +427,114 @@ class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
     def test_an_unknown_slot_is_marked_rather_than_guessed(self):
         battler = _ours(moves=("False Swipe",), pp=(40,))
         self.assertTrue(move_info(battler)[0]["known"])
+
+
+class TestSwitchingActuallySwitches(unittest.TestCase):
+    """SWITCH used to fall into the bag-action branch, emit an ITEM token, and swap nobody -- so
+    the run kept simulating the Pokemon that had left, and asked for its HP at end of turn."""
+
+    def _session_with_bench(self):
+        return HuntSession(_window(8), _ours(), _target(), HUNT, bench=(_bench(),))
+
+    def test_it_emits_a_switch_token_not_an_item_one(self):
+        session = self._session_with_bench()
+        rendered = session.predict(Action.SWITCH, bench_slot=0)[session.survivors[0]]
+        self.assertTrue(rendered.startswith("S2"), rendered)
+        self.assertNotIn("I", rendered.split("E")[0])
+
+    def test_the_party_slot_counts_the_active_pokemon(self):
+        """Bench slot 0 is party slot 2, because the active one is slot 1."""
+        session = self._session_with_bench()
+        self.assertTrue(
+            session.predict(Action.SWITCH, bench_slot=0)[session.survivors[0]].startswith("S2"))
+
+    def test_the_incoming_pokemon_becomes_active(self):
+        session = self._session_with_bench()
+        truth = session.survivors[0]
+        rendered = session.predict(Action.SWITCH, bench_slot=0)[truth]
+        snap = session.observe(Action.SWITCH, [rendered], bench_slot=0)
+        self.assertEqual(snap["ours"]["name"], "Magneton")
+        self.assertEqual(snap["ours"]["max_hp"], 85)
+
+    def test_the_outgoing_pokemon_goes_to_the_bench(self):
+        session = self._session_with_bench()
+        truth = session.survivors[0]
+        rendered = session.predict(Action.SWITCH, bench_slot=0)[truth]
+        snap = session.observe(Action.SWITCH, [rendered], bench_slot=0)
+        self.assertEqual([b["name"] for b in snap["bench"]], ["Smeargle"])
+
+    def test_the_hp_reported_belongs_to_the_incoming_pokemon(self):
+        """The bug behind 'it asks for Magneton's HP when I switched to Smeargle'."""
+        session = self._session_with_bench()
+        truth = session.survivors[0]
+        rendered = session.predict(Action.SWITCH, bench_slot=0)[truth]
+        hp = [t for t in tok.tokenise(rendered) if t.startswith("HP")]
+        if hp:
+            self.assertLessEqual(int(hp[0][2:]), 85, "HP exceeds the incoming Pokemon's maximum")
+
+    def test_a_switch_without_a_target_is_refused(self):
+        session = self._session_with_bench()
+        with self.assertRaises(ValueError) as caught:
+            session.predict(Action.SWITCH)
+        self.assertIn("which party member came in", str(caught.exception))
+
+    def test_switch_is_not_offered_with_an_empty_bench(self):
+        self.assertNotIn(Action.SWITCH, _session().legal_actions())
+
+    def test_switch_is_offered_when_there_is_a_bench(self):
+        self.assertIn(Action.SWITCH, self._session_with_bench().legal_actions())
+
+    def test_the_bench_survives_undo(self):
+        session = self._session_with_bench()
+        truth = session.survivors[0]
+        rendered = session.predict(Action.SWITCH, bench_slot=0)[truth]
+        session.observe(Action.SWITCH, [rendered], bench_slot=0)
+        snap = session.undo()
+        self.assertEqual(snap["ours"]["name"], "Smeargle")
+        self.assertEqual([b["name"] for b in snap["bench"]], ["Magneton"])
+
+    def test_ranking_can_score_a_switch_without_being_told_who(self):
+        """Information gain cannot depend on it -- a switch costs zero RNG advances -- so the
+        ranking defaults it rather than refusing."""
+        session = self._session_with_bench()
+        ranked = dict(session._session.rank_actions(session.legal_actions()))
+        self.assertIn(Action.SWITCH, ranked)
+
+
+class TestItemsActuallyApply(unittest.TestCase):
+    """The simulator appended an item token and healed nothing, so after a potion its predicted
+    HP diverged from the real one and the next report contradicted every candidate."""
+
+    def test_a_potion_heals_and_the_token_names_it(self):
+        session = _session()
+        state = next(iter(session._session.states.values()))
+        session._session.states = {s: replace(st, ours=st.ours.with_hp(100))
+                                   for s, st in session._session.states.items()}
+        rendered = session.predict(Action.ITEM, item_code="sp")[session.survivors[0]]
+        self.assertTrue(rendered.startswith("Isp"), rendered)
+
+    def test_healing_is_capped_at_the_missing_amount(self):
+        from claytonlib.battle_compass.items import heal_amount
+        self.assertEqual(heal_amount("hp", 140, 170), 30)
+        self.assertEqual(heal_amount("mp", 10, 170), 160)
+        self.assertEqual(heal_amount("p", 170, 170), 0)
+
+    def test_a_full_heal_clears_status_without_healing(self):
+        from claytonlib.battle_compass.items import item
+        self.assertTrue(item("fh").cures_status)
+        self.assertFalse(item("fh").heals)
+
+    def test_the_solvers_prices_come_from_the_same_table(self):
+        """Three consumers used to disagree about what an item was."""
+        from claytonlib.battle_compass.items import PRICES
+        from claytonlib.battle_compass.solver import ITEM_PRICES
+        self.assertEqual(PRICES, ITEM_PRICES)
+
+    def test_the_snapshot_offers_the_items_so_the_page_can_ask(self):
+        offered = _session().snapshot()["items"]
+        self.assertEqual({i["code"] for i in offered}, set(items.PRICES))
+        for entry in offered:
+            self.assertTrue(entry["name"])
 
 
 if __name__ == "__main__":

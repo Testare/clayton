@@ -28,7 +28,7 @@ from claytonlib.battle.catch import (
 )
 from claytonlib.battle.damage import Attacker, Defender, damage, unsupported_reason
 from claytonlib.battle.readiness import PARALYSIS_SPEED_FACTOR
-from claytonlib.battle_compass import tokens as tok
+from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
 from claytonlib.safari import advance_rng
@@ -260,7 +260,9 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
     return effective_speed(state.ours) > effective_speed(state.target)
 
 
-def simulate_turn(state: BattleState, action: Action, config: HuntConfig) -> BattleState:
+def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
+                  item_code: str | None = None,
+                  bench_slot: int | None = None) -> BattleState:
     """One turn, advancing `state` and appending its rendered tokens to ``state.log``.
 
     Structure per ``claytonlib.battle.turn`` (verified): the wild move-selection roll, four
@@ -310,9 +312,42 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig) -> Bat
             else:
                 new.captured_in_wrong_ball = captured
             return False
+        if action is Action.SWITCH:
+            # Costs no advances of its own (verified), but it changes WHO is out -- which decides
+            # turn order, what the incoming damage is computed against, and whose HP the rest of
+            # the turn refers to. An earlier version emitted an item token and swapped nobody,
+            # so a switch silently kept simulating the Pokemon that had left.
+            if bench_slot is None or not 0 <= bench_slot < len(new.bench):
+                raise ValueError(
+                    f"a switch needs which party member came in: bench_slot={bench_slot!r} with "
+                    f"{len(new.bench)} on the bench")
+            incoming = new.bench[bench_slot]
+            new.bench = tuple(b for i, b in enumerate(new.bench) if i != bench_slot) + (new.ours,)
+            new.ours = incoming
+            # Party slot is 1-based and counts the active Pokemon, which was slot 1.
+            parts.append(tok.switch_token(bench_slot + 2))
+            return False
         if action.is_bag_action:
-            # Items and switches cost no advances of their own (verified).
-            parts.append(tok.item_token("hp" if action is Action.ITEM else "fh"))
+            # Items cost no advances of their own (verified) -- but they are not inert. A potion
+            # that healed nothing here would make the predicted HP diverge from the real one and
+            # contradict every candidate on the next report.
+            code = item_code or ("fh" if action is Action.ITEM_CURE else "p")
+            entry = items.item(code)
+            if entry.heals and new.ours.hp is not None:
+                healed = items.heal_amount(code, new.ours.hp, new.ours.max_hp)
+                if healed:
+                    new.ours = new.ours.with_hp(new.ours.hp + healed)
+            if entry.cures_status:
+                new.ours = new.ours.with_status(Status.NONE)
+            if entry.raises:
+                stat, stages = entry.raises
+                if stat == "spd":
+                    new.ours = replace(new.ours,
+                                       spdef_stage=min(6, new.ours.spdef_stage + stages))
+                elif stat == "def":
+                    new.ours = replace(new.ours,
+                                       def_stage=min(6, new.ours.def_stage + stages))
+            parts.append(tok.item_token(code))
             return False
         slot = action.move_slot
         move = new.ours.move(slot)

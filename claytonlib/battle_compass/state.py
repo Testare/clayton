@@ -148,6 +148,9 @@ class BattleState:
     ours: Battler
     target: Battler
     rng: int
+    #: The rest of the party, in send-out order, that `ours` can be swapped for. Phase 1 only:
+    #: Phase 2's precondition guarantees the right Pokemon is already out (sec 12.5).
+    bench: tuple[Battler, ...] = ()
     turn: int = 0
     #: Set once the target is at 1 HP and paralyzed; the solver asserts it (sec 2 / sec 15.3).
     phase: int = 1
@@ -171,7 +174,8 @@ class BattleState:
 
     def copy(self) -> "BattleState":
         return BattleState(
-            ours=self.ours, target=self.target, rng=self.rng, turn=self.turn, phase=self.phase,
+            ours=self.ours, target=self.target, rng=self.rng, bench=self.bench,
+            turn=self.turn, phase=self.phase,
             our_attack_stage=self.our_attack_stage, target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
