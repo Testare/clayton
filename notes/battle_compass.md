@@ -1946,47 +1946,50 @@ the target's IVs come from hitting a Seed A advance frame.
 frames that generate the target species. A static legendary's species is fixed, so there is nothing
 to search for.
 
-### 17.1a A caveat on the identification-rate arithmetic
+### 17.1a The two grid axes are not equally identifiable — measured
 
-The user's scepticism about reducing ~a million candidates to one in ~4 turns is well placed, and
-the number should not be trusted as a prediction.
+Section 17.1 said the window "can be generous to the point of carelessness". That is true of the
+**frame** and false of the **second**, and the difference is structural rather than a matter of
+degree [derived, and now asserted in `tests/test_battle_compass_identify.py`].
 
-Recomputing more carefully over 8 Phase 1 turns — 2 bits of move choice every turn, plus crit,
-damage-roll and Attack-drop entropy on the ~half that deal damage — gives **~28 bits**, i.e. an
-upper bound around 10^8 distinguishable paths. So the arithmetic is internally consistent and even
-generous.
+| Window | Candidates | Outcome |
+|---|---|---|
+| frame ±60, second ±0 | 121 | **identified in 2 turns** |
+| frame ±600, second ±0 | 1,201 | **identified in 3 turns** |
+| frame ±60, second ±2 | 605 | **stalls at 5 survivors, forever** |
 
-But it is an **information-theoretic ceiling, not a rate**. What survives as a genuine caveat is
-narrower than an earlier draft of this section claimed:
+**Why the second cannot be identified.** `calculate_seed` is
+`((mdms << 24) | (hour << 16)) + delay`, so the RTC second enters through `mdms` in the **top 8
+bits**. An LCRNG difference of `k · 2²⁴` stays in the top 8 bits for every subsequent advance.
+Every modulus the game takes — `% 4` for the wild move choice, `% 16` for crits and the damage
+roll, `% 100` for accuracy and secondary procs — reads only the *low* bits of a roll, which are
+identical across such candidates. Measured on four real survivors, the low byte of every roll
+agrees indefinitely, so no move ever separates them.
 
-**Retracted — "candidate seeds are shifted versions of each other."** That was wrong [corrected by
-user]. `calculate_seed` is `((mdms << 24) | (hour << 16)) + delay` [verified], so the delay sits in
-the **low 16 bits** and one delay apart means the seeds differ by **1 in numeric value** — not by
-one RNG advance. Advancing is the LCRNG `state * 1103515245 + 24691`, so `S` and `S+1` diverge by
-1,103,515,245 on the very first advance and their streams are unrelated thereafter. Measured on
-20,000 consecutive candidate seeds [derived]:
+Only a **magnitude** comparison can, and the game has exactly one: the shake check `roll < b`. So
+a ball throw is the only observable sensitive to the second — and it is not a practical remedy.
+Measured on that same four-way ambiguity: one throw separates two of the four, **ten throws** are
+needed to separate all of them, and **two of those ten capture** — losing the run to the wrong
+ball.
 
-| Check | Result |
-|---|---|
-| first-roll move choice (`%4`) | 25.0% / 25.0% / 25.0% / 25.0% — perfectly even |
-| a crude 3-observation signature | 256 distinct buckets, largest holding 87 of 20,000 |
+**Consequences.**
 
-So adjacent candidates partition cleanly, and **the independence assumption behind the ~28-bit
-estimate is reasonable in practice** — the retraction strengthens the estimate rather than
-weakening it.
+- `candidates.generate` defaults `second_window` to **0**. Widening it does not add a safety
+  margin; it trades a pinned seed for a permanently ambiguous one.
+- The frame window can stay generous, so imprecision in Vector ms really is close to free — §1's
+  claim survives, but only on the axis observation can correct.
+- The second must come from the model and be trusted. That raises the stakes on
+  `rtc_offset_seconds` being right for a *static A-press* encounter, since §R1 noted its value is
+  fitted to the Sweet-Scent path. Previously that was "non-blocking"; it is now the one
+  calibration number a run genuinely depends on.
+- `identify.Session.ambiguity()` reports this situation explicitly rather than letting a stuck set
+  look like one that needs more turns.
 
-The caveats that do survive:
-
-- **Entropy decays as moves are exhausted** (R4): 2.00 -> 1.58 -> 1.00 -> 0 bits, and Rain Dance's
-  5 PP makes that start early.
-- **A ceiling is still not a rate.** Nothing above proves the *absence* of systematic collisions in
-  the full observable path; it only shows the obvious source of them is not there.
-
-So the honest position: a generous window is *probably* affordable, and **§11.7 test 2 (the
-seed-uniqueness study) is what actually answers it** — measure how many candidates survive N turns
-of this specific fixture rather than trusting the bound. If it turns out worse than the bound
-suggests, the remedy is cheap: narrow the window using a tighter Vector ms estimate, or spend more
-Phase 1.5 turns.
+**On the earlier arithmetic.** §17.1's entropy estimate was not wrong so much as measuring the
+wrong thing: it counted bits per turn without asking *which* bits of the seed those observations
+can see. They see the frame and never the second. Worth remembering as a general caution — an
+entropy count says how much information an observation carries, not which unknowns it is capable
+of addressing.
 
 ### 17.2 Smaller open items
 

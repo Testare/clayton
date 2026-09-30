@@ -16,12 +16,29 @@ Modules:
   seed is simulated forwards to produce the tokens it would emit, and filtering is a comparison
   against what the player reported.
 * ``sim`` — turn resolution over the emulator-verified skeleton in ``claytonlib.battle.turn``.
+* ``candidates`` — the uniform (frame x second) grid of possible battle seeds (sec 17.1).
+* ``identify`` — narrowing that grid against what the player reports, and the phase machine.
+
+**One finding worth knowing before using any of this.** The two axes of the candidate grid are
+not equally identifiable.  The frame is easy — 1,201 frame candidates narrow to one in three
+turns.  The RTC second is *impossible*: it lives in the seed's top 8 bits, an LCRNG difference of
+``k * 2**24`` stays in the top 8 bits forever, and every modulus the game takes reads only the low
+bits.  A second window of 2 stalls at five survivors and never resolves, and balls are not a
+practical remedy — separating four seconds took ten throws in testing, two of which captured and
+would have lost the run.  Hence ``second_window`` defaults to 0, and
+``identify.Session.ambiguity`` explains the situation when a set is stuck.
 """
 from claytonlib.battle_compass.state import (  # noqa: F401
     Action, Battler, BattleState, Status,
 )
 from claytonlib.battle_compass.sim import (  # noqa: F401
     HuntConfig, execute_move, move_roll_cost, select_target_move, throw_ball,
+)
+from claytonlib.battle_compass.candidates import (  # noqa: F401
+    Candidate, CandidateWindow,
+)
+from claytonlib.battle_compass.identify import (  # noqa: F401
+    Narrowing, Observation, Phase, Session,
 )
 
 # `simulate` and `simulate_turn` are deliberately NOT re-exported here. claytonlib/__init__
