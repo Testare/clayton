@@ -21,8 +21,13 @@ from claytonlib.battle.damage import (  # noqa: F401
     rolls_for_damage, stage_multiplier, unsupported_reason,
 )
 from claytonlib.battle.catch import (  # noqa: F401
-    capture_chance, capture_windows, captures, catch_value, rolls_consumed,
-    shake_threshold, shakes_for_rolls,
+    apricorn_catch_rate, capture_chance, capture_windows, captures, catch_value,
+    fast_ball_catch_rate, is_guaranteed, rolls_consumed, shake_threshold, shakes_for_rolls,
+)
+from claytonlib.battle.turn import (  # noqa: F401
+    BAG_ACTION_ADVANCES, BEFORE_TURN_ADVANCES, BETWEEN_TURN_ADVANCES,
+    END_OF_TURN_ADVANCES, POST_SUCCESSFUL_MOVE_ADVANCES,
+    ActionCost, ball_turn_cost, shake_roll_offset, turn_cost,
 )
 from claytonlib.battle.readiness import (  # noqa: F401
     AlphabetReport, SpeedCheck, alphabet_report, estimated_move_rolls,

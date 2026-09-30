@@ -28,9 +28,11 @@ from claytonlib.moves import CATEGORY_PHYSICAL, CATEGORY_SPECIAL, Move
 # Gen 4 multiplies damage by one of sixteen values, 85..100 percent.
 DAMAGE_ROLLS: tuple[int, ...] = tuple(range(85, 101))
 
-# Stat-stage multipliers for Defence/Sp. Def, indexed -6..+6.  Critical hits ignore the
-# defender's *positive* stages (Gen 3-5), which is why X Sp. Def does not lower the danger
-# floor -- see sec 12.3.
+# Stat-stage multipliers, indexed -6..+6.  A critical hit ignores **every stat change that
+# would reduce its damage** [verified]: the target's raised defences AND the attacker's lowered
+# offences.  Changes that would *increase* the damage still apply.  That is why X Sp. Def does
+# not lower the danger floor (sec 12.3) -- and, symmetrically, why lowering the opponent's
+# offence does not protect against its crits either.
 _STAGE_NUM = (2, 2, 2, 2, 2, 2, 2, 3, 4, 5, 6, 7, 8)
 _STAGE_DEN = (8, 7, 6, 5, 4, 3, 2, 2, 2, 2, 2, 2, 2)
 
@@ -48,6 +50,8 @@ class Attacker:
     attack: int          # Atk for a physical move, SpA for a special one
     special_attack: int
     types: tuple[str, ...]
+    attack_stage: int = 0
+    special_attack_stage: int = 0
 
 
 @dataclass(frozen=True)
@@ -90,10 +94,14 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     physical = move.category == CATEGORY_PHYSICAL
     attack = attacker.attack if physical else attacker.special_attack
     defence = defender.defence if physical else defender.special_defence
-    stage = defender.defence_stage if physical else defender.special_defence_stage
-    # A critical hit ignores the defender's positive stages but keeps negative ones.
-    if not (critical and stage > 0):
-        defence = max(1, math.floor(defence * stage_multiplier(stage)))
+    defence_stage = defender.defence_stage if physical else defender.special_defence_stage
+    attack_stage = attacker.attack_stage if physical else attacker.special_attack_stage
+    # A crit ignores any stage that would REDUCE its damage -- the defender's raised defences and
+    # the attacker's lowered offences -- while keeping those that would raise it.
+    if not (critical and defence_stage > 0):
+        defence = max(1, math.floor(defence * stage_multiplier(defence_stage)))
+    if not (critical and attack_stage < 0):
+        attack = max(1, math.floor(attack * stage_multiplier(attack_stage)))
 
     base = math.floor(
         math.floor(math.floor((2 * attacker.level / 5 + 2) * move.power * attack / defence) / 50)

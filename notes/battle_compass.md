@@ -494,7 +494,7 @@ realistic configuration, so no tie rolls. Still needed: priority brackets (Prote
 the encounter is RNG-manipulated we know Suicune's **exact** Speed — a real asymmetry versus
 `metronome_compass`, which must reason about a *range* of Magikarp speeds.
 
-**R4 — Wild move selection. ANSWERED** [user; confirm on the emulator]. It is **not** rejection
+**R4 — Wild move selection. CONFIRMED** [verified on emulator]. It is **not** rejection
 sampling. The game rolls `RANDOM % (number of *possible* moves)` and indexes into the list of moves
 **that have not been eliminated**. So if Rain Dance (slot 1) is out of PP, the surviving list is
 `[Gust, Aurora Beam, Mist]` and `roll % 3 == 1` selects **Aurora Beam** — the second survivor.
@@ -510,9 +510,22 @@ Consequences:
 - The same roll maps to *different* moves for candidates with different PP histories, which is a
   genuine source of discrimination rather than a complication.
 
-**R5 — General `GetShakeCount`** [needs gdb]. Confirm the ball and status multipliers, and that
-the HP term floors as §2.2's table assumes. At catch rate 3 the integer flooring does most of
-the work, so an off-by-one in that division changes `b` materially.
+**R5 — General `GetShakeCount`. RESOLVED from the ROM decompilation**, no emulator needed.
+`BattleSystem_CalculateBallShakes` in `~/arch/pokeheartgold/src/battle/battle_command.c` is the
+authority, and `claytonlib/battle/catch.py` is now a transcription of it. What it settled:
+
+- **The arithmetic order floors twice**, not once — `((catchRate * ballMultiplier) / 10 * lostHp)
+  / (3 * maxHp)`. The ROM's own comment flags this ("the CPU actually does the operations from
+  left to right, causing weird rounding issues"). An earlier version of `catch.py` collapsed it
+  into one division, which diverges for any ball multiplier that is not a multiple of 10.
+- **Apricorn balls scale the catch *rate*** (then clamp to 1..255) rather than setting a ball
+  multiplier, so they see diminishing returns on high-catch-rate species. Fast Ball is
+  `catchRate *= 4` when base Speed >= 100, not a x4 multiplier.
+- **`modifiedCatchRate >= 255` skips the shake rolls entirely** — a guaranteed catch.
+- Standard multipliers confirmed as Ultra 20, Great 15, Poke 10, Safari 15 (all tenths), and the
+  status bonuses as sleep/freeze x2, burn/paralysis/poison x1.5.
+- Two ROM quirks recorded in `catch.py`: Fast Ball falls through into the Moon Ball case (a
+  missing `break`), and Heavy Ball tests the catch rate where it meant to test the weight.
 
 **R6 — Bag-action turn order and advance structure. LARGELY RESOLVED** [verified by user on
 emulator]. Bag actions resolve before any move, so a successful capture ends the battle before
@@ -529,20 +542,33 @@ remains: the between-turn count in this context, and confirmation that the exist
 counts hold outside the Metronome matchup. §1.1's requirement is satisfied — the alphabet spans
 zero-cost (item/switch) through to multi-roll moves and the 1-4 roll ball.
 
-**R8 — Paralysis constants** [needs confirmation]. Gen 4 paralysis speed factor (believed
-x0.25) and catch multiplier (believed x1.5). §4.2's whole argument rests on these two numbers.
+**R8 — Paralysis constants. CONFIRMED** [verified on emulator]. Speed is divided by 4 and the
+catch rate multiplied by 1.5, as assumed throughout. So a Lv 40 Suicune's 85 Speed becomes 21.
 
 **R9 — Switch-in RNG cost. RESOLVED: zero** [verified by user on emulator]. A switch consumes
 no additional advances (§12.1). `notes/ss_rng/switching_out.md`'s speed-tie worry does not apply
 to §11's party (§11.4), so switching is a narrow, solved feature rather than the open-ended
 problem that note describes.
 
-**R10 — Exact incoming-damage calculation, per opponent move** [needs gdb + validation].
-Required by §3.1, and deliberately narrow: for Suicune it is **Aurora Beam and Gust only**,
-correct to the last integer, with no modifiers needed (§3.1's table). Each newly supported
-opponent adds and validates only its own attacking moves. Unlike most unknowns here, an error
-is **unsound rather than imprecise** — it discards the true seed — so validate on real runs
-before enabling the filter for that opponent.
+**R10 — Exact incoming-damage calculation, per opponent move** [needs emulator]. Required by
+§3.1, and deliberately narrow: for Suicune it is **Aurora Beam and Gust only**, correct to the
+last integer, with no modifiers needed (§3.1's table). Each newly supported opponent adds and
+validates only its own attacking moves. Unlike most unknowns here, an error is **unsound rather
+than imprecise** — it discards the true seed — so validate on real runs before enabling the
+filter for that opponent.
+
+**Crit stat-stage rule. CONFIRMED, and broader than assumed** [verified]. A critical hit ignores
+**every stat change that would reduce its damage** — the target's raised defences *and* the
+attacker's lowered offences — while changes that would raise the damage still apply. An earlier
+version of `damage.py` only ignored the defender's positive stages. The consequence for §12.3
+stands and now generalises: X Sp. Def does not lower the crit-defined danger floor, and neither
+does lowering the opponent's offence.
+
+**Turn structure. CONFIRMED** [verified]. Recorded in `claytonlib/battle/turn.py`: 4 BeforeTurn,
+then the first actor's action (bag 0, ball 1-4 shakes, or a move), +2 if that was a successful
+move, 2 between-turn, the second actor's move, +2 if successful, 4 end-of-turn. The counts match
+the values `metronome_compass` verified independently for Blackthorn, and a test asserts they stay
+in agreement.
 
 ---
 
@@ -681,30 +707,29 @@ validation in the entire tool.
 
 ## 9. Work breakdown
 
-### Phase 0 — Ground truth (gdb)
-Much of this is now closed — see §5.2 and §12.1. And per §16.3 the rest does **not** block
-starting: the forced-seed emulator loop needs the tool to exist, so the order is build with
-best-guess constants, then calibrate. These are the gate on *trusting* output, not on writing it.
+### Phase 0 — Ground truth
+Mostly closed. Per §16.3 the rest does **not** block starting: the forced-seed emulator loop needs
+the tool to exist, so the order is build with best-guess constants, then calibrate. These gate
+*trusting* output, not writing it.
 
-1. **The forced-seed logging utility** (§16.1) — gdb writes a chosen battle seed, and a reader
+1. ~~R1: static encounters reseed Seed B~~ — **done**.
+2. ~~R6/R7/R9: bag-action ordering, item/switch/ball costs, switch cost~~ — **done**: items and
+   switches cost zero, a ball's shakes are ordinary action rolls after the standard 4 BeforeTurn
+   rolls, and between-turn rolls still occur.
+3. ~~R4: wild move selection~~ — **done**: `RANDOM % (moves with PP)` indexing the surviving list.
+4. ~~R8: paralysis constants~~ — **done**: Speed / 4, catch rate x1.5.
+5. ~~R5: general `GetShakeCount`~~ — **done from the ROM decompilation**, no emulator needed.
+6. ~~Turn structure~~ — **done**, in `claytonlib/battle/turn.py`.
+7. ~~Crit stat-stage rule~~ — **done**, and broader than assumed: a crit ignores every change that
+   would reduce its damage, on either side.
+8. **The forced-seed logging utility** (§16.1) — gdb writes a chosen battle seed, and a reader
    modelled on `utils/gdb-seed-reader.py` / `utils/verify_paths.py` logs the emulator side for
-   diffing against tool output. This is the instrument every item below is measured with.
-
-2. ~~R1: static encounters reseed Seed B~~ — **done**.
-3. ~~R6: bag-action ordering; R7: item/switch advance costs; R9: switch cost~~ — **done**:
-   items and switches cost zero, a ball's shakes are ordinary action rolls after the standard
-   4 BeforeTurn rolls, and between-turn rolls still occur.
-4. **R7 residual**: the between-turn advance count in this context, and confirmation that
-   `effects.py`'s verified per-move counts hold outside the Metronome matchup.
-5. **R8: paralysis constants** (speed x0.25, catch x1.5).
-6. **R5: general `GetShakeCount`** — ball and status multipliers, and the HP term's flooring.
-7. **R4: wild move selection loop**, including rejection sampling on unusable moves — do this
-   **first**, since it shapes the identification code's control flow, not just a constant (§16.3).
-8. **R2: battle-start advance count** for Suicune (Pressure) and for a test species.
-9. **R10: incoming damage for Aurora Beam and Gust** — all 16 rolls, crit and non-crit, against
-   each party member's exact stats. Gates the §3.1 filter.
-10. Confirm the Gen 4 crit rule that crits **ignore the defender's positive Def/SpD stages**
-   (§12.3) — it determines whether the danger floor is invariant under X Sp. Def.
+   diffing against tool output. The instrument for everything below.
+9. **R2: battle-start advance count** for Suicune (Pressure on entry) and for a throwaway test
+   species. `metronome_compass`'s 6 is "4 bellShimmer + 2 ability" for Blackthorn and will differ.
+10. **R7 residual**: confirm `effects.py`'s per-move counts hold outside the Metronome matchup.
+11. **R10: incoming damage for Aurora Beam and Gust** — all 16 rolls, crit and non-crit, against
+    each party member's exact stats. Gates the §3.1 filter.
 
 ### Phase 1 — Shared core, built alongside (§15.2)
 **Superseded:** earlier drafts made this a symmetric refactor of `effects.py`. Per §15.2 Battle

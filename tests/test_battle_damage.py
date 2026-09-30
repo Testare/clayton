@@ -153,3 +153,49 @@ class TestScopeGuards(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCritIgnoresDamageReducingStages(unittest.TestCase):
+    """A crit ignores every stat change that would reduce its damage: the target's raised
+    defences and the attacker's lowered offences. Changes that would raise the damage still
+    apply, in both directions."""
+
+    def setUp(self):
+        self.base_defender = _party("smeargle", 60)
+        self.plain = damage_range(AURORA_BEAM, _suicune(), self.base_defender, critical=True)
+
+    def _attacker(self, spa_stage=0):
+        a = _suicune()
+        return Attacker(level=a.level, attack=a.attack, special_attack=a.special_attack,
+                        types=a.types, special_attack_stage=spa_stage)
+
+    def _defender(self, spd_stage=0):
+        d = self.base_defender
+        return Defender(defence=d.defence, special_defence=d.special_defence, types=d.types,
+                        special_defence_stage=spd_stage)
+
+    def test_a_crit_ignores_the_targets_raised_special_defence(self):
+        self.assertEqual(damage_range(AURORA_BEAM, self._attacker(), self._defender(6),
+                                      critical=True), self.plain)
+
+    def test_a_crit_ignores_the_attackers_lowered_special_attack(self):
+        """So lowering the opponent's offence does not protect against its crits."""
+        self.assertEqual(damage_range(AURORA_BEAM, self._attacker(-6), self._defender(),
+                                      critical=True), self.plain)
+
+    def test_a_crit_still_honours_the_targets_lowered_defence(self):
+        lowered = damage_range(AURORA_BEAM, self._attacker(), self._defender(-2), critical=True)
+        self.assertGreater(lowered[1], self.plain[1])
+
+    def test_a_crit_still_honours_the_attackers_raised_offence(self):
+        raised = damage_range(AURORA_BEAM, self._attacker(2), self._defender(), critical=True)
+        self.assertGreater(raised[1], self.plain[1])
+
+    def test_a_non_crit_honours_every_stage_in_both_directions(self):
+        plain = damage_range(AURORA_BEAM, self._attacker(), self._defender())
+        self.assertLess(damage_range(AURORA_BEAM, self._attacker(-2), self._defender())[1],
+                        plain[1])
+        self.assertLess(damage_range(AURORA_BEAM, self._attacker(), self._defender(2))[1],
+                        plain[1])
+        self.assertGreater(damage_range(AURORA_BEAM, self._attacker(2), self._defender())[1],
+                           plain[1])
