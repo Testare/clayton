@@ -39,8 +39,16 @@ state really held.
 Sourcing only registers the commands and installs breakpoints; it records nothing until
 `battlelog`.  Output is one JSON line per recorded battle, so repeated battles append.
 
+On sourcing, every hook reports whether it resolved.  Take the FAIL lines seriously: a missing
+message hook leaves a recording that looks complete and has no way to say which action each turn
+was, which is the one thing the messages are for.
+
 Analyse the result with `claytonlib.battle.logcheck`, which is pure Python and tested --
 everything in this file needs a live emulator, so as little logic as possible lives here.
+
+Symbols this file breaks on, all verified present in utils/main.elf:
+BattleSetup_New, BattleSystem_Random, BattleSystem_GetBattleMon,
+BattleSystem_PrintBattleMessage and ov12_0223C4E8.
 """
 
 import json
@@ -434,6 +442,7 @@ def write_recording(recording, path=None):
 # GDB wiring
 # ---------------------------------------------------------------------------
 
+_HOOKS = {}          # what -> "live" or why not; reported at load and by battlestatus
 _rec = None          # the active Recording, or None
 _hijack_bp = None
 _hp_available = None  # None = not probed yet; False = symbolic reads unavailable
@@ -610,6 +619,19 @@ if _IN_GDB:
             _RandomFinish(gdb.selected_frame(), _eval_int("$r0"))
             return False
 
+    def _read_msg_buffer(battle_system_ptr):
+        """``battleSystem->msgBuffer``, the String the expanded message text lands in.
+
+        Read as a member where DWARF allows, because the raw offset is only correct for one
+        struct layout. It happens to be 0x18 in this build -- unk0, bgConfig, window, msgData,
+        unk10, msgFormat, then msgBuffer -- which is the fallback when the type is unavailable.
+        """
+        try:
+            return _eval_int(f"((BattleSystem *){battle_system_ptr:#x})->msgBuffer")
+        except Exception:
+            return _eval_int(f"*(unsigned int *)({battle_system_ptr:#x} + 0x18)")
+
+
     class _MsgFinish(gdb.FinishBreakpoint):
         def __init__(self, frame, battle_system_ptr):
             super().__init__(frame, internal=True)
@@ -621,7 +643,7 @@ if _IN_GDB:
             if rec is None or rec.stopped:
                 return False
             try:
-                msgbuf = _eval_int(f"*(unsigned int *)({self.battle_system_ptr:#x} + 0x18)")
+                msgbuf = _read_msg_buffer(self.battle_system_ptr)
                 if msgbuf:
                     text = _decode_poke_string(msgbuf)
                     rec.add_message(text)
@@ -830,6 +852,9 @@ if _IN_GDB:
             print(f"            {kinds or 'nothing captured yet'}")
             hp = ", ".join(f"battler {b}: {v[0]}/{v[1]}" for b, v in sorted(_rec.hp_seen.items()))
             print(f"            HP: {hp or 'not tracked'}")
+            dead = [k for k, v in _HOOKS.items() if v != "live"]
+            if dead:
+                print(f"            NOT HOOKED: {', '.join(dead)}")
 
     class BattleSaveCommand(gdb.Command):
         """battlesave [path] — flush the recording to jsonl and stop recording."""
@@ -850,25 +875,52 @@ if _IN_GDB:
             _rec.stopped = True
             _rec = None
 
-    BattleSetupNewBreakpoint()
-    _RandomBreakpoint()
-    try:
-        _GetBattleMonBreakpoint()
-    except Exception as _exc:
-        print(f"[battlelog] target override UNAVAILABLE: {_exc}\n"
-              f"            BattleSystem_GetBattleMon is in an overlay -- if it is not loaded "
-              f"yet, re-source this file once the battle overlay is in memory.")
-    for _symbol in ("BattleSystem_SetCurrentMessage", "BattleMessage_Print"):
+    def _install(what, factory):
+        """Create a breakpoint, or record why it could not be.
+
+        GDB's default for an unknown symbol is a *pending* breakpoint: it prints an error and
+        then silently never fires, which the constructor reports as success. That is the worst
+        outcome here -- a recording that looks fine and is missing a whole class of event.
+        `breakpoint pending off` makes the constructor raise instead, which we can act on.
+        """
         try:
-            _MsgBreakpoint(_symbol)
-        except Exception:
-            # Message symbols vary by build; a missing one is not fatal, rolls still record.
-            pass
+            gdb.execute("set breakpoint pending off", to_string=True)
+            bp = factory()
+        except Exception as exc:
+            _HOOKS[what] = f"UNAVAILABLE ({str(exc).splitlines()[0]})"
+            return None
+        finally:
+            gdb.execute("set breakpoint pending auto", to_string=True)
+        if getattr(bp, "pending", False):
+            bp.delete()
+            _HOOKS[what] = "UNAVAILABLE (symbol did not resolve)"
+            return None
+        _HOOKS[what] = "live"
+        return bp
+
+    _install("battle start", BattleSetupNewBreakpoint)
+    _install("RNG rolls", _RandomBreakpoint)
+    _install("target override", _GetBattleMonBreakpoint)
+    # Both public entry points that expand a BattleMessage into battleSystem->msgBuffer; the
+    # expansion itself is static, so it is not a reliable symbol to break on.
+    _messages = [_install(f"messages ({sym})", lambda s=sym: _MsgBreakpoint(s))
+                 for sym in ("BattleSystem_PrintBattleMessage", "ov12_0223C4E8")]
+
     BattleLogCommand()
     BattleOverrideCommand()
     BattleMarkCommand()
     BattleStatusCommand()
     BattleSaveCommand()
+    for _what, _state in _HOOKS.items():
+        print(f"[battlelog] {'  ok' if _state == 'live' else 'FAIL'}  {_what}: {_state}")
+    if not any(v == "live" for k, v in _HOOKS.items() if k.startswith("messages")):
+        print("[battlelog] WARNING: no message hook resolved, so the log will record rolls and "
+              "HP but NOT battle messages -- and the messages are how you tell which action "
+              "each turn was. Check the symbol names against this build before recording.")
+    if _HOOKS.get("target override") != "live":
+        print("[battlelog] WARNING: the target override is not installed; IVs and nature will "
+              "be whatever the save state holds. If BattleSystem_GetBattleMon lives in an "
+              "overlay, re-source this file once the battle overlay is loaded.")
     print("[battlelog] ready. Commands: battlelog [seed] [label], battleoverride, "
           "battlemark, battlestatus, battlesave")
     if OVERRIDE_TARGET:

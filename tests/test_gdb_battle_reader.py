@@ -274,5 +274,50 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(gbr._fmt_spread(gbr.TARGET_OVERRIDE["ivs"]), "29/15/31/31/31/28")
 
 
+class TestBreakpointSymbolsExistInTheBuild(unittest.TestCase):
+    """The recorder once broke on two symbols I invented -- BattleSystem_SetCurrentMessage and
+    BattleMessage_Print -- neither of which appears anywhere in the decompilation. GDB turned
+    them into *pending* breakpoints, which print an error and then silently never fire, so the
+    failure looked like a warning rather than a missing feature.
+
+    utils/main.elf is a build artifact and gitignored, so this skips when it is absent. On a
+    machine that has it, it is the check that would have caught that.
+    """
+
+    ELF = pathlib.Path(__file__).resolve().parent.parent / "utils" / "main.elf"
+
+    def setUp(self):
+        if not self.ELF.exists():
+            self.skipTest(f"{self.ELF} not present (build artifact)")
+
+    def _symbols_in_source(self):
+        import re
+        source = _PATH.read_text()
+        return sorted(set(re.findall(r"\b(Battle(?:System|Setup)_\w+|ov12_[0-9A-F]{8})\b",
+                                     source)))
+
+    def test_every_rom_symbol_the_script_names_exists(self):
+        blob = self.ELF.read_bytes()
+        found = self._symbols_in_source()
+        self.assertGreater(len(found), 4, "the symbol scan matched almost nothing")
+        for symbol in found:
+            # assertTrue, not assertIn: a failing assertIn renders the whole 12MB ELF.
+            self.assertTrue(symbol.encode() in blob, f"{symbol} is not in the build")
+
+    def test_the_invented_symbols_really_were_absent(self):
+        """Pinning the original bug, so the names cannot drift back in."""
+        blob = self.ELF.read_bytes()
+        for symbol in (b"BattleSystem_SetCurrentMessage", b"BattleMessage_Print"):
+            self.assertFalse(symbol in blob, f"{symbol} unexpectedly present")
+
+    def test_a_message_hook_symbol_is_among_them(self):
+        """Messages are how a recording says which action each turn was, so losing every message
+        hook is not a degraded recording, it is an unusable one."""
+        found = self._symbols_in_source()
+        self.assertTrue(
+            {"BattleSystem_PrintBattleMessage", "ov12_0223C4E8"} & set(found),
+            "no battle-message hook is named in the script")
+
+
 if __name__ == "__main__":
     unittest.main()
