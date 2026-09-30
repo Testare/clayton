@@ -6,7 +6,7 @@ from dataclasses import replace
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
 from claytonlib.battle_compass.hunt_session import (
-    CANDIDATE_PREVIEW, HuntSession, TurnLog, worst_incoming_hit,
+    CANDIDATE_PREVIEW, HuntSession, TurnLog, move_info, worst_incoming_hit,
 )
 from claytonlib.battle_compass.identify import Phase
 from claytonlib.battle_compass.sim import HuntConfig
@@ -333,6 +333,81 @@ class TestSecondOnlyAmbiguityIsSurfaced(unittest.TestCase):
         for _ in range(5):
             s.observe(Action.MOVE_1, [s.predict(Action.MOVE_1)[truth]])
         self.assertEqual(len(s.survivors), 3)
+
+
+class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
+    """The page assembles tokens from answers rather than taking a typed string, so its question
+    vocabulary has to cover everything the simulator can predict. A gap here is not cosmetic: a
+    turn the player cannot report is a run that cannot continue.
+
+    Found exactly that on the first run of this test -- 96 of 456 renderings carried the `~`
+    secondary-effect marker (Aurora Beam's Attack drop) and there was no question for it.
+    """
+
+    #: The token shapes the interview's chips can produce, per app/web/index.html's hrTokens().
+    OURS = (r"(?:M[1-4][h!\-]?~?|M(?:par|slp|frz|cfz|fln)|Mscfz[1-4][h!\-]?~?"
+            r"|I[a-z]+|S[1-6]|C[0-3]?|Pc?[0-3]?)")
+    TARGET = r"(?:E[1-4][h!\-]?~?|E(?:par|slp|frz|fln))"
+    TURN = None  # built in setUpClass
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        cls.TURN = re.compile(rf"^{cls.OURS}(?:{cls.TARGET})?(?:HP\d{{3}})?$")
+
+    def _renderings(self):
+        import random
+        from claytonlib.battle_compass.sim import simulate_turn
+        rng = random.Random(9)
+        seen = set()
+        for _ in range(400):
+            for extra in ({}, {"hp": 1, "status": Status.PARALYSIS}):
+                state = _session(n=1, **extra)._session.states
+                base = next(iter(state.values()))
+                base = replace(base, rng=rng.getrandbits(32))
+                for action in Action:
+                    if action is Action.SWITCH:
+                        continue
+                    try:
+                        nxt = simulate_turn(base, action, HUNT)
+                    except Exception:
+                        continue
+                    from claytonlib.battle_compass import tokens as tk
+                    seen.add(tk.render_turn(tk.normalise(nxt.log[-1])))
+        return seen
+
+    def test_the_sample_is_broad_enough_to_mean_something(self):
+        self.assertGreater(len(self._renderings()), 200)
+
+    def test_every_predictable_turn_matches_the_interviews_vocabulary(self):
+        unreportable = sorted(r for r in self._renderings() if not self.TURN.match(r))
+        self.assertEqual(unreportable, [],
+                         f"{len(unreportable)} turn(s) the interview cannot express")
+
+    def test_move_info_says_which_questions_apply(self):
+        info = {m["name"]: m for m in move_info(_target())}
+        # Aurora Beam: damaging, can miss, has a secondary. Mist: none of those.
+        self.assertTrue(info["Aurora Beam"]["damaging"])
+        self.assertTrue(info["Aurora Beam"]["has_secondary"])
+        self.assertEqual(info["Aurora Beam"]["effect_chance"], 10)
+        self.assertFalse(info["Mist"]["damaging"])
+        self.assertFalse(info["Mist"]["has_secondary"])
+        self.assertFalse(info["Mist"]["can_miss"])
+
+    def test_a_status_move_is_never_asked_whether_it_crit(self):
+        """Which is what move_info's `damaging` flag is for."""
+        info = {m["name"]: m for m in move_info(_ours())}
+        self.assertFalse(info["Mean Look"]["damaging"])
+        self.assertTrue(info["False Swipe"]["damaging"])
+
+    def test_move_info_tracks_remaining_pp(self):
+        session = _session()
+        before = move_info(next(iter(session._session.states.values())).ours)
+        self.assertEqual([m["pp"] for m in before], [40, 5, 20, 15])
+
+    def test_an_unknown_slot_is_marked_rather_than_guessed(self):
+        battler = _ours(moves=("False Swipe",), pp=(40,))
+        self.assertTrue(move_info(battler)[0]["known"])
 
 
 if __name__ == "__main__":

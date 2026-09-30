@@ -206,6 +206,12 @@
 .hr-pinned { font-family:ui-monospace,monospace }
 .hr-next { margin:6px 0;font-size:14px }
 @media (max-width:720px){ .hr-sides { grid-template-columns:1fr } }
+
+.hr-q { margin-bottom:12px }
+.hr-q-label { font-size:13px;font-weight:600;margin-bottom:2px;display:flex;gap:8px;
+  align-items:baseline }
+.hr-confirm { border-top:1px solid var(--line);margin-top:14px;padding-top:12px;font-size:13px }
+.hr-confirm code { font-family:ui-monospace,monospace }
 </style>
 </head>
 <body>
@@ -3806,6 +3812,12 @@ async function huntRunStart(_owner, id){
   } catch (e) { toast(String(e.message || e)); }
 }
 
+function huntVectorHint(ms){
+  if (ms == null || ms === "") return "milliseconds — e.g. 300000 for five minutes";
+  return `${fmtVectorMs(ms)} <span class="muted">= ${fmtDuration(Number(ms))}</span>`;
+}
+function huntVectorPreview(v){ $("hrVectorPreview").innerHTML = huntVectorHint(v); }
+
 function huntTargetingFromForm(){
   return {
     key_seed: $("hrKeySeed").value.trim(),
@@ -3830,6 +3842,7 @@ async function huntRunBegin(){
     if (!started.session_id){ renderHuntSetup(); return; }
     _huntRun = started.session_id;
     _huntSnap = started.snapshot;
+    hrTurnReset();
     renderHuntRun();
   } catch (e) { toast(String(e.message || e)); }
 }
@@ -3883,7 +3896,10 @@ function renderHuntSetup(){
         <div class="field"><label>Key seed</label>
           <input id="hrKeySeed" value="${esc(t.key_seed || "")}" placeholder="0x…"></div>
         <div class="field"><label>Vector ms</label>
-          <input id="hrVectorMs" value="${t.vector_ms ?? ""}"></div>
+          <input id="hrVectorMs" type="number" min="0" value="${t.vector_ms ?? ""}"
+            placeholder="300000" oninput="huntVectorPreview(this.value)">
+          <div id="hrVectorPreview" class="hint"
+            style="font-family:ui-monospace,monospace">${huntVectorHint(t.vector_ms)}</div></div>
         <div class="field"><label>Delay ±</label>
           <input id="hrDelayWindow" value="${t.delay_window ?? 60}"></div>
         <button class="btn" onclick="huntFindCandidates()">Search</button>
@@ -3907,28 +3923,235 @@ function renderHuntSetup(){
 async function huntRunDo(method, ...args){
   try {
     _huntSnap = await api(method, _huntRun, ...args);
+    hrTurnReset();
     renderHuntRun();
   } catch (e) { toast(String(e.message || e)); }
 }
 
-function huntRunObserve(){
-  const action = $("hrAction").value;
-  const text = $("hrTokens").value.trim();
-  if (!text) return toast("Type what happened, e.g. M1hE3hHP130");
-  huntRunDo("hunt_session_observe", action, [text]);
+// --- the per-turn interview -----------------------------------------------
+//
+// Reporting a turn is a handful of small factual questions -- what you did, what happened, what
+// the target did, your HP -- so the page asks them and assembles the tokens itself. Typing a
+// token string was quicker to build and wrong to use: it puts the grammar in the player's head
+// over dozens of turns, and a typo is indistinguishable from a wrong model constant.
+//
+// Questions are driven by move_info from the snapshot, so a status move is never asked whether it
+// crit and a never-miss move is never offered "missed".
+let _hrTurn = null;
+
+function hrTurnReset(){ _hrTurn = { action: null, ours: null, target: null, hp: "" }; }
+
+const HR_PREVENTED = [
+  ["par", "fully paralyzed"], ["slp", "asleep"], ["frz", "frozen"],
+  ["cfz", "hurt itself in confusion"], ["fln", "flinched"],
+];
+
+function hrOurMoveInfo(){
+  const slot = _hrTurn.action && _hrTurn.action.startsWith("M")
+    ? Number(_hrTurn.action[1]) - 1 : null;
+  return slot === null ? null : _huntSnap.ours.move_info[slot];
 }
 
-// Fill the report box with what the pinned seed predicts. Only offered once ONE candidate
-// remains: before that there is no single prediction, and offering the centre candidate's guess
-// would invite reporting a prediction instead of an observation -- which would confirm the wrong
-// seed and desynchronise everything after it.
-async function huntRunPrefill(){
-  try {
-    const preds = await api("hunt_session_predict", _huntRun, $("hrAction").value);
-    const seeds = Object.keys(preds);
-    if (seeds.length !== 1) return toast("Only available once the seed is pinned.");
-    $("hrTokens").value = preds[seeds[0]];
-  } catch (e) { toast(String(e.message || e)); }
+// The token string the answers so far describe. Also what gets submitted, so what the player
+// sees confirmed is exactly what is applied.
+function hrTokens(){
+  const t = _hrTurn, parts = [];
+  if (!t.action) return "";
+  if (t.action.startsWith("M")){
+    if (t.ours === null) return "";
+    if (t.ours.prevented) parts.push("M" + t.ours.prevented);
+    else if (t.ours.snapped) parts.push("Mscfz" + t.action[1] + (t.ours.result || ""));
+    else parts.push(t.action + (t.ours.result || "") + (t.ours.secondary ? "~" : ""));
+  } else {
+    parts.push(t.action === "I" ? "I" + (t.ours?.item || "p")
+             : t.action === "Ic" ? "Ifh"
+             : t.action === "S" ? "S" + (t.ours?.slot || 2)
+             : t.action);            // C / P carry their shake count below
+    if ((t.action === "C" || t.action === "P") && t.ours?.result) parts.push(t.ours.result);
+  }
+  if (t.target){
+    if (t.target.prevented) parts.push("E" + t.target.prevented);
+    else if (t.target.slot !== null && t.target.slot !== undefined)
+      parts.push("E" + (t.target.slot + 1) + (t.target.result || "")
+                     + (t.target.secondary ? "~" : ""));
+  }
+  if (t.hp !== "" && t.hp !== null) parts.push("HP" + String(t.hp).padStart(3, "0"));
+  return parts.join("");
+}
+
+// Mirrors tokens.turn_requires_hp: the target landing a hit is the only thing in scope that
+// damages us, plus our own confusion self-hit. The facade re-checks, so this only decides
+// whether to ASK.
+function hrNeedsHp(){
+  const t = _hrTurn;
+  if (t.ours && t.ours.prevented === "cfz") return true;
+  return !!(t.target && !t.target.prevented && (t.target.result === "h" || t.target.result === "!"));
+}
+
+function hrSet(path, value){
+  const t = _hrTurn;
+  if (path === "action"){
+    t.action = value; t.ours = null; t.target = null; t.hp = "";
+    // A bag action resolves before any move and needs no result of its own.
+    if (!value.startsWith("M") && value !== "C" && value !== "P") t.ours = {};
+  } else if (path === "ours"){ t.ours = value; }
+  else if (path === "target"){ t.target = value; }
+  else if (path === "hp"){ t.hp = value; }
+  renderHuntRun();
+}
+
+function hrChips(label, options, hint){
+  return `<div class="hr-q"><div class="hr-q-label">${esc(label)}
+      ${hint ? `<span class="muted hr-small">${esc(hint)}</span>` : ""}</div>
+    <div class="chip-row">${options.join("")}</div></div>`;
+}
+
+function hrChip(text, onclick, active, title){
+  return `<button class="chip ${active ? "active" : ""}" type="button"
+    ${title ? `title="${esc(title)}"` : ""} onclick="${onclick}">${esc(text)}</button>`;
+}
+
+function hrInterview(){
+  const s = _huntSnap, t = _hrTurn;
+  const blocks = [];
+
+  // 1. What did you do?
+  const actionChips = s.ours.move_info
+    .filter(m => m.known && m.pp > 0 && s.legal_actions.includes("M" + (m.slot + 1)))
+    .map(m => hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
+                     t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
+  if (s.legal_actions.includes("I"))
+    actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
+  if (s.legal_actions.includes("C"))
+    actionChips.push(hrChip(`Threw the ${s.capture_ball || "capture ball"}`,
+      "hrSet('action','C')", t.action === "C"));
+  if (s.legal_actions.includes("P"))
+    actionChips.push(hrChip("Threw a Poké Ball", "hrSet('action','P')", t.action === "P"));
+  if (s.legal_actions.includes("S"))
+    actionChips.push(hrChip("Switched", "hrSet('action','S')", t.action === "S"));
+  blocks.push(hrChips(`What did ${s.ours.name} do?`, actionChips));
+  if (!t.action) return blocks.join("");
+
+  // 2. How did it go? Only the outcomes this move can actually have.
+  if (t.action.startsWith("M")){
+    const info = hrOurMoveInfo();
+    const opts = [];
+    if (info.damaging){
+      opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
+      opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
+    } else {
+      opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
+                       t.ours && t.ours.result === "" && !t.ours.prevented));
+    }
+    if (info.can_miss)
+      opts.push(hrChip("Missed / failed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
+    HR_PREVENTED.forEach(([code, label]) =>
+      opts.push(hrChip(label, `hrSet('ours',{prevented:'${code}'})`,
+                       t.ours?.prevented === code)));
+    opts.push(hrChip("Snapped out of confusion",
+      `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`, !!t.ours?.snapped,
+      "The move still went through"));
+    blocks.push(hrChips(`What happened to ${info.name}?`, opts));
+    if (!t.ours) return blocks.join("");
+    // The proc is its own observable and its own token, so it has to be asked, not assumed.
+    if (info.has_secondary && (t.ours.result === "h" || t.ours.result === "!")){
+      blocks.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
+        hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
+               t.ours.secondary === false),
+        hrChip("Yes", `hrSet('ours',{result:'${t.ours.result}',secondary:true})`,
+               t.ours.secondary === true),
+      ], `${info.effect_chance}% chance`));
+      if (t.ours.secondary === undefined) return blocks.join("");
+    }
+  } else if (t.action === "C" || t.action === "P"){
+    const opts = [0, 1, 2, 3].map(n => hrChip(`${n} shake${n === 1 ? "" : "s"}`,
+      `hrSet('ours',{result:'${n}'})`, t.ours?.result === String(n)));
+    opts.push(hrChip("Caught it!", `hrSet('ours',{result:'c'})`, t.ours?.result === "c"));
+    blocks.push(hrChips("How many times did the ball shake?", opts,
+      "Count the shakes before it broke free."));
+    if (!t.ours?.result) return blocks.join("");
+  }
+
+  // 3. What did the target do? A capture ends the battle, so nothing follows it.
+  const caught = (t.action === "C" || t.action === "P") && t.ours?.result === "c";
+  if (!caught){
+    const opts = s.target.move_info.filter(m => m.known).map(m =>
+      hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
+             t.target && t.target.slot === m.slot && !t.target.prevented,
+             `${m.pp} PP left`));
+    HR_PREVENTED.filter(([c]) => c !== "cfz").forEach(([code, label]) =>
+      opts.push(hrChip(label, `hrSet('target',{prevented:'${code}'})`,
+                       t.target?.prevented === code)));
+    blocks.push(hrChips(`What did ${s.target.name} do?`, opts));
+    if (!t.target) return blocks.join("");
+
+    // 3b. …and how did that go?
+    if (!t.target.prevented){
+      const info = s.target.move_info[t.target.slot];
+      const opts2 = [];
+      if (info.damaging){
+        opts2.push(hrChip("Hit us", `hrSet('target',{slot:${t.target.slot},result:'h'})`,
+                          t.target.result === "h"));
+        opts2.push(hrChip("Critical hit", `hrSet('target',{slot:${t.target.slot},result:'!'})`,
+                          t.target.result === "!"));
+      } else {
+        opts2.push(hrChip("It worked", `hrSet('target',{slot:${t.target.slot},result:''})`,
+                          t.target.result === ""));
+      }
+      if (info.can_miss)
+        opts2.push(hrChip("Missed / failed",
+          `hrSet('target',{slot:${t.target.slot},result:'-'})`, t.target.result === "-"));
+      blocks.push(hrChips(`What happened to ${info.name}?`, opts2));
+      if (!t.target.result && t.target.result !== "") return blocks.join("");
+      if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")){
+        const base = `{slot:${t.target.slot},result:'${t.target.result}'`;
+        blocks.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
+          hrChip("No", `hrSet('target',${base},secondary:false})`,
+                 t.target.secondary === false),
+          hrChip(`Yes — ${esc(s.ours.name)}'s stat fell`,
+                 `hrSet('target',${base},secondary:true})`, t.target.secondary === true),
+        ], `${info.effect_chance}% chance`));
+        if (t.target.secondary === undefined) return blocks.join("");
+      }
+    }
+  }
+
+  // 4. HP, asked only when something must have changed it.
+  if (hrNeedsHp()){
+    blocks.push(`<div class="hr-q"><div class="hr-q-label">${esc(s.ours.name)}'s HP now?
+        <span class="muted hr-small">out of ${s.ours.max_hp}</span></div>
+      <input id="hrHp" type="number" min="0" max="${s.ours.max_hp}" value="${esc(String(t.hp))}"
+        style="max-width:120px" oninput="_hrTurn.hp = this.value; hrRefreshPreview()"
+        onkeydown="if(event.key==='Enter')huntRunObserve()"></div>`);
+  }
+
+  const tokens = hrTokens();
+  const ready = tokens && (!hrNeedsHp() || (t.hp !== "" && t.hp !== null));
+  blocks.push(`<div class="hr-confirm">
+    <div>Reporting <code id="hrPreview">${esc(tokens)}</code></div>
+    <div class="chip-row">
+      <button class="btn primary" onclick="huntRunObserve()" ${ready ? "" : "disabled"}>
+        Report turn</button>
+      <button class="btn" onclick="hrTurnReset();renderHuntRun()">Start over</button>
+      <button class="btn" onclick="huntRunDo('hunt_session_undo')"
+        ${s.turns.length ? "" : "disabled"}
+        title="Rewind a MISREPORT. A misplay can't be undone -- the game has advanced, so report what actually happened instead."
+      >Undo last turn</button>
+    </div></div>`);
+  return blocks.join("");
+}
+
+function hrRefreshPreview(){
+  const el = $("hrPreview");
+  if (el) el.textContent = hrTokens();
+}
+
+function huntRunObserve(){
+  const tokens = hrTokens();
+  if (!tokens) return toast("Answer the questions above first.");
+  const action = _hrTurn.action;
+  hrTurnReset();
+  huntRunDo("hunt_session_observe", action, [tokens]);
 }
 
 function huntRunAbandon(){
@@ -4053,22 +4276,7 @@ function renderHuntRun(){
     ${solver}
     <div class="panel">
       <div class="section-label">Report the turn you just played</div>
-      <div class="chip-row">
-        <select id="hrAction">${s.legal_actions.map(a =>
-          `<option value="${esc(a)}">${esc(a)}</option>`).join("")}</select>
-        <input id="hrTokens" placeholder="e.g. M1hE3hHP130" style="flex:1"
-          onkeydown="if(event.key==='Enter')huntRunObserve()">
-        <button class="btn primary" onclick="huntRunObserve()">Report</button>
-        <button class="btn" onclick="huntRunDo('hunt_session_undo')"
-          ${s.turns.length ? "" : "disabled"} title="Rewind a MISREPORT. A misplay can't be
-undone — the game has advanced, so report what actually happened instead.">Undo</button>
-        ${pinned ? `<button class="btn" onclick="huntRunPrefill()"
-          title="Fill in what the pinned seed predicts">Predict</button>` : ""}
-      </div>
-      <div class="hr-small muted">Tokens in the order things happened: our move, then the target's,
-        then <code>HP###</code> whenever our HP changed for any reason.
-        <code>h</code> hit · <code>!</code> crit · <code>-</code> missed ·
-        <code>Epar</code> fully paralyzed.</div>
+      ${hrInterview()}
     </div>
     ${phaseButtons}
     ${advice}
@@ -4127,6 +4335,32 @@ function renderHuntConfigure(){
         <th title="Held items change per hunt, so they live here rather than on the profile.">Held item</th>
       </tr></thead><tbody>${partyRows}</tbody></table>`;
 
+  // Send-out order, which the table above cannot show because it lists the PROFILE's party.
+  // The order is not cosmetic: the first entry is the Pokemon Battle Compass simulates as
+  // active, so it decides whose Speed sets turn order and whose moves the M1-M4 tokens mean.
+  const ordered = (h.party || []).map((slot, i) => {
+    const p = (_huntProfile.party || []).find(x => x.id === slot.pokemon_id);
+    const last = i === (h.party || []).length - 1;
+    return `<tr>
+      <td>${i === 0 ? `<span class="badge ok">lead</span>` : i + 1}</td>
+      <td>${esc(p ? p.name : "(removed from profile)")}</td>
+      <td class="muted">${esc(p ? (capName(p.species) || "—") : "")}</td>
+      <td>
+        <button class="btn small" ${i === 0 ? "disabled" : ""}
+          title="Move earlier" onclick="huntMoveParty(${slot.pokemon_id}, -1)">↑</button>
+        <button class="btn small" ${last ? "disabled" : ""}
+          title="Move later" onclick="huntMoveParty(${slot.pokemon_id}, 1)">↓</button>
+      </td></tr>`;
+  }).join("");
+
+  const orderPanel = (h.party || []).length === 0
+    ? `<div class="empty">Nothing selected yet — tick “Bring” above.</div>`
+    : `<table><thead><tr><th title="The lead is sent out first, and is the Pokemon Battle
+          Compass simulates as active.">Order</th><th>Name</th><th>Species</th><th></th>
+       </tr></thead><tbody>${ordered}</tbody></table>
+       <div class="hint muted">The lead sets turn order and is whose moves <code>M1</code>–<code>M4</code>
+         refer to during a run.</div>`;
+
   mount(`<div class="head"><h2>Configure — ${esc(h.name)}</h2>
       <button class="btn" onclick="openHuntHome('${esc(h.id)}')">← Hunt</button></div>
 
@@ -4174,6 +4408,9 @@ function renderHuntConfigure(){
     <div class="section-label">Party</div>
     ${party}
 
+    <div class="section-label">Send-out order</div>
+    ${orderPanel}
+
     <div class="section-label">Seed targeting</div>
     <div class="panel">
       <div class="hr-small muted">These centre the window Battle Compass searches for your battle
@@ -4191,8 +4428,12 @@ function renderHuntConfigure(){
           <input value="${esc(h.initial_time||"")}" placeholder="2026-09-29T12:00:00"
             onchange="huntSetField('initial_time', this.value.trim())"></div>
         <div class="field"><label>Vector ms</label>
-          <input type="number" min="0" value="${h.vector_ms ?? ""}"
-            onchange="huntSetField('vector_ms', this.value ? +this.value : null)"></div>
+          <input id="hcVectorMs" type="number" min="0" value="${h.vector_ms ?? ""}"
+            placeholder="300000"
+            oninput="$('hcVectorPreview').innerHTML = fmtVectorMs(this.value)"
+            onchange="huntSetField('vector_ms', this.value ? +this.value : null)">
+          <div id="hcVectorPreview" class="hint"
+            style="font-family:ui-monospace,monospace">${fmtVectorMs(h.vector_ms)}</div></div>
         <div class="field"><label>Seconds window (±)</label>
           <input type="number" min="0" value="${h.seconds_window ?? 2}"
             onchange="huntSetField('seconds_window', +this.value)"></div>
@@ -4252,6 +4493,15 @@ function huntSetSeed(raw){
 function huntToggleParty(pokemonId, bring){
   const party = (_hunt.party || []).filter(s => s.pokemon_id !== pokemonId);
   if(bring) party.push({pokemon_id: pokemonId, held_item: ""});
+  _hunt.party = party;
+  huntSaveAndRefresh();
+}
+function huntMoveParty(pokemonId, delta){
+  const party = (_hunt.party || []).slice();
+  const i = party.findIndex(s => s.pokemon_id === pokemonId);
+  const j = i + delta;
+  if(i < 0 || j < 0 || j >= party.length) return;
+  [party[i], party[j]] = [party[j], party[i]];
   _hunt.party = party;
   huntSaveAndRefresh();
 }

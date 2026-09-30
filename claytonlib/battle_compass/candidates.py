@@ -90,11 +90,11 @@ class CandidateWindow:
             return None
         if self.skipped_below_base_delay:
             return (
-                f"The model centres this window at frame {self.frame_centre}, but key seed "
-                f"{self.key_seed:#010x} does not start until frame {self.base_delay} — and a "
-                f"battle seed cannot precede the seed it was generated after, so all "
-                f"{self.skipped_below_base_delay} frames were skipped. Either the vector ms is "
-                f"too small for this key seed, or the wrong key seed is configured.")
+                f"The window centres on frame {self.frame_centre}, before Seed A's own frame "
+                f"{self.base_delay} — and Seed B cannot precede the seed it was generated "
+                f"after, so all {self.skipped_below_base_delay} frames were skipped. Vector ms "
+                f"is the gap between Seed A and Seed B, so a value this small leaves no room; "
+                f"check it is in MILLISECONDS.")
         return ("The window generated no seeds at all. Check the key seed, initial time and "
                 "vector ms — one of them is almost certainly not what you played.")
 
@@ -106,14 +106,41 @@ class CandidateWindow:
         return {c.seed: c for c in self.candidates}
 
 
-def centre(model, key_seed: int, vector_ms: float) -> tuple[int, int]:
+def seed_a_delay(key_seed: int, initial_time: dt.datetime) -> int:
+    """Seed A's own delay, recovered from the key seed and the target year.
+
+    ``calculate_seed`` masks ``delay + year - 2000`` into the low 16 bits, so this inverts that
+    for *this* year — which is what makes the frame difference below add on cleanly. Same
+    derivation as ``app.metronome._target_delay_for_key_seed``.
+    """
+    return (key_seed & 0xFFFF) - (initial_time.year - 2000)
+
+
+def centre(model, key_seed: int, vector_ms: float,
+           initial_time: dt.datetime | None = None) -> tuple[int, int]:
     """(frame, second) the window is built around.
 
-    The frame comes from the fitted model; the second from real elapsed time. Kept separate on
-    purpose — see the module docstring.
+    **Vector ms is a difference, not a position.** It is the gap between Seed A (the key seed)
+    and Seed B, so the battle frame is Seed A's delay *plus* the predicted frame difference. An
+    earlier version of this function used ``model.frame(...)`` directly as an absolute frame,
+    which put the centre a couple of hundred frames *below* the key seed's own delay and made
+    every window empty — see ``app.metronome.seed_b_center``, which has always done it correctly
+    and is what this now matches:
+
+    * frame — ``model.frame(M, base_low16)`` is the battle seed's low16 field, so subtracting
+      ``base_low16`` leaves the pure frame difference. That difference is year-independent, and
+      so adds cleanly onto Seed A's own year-adjusted delay.
+    * second — from REAL elapsed time, never from the frame counter, which lags across loads
+      (notes/seed_hitting_process.md).
+
+    `initial_time` is only needed for its year. It is optional for callers that predate this
+    fix; without it the year is taken as 2000, which is the identity case.
     """
-    frame = round(model.frame(vector_ms, key_seed & 0xFFFF))
-    return frame, model.battle_second_offset(vector_ms)
+    base_low16 = key_seed & 0xFFFF
+    a_delay = (seed_a_delay(key_seed, initial_time) if initial_time is not None
+               else base_low16)
+    frame_difference = round(model.frame(vector_ms, base_low16) - base_low16)
+    return a_delay + frame_difference, model.battle_second_offset(vector_ms)
 
 
 def generate(model, *, key_seed: int, initial_time: dt.datetime, vector_ms: float,
@@ -129,8 +156,11 @@ def generate(model, *, key_seed: int, initial_time: dt.datetime, vector_ms: floa
     """
     if frame_window < 0 or second_window < 0:
         raise ValueError("windows cannot be negative")
-    frame_centre, second_centre = centre(model, key_seed, vector_ms)
-    base_delay, _ = get_times(key_seed)
+    frame_centre, second_centre = centre(model, key_seed, vector_ms, initial_time)
+    # Seed B cannot precede Seed A. The floor is Seed A's own delay for this year, not
+    # get_times()'s year-2000 delay -- those differ by (year - 2000) and comparing against the
+    # wrong one rejects legitimate frames.
+    base_delay = seed_a_delay(key_seed, initial_time)
 
     seen: set[int] = set()
     found: list[Candidate] = []

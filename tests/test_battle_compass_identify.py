@@ -46,6 +46,19 @@ def _window(**kwargs):
                     vector_ms=VECTOR_MS, **kwargs)
 
 
+def _second_sibling_truth(window):
+    """A candidate that definitely has siblings differing ONLY in the RTC second.
+
+    Picked deliberately rather than by index: `generate` sorts centre-first, so which seed sits
+    at a given position depends on where the window is centred, and a magic index silently stops
+    testing what it was written for when the centring changes (which is exactly what happened
+    when candidates.centre was corrected).
+    """
+    centre_frame = window.frame_centre
+    siblings = [c for c in window.candidates if c.frame == centre_frame]
+    assert len(siblings) > 1, "this window has no second-only siblings to be ambiguous about"
+    return siblings[0].seed
+
 def _session(window, phase=Phase.PINNING) -> Session:
     return Session(list(window.candidates), _ours(), _target(), CONFIG, phase=phase)
 
@@ -68,11 +81,27 @@ class TestCandidateGeneration(unittest.TestCase):
         self.assertEqual(len(set(window.seeds)), len(window))
         self.assertLessEqual(len(window), estimate_size(10, 1))
 
-    def test_the_centre_comes_from_the_model(self):
+    def test_the_centre_is_seed_as_delay_plus_the_predicted_difference(self):
+        """Vector ms is the GAP between Seed A and Seed B, not an absolute position.
+
+        This test previously asserted ``frame_centre == round(model.frame(M, low16))`` -- the
+        model's output used directly -- which is the bug it was meant to guard: that put the
+        centre a couple of hundred frames *below* the key seed's own delay and emptied every
+        window. See candidates.centre and app.metronome.seed_b_center.
+        """
+        from claytonlib.battle_compass.candidates import seed_a_delay
         window = _window()
+        base_low16 = KEY_SEED & 0xFFFF
+        difference = round(_model().frame(VECTOR_MS, base_low16) - base_low16)
         self.assertEqual(window.frame_centre,
-                         round(_model().frame(VECTOR_MS, KEY_SEED & 0xFFFF)))
+                         seed_a_delay(KEY_SEED, INITIAL_TIME) + difference)
         self.assertEqual(window.second_centre, _model().battle_second_offset(VECTOR_MS))
+
+    def test_the_centre_agrees_with_the_metronome_path(self):
+        """The same quantity computed by the tool that always had it right."""
+        from app.metronome import seed_b_center
+        _, b_delay = seed_b_center(KEY_SEED, INITIAL_TIME, VECTOR_MS, _model())
+        self.assertEqual(_window().frame_centre, b_delay)
 
     def test_the_second_is_not_derived_from_the_frame(self):
         """Coupling the two axes once produced a candidate set disjoint from the chart's."""
@@ -83,11 +112,13 @@ class TestCandidateGeneration(unittest.TestCase):
         """Because observation cannot correct it — see TestSecondAmbiguity."""
         self.assertEqual(len(set(c.second for c in _window().candidates)), 1)
 
-    def test_frames_below_the_key_seeds_base_delay_are_skipped(self):
-        from claytonlib.times import get_times
-        base, _ = get_times(KEY_SEED)
+    def test_frames_below_seed_as_own_delay_are_skipped(self):
+        """Seed B cannot precede Seed A. The floor is Seed A's delay for the TARGET YEAR, not
+        get_times()'s year-2000 delay -- those differ by (year - 2000)."""
+        from claytonlib.battle_compass.candidates import seed_a_delay
+        floor = seed_a_delay(KEY_SEED, INITIAL_TIME)
         for candidate in _window(frame_window=100000).candidates:
-            self.assertGreaterEqual(candidate.frame, base)
+            self.assertGreaterEqual(candidate.frame, floor)
 
     def test_candidates_are_ordered_by_proximity_to_the_centre(self):
         window = _window(frame_window=5, second_window=1)
@@ -152,14 +183,14 @@ class TestSecondAmbiguity(unittest.TestCase):
     def test_a_second_window_stalls_and_never_resolves(self):
         window = _window(frame_window=60, second_window=2)
         session = _session(window)
-        _play(session, window.candidates[7].seed, turns=12)
+        _play(session, _second_sibling_truth(window), turns=12)
         self.assertIsNone(session.identified)
         self.assertGreater(len(session.survivors), 1)
 
     def test_the_stall_is_diagnosed_as_second_only(self):
         window = _window(frame_window=60, second_window=2)
         session = _session(window)
-        _play(session, window.candidates[7].seed, turns=6)
+        _play(session, _second_sibling_truth(window), turns=6)
         ambiguity = session.ambiguity()
         self.assertTrue(ambiguity["frame_pinned"])
         self.assertTrue(ambiguity["second_only"])
@@ -169,7 +200,7 @@ class TestSecondAmbiguity(unittest.TestCase):
     def test_no_move_separates_second_only_survivors(self):
         window = _window(frame_window=60, second_window=2)
         session = _session(window)
-        _play(session, window.candidates[7].seed, turns=6)
+        _play(session, _second_sibling_truth(window), turns=6)
         for action in (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4, Action.ITEM):
             self.assertEqual(len(set(session.predict(action).values())), 1, action)
 

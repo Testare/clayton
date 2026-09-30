@@ -225,7 +225,8 @@ class TestThePageOpensOnConfigurationAlone(unittest.TestCase):
         result = facade.hunt_candidates(hunt_id)
         self.assertFalse(result["ok"])
         self.assertEqual(result["candidates"], 0)
-        self.assertIn("does not start until frame", result["problem"])
+        self.assertIn("before Seed A's own frame", result["problem"])
+        self.assertIn("MILLISECONDS", result["problem"])
 
     def test_starting_with_an_empty_window_returns_the_problem(self):
         facade, hunt_id = _ready_hunt(vector_ms=1000)
@@ -306,6 +307,103 @@ class TestThePageOpensOnConfigurationAlone(unittest.TestCase):
                           vector_ms=5000, frame_window=60, second_window=0)
         self.assertTrue(len(window))
         self.assertIsNone(window.why_empty())
+
+
+class TestTheRunPageIsAnInterview(unittest.TestCase):
+    """Not a box you type a token string into. The grammar belongs in the tool, not in the
+    player's head over dozens of turns -- and a typo would be indistinguishable from a wrong
+    model constant, which is the one diagnosis the whole design depends on."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+        self.run = self.html[self.html.index("// --- Battle Compass: the live run"):]
+        self.run = self.run[:self.run.index("async function huntConfigure(id){")]
+
+    def test_there_is_no_free_text_token_input(self):
+        self.assertFalse('placeholder="e.g. M1hE3hHP130"' in self.html)
+        self.assertFalse('id="hrTokens"' in self.html)
+
+    def test_there_is_no_raw_action_code_dropdown(self):
+        """M1/M2/C/P meant nothing to read; the chips carry move names instead."""
+        self.assertFalse('<select id="hrAction">' in self.html)
+
+    def test_it_asks_questions_and_assembles_the_tokens_itself(self):
+        for fn in ("hrInterview", "hrTokens", "hrChips", "hrChip", "hrSet", "hrTurnReset"):
+            self.assertTrue(f"function {fn}(" in self.html, fn)
+
+    def test_the_questions_are_driven_by_move_metadata(self):
+        """So a status move is never asked whether it crit, and a never-miss move is never
+        offered 'missed'."""
+        for flag in ("damaging", "can_miss", "has_secondary"):
+            self.assertIn(flag, self.run)
+
+    def test_the_secondary_effect_is_asked_about(self):
+        """Aurora Beam's Attack drop renders its own token; without a question for it, 96 of 456
+        predictable turns were unreportable."""
+        self.assertIn("extra effect happen", self.run)
+        self.assertIn("~", self.run)
+
+    def test_hp_is_only_asked_when_something_changed_it(self):
+        self.assertTrue("function hrNeedsHp(" in self.html)
+
+    def test_the_assembled_tokens_are_shown_before_submitting(self):
+        """What the player confirms must be exactly what is applied."""
+        self.assertIn("hrPreview", self.run)
+        self.assertIn("Reporting", self.run)
+
+    def test_move_names_reach_the_chips(self):
+        self.assertIn("move_info", self.run)
+        self.assertIn("m.name", self.run)
+
+
+class TestVectorMsPresentation(unittest.TestCase):
+    """Vector ms is in MILLISECONDS, and 120 vs 120000 is the mistake the unit invites."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_both_vector_fields_suggest_a_realistic_value(self):
+        self.assertEqual(self.html.count('placeholder="300000"'), 4)
+
+    def test_the_last_three_digits_are_shaded_like_the_other_pages(self):
+        self.assertTrue("fmtVectorMs(h.vector_ms)" in self.html)
+        self.assertTrue("huntVectorHint" in self.html)
+        self.assertTrue(".ms-tail" in self.html.split("</style>")[0])
+
+    def test_the_run_page_shows_the_duration_too(self):
+        """A duration makes a wrong unit obvious at a glance."""
+        self.assertIn("fmtDuration", self.html[self.html.index("function huntVectorHint"):
+                                               self.html.index("function huntTargetingFromForm")])
+
+
+class TestPartyOrdering(unittest.TestCase):
+    """The lead is the Pokemon Battle Compass simulates as active, so the order decides whose
+    Speed sets turn order and whose moves M1-M4 mean. It was not visible or changeable."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_there_is_a_send_out_order_section(self):
+        self.assertIn("Send-out order", self.html)
+
+    def test_it_can_be_reordered(self):
+        self.assertTrue("function huntMoveParty(" in self.html)
+        self.assertIn("huntMoveParty(", self.html)
+
+    def test_the_lead_is_labelled(self):
+        self.assertIn('badge ok">lead', self.html)
+
+    def test_reordering_the_party_changes_which_pokemon_leads(self):
+        """The functional consequence, exercised through the facade."""
+        facade, hunt_id = _ready_hunt()
+        hunt = facade.get_hunt(hunt_id)
+        profile_id = hunt["profile_id"]
+        second = facade.add_party_pokemon(profile_id, dict(LEAD, name="Slowpoke"))["pokemon_id"]
+        hunt["party"] = [{"pokemon_id": second, "held_item": ""},
+                         hunt["party"][0]]
+        facade.save_hunt(hunt)
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["name"], "Slowpoke")
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import HuntConfig
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler
+from claytonlib.moves import CATEGORY_STATUS, resolve_move
 
 #: How many candidate rows a snapshot carries. The full set can be 1,200 wide; the UI shows the
 #: nearest few and a count, and the window is sorted centre-first so these are the likeliest.
@@ -62,6 +63,37 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
 
 #: Move slot -> Action, so slot order and token numbering cannot drift apart.
 _MOVE_ACTIONS = (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4)
+
+
+def move_info(battler: Battler) -> list[dict]:
+    """Per slot: what the UI must know to ask the right questions about this move.
+
+    A damaging move renders a hit marker (``h``/``!``); a status move that lands renders the bare
+    slot, so asking "did it crit?" about Mean Look would be nonsense. A move with accuracy 0
+    cannot miss, so offering "missed" would be wrong too. Deriving this here rather than in the
+    page keeps one source of truth for it.
+    """
+    out: list[dict] = []
+    for slot in range(len(battler.moves)):
+        move = battler.move(slot)
+        if move is None:
+            out.append({"slot": slot, "name": "", "known": False, "damaging": False,
+                        "can_miss": False, "has_secondary": False, "effect_chance": 0,
+                        "pp": 0})
+            continue
+        out.append({
+            "slot": slot,
+            "name": move.name,
+            "known": True,
+            "damaging": move.category != CATEGORY_STATUS,
+            "can_miss": move.accuracy > 0,
+            # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
+            # `~` token, so the interview has to ask about it or such a turn is unreportable.
+            "has_secondary": move.effect_chance > 0,
+            "effect_chance": move.effect_chance,
+            "pp": battler.pp_left(slot),
+        })
+    return out
 
 
 @dataclass
@@ -295,12 +327,14 @@ class HuntSession:
                      "max_hp": state.ours.max_hp,
                      "status": state.ours.status.value,
                      "pp": [state.ours.pp_left(i) for i in range(len(state.ours.moves))],
-                     "moves": list(state.ours.moves)},
+                     "moves": list(state.ours.moves),
+                     "move_info": move_info(state.ours)},
             "target": {"name": state.target.name, "hp": state.target.hp,
                        "max_hp": state.target.max_hp,
                        "status": state.target.status.value,
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
-                       "moves": list(state.target.moves)},
+                       "moves": list(state.target.moves),
+                       "move_info": move_info(state.target)},
             "capture_ball": self.capture_ball,
             "danger_floor": self.danger_floor,
             "in_danger": state.ours.hp is not None and state.ours.hp <= self.danger_floor,

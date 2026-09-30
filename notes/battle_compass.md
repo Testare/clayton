@@ -630,6 +630,31 @@ can only report "no capture within the budget searched", which is what `Unreacha
 `searched_turns` say together. The one real proof available is the **window scan**: if no four
 consecutive rolls fall under `b` anywhere in the horizon, no throw captures however you arrive.
 
+### 6.0.1 Vector ms is a difference, not a position [corrected — implementation]
+
+`candidates.centre` originally used `model.frame(M, low16)` as an **absolute** frame. It is not:
+Vector ms is the gap between Seed A (the key seed) and Seed B, so
+
+```
+dF    = round(model.frame(M, base_low16) - base_low16)   # the pure frame difference
+frame = seed_a_delay(key_seed, initial_time) + dF        # added onto Seed A's own delay
+```
+
+The absolute reading put every window a couple of hundred frames *below* the key seed's own
+delay, so the "Seed B cannot precede Seed A" guard skipped all of them and no window ever held a
+candidate. `app.metronome.seed_b_center` had always done this correctly; `centre` is now
+cross-checked against it across seeds, years and vectors.
+
+Two related corrections fell out:
+
+* The floor for that guard is Seed A's delay **for the target year**, not `get_times()`'s
+  year-2000 delay — they differ by `year - 2000`, and comparing against the wrong one rejects
+  legitimate frames.
+* The model is fitted over realistic countdowns. Extrapolating to a sub-second `M` gives a
+  *negative* frame difference, which is how a Vector ms entered in seconds rather than
+  milliseconds shows up. `why_empty()` names that case, because "120" for "120 seconds" is the
+  mistake the unit invites.
+
 ### 6.1.1 A capture window is a target, not a reachable one
 
 The distinction §6.1 step 2 now turns on, worth stating on its own because it is easy to misread
@@ -1452,6 +1477,24 @@ They are not redundant; each handles something the others cannot:
 Design is the user's; this section records it with the fixes noted below. It follows
 `metronome_compass`: a string of tokens, **spaces separating turns**, tokens concatenated with
 no delimiter inside a turn.
+
+### 12.9 Reporting is an interview, not a token string [implementation]
+
+The grammar of §13 is how the tool *stores* and *compares* turns. It is not how a turn should be
+entered. The run page asks the small factual questions — what did you do, what happened, what did
+the target do, what is your HP — and assembles the tokens itself, because over dozens of turns a
+typed string puts the grammar in the player's head, and a typo is then indistinguishable from a
+wrong model constant. Telling those two apart is the one diagnosis §2.5 depends on.
+
+Which questions apply is derived from the moveset, not hardcoded: a status move is never asked
+whether it crit, a never-miss move is never offered "missed", and HP is asked only when something
+must have changed it. `hunt_session.move_info` is the single source of those flags.
+
+The completeness requirement this creates is worth stating: **every turn the simulator can
+predict must be expressible in the interview**, or a run can reach a state it cannot report. That
+is a test, not an aspiration — and its first run found 96 of 456 distinct renderings
+unreportable, all of them the `~` secondary-effect marker (Aurora Beam's Attack drop), which had
+no question.
 
 ### 13.1 The grammar's real job is canonical rendering, not parsing
 
