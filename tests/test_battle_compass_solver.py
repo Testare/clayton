@@ -12,8 +12,8 @@ from claytonlib.battle.turn import max_turn_advances
 from claytonlib.battle_compass.sim import HuntConfig
 from claytonlib.battle_compass.solver import (
     BALL_PRICE, BASE_DISTANCE, COST_DIVISOR, ITEM_PRICES, Solution, SolverConfig, Unreachable,
-    capture_windows_in_horizon, choose_item, distance_of, solve, struggle_deadline,
-    target_threshold,
+    TURNS_PER_PP, capture_windows_in_horizon, choose_item, distance_of, remaining_target_pp,
+    solve, struggle_deadline, target_threshold,
 )
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
@@ -210,14 +210,14 @@ class TestOffsetCollapsing(unittest.TestCase):
         self.assertGreater(result.capture_windows, 0, "this seed must reach the search, not the "
                                                       "window proof, to test anything")
         self.assertFalse(result.proven)
-        self.assertIn("complete search", result.reason)
+        self.assertIn("cheapest arrival", result.reason)
 
     def test_the_exhaustive_search_does_claim_one(self):
         result = solve(_state(self.EXHAUSTING_SEED), HUNT,
                        _config(max_turns=2, collapse_offsets=False))
         self.assertIsInstance(result, Unreachable)
         self.assertTrue(result.proven)
-        self.assertIn("exhausted", result.reason)
+        self.assertEqual(result.searched_turns, 2)
 
     def test_hitting_the_state_cap_is_not_a_proof(self):
         result = solve(_state(), HUNT, _config(max_states=5))
@@ -262,33 +262,113 @@ class TestStruggleDeadline(unittest.TestCase):
     no damage, so those turns would be silently wrong. And in reality Struggle recoil kills a
     1 HP target, losing the legendary. So the search must stop short of it."""
 
-    def test_the_deadline_is_the_targets_total_pp(self):
-        self.assertEqual(struggle_deadline(_state().target), 90)
+    def test_the_deadline_is_two_and_a_half_times_remaining_pp(self):
+        """Not total PP: a fully-paralyzed turn costs the target none, so the battle outlasts
+        its PP -- and by Phase 2 some of that PP is already spent."""
+        self.assertEqual(remaining_target_pp(_state().target), 90)
+        self.assertEqual(struggle_deadline(_state().target), 225)
+
+    def test_the_factor_is_configurable(self):
+        self.assertEqual(struggle_deadline(_state().target, turns_per_pp=1.0), 90)
+
+    def test_remaining_pp_is_what_counts_not_the_full_moveset(self):
+        """Phase 2 starts after the identification turns have already burned PP."""
+        state = _state()
+        state.target = replace(state.target, pp=(1, 5, 2, 0))
+        self.assertEqual(remaining_target_pp(state.target), 8)
+        self.assertEqual(struggle_deadline(state.target), 20)
 
     def test_the_deadline_clamps_a_larger_configured_ceiling(self):
-        """The default max_turns of 120 is past Suicune's 90 PP."""
-        result = solve(_state(), HUNT, _config(max_turns=120))
+        result = solve(_state(), HUNT, _config(max_turns=1000))
         if isinstance(result, Solution):
-            self.assertLessEqual(result.turns, 90)
+            self.assertLessEqual(result.turns, 225)
 
     def test_a_lower_ceiling_still_wins(self):
         result = solve(_state(), HUNT, _config(max_turns=4))
         if isinstance(result, Solution):
             self.assertLessEqual(result.turns, 4)
 
-    def test_exhaustion_at_the_deadline_names_it(self):
-        target = replace(_state().target, pp=(1, 0, 0, 0))
+    def test_the_exact_cutoff_is_applied_per_path_not_by_the_estimate(self):
+        """A branch is cut the moment the target has no usable move, whatever the turn budget
+        says -- that is exact, where the 2.5x figure is only a search-sizing estimate."""
         state = _state()
-        state.target = target
+        state.target = replace(state.target, pp=(3, 0, 0, 0))
         result = solve(state, HUNT, _config(collapse_offsets=False))
-        if isinstance(result, Unreachable) and result.capture_windows:
-            self.assertIn("Struggles", result.reason)
+        self.assertIsInstance(result, Unreachable)
+        self.assertGreater(result.capture_windows, 0, "must reach the search, not the "
+                                                      "window proof, to test anything")
+        self.assertTrue(result.stopped_at_struggle)
+
+    def test_a_full_pp_target_never_reaches_struggle_in_a_short_search(self):
+        result = solve(_state(), HUNT, _config(max_turns=3))
+        if isinstance(result, Unreachable):
+            self.assertFalse(result.stopped_at_struggle)
 
     def test_a_target_with_no_pp_leaves_no_turns_to_search(self):
         state = _state()
         state.target = replace(state.target, pp=(0, 0, 0, 0))
         self.assertEqual(struggle_deadline(state.target), 0)
         self.assertIsInstance(solve(state, HUNT, _config()), Unreachable)
+
+
+class TestAWindowIsATargetNotAReachableOne(unittest.TestCase):
+    """The trap this whole result type exists to label. A capture window says four consecutive
+    rolls under b sit at some RNG offset -- nothing about whether any action sequence arrives
+    there holding a ball. Windows are dense (~1 offset in 79), so "windows exist" is close to
+    free information and must never be read as "nearly reachable"."""
+
+    def test_windows_are_found_even_where_no_path_exists(self):
+        state = _state(TestOffsetCollapsing.EXHAUSTING_SEED)
+        result = solve(state, HUNT, _config(max_turns=2))
+        self.assertIsInstance(result, Unreachable)
+        self.assertGreater(result.capture_windows, 0)
+
+    def test_the_reason_says_targets_were_found_but_not_reached(self):
+        result = solve(_state(TestOffsetCollapsing.EXHAUSTING_SEED), HUNT, _config(max_turns=2))
+        self.assertIn("capture window", result.reason)
+        self.assertIn("no action sequence arrives", result.reason)
+
+    def test_the_reason_names_what_limited_the_search(self):
+        """So a caller can tell "we looked everywhere" from "we stopped looking"."""
+        collapsed = solve(_state(TestOffsetCollapsing.EXHAUSTING_SEED), HUNT, _config(max_turns=2))
+        self.assertIn("cheapest arrival", collapsed.reason)
+        capped = solve(_state(), HUNT, _config(max_states=5))
+        self.assertIn("gave up", capped.reason)
+        self.assertIn("says nothing about the seed", capped.reason)
+
+    def test_the_window_count_is_reported_even_when_the_search_gave_up(self):
+        """Or the count would look like zero and read as a proof."""
+        result = solve(_state(), HUNT, _config(max_states=5))
+        self.assertGreater(result.capture_windows, 0)
+        self.assertFalse(result.proven)
+
+    def test_many_windows_and_no_path_is_an_ordinary_outcome(self):
+        """Not a contradiction to be explained away."""
+        result = solve(_state(TestOffsetCollapsing.EXHAUSTING_SEED), HUNT, _config(max_turns=2))
+        self.assertFalse(isinstance(result, Solution))
+        self.assertGreaterEqual(result.capture_windows, 1)
+
+    def test_every_unreachable_reports_the_budget_it_searched(self):
+        """`proven` is bounded by it, so the number has to travel with the claim."""
+        for config in (_config(max_turns=2), _config(max_states=5), _config(max_turns=1)):
+            result = solve(_state(TestOffsetCollapsing.EXHAUSTING_SEED), HUNT, config)
+            if isinstance(result, Unreachable):
+                self.assertGreater(result.searched_turns, 0)
+
+    def test_a_precondition_refusal_claims_nothing_at_all(self):
+        result = solve(_state(hp=50), HUNT, _config())
+        self.assertFalse(result.proven)
+        self.assertEqual(result.capture_windows, 0)
+        self.assertFalse(result.stopped_at_struggle)
+
+    def test_no_window_in_the_horizon_is_the_one_real_proof(self):
+        """The search can never prove a seed hopeless, because paralysis gives the battle no
+        provable turn bound. The window scan can, within its horizon: no four consecutive rolls
+        under b means no throw captures, however you arrive."""
+        result = solve(_state(), HUNT, _config(max_turns=1))
+        self.assertEqual(result.capture_windows, 0)
+        self.assertTrue(result.proven)
+        self.assertEqual(result.searched_turns, 1)
 
 
 if __name__ == "__main__":

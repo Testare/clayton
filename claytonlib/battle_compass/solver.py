@@ -66,6 +66,14 @@ def distance_of(price: int, *, base: int = BASE_DISTANCE, divisor: int = COST_DI
     return base + price // divisor
 
 
+#: Turns to search per point of the target's remaining PP. A fully-paralyzed turn costs the
+#: target no PP, so the battle outlasts its PP total -- by 4/3 on average at a 25% full-paralysis
+#: rate, and by more than that in practice because the solver can prefer paths that proc it.
+#: 2.5 leaves room for that without searching so far that the estimate carries real weight; the
+#: per-path cutoff below is exact, so this only sizes the search.
+TURNS_PER_PP = 2.5
+
+
 @dataclass(frozen=True)
 class SolverConfig:
     """What the search optimises and what it refuses to do."""
@@ -75,9 +83,11 @@ class SolverConfig:
     #: bound holds without knowing which move is coming (sec 11.2). Bag actions resolve before
     #: moves, so a heal always lands before the incoming hit regardless of Speed.
     danger_floor: int = 0
-    #: A ceiling on the search. The target's own PP caps the battle well below this in practice
-    #: (see `struggle_deadline`), and the search is clamped to whichever is lower.
-    max_turns: int = 120
+    #: A hard ceiling on the search, whatever `struggle_deadline` estimates. The search stops at
+    #: whichever is lower, and says which one bound it.
+    max_turns: int = 300
+    #: Turns to search per point of the target's remaining PP; see `TURNS_PER_PP`.
+    turns_per_pp: float = TURNS_PER_PP
     #: Guards a runaway search rather than the battle; exhausting the horizon above is the real
     #: stopping condition.
     max_states: int = 200_000
@@ -96,19 +106,31 @@ class SolverConfig:
     allow_standard_balls: bool = True
 
 
-def struggle_deadline(target) -> int:
-    """How many turns the search may use before the target runs out of PP.
+def remaining_target_pp(target) -> int:
+    """The target's PP left, summed over slots that hold a move.
 
-    Past this the target must Struggle, and at 1 HP the recoil kills it -- losing the legendary
-    outright (sec 4.4).  The simulator does not model Struggle at all: with no usable slot it
-    simply spends no roll, which would make those turns silently wrong rather than visibly
-    unsupported.  So the solver refuses to search there.
-
-    Total PP is a *conservative* bound in turns, because a fully-paralyzed turn costs the target
-    no PP -- the real deadline is later, and erring early is the safe direction.
+    *Remaining*, not total: by the time Phase 2 begins the target has already spent PP on the
+    turns that identified the seed, so a total-PP figure would overstate the battle left.
     """
     return sum(target.pp_left(slot) for slot in range(len(target.moves))
                if target.move(slot) is not None)
+
+
+def struggle_deadline(target, turns_per_pp: float = TURNS_PER_PP) -> int:
+    """How many turns to search before the target must be out of PP.
+
+    Past its PP the target Struggles, and at 1 HP the recoil kills it -- losing the legendary
+    outright (sec 4.4).  The simulator does not model Struggle: with no usable slot it spends no
+    roll and deals no damage, so such a turn is silently wrong rather than visibly unsupported.
+
+    **This is an estimate, and it is not what actually enforces the deadline.** How many turns
+    the PP lasts depends on the RNG path itself -- every full-paralysis turn is a free one -- so
+    there is no turn count that bounds the battle from the outside.  The exact cutoff is applied
+    per path instead: a state whose target has no usable move is never expanded, because the
+    next turn would be Struggle.  This figure only sizes the search, which is why erring high
+    is safe and why exhausting it is not a proof of anything about the seed.
+    """
+    return int(remaining_target_pp(target) * turns_per_pp)
 
 
 @dataclass(frozen=True)
@@ -148,16 +170,38 @@ class Solution:
 
 @dataclass
 class Unreachable:
-    """Why no path exists — and whether that is a proof or a limit.
+    """Why no path was found — and how much that tells you about the seed.
 
-    The distinction matters: an exhausted horizon means this seed genuinely cannot be captured
-    and a soft reset is the right move, whereas hitting the state cap means the search gave up
-    and says nothing about the seed (sec 6.3).
+    Read `proven` before acting on this. A soft reset is only clearly right when the search was
+    complete; otherwise the result is a limit of the search, not a fact about the seed (sec 6.3).
+
+    ``capture_windows`` is the trap this class exists to label. A window is a *target* -- four
+    consecutive rolls under ``b`` at some RNG offset -- and nothing more. Whether any action
+    sequence can arrive at one holding a ball is exactly the question the search answers, so a
+    large window count alongside no path is the ordinary outcome. Do not read it as "nearly
+    reachable".
     """
     reason: str
+    #: True when every action sequence was tried *within* ``searched_turns``: the complete
+    #: search (``collapse_offsets=False``), not cut short by the state cap. False whenever the
+    #: search was narrowed or gave up, in which case it says nothing about the seed at all.
+    #:
+    #: Even True is a bounded claim. There is no provable turn bound on the battle -- every
+    #: full-paralysis turn costs the target no PP, so no finite budget covers every branch --
+    #: so this means "no capture within ``searched_turns`` turns", never "this seed is hopeless
+    #: forever". ``searched_turns`` is 2.5x the target's remaining PP by default, which the
+    #: battle exceeds only astronomically rarely, but rarely is not never.
     proven: bool
     states_explored: int
+    #: Capture windows found in the horizon. Targets, not reachable ones -- see above.
     capture_windows: int = 0
+    #: The turn budget actually searched.
+    searched_turns: int = 0
+    #: Whether any branch ended because the target would have had to Struggle -- the one exact
+    #: deadline in the model.
+    #: True when at least one branch ended because the target would have had to Struggle. That
+    #: is the one exact deadline in the model -- unlike the turn ceiling, it is not an estimate.
+    stopped_at_struggle: bool = False
 
 
 def capture_windows_in_horizon(seed: int, threshold: int, advances: int) -> list[int]:
@@ -276,7 +320,7 @@ def solve(state: BattleState, hunt: HuntConfig,
                     f"paralyzed"),
             proven=False, states_explored=0)
 
-    deadline = struggle_deadline(state.target)
+    deadline = struggle_deadline(state.target, config.turns_per_pp)
     max_turns = min(config.max_turns, deadline)
     threshold = target_threshold(state, hunt)
     if is_guaranteed(threshold):
@@ -286,9 +330,10 @@ def solve(state: BattleState, hunt: HuntConfig,
     if not windows:
         return Unreachable(
             reason=(f"no four consecutive rolls fall under b={threshold} within "
-                    f"{horizon_advances} advances -- an upper bound on what {max_turns} "
-                    f"turns can spend -- so no action sequence can capture"),
-            proven=True, states_explored=0, capture_windows=0)
+                    f"{horizon_advances} advances -- an upper bound on what {max_turns} turns "
+                    f"can spend -- so no action sequence captures inside that budget"),
+            proven=True, states_explored=0, capture_windows=0,
+            searched_turns=max_turns)
 
     # (accumulated distance, tiebreak, turns, state, path)
     counter = 0
@@ -299,17 +344,29 @@ def solve(state: BattleState, hunt: HuntConfig,
     buckets: dict[tuple, list[tuple[BattleState, int]]] = {}
     explored = 0
 
+    hit_turn_ceiling = False
+    hit_struggle = False
     while queue:
         dist_so_far, _, turns, current, path = heapq.heappop(queue)
         explored += 1
         if explored > config.max_states:
             return Unreachable(
-                reason=f"search gave up after {config.max_states} states",
-                proven=False, states_explored=explored, capture_windows=len(windows))
+                reason=(f"search gave up after {config.max_states} states, with "
+                        f"{len(windows)} capture window(s) in the horizon it had not reached; "
+                        f"this says nothing about the seed"),
+                proven=False, states_explored=explored, capture_windows=len(windows),
+                searched_turns=max_turns)
         if current.captured:
             return Solution(steps=list(path), total_distance=dist_so_far,
                             states_explored=explored)
         if turns >= max_turns:
+            hit_turn_ceiling = True
+            continue
+        if not current.target.usable_slots():
+            # Exact deadline: the next turn would be Struggle, which is unmodelled and which
+            # kills a 1 HP target. Unlike the turn ceiling above this is not an estimate, so a
+            # search that only ever stopped here really did see the whole battle.
+            hit_struggle = True
             continue
 
         if config.collapse_offsets:
@@ -336,13 +393,25 @@ def solve(state: BattleState, hunt: HuntConfig,
             heapq.heappush(queue, (dist_so_far + step_distance, counter, turns + 1,
                                    nxt, path + (step,)))
 
-    exhaustive = not config.collapse_offsets
+    # A window is a *target*, not a reachable one: it says four consecutive rolls under b exist
+    # at some offset, not that any action sequence arrives there with a ball in hand. So finding
+    # windows and then finding no path is the ordinary outcome, not a contradiction.
+    targets = len(windows)
+    complete = not config.collapse_offsets
+    if config.collapse_offsets:
+        limit = ("collapsing each RNG offset to its cheapest arrival, so a dearer arrival that "
+                 "carried the PP or HP for a later turn was never tried")
+    elif hit_turn_ceiling:
+        limit = (f"stopping at {max_turns} turns, which is "
+                 + (f"{config.turns_per_pp}x the target's {remaining_target_pp(state.target)} "
+                    f"remaining PP -- an estimate, since every full-paralysis turn is a free one"
+                    if max_turns == deadline else "the configured ceiling"))
+    else:
+        limit = ("searching every action sequence to the point where the target runs out of PP "
+                 "and must Struggle")
     return Unreachable(
-        reason=(f"exhausted every action sequence within {max_turns} turns "
-                f"({'the target Struggles past there and dies to recoil' if max_turns == deadline
-                   else 'the configured ceiling'}), so this seed cannot be captured"
-                if exhaustive else
-                f"found no path within {max_turns} turns, visiting each RNG offset at "
-                f"its cheapest arrival. Re-run with collapse_offsets=False for a complete "
-                f"search before concluding the seed is hopeless"),
-        proven=exhaustive, states_explored=explored, capture_windows=len(windows))
+        reason=(f"{targets} capture window{'' if targets == 1 else 's'} in reach of the horizon, "
+                f"but no action sequence arrives at one with a ball in hand -- "
+                f"{limit}"),
+        proven=complete, states_explored=explored, capture_windows=targets,
+        searched_turns=max_turns, stopped_at_struggle=hit_struggle)

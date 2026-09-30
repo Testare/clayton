@@ -609,10 +609,39 @@ intrinsically bounded (§6.3).
 
 **The Struggle deadline is enforced, not just noted [implementation].** The simulator does not
 model Struggle at all — `select_target_move` returns no slot, so the turn spends no roll and deals
-no damage, which would be silently wrong rather than visibly unsupported. The solver therefore
-clamps its search to `struggle_deadline(target)` = the target's total PP (90 for Suicune, against
-a configured ceiling of 120). Total PP is conservative in turns, because a fully-paralyzed turn
-costs the target no PP — the real deadline is later, and erring early is the safe direction.
+no damage, which would be silently wrong rather than visibly unsupported. And at 1 HP the recoil
+kills the target outright, losing the legendary.
+
+There are two mechanisms, and only one of them is exact:
+
+* **Exact, per path.** A state whose target has no usable move is never expanded, because the
+  next turn would be Struggle. The simulator tracks the target's PP along each path and a
+  fully-paralyzed turn spends none, so this needs no estimate at all. This is what actually
+  enforces the deadline.
+* **An estimate, for sizing.** `struggle_deadline()` = `2.5 ×` the target's **remaining** PP
+  (remaining, not total: by Phase 2 the identification turns have already spent some). It bounds
+  the turn budget and the RNG horizon the window scan covers. 2.5 rather than 1.0 because every
+  full-paralysis turn is free — 4/3 on average at a 25% rate, and more in practice because the
+  solver can prefer paths that proc it.
+
+**There is no provable turn bound on the battle.** Paralysis can extend it indefinitely, so no
+finite budget covers every branch. Consequently the *search* can never prove a seed hopeless; it
+can only report "no capture within the budget searched", which is what `Unreachable.proven` and
+`searched_turns` say together. The one real proof available is the **window scan**: if no four
+consecutive rolls fall under `b` anywhere in the horizon, no throw captures however you arrive.
+
+### 6.1.1 A capture window is a target, not a reachable one
+
+The distinction §6.1 step 2 now turns on, worth stating on its own because it is easy to misread
+in the other direction. A window says four consecutive rolls under `b` sit at some RNG offset. It
+says nothing about whether any legal action sequence arrives there holding a ball, under the
+sustainability constraints, before the target runs out of PP.
+
+Windows are *dense* — roughly one offset in 79 at `b = 21845` — so "windows exist" is nearly free
+information. The two seeds out of 200 the solver could not crack had **63 and 56** windows
+respectively, and reached none of them. A high window count alongside no path is the ordinary
+outcome, not a contradiction, and `Unreachable.capture_windows` is documented as a count of
+*targets* for exactly that reason.
 
 **Measured [implementation].** §1.1's reachability table was built from an illustrative cost
 model before any simulator existed. Re-measured against the real solver over 200 random seeds:
@@ -620,9 +649,9 @@ model before any simulator existed. Re-measured against the real solver over 200
 | | §1.1 predicted | measured |
 |---|---|---|
 | seeds solved within 40 turns | ~98–99% | **99.0%** (198/200) |
-| median turns | ~8 | **6** |
-| mean turns | — | 8.1 |
-| worst | — | 37 |
+| median turns | ~8 | **6–7** |
+| mean turns | — | 8.1–8.8 |
+| worst | — | 36–37 |
 
 Cumulative: 31% within 4 turns, 62% within 8, 92% within 16. The deadline of §6.3 never binds at
 these counts. A representative solution, on a seed needing 9 turns:
