@@ -56,3 +56,26 @@ class TestClaytonlibExports(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBattleCompassIsNotShadowed(unittest.TestCase):
+    """battle_compass sorts before metronome_compass, so a shared name would resolve to the
+    metronome one at claytonlib.<name>. Two were caught this way: sim.resolve_move shadowing
+    moves.resolve_move (a different concept -- executing a move versus looking one up), and
+    simulate_turn colliding outright."""
+
+    def test_simulate_turn_is_not_hoisted(self):
+        import claytonlib.battle_compass as bc
+        self.assertFalse(hasattr(bc, "simulate_turn"),
+                         "re-exporting simulate_turn would be shadowed by metronome_compass")
+
+    def test_the_move_executor_is_not_called_resolve_move(self):
+        from claytonlib.battle_compass import sim
+        self.assertTrue(hasattr(sim, "execute_move"))
+        self.assertFalse(hasattr(sim, "resolve_move"),
+                         "resolve_move would shadow claytonlib.moves.resolve_move")
+
+    def test_looking_up_a_move_by_name_still_reaches_the_right_function(self):
+        import claytonlib
+        from claytonlib.moves import Move
+        self.assertIsInstance(claytonlib.resolve_move("Aurora Beam"), Move)
