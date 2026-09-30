@@ -1844,9 +1844,46 @@ The primary way this tool gets validated, and the reason most of §14.2's ground
 2. **Use gdb to overwrite the battle seed** in the emulator with one of them, chosen at random.
 3. Run Battle Compass against that same candidate list and check it **identifies the right seed**.
 4. Check that the path it returns **actually captures in the emulator**.
-5. A logging utility — modelled on the existing seed-slurper tools (`utils/gdb-seed-reader.py`,
-   `utils/gdb-safari-reader.py`, `utils/safari_reader.py`, `utils/verify_paths.py`) — records the
-   emulator side so logs can be diffed against the tool's output.
+5. A logging utility records the emulator side so logs can be diffed against the tool's output.
+
+Steps 2 and 5 are built:
+
+**`utils/gdb-battle-reader.py`** — sourced inside gdb, records one hand-played battle with the
+seed optionally forced. Sibling to `utils/gdb-seed-reader.py`, and different in two ways that
+matter. It does **no auto-pressing and no batch loop**: the Metronome slurper replays a seed file
+because that battle plays itself, whereas a Battle Compass battle is played by hand over dozens
+of turns. And it logs **our Pokemon's HP**, which is the one thing battle messages cannot tell us
+and exactly what R10 needs. The forced-seed technique is lifted wholesale from the proven reader
+— overwrite `r3` at `BattleSystem_Random+8`, just past the seed load, so the game's own store
+writes `advance_rng(seed)` coherently, with the same sanity check that aborts rather than
+mislabelling a recording.
+
+```
+(gdb) source utils/gdb-battle-reader.py
+(gdb) battlelog 0xEC1504DC suicune    # force this seed, record to data/battle_logs/suicune.jsonl
+      ... play the battle, typing `battlemark turn1`, `turn2`, ... as you go ...
+(gdb) battlesave
+```
+
+**`claytonlib/battle/logcheck.py`** — pure Python and tested, because the recorder needs a live
+emulator and cannot be tested at all. As little judgement as possible lives in the recorder and
+as much as possible lives here. `python -m claytonlib.battle.logcheck <log.jsonl>` reports:
+
+| Section | Answers |
+|---|---|
+| rolls by calling function | **R7** — which of the ROM's 74 `BattleSystem_Random` call sites this matchup exercises, and how often |
+| rolls between markers | **R2** — battle-start advances, and per-turn counts to check `battle/turn.py` against |
+| damage taken | **R10** — each HP drop with the rolls before it; `check_damage_event` then asks `battle.damage` which of the sixteen rolls could have produced it |
+
+Segmentation uses the markers you type rather than a heuristic, on the grounds that you are
+already sitting at the emulator and a marker is exact where a guess is not. And a damage event
+that **no** roll explains is the outcome that matters: it means the seed, the entered stats, or
+the damage model is wrong, and §3.1 requires that be loud rather than quietly eliminating
+candidates.
+
+Both tolerate the case where gdb has no DWARF types for `BattleSystem`/`BattleContext`: the
+recorder says so once and carries on logging rolls and messages without HP, and the report says
+R10 cannot be answered from that log rather than looking complete.
 
 ### 16.2 Why this is the right shape
 

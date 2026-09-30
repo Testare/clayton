@@ -40,3 +40,4 @@ data/
 # Nix build result symlinks
 result
 result-*
+data/battle_logs/

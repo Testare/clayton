@@ -29,6 +29,9 @@ from claytonlib.battle.turn import (  # noqa: F401
     END_OF_TURN_ADVANCES, POST_SUCCESSFUL_MOVE_ADVANCES,
     ActionCost, ball_turn_cost, shake_roll_offset, turn_cost,
 )
+from claytonlib.battle.logcheck import (  # noqa: F401
+    BattleLog, DamageEvent, HpChange, check_damage_event, report,
+)
 from claytonlib.battle.readiness import (  # noqa: F401
     AlphabetReport, SpeedCheck, alphabet_report, estimated_move_rolls,
     speed_checks, speed_warnings,
