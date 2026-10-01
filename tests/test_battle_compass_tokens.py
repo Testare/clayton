@@ -268,3 +268,38 @@ class TestNormalisation(unittest.TestCase):
     def test_validation_works_on_either_form(self):
         self.assertTrue(tok.validate_turn(["M1", "h", "E3", "!"]))
         self.assertEqual(tok.validate_turn(["M1", "h", "E3", "!", "HP103"]), [])
+
+class TestBallTokensAreValidated(unittest.TestCase):
+    """The gap that let a winning turn be unreportable.
+
+    A malformed ball token is still a well-formed *token* -- right prefix, right position -- so
+    nothing in the grammar objected to it. It just matched no candidate's prediction, and the
+    player saw a capture they could not report with no indication why. The run UI emitted "Cc",
+    having appended the raw "caught it" answer to the "C" prefix; that works for a standard ball
+    ("Pc") and is wrong for the capture ball, where the bare "C" IS the capture.
+    """
+
+    def test_the_malformed_capture_token_is_rejected(self):
+        problems = tok.validate_turn(["Cc"])
+        self.assertTrue(problems)
+        self.assertIn("not a ball outcome", problems[0])
+
+    def test_both_captures_are_accepted_and_are_the_only_suffixed_forms(self):
+        self.assertEqual(tok.validate_turn(["C"]), [])
+        self.assertEqual(tok.validate_turn(["Pc"]), [])
+        self.assertTrue(tok.validate_turn(["Cp"]))
+        self.assertTrue(tok.validate_turn(["P"]))
+
+    def test_every_token_ball_token_can_produce_is_valid(self):
+        """Keeps the renderer and the validator from disagreeing about the asymmetry."""
+        produced = {tok.ball_token(0, True, capture_ball=True),
+                    tok.ball_token(0, True, capture_ball=False)}
+        produced |= {tok.ball_token(n, False, capture_ball=cb)
+                     for cb in (True, False) for n in range(4)}
+        self.assertEqual(produced, set(tok.BALL_TOKENS))
+        for token in produced:
+            self.assertEqual(tok.validate_turn([token]), [], token)
+
+    def test_a_shake_count_out_of_range_is_rejected(self):
+        self.assertTrue(tok.validate_turn(["C4"]))
+        self.assertTrue(tok.validate_turn(["P9"]))

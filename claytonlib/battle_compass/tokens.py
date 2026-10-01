@@ -230,6 +230,12 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
     return False
 
 
+#: Every outcome a thrown ball can have. Both captures are terminal: ``C`` is the win and ``Pc``
+#: loses the run by catching the target in the wrong ball (sec 2.3).
+BALL_TOKENS = frozenset(
+    {"C", "Pc"} | {f"{prefix}{shakes}" for prefix in "CP" for shakes in range(4)})
+
+
 def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
     """Grammar invariants, as a list of problems (sec 13.8). Empty means the turn is well formed.
 
@@ -262,6 +268,15 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
         if token[0] in ("I", "C", "P", "S") and seen_move:
             problems.append(
                 f"{token!r} is a bag action but follows a move; bag actions resolve first")
+        if token[0] in ("C", "P") and token not in BALL_TOKENS:
+            # Worth checking explicitly because the failure is otherwise invisible. A malformed
+            # ball token is still a well-formed *token* -- it parses, it sits in the right place
+            # -- so nothing here objected to it and it simply matched no candidate's prediction.
+            # The run UI emitted "Cc" for a capture in the capture ball (the bare "C" is the
+            # win; only a standard ball's capture takes the "c" suffix) and the symptom was a
+            # winning turn that could not be reported, with no indication why.
+            problems.append(
+                f"{token!r} is not a ball outcome; expected one of {sorted(BALL_TOKENS)}")
     if turn_requires_hp(tokens) and not any(t.startswith("HP") for t in tokens):
         problems.append("the target hit us, so this turn needs an HP token")
     terminal = [t for t in tokens if t in ("C", "Pc")]

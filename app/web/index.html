@@ -4083,10 +4083,18 @@ function hrTokens(){
     } else if (t.action === "S"){
       if (t.ours?.bench === undefined) return "";   // as is which Pokemon came in
       parts.push("S" + (t.ours.bench + 2));         // party slot: the active one was 1
+    } else if (t.action === "C" || t.action === "P"){
+      // The two ball prefixes are NOT symmetric, and this mirrors tokens.ball_token rather
+      // than guessing: a capture in the CAPTURE ball is the bare "C" -- the win needs no
+      // suffix -- while a capture in a standard ball is "Pc". Concatenating the raw answer
+      // onto the prefix gave "Cc", which no candidate ever renders, so the winning turn
+      // silently matched nothing and the run could not be closed out.
+      if (!t.ours?.result) parts.push(t.action);
+      else if (t.ours.result === "c") return t.action === "C" ? "C" : "Pc";
+      else parts.push(t.action + t.ours.result);
     } else {
-      parts.push(t.action);                          // C / P carry their shake count below
+      parts.push(t.action);
     }
-    if ((t.action === "C" || t.action === "P") && t.ours?.result) parts.push(t.ours.result);
   }
   if (t.target){
     if (t.target.prevented) targetParts.push("E" + t.target.prevented);
