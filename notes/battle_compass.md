@@ -2368,6 +2368,40 @@ Four decisions worth recording, because each has a wrong version that looks fine
   something they can see. A transposed pair of IVs is invisible in the numbers typed and obvious
   the moment the HP it implies disagrees with the HP bar.
 
+### Seed A's advance FRAME, which is a different question again
+
+Copied from Safari Compass's "Seed A advances" step, and it reuses the two facade calls
+unchanged — `safari_compass_identify_frame` and `safari_compass_plan_frame`. Neither takes
+anything Safari-specific (a seed, the roamer routes, two frame numbers), which is what makes the
+reuse free. What is deliberately **not** reused is `safari_compass_find_target_frame`: it searches
+a Safari *area*'s encounter slots for a species, which has no meaning for a static A-press
+encounter, and it is the source of the optional target-frame field this page should not have.
+Safari Compass keeps its own in-house search and Pokefinder field untouched.
+
+For a static encounter the advance frame is what *generates the Pokemon*, so it answers one of
+two questions depending on where Seed A landed:
+
+* **Seed A is the key seed** — `hunt.key_seed_advances` is the frame that generates the Suicune
+  the hunt was planned around, so there is something to route to: chatot flips, then Elm calls,
+  then press A. (The plan's own field names stay Safari-flavoured — `elm_before_scent`,
+  `scent_frame` — and are left alone; only the wording changes, since the arithmetic is identical
+  and only the terminal action differs.)
+* **Seed A is anything else** — `key_seed_advances` was computed against a different stream and
+  routing to it would be confidently wrong. So the frame is only *identified*, which is exactly
+  what the player needs: it says which Suicune an A-press would generate, and therefore which
+  nature and IVs to look up and type into the step above.
+
+**"Is this the key seed" and "is there a frame to aim for" are separate questions**, and
+collapsing them is the mistake available here. A hunt can land on its key seed and still have no
+`key_seed_advances` configured; treating that as "not the key seed" printed *"Seed A is not the
+key seed"* at someone who had just hit it. Three cases, not two. The spread step keys off the
+*seed*, since the configured spread is the key seed's whether or not a frame was configured.
+
+The spread step waits on the frame rather than merely on Seed A — until the frame is pinned there
+is nothing to look the spread up *by*. Seed B deliberately does not wait on it: a player who
+already knows they are on the right frame should not have to re-derive it to get on with the
+battle.
+
 One parser serves both the page's live red-field check and the facade's authoritative pass
 (`claytonlib.battle.stats.parse_iv_spread`), because the interesting failure is silent: a spread
 short by one value shifts every later stat by a position, and five plausible IVs with a missing

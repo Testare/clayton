@@ -180,11 +180,21 @@ class TestUiWiring(unittest.TestCase):
                             f"index.html calls api({method!r}) but Facade has no such method")
         self.assertIn("hunt_session_start", called)
 
+    #: Things an inline handler may legitimately call that this page does not define.
+    #: Needed because an onkeydown is often a small statement rather than a single call --
+    #: `if(event.key==='Enter'){event.preventDefault();huntAppendFrameElm();}` names two
+    #: functions and only one of them is ours. The alternative was to match just the first
+    #: call, which quietly stopped checking the handler that actually matters.
+    DOM_BUILTINS = {"preventDefault", "stopPropagation", "focus", "blur", "click"}
+
     def test_the_run_page_defines_every_handler_its_markup_references(self):
         run = self.html[self.html.index("// --- Battle Compass: the live run"):]
         run = run[:run.index("async function huntConfigure(id){")]
         referenced = set(re.findall(r'onclick="(\w+)\(', run))
-        referenced |= set(re.findall(r"onkeydown=\"[^\"]*?(\w+)\(\)", run))
+        for handler in re.findall(r'onkeydown="([^"]*)"', run):
+            referenced |= set(re.findall(r"(\w+)\(", handler))
+        referenced -= self.DOM_BUILTINS
+        referenced -= {"if"}                      # `if(` is not a call
         self.assertTrue(referenced)
         for name in referenced:
             # assertTrue, not assertIn: a failing assertIn prints the whole page.

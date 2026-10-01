@@ -16,7 +16,7 @@ from app import chart as chart_lib
 from app import metronome
 from app.models import (
     CalibrationModelDoc, Chart, Expedition, Hunt, MetronomeUser, PartyPokemon,
-    Profile, Run, Target,
+    Profile, Run, Target, _default_preferences,
 )
 from app.store import FileStore, Store
 
@@ -502,6 +502,14 @@ class Facade:
             },
             "capture_ball": h.capture_ball,
             "calibration_model": self.calibration_model_summary(h.profile_id),
+            # The advance frame the hunt is planned to encounter on. Only meaningful when the
+            # run actually lands on the key seed -- on any other Seed A it was computed for a
+            # different stream -- so the page uses it only there, to plan the chatot-flip route.
+            "key_seed_advances": h.key_seed_advances,
+            # Elm calls to leave after the chatot flips. A Hunt has no preferences of its own
+            # (only an Expedition does), so this is the shared default rather than an invented
+            # per-hunt setting.
+            "elm_margin": _default_preferences()["elm_calls_after_flips"],
             # Seed A comes first in a real run, and it needs the key seed and initial time that
             # are already above. What it adds is the roamer/Elm search defaults, remembered per
             # hunt so a repeat run does not retype them.

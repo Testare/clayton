@@ -241,7 +241,8 @@ class TestThePageIsWiredUp(unittest.TestCase):
 
     def test_the_spread_panel_is_only_rendered_on_a_key_seed_miss(self):
         self.assertIn("const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();", self.html)
-        self.assertIn('${needSpread ? `<div class="panel" id="hsa-spread">', self.html)
+        self.assertIn('${needSpread ? `<div class="panel ${spreadLocked ? "locked" : ""}" '
+                      'id="hsa-spread">', self.html)
 
     def test_seed_b_is_locked_until_seed_a_is_identified(self):
         self.assertIn("const seedBLocked = blocked || !_hsa?.seedA;", self.html)
@@ -313,3 +314,167 @@ class TestTheSpreadFieldsStartEmpty(unittest.TestCase):
         """Not 250ms later when the debounced check returns -- in between, the button would
         still be offering to start a run on a spread the player is mid-way through changing."""
         self.assertIn("huntRenderStartButton();          // disable NOW", self.html)
+
+
+class TestTheAdvanceFrameStep(unittest.TestCase):
+    """Seed A's advance FRAME, which is a different question from which seed it is.
+
+    For a static A-press encounter the frame is what generates the Pokemon, so it answers one of
+    two questions depending on where Seed A landed: how to reach the Suicune that was planned
+    for, or which Suicune is about to appear.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_it_reuses_the_two_generic_facade_calls(self):
+        """Neither takes anything Safari-specific -- a seed, the roamer routes and frame
+        numbers -- which is what makes them reusable here without a fork."""
+        self.assertIn('api("safari_compass_identify_frame"', self.html)
+        self.assertIn('api("safari_compass_plan_frame"', self.html)
+
+    def test_it_does_not_reuse_the_in_house_target_frame_search(self):
+        """safari_compass_find_target_frame searches a Safari AREA's encounter slots for a
+        species. That has no meaning for a static encounter, and it is the source of the
+        optional target-frame field this page is explicitly not supposed to have."""
+        run = self.html[self.html.index("// --- Battle Compass: the live run"):]
+        run = run[:run.index("async function huntConfigure(id){")]
+        # The CALL, not the string: the only mention in this region is the comment explaining
+        # why it is not used, and a test that forbade the name would forbid the explanation.
+        self.assertNotIn('api("safari_compass_find_target_frame"', run)
+        self.assertNotIn("sac-target-frame", run)
+        self.assertNotIn("aim_advance", run)
+
+    def test_the_target_frame_is_only_used_on_an_exact_key_seed_hit(self):
+        """key_seed_advances was computed against the key seed's own stream. On any other Seed A
+        it is a number from a different battle and routing to it would be worse than useless."""
+        self.assertIn("function huntKeySeedTargetFrame(", self.html)
+        self.assertIn("return (huntSeedAIsKeySeed() && _huntSetup?.key_seed_advances != null)",
+                      self.html)
+
+    def test_a_non_key_seed_identifies_the_frame_and_stops_there(self):
+        self.assertIn("Seed A is not the key seed, so no target frame", self.html)
+        self.assertIn("Look up the Suicune at frame", self.html)
+
+    def test_the_route_is_worded_for_an_a_press_not_sweet_scent(self):
+        """The plan is the same arithmetic; the terminal action is not. plan_frame_route's own
+        field names stay Safari-flavoured (elm_before_scent, scent_frame) and are left alone --
+        only the wording here changes."""
+        self.assertIn("then press A on Suicune.", self.html)
+        self.assertIn('(press A at the "!")', self.html)
+
+    def test_the_spread_panel_waits_for_the_frame(self):
+        """Until the frame is pinned there is nothing to look the spread up BY."""
+        self.assertIn("const spreadLocked = _hsa?.pinnedFrame == null;", self.html)
+
+    def test_seed_b_is_deliberately_not_gated_on_the_frame(self):
+        """A player who already knows they are on the right frame should not have to re-derive
+        it to get on with the battle."""
+        self.assertIn("const seedBLocked = blocked || !_hsa?.seedA;", self.html)
+
+    def test_changing_seed_a_discards_the_pinned_frame(self):
+        """A frame is an offset into one seed's Elm stream; carried onto another seed it is a
+        confidently wrong number."""
+        self.assertIn("_hsa.pinnedFrame = null; _hsa.frameGuide = null;", self.html)
+
+    def test_the_elm_calls_typed_for_seed_a_carry_into_the_frame_step(self):
+        """They are the same calls -- the ones heard since the seed loaded. Prefilled rather
+        than applied, so a mistyped call can be fixed first."""
+        self.assertIn('const elmHeard = $("hsa-elm")?.value || "";', self.html)
+        self.assertIn("_hsa.frameElmPrefill = elmHeard;", self.html)
+
+    def test_re_pinning_moves_the_heard_calls_back_into_the_field(self):
+        """Rather than discarding them: the usual reason to come back is one mistyped call in an
+        otherwise correct sequence."""
+        self.assertIn("const moved = _hsa.frameObservedElm", self.html)
+
+
+class TestTheSetupCarriesTheFrameInputs(unittest.TestCase):
+    def setUp(self):
+        self.facade, self.hunt_id = _ready_hunt()
+
+    def test_it_reports_the_hunts_planned_advance_frame(self):
+        hunt = self.facade.get_hunt(self.hunt_id)
+        hunt["key_seed_advances"] = 81
+        self.facade.save_hunt(hunt)
+        self.assertEqual(self.facade.hunt_run_setup(self.hunt_id)["key_seed_advances"], 81)
+
+    def test_an_unset_advance_frame_is_none_rather_than_a_default(self):
+        """A guessed frame would plan a confident route to the wrong Suicune, so there is no
+        default -- the page simply does not offer a route without one."""
+        self.assertIsNone(self.facade.hunt_run_setup(self.hunt_id)["key_seed_advances"])
+
+    def test_the_elm_margin_is_the_shared_default_not_an_invented_per_hunt_setting(self):
+        from app.models import _default_preferences
+        self.assertEqual(self.facade.hunt_run_setup(self.hunt_id)["elm_margin"],
+                         _default_preferences()["elm_calls_after_flips"])
+
+    def test_identifying_a_frame_works_off_a_hunt_seed(self):
+        """End to end through the facade, since the call was written for Safari Compass and this
+        is the first time a Hunt has driven it."""
+        result = self.facade.safari_compass_identify_frame(
+            {"seed": 0x2D005C61, "prev_routes": {"r": 31, "e": 30, "l": 7},
+             "observed_elm": ""})
+        self.assertIn("frames", result)
+        self.assertGreater(len(result["frames"]), 0)
+
+    def test_planning_a_route_works_off_a_hunt_seed(self):
+        plan = self.facade.safari_compass_plan_frame(
+            {"seed": 0x2D005C61, "prev_routes": {"r": 31, "e": 30, "l": 7},
+             "current_frame": 10, "encounter_frame": 81, "margin": 3})
+        self.assertEqual(plan["encounter_frame"], 81)
+        self.assertEqual(plan["current_frame"], 10)
+        self.assertTrue(plan["guide"])
+
+
+class TestSafariCompassIsUntouched(unittest.TestCase):
+    """The reuse must not cost Safari Compass anything -- its in-house search and its Pokefinder
+    target-frame field both stay exactly where they were."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_its_in_house_search_is_still_there(self):
+        self.assertIn("function renderInHouseFrameSearch(", self.html)
+        self.assertIn("function sacFindTargetFrame(", self.html)
+        self.assertIn('api("safari_compass_find_target_frame"', self.html)
+
+    def test_its_optional_target_frame_field_is_still_there(self):
+        self.assertIn('id="sac-target-frame"', self.html)
+        self.assertIn("function _sacAimAdvanceField(", self.html)
+
+    def test_its_own_frame_guide_still_says_sweet_scent(self):
+        self.assertIn('(Sweet scent at the "!")', self.html)
+
+    def test_the_facade_still_exposes_the_search_it_does_not_use_here(self):
+        self.assertTrue(callable(getattr(Facade, "safari_compass_find_target_frame", None)))
+
+
+class TestKeySeedHitVersusFrameToAimFor(unittest.TestCase):
+    """Two separate questions that it is tempting to collapse into one.
+
+    A hunt can land on its key seed and still have no `key_seed_advances` configured. Treating
+    "no target frame" as "not the key seed" printed "Seed A is not the key seed" at someone who
+    had just hit it -- and would have asked them for a spread they did not need.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_two_conditions_are_tracked_separately(self):
+        self.assertIn("const onKeySeed = huntSeedAIsKeySeed();", self.html)
+        self.assertIn("// THREE cases, not two.", self.html)
+
+    def test_a_key_seed_hit_without_a_planned_frame_says_so(self):
+        self.assertIn("but this hunt has no planned advance frame configured", self.html)
+        self.assertIn("No planned advance frame is configured for this hunt", self.html)
+
+    def test_the_spread_is_still_skipped_on_a_key_seed_hit(self):
+        """It keys off the SEED, not off whether a frame was configured -- the configured spread
+        is the key seed's either way."""
+        self.assertIn("const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();", self.html)
+
+    def test_a_failed_plan_is_not_a_dead_end(self):
+        """The in-flight state is also where a thrown plan lands, and a toast has faded by the
+        time the player looks."""
+        self.assertIn('onclick="huntPlanFrameRoute(${target})">Retry', self.html)

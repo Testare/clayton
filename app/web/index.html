@@ -3922,6 +3922,12 @@ async function huntRunStart(_owner, id){
       // Start with the wrong Suicune's stats, which is worse than an empty field. The configured
       // values are shown in the panel as reference instead.
       nature: "", ivs: "", spread: null, spreadConfirmed: false,
+      // Seed A's own ADVANCE FRAME, which is a different question from which seed it is. For a
+      // static encounter the frame decides which Suicune the A-press generates, so it is what
+      // tells the player either how to reach the one they planned (key-seed hit) or which one
+      // they are about to get (anything else).
+      frameObservedElm: "", frameElmPrefill: "", frameCandidates: null,
+      pinnedFrame: null, frameGuide: null,
     };
     renderHuntSetup();
     huntSeedAFocus();
@@ -4015,15 +4021,24 @@ function huntPickSeedA(seed){
   const changed = _hsa.seedA && _hsa.seedA.seed !== picked.seed;
   _hsa.seedA = picked;
   _hsa.editing = false;
+  // The Elm calls typed to narrow Seed A ARE the calls heard since it loaded, so they are the
+  // start of the frame identification -- prefilled rather than applied, so a mistyped call can
+  // be corrected first. Same handoff Safari Compass makes.
+  const elmHeard = $("hsa-elm")?.value || "";
   if (changed){
-    // A different Seed A is a different Suicune, so an already-confirmed spread no longer
-    // describes anything, and the Seed B window found under the old one is equally stale.
+    // A different Seed A is a different Suicune on a different stream: the confirmed spread
+    // describes nothing, the pinned frame belonged to the old seed, and the Seed B window found
+    // under it is equally stale.
     _hsa.spread = null; _hsa.spreadConfirmed = false;
+    _hsa.frameObservedElm = ""; _hsa.frameCandidates = null;
+    _hsa.pinnedFrame = null; _hsa.frameGuide = null;
     _huntWindow = null;
   }
+  _hsa.frameElmPrefill = elmHeard;
   renderHuntSetup();
-  if (huntSeedAIsKeySeed()) $("hrVectorMs")?.focus();
-  else $("hsa-ivs")?.focus();
+  // Seed A advances is the next step either way -- the guide on a key-seed hit, the frame
+  // identification otherwise.
+  $("hsa-frame-elm-new")?.focus();
 }
 function huntChangeSeedA(){ _hsa.editing = true; renderHuntSetup(); }
 function huntKeepSeedA(){ _hsa.editing = false; renderHuntSetup(); }
@@ -4072,6 +4087,169 @@ function renderHuntSeedA(){
     </div>
     <div id="hsa-candA">${hasCand ? renderCandA(_hsa.candidates, "huntPickSeedA")
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
+}
+
+// --- Seed A advances (the advance frame) ----------------------------------
+// The same step Safari Compass calls "Seed A advances", and the same two generic facade calls
+// (safari_compass_identify_frame / safari_compass_plan_frame -- neither takes anything
+// Safari-specific). What is NOT reused is safari_compass_find_target_frame: that searches a
+// Safari area's encounter slots for a species, which has no meaning for a static A-press
+// encounter, and it is the source of the optional "target frame" field this page does not want.
+// Safari Compass keeps its own in-house search and Pokefinder field untouched.
+//
+// The two cases do genuinely different things:
+//
+//  * Seed A IS the key seed -- the hunt's own key_seed_advances is the frame that generates the
+//    Suicune the hunt was planned around, so a route to it is worth planning: chatot flips, then
+//    Elm calls, then press A.
+//  * Seed A is anything else -- key_seed_advances was computed for a different stream and means
+//    nothing here, so there is nothing to plan a route TO. The frame is merely identified, which
+//    is what the player needs: it says which Suicune an A-press would generate, and therefore
+//    which nature and IVs to look up and enter below.
+
+function huntFrameMargin(){ return _huntSetup?.elm_margin ?? 3; }
+
+function huntKeySeedTargetFrame(){
+  // Only on an exact key-seed hit. On any other Seed A this number belongs to another stream.
+  return (huntSeedAIsKeySeed() && _huntSetup?.key_seed_advances != null)
+    ? _huntSetup.key_seed_advances : null;
+}
+
+async function huntIdentifyFrame(){
+  try {
+    const res = await api("safari_compass_identify_frame", {
+      seed: _hsa.seedA.seed, prev_routes: _hsa.seedAParams.prev_routes,
+      observed_elm: _hsa.frameObservedElm});
+    _hsa.frameCandidates = res.frames;
+    if (res.pinned){
+      _hsa.pinnedFrame = res.frame;
+      renderHuntSetup();
+      // A key-seed hit has a target frame already, so resolve the route without being asked.
+      // Anything else has nothing to resolve -- identifying the frame WAS the answer.
+      const target = huntKeySeedTargetFrame();
+      if (target != null) await huntPlanFrameRoute(target);
+      else $("hsa-ivs")?.focus();
+      return;
+    }
+    renderHuntSetup();
+    // The re-render replaces the input with a fresh node, so focus has to be put back or
+    // Enter-to-apply drops it on every call.
+    $("hsa-frame-elm-new")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function huntAppendFrameElm(){
+  const el = $("hsa-frame-elm-new");
+  const add = (el?.value || "").trim();
+  if (!add) return;
+  _hsa.frameObservedElm = (_hsa.frameObservedElm || "") + add;
+  _hsa.frameElmPrefill = "";
+  await huntIdentifyFrame();
+}
+
+function huntChangeFrameElm(){
+  // Move what was heard back into the input rather than discarding it: the usual reason to
+  // come back here is one mistyped call in an otherwise correct sequence.
+  const moved = _hsa.frameObservedElm || "";
+  _hsa.frameObservedElm = ""; _hsa.frameCandidates = null;
+  _hsa.pinnedFrame = null; _hsa.frameGuide = null;
+  _hsa.frameElmPrefill = moved;
+  renderHuntSetup();
+  $("hsa-frame-elm-new")?.focus();
+}
+
+async function huntPlanFrameRoute(target){
+  try {
+    _hsa.frameGuide = await api("safari_compass_plan_frame", {
+      seed: _hsa.seedA.seed, prev_routes: _hsa.seedAParams.prev_routes,
+      current_frame: _hsa.pinnedFrame, encounter_frame: target,
+      margin: huntFrameMargin()});
+    renderHuntSetup();
+    $("hrVectorMs")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function renderHuntFrameGuide(){
+  if (!_hsa.seedA)
+    return `<h3>Seed A advances</h3><div class="status">Identify Seed A first.</div>`;
+
+  // THREE cases, not two. "Is this the key seed" and "is there a frame to aim for" are separate
+  // questions: a hunt can hit its key seed and still have no key_seed_advances configured, and
+  // collapsing the two printed "Seed A is not the key seed" at someone who had just hit it.
+  const onKeySeed = huntSeedAIsKeySeed();
+
+  if (_hsa.pinnedFrame == null){
+    const target = huntKeySeedTargetFrame();
+    const why = target != null
+      ? `Seed A is the key seed, so the Suicune you planned for is waiting at advance frame
+         <b>${target}</b>. Pin where you are now and the route there follows.`
+      : onKeySeed
+      ? `Seed A is the key seed, but this hunt has no planned advance frame configured, so there
+         is nothing to route to. Pin where you are and the frame itself tells you which Suicune
+         an A-press would generate.`
+      : `Seed A is not the key seed, so there is no planned frame to aim for — but the frame you
+         are on decides which Suicune an A-press generates, so pin it and you know which nature
+         and IVs to look up.`;
+    const cand = !_hsa.frameCandidates ? ""
+      : _hsa.frameCandidates.length === 0
+        ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check
+             what you entered.</div>`
+        : `<div class="status">${_hsa.frameCandidates.length} possible frame(s):
+             ${_hsa.frameCandidates.join(", ")} — keep listening.</div>`;
+    return `<h3>Seed A advances</h3>
+      <div class="hint muted" style="margin-bottom:8px">${why}</div>
+      ${_hsa.frameObservedElm ? `<div class="hr-small muted">Elm calls so far:
+        <code>${esc(_hsa.frameObservedElm)}</code>
+        <button class="btn small" type="button" onclick="huntChangeFrameElm()">Change</button>
+        </div>` : ""}
+      <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
+        <input id="hsa-frame-elm-new" value="${esc(_hsa.frameElmPrefill || "")}"
+          placeholder="PEKE…" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();huntAppendFrameElm();}">
+        </div>
+      ${cand}
+      <button class="btn small" onclick="huntAppendFrameElm()">Apply</button>`;
+  }
+
+  const target = huntKeySeedTargetFrame();
+  const pinned = `<div class="info-line done">Current advance frame:
+    <b>${_hsa.pinnedFrame}</b></div>`;
+
+  if (target == null){
+    // Nothing to route to, and that is the whole answer rather than a missing feature.
+    return `<h3>Seed A advances</h3>
+      ${pinned}
+      <div class="hr-small" style="margin:6px 0">${onKeySeed
+        ? `No planned advance frame is configured for this hunt, so there is nothing to route to
+           — set one in Configure if you want the guide. This frame is what an A-press would
+           generate from.`
+        : `Seed A is not the key seed, so no target frame applies — this frame is what an A-press
+           would generate from. Look up the Suicune at frame <b>${_hsa.pinnedFrame}</b> on this
+           seed and enter its nature and IVs below.`}</div>
+      <button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>`;
+  }
+
+  if (!_hsa.frameGuide){
+    // Transient while the plan is in flight -- but it is also where a failed plan lands, so it
+    // carries a way out rather than being a dead end with a toast that has already faded.
+    return `<h3>Seed A advances</h3>${pinned}
+      <div class="hint muted">Planning the route to frame ${target}…</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn small" onclick="huntPlanFrameRoute(${target})">Retry</button>
+        <button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>
+      </div>`;
+  }
+  const g = _hsa.frameGuide;
+  return `<h3>Seed A advances</h3>
+    <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
+    <div class="info-line done">${g.chatot_flips > 0
+      ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) →
+      frame ${g.encounter_frame}, then press A on Suicune.</div>
+    <div class="status">Guide: <code>${esc(g.guide)}</code> (press A at the "!")
+      ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm
+        sequence</span>` : ""}
+      ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
+    <button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>`;
 }
 
 // --- The target's actual spread -------------------------------------------
@@ -4279,6 +4457,11 @@ function renderHuntSetup(){
   // the window sizes belong to Seed B alone.
   const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();
   const seedBLocked = blocked || !_hsa?.seedA;
+  // The spread panel waits on the FRAME, not just on Seed A: for a static encounter the frame
+  // is what decides which Suicune the A-press generates, so until it is pinned there is nothing
+  // to look up. Seed B is deliberately not gated on it -- a player who already knows they are
+  // on the right frame should not have to re-derive it to get on with the battle.
+  const spreadLocked = _hsa?.pinnedFrame == null;
 
   mount(`<div class="head"><h2>${esc(s.name)} — Battle Compass</h2>
       <div style="display:flex;gap:10px">
@@ -4306,7 +4489,9 @@ function renderHuntSetup(){
 
     <div class="nr-stack">
       <div class="panel ${blocked ? "locked" : ""}" id="hsa-seeda">${renderHuntSeedA()}</div>
-      ${needSpread ? `<div class="panel" id="hsa-spread">${renderHuntSpread()}</div>` : ""}
+      <div class="panel ${_hsa?.seedA ? "" : "locked"}" id="hsa-frame">${renderHuntFrameGuide()}</div>
+      ${needSpread ? `<div class="panel ${spreadLocked ? "locked" : ""}" id="hsa-spread">
+        ${renderHuntSpread()}</div>` : ""}
       <div class="panel ${seedBLocked ? "locked" : ""}" id="hsa-seedb">
         <h3>Seed B — the battle seed</h3>
         <div class="hr-small muted" style="margin-bottom:10px">These centre the candidate window.
