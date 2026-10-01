@@ -2412,6 +2412,43 @@ test2.jsonl's actual Bold 29/15/31/31/31/28 share Def, Sp. Atk *and* Sp. Def IVs
 three stats are byte-identical and False Swipe takes exactly the same amount off either Suicune.
 Only HP, Attack and Speed move. An override has to be checked on max HP, not on outgoing damage.
 
+## 16.4 The winning turn, and why it crashed [fixed]
+
+Reporting the throw that lands raised `IndexError: list index out of range` — on the one turn a
+run exists to reach. Worth recording, because every part of it was behaving correctly on its own.
+
+`HuntSession.observe` re-solves after every Phase 2 turn (that is what makes a misplay free). On
+the turn the ball lands, the state it re-solves from is **already captured**, so the solver
+returns a `Solution` with **zero steps** — a correct and meaningful answer: the goal is met, the
+path is empty, the distance is zero. `snapshot` then read `steps[0]` unconditionally. Because the
+solver re-runs after *every* Phase 2 turn, the winning turn was guaranteed to hit it.
+
+Underneath that was the real gap: **the snapshot never reported that the run had ended.** No
+`captured`, no `over`. With no terminal flag the page had no reason to stop asking for the next
+turn, so the only thing standing between a landed ball and a fresh question was the crash. The
+snapshot now carries `captured`, `captured_in_wrong_ball`, `we_fainted` and `over`, and the run
+page renders an outcome banner and suppresses the interview, the solver panel and the advice.
+
+`all`, not `any`: a candidate set that disagrees about whether the ball landed has not finished,
+and announcing a win on one member of it would be a lie. (A `C` token only matches candidates that
+captured, so in practice the set agrees by the time it matters — but the flag should not depend on
+that.)
+
+### Recommendations are in words now
+
+The solver's next action was rendered as its raw code, so "throw the Fast Ball" appeared as `C`
+and "use False Swipe" as `M1`. That is not merely unfriendly: `M1` and `M4` differ by one
+character and name two completely different moves, and a player translating a code under time
+pressure translates it wrongly — which is what happened. `next` and every step now carry a
+`label`, and `action_label` names the specific item for a bag step ("Use a Hyper Potion") rather
+than letting every one of them read "Use an item". The code is kept beside the name in small
+type, because the path string and the turn history are still written in codes.
+
+The turn **history** stays in codes on purpose. `action_label` names a move from the *currently*
+active Pokemon's moveset, so labelling a turn played before a switch would confidently name the
+wrong move — and the history is a record that pairs with the path string, where `next` is an
+instruction.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

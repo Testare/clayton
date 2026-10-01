@@ -5013,7 +5013,10 @@ function huntReportWidening(){
 }
 
 function huntRunAbandon(){
-  if (!confirm("End this run? The battle state is not saved.")) return;
+  // No confirmation on a finished run: there is nothing left to lose, and asking "are you sure?"
+  // after a capture reads as though closing might undo it.
+  if (!(_huntSnap && _huntSnap.over)
+      && !confirm("End this run? The battle state is not saved.")) return;
   api("hunt_session_abandon", _huntRun).catch(() => {});
   _huntRun = _huntSnap = null;
   huntRunStart(null, _huntRunHunt);   // back to targeting, ready to search again
@@ -5123,18 +5126,34 @@ function renderHuntRun(){
   }
 
   let solver = "";
-  if (s.phase === 3 && s.solution && s.solution.found){
+  if (s.phase === 3 && s.solution && s.solution.found && s.solution.next){
     const sol = s.solution;
+    // The NAME, not the code. "M1" and "M4" differ by one character and name two completely
+    // different moves, and a player translating a code under time pressure translates it
+    // wrongly -- which is exactly what happened. The code is kept alongside, small, because it
+    // is still what the path string and the turn history are written in.
     solver = `<div class="panel">
       <div class="section-label">Solved — ${sol.turns} turn${sol.turns === 1 ? "" : "s"} to the capture</div>
-      <div class="hr-next">Next: <code>${esc(sol.next.action)}</code>
-        ${sol.next.item ? `<span class="chip">${esc(sol.next.item)}</span>` : ""}
+      <div class="hr-next">Next: <b>${esc(sol.next.label || sol.next.action)}</b>
+        <span class="muted">(<code>${esc(sol.next.action)}</code>)</span>
         <span class="muted">expect <code>${esc(sol.next.expect)}</code></span></div>
+      ${sol.steps.length > 1 ? `<div class="candtable" style="margin-top:8px"><table>
+        <tr><th>#</th><th>do this</th><th>expect</th></tr>
+        ${sol.steps.map(st => `<tr><td>${st.n}</td>
+          <td>${st.n === 1 ? "<b>" : ""}${esc(st.label || st.action)}${st.n === 1 ? "</b>" : ""}
+            <span class="muted">(<code>${esc(st.action)}</code>)</span></td>
+          <td><code>${esc(st.expect)}</code></td></tr>`).join("")}</table></div>` : ""}
       <div class="muted hr-small">Full path: <code>${esc(sol.rendered)}</code></div>
       ${Object.keys(sol.items).length ? `<div class="hr-small">Items needed:
         ${Object.entries(sol.items).map(([k, n]) => `${esc(k)} ×${n}`).join(", ")}</div>` : ""}
       <div class="muted hr-small">Re-solved after every turn, so a misplay costs nothing — just
         report what actually happened.</div></div>`;
+  } else if (s.phase === 3 && s.solution && s.solution.found){
+    // Found with NO steps left: the path is complete. Reached by solving from a state that is
+    // already captured, which is every winning turn, since the solver re-runs after each one.
+    solver = `<div class="panel ok-cta"><div class="section-label">Nothing left to do</div>
+      <div class="hr-small">The solver has no steps left from here — the path is finished.</div>
+      </div>`;
   } else if (s.phase === 3 && s.solution){
     solver = `<div class="notice danger"><b>No path found from here.</b>
       <div class="hr-small">${esc(s.solution.reason)}</div>
@@ -5173,20 +5192,37 @@ function renderHuntRun(){
        </table></div>`
     : `<div class="muted hr-small">No turns reported yet.</div>`;
 
+  // How it ended. Without this the page kept asking for the next turn after a landed ball, and
+  // the only thing standing between a won run and a fresh question was the solver crashing on
+  // the empty path it had just correctly produced.
+  const outcome = s.captured
+    ? `<div class="notice ok-cta"><b>Caught it — in the
+         ${esc(s.capture_ball || "capture ball")}.</b>
+       <div class="hr-small">That is the run. ${s.turns.length}
+         turn${s.turns.length === 1 ? "" : "s"} reported.</div></div>`
+    : s.captured_in_wrong_ball
+    ? `<div class="notice danger"><b>Caught in the wrong ball.</b>
+       <div class="hr-small">A plain Poké Ball landed, so the target is caught but not in the
+         ${esc(s.capture_ball || "capture ball")} — the run is lost (sec 2.3).</div></div>`
+    : s.we_fainted
+    ? `<div class="notice danger"><b>${esc(s.ours.name)} fainted.</b>
+       <div class="hr-small">The battle is over.</div></div>`
+    : "";
+
   mount(`<div class="head"><h2>Battle Compass</h2>
       <div style="display:flex;gap:10px">
-        <button class="btn" onclick="huntRunAbandon()">End run</button>
+        <button class="btn" onclick="huntRunAbandon()">${s.over ? "Close" : "End run"}</button>
       </div></div>
     <div class="hr-phase">${esc(s.phase_label)}</div>
-    ${ambiguity}${contra}
+    ${outcome}${ambiguity}${contra}
     <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor)}${hrSide("Target:", s.target, 0)}</div>
-    ${solver}
-    <div class="panel">
+    ${s.over ? "" : solver}
+    ${s.over ? "" : `<div class="panel">
       <div class="section-label">Report the turn you just played</div>
       ${hrInterview()}
-    </div>
-    ${phaseButtons}
-    ${advice}
+    </div>`}
+    ${s.over ? "" : phaseButtons}
+    ${s.over ? "" : advice}
     <div class="panel"><div class="section-label">Candidates</div>${candidates}</div>
     <div class="panel"><div class="section-label">Turns so far</div>${history}
       ${s.path ? `<div class="muted hr-small" style="margin-top:8px">Path:

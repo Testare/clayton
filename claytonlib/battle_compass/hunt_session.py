@@ -319,17 +319,28 @@ class HuntSession:
     def predict(self, action: Action, **extra) -> dict[int, str]:
         return self._session.predict(action, **extra)
 
-    def action_label(self, action: Action) -> str:
+    def action_label(self, action: Action, item_code: str | None = None) -> str:
         """What the action is, in words. "Use False Swipe", not "M1".
 
         Built from the same move names the interview's chips use, because a ranking nobody can
-        read is a ranking nobody acts on.
+        read is a ranking nobody acts on -- and worse than unread, a code the player has to
+        translate under time pressure is a code they translate wrongly. "M1" and "M4" differ by
+        one character and name two completely different moves.
+
+        `item_code` names the actual item when there is one, so a solver step reads "Use a Hyper
+        Potion" rather than the bare "Use an item" it would otherwise share with every other
+        bag action in the path.
         """
         state = next(iter(self._session.states.values()))
         slot = action.move_slot
         if slot is not None:
             move = state.ours.move(slot)
             return f"Use {move.name}" if move else f"Use move {slot + 1}"
+        if action in (Action.ITEM, Action.ITEM_CURE) and item_code:
+            try:
+                return f"Use a {items.item(item_code).name}"
+            except ValueError:
+                pass                      # an unknown code falls back to the generic wording
         return {
             Action.ITEM: "Use an item",
             Action.ITEM_CURE: "Use a status cure",
@@ -513,9 +524,19 @@ class HuntSession:
         state = next(iter(self._session.states.values()))
         we_first = effective_speed(state.ours) > effective_speed(state.target)
         seed = self.identified
+        # How the run ENDED, which the snapshot never said. Its absence is why the capture bug
+        # was reachable at all: with no terminal flag the page had no reason to stop asking for
+        # turns, so the only thing between a landed ball and a fresh question was the solver
+        # crashing. `all`, not `any`: a candidate set that disagrees about whether the ball
+        # landed has not finished, and reporting a win on one member of it would be a lie.
+        states = list(self._session.states.values())
         out = {
             "phase": int(self.phase),
             "phase_label": self.phase.label,
+            "captured": all(st.captured for st in states),
+            "captured_in_wrong_ball": all(st.captured_in_wrong_ball for st in states),
+            "we_fainted": all(st.ours.fainted for st in states),
+            "over": all(st.over for st in states),
             # Whether a plain Poke Ball is exactly as catchable as the capture ball here, which
             # is what decides how harshly to word a standard-ball throw. Replaces the old
             # `balls_allowed` flag: balls are always allowed now, so a key that was always true
@@ -587,6 +608,10 @@ class HuntSession:
             "capture_ball": self.capture_ball,
             "danger_floor": self.danger_floor,
             "in_danger": state.ours.hp is not None and state.ours.hp <= self.danger_floor,
+            # Codes here, not labels, and deliberately: `action_label` names a move from the
+            # CURRENTLY active Pokemon's moveset, so labelling a turn played before a switch
+            # would confidently name the wrong move. The history pairs with `path` below, which
+            # is in codes anyway -- it is a record, where the solver's `next` is an instruction.
             "turns": [{"n": i + 1, "action": t.action.value, "rendered": t.rendered,
                        "survivors_before": t.survivors_before,
                        "survivors_after": t.survivors_after}
@@ -604,18 +629,28 @@ class HuntSession:
             "solution": None,
         }
         if isinstance(self.solution, Solution):
+            steps = self.solution.steps
             out["solution"] = {
                 "found": True,
+                # Zero steps is a real and good answer: the solver was asked for a path from a
+                # state that is ALREADY captured, so the path is empty. `steps[0]` was taken
+                # unconditionally, and the one turn a run exists to reach -- the capture landing
+                # -- raised "list index out of range" the moment it was reported. The solver
+                # re-runs after every Phase 2 turn, so the winning turn was guaranteed to hit it.
+                "done": not steps,
                 "turns": self.solution.turns,
                 "distance": self.solution.total_distance,
                 "rendered": self.solution.rendered(),
                 "items": self.solution.item_bill(),
-                "next": {"action": self.solution.steps[0].action.value,
-                         "item": self.solution.steps[0].item,
-                         "expect": self.solution.steps[0].rendered},
-                "steps": [{"n": i + 1, "action": s.action.value, "item": s.item,
+                "next": None if not steps else {
+                    "action": steps[0].action.value,
+                    "label": self.action_label(steps[0].action, steps[0].item),
+                    "item": steps[0].item,
+                    "expect": steps[0].rendered},
+                "steps": [{"n": i + 1, "action": s.action.value,
+                           "label": self.action_label(s.action, s.item), "item": s.item,
                            "expect": s.rendered, "distance": s.distance}
-                          for i, s in enumerate(self.solution.steps)],
+                          for i, s in enumerate(steps)],
             }
         elif isinstance(self.solution, Unreachable):
             out["solution"] = {
