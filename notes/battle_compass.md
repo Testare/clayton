@@ -2326,6 +2326,58 @@ now records the word's address, 4-byte alignment, intended value and an immediat
 read, which separates "the store did not take" from "something rewrites it afterwards" at no cost
 on the next run.
 
+## 16.3 Seed A comes first — and a missed key seed changes the target [implemented]
+
+Battle Compass was built Seed-B-first because Seed B is the novel part. A real run does not
+start there. It starts the way every other compass does: load the save, watch the roamers and
+the Elm calls, and pin **Seed A**. Only then does the encounter fire and Seed B exist.
+
+The run page now reflects that order — a shared header (key seed, initial time), then three
+stacked panels: **Seed A**, **the target's spread** (conditional), **Seed B**. The Seed A step
+is deliberately not new code: it calls the same `metronome_seed_a` and `metronome_key_seed_info`
+the Metronome and Safari compasses call, and renders the same `renderCandA` table and
+`_seedASummary` line. Nothing about identifying an initial seed is special here, and anything
+that looked special would be a bug.
+
+### The consequence that is not cosmetic
+
+`hunt.target` holds a nature and an IV spread, and the whole simulation derives the target's
+stats from them (§15.4.1). But that spread is **the one the key seed produces**. Land on a
+different Seed A — the normal outcome, since hitting the key seed exactly is the hard part — and
+the Suicune in front of the player is a different Pokemon with different stats.
+
+So when the identified Seed A is not the key seed, the run asks for the actual spread: a nature
+picker and one text field taking six IVs in `hp atk def spa spd spe` order. The player works the
+spread out themselves (Pokefinder, or the seed's own PID); the app validates it and shows the
+stats it derives.
+
+Four decisions worth recording, because each has a wrong version that looks fine:
+
+* **The override is run-scoped and never written back to `hunt.target`.** That record is the
+  *plan* — the spread every future attempt is aimed at. Overwriting it with one run's actual
+  spread would lose the thing being targeted.
+* **The fields start empty rather than prefilled from the configured spread.** Prefilling is the
+  obvious convenience and it is wrong: this step is only reached when the configured spread is
+  wrong, so a prefill would validate instantly and enable *Start* with the stats of a Suicune
+  that is not there. An empty field cannot do that.
+* **Half an entry is refused.** A nature without IVs, or the reverse, is a half-filled form, not
+  a partial override. Completing the other half from the configuration would mix a nature from
+  one Suicune with IVs from another — stats belonging to no Pokemon at all, and no error
+  anywhere.
+* **The derived stats are shown back.** They are the only part the player can check against
+  something they can see. A transposed pair of IVs is invisible in the numbers typed and obvious
+  the moment the HP it implies disagrees with the HP bar.
+
+One parser serves both the page's live red-field check and the facade's authoritative pass
+(`claytonlib.battle.stats.parse_iv_spread`), because the interesting failure is silent: a spread
+short by one value shifts every later stat by a position, and five plausible IVs with a missing
+Speed is indistinguishable from a correct entry until the simulation desynchronises mid-battle.
+
+**A trap worth knowing when testing this.** The hunt's configured all-31s Bold spread and
+test2.jsonl's actual Bold 29/15/31/31/31/28 share Def, Sp. Atk *and* Sp. Def IVs of 31, so those
+three stats are byte-identical and False Swipe takes exactly the same amount off either Suicune.
+Only HP, Attack and Speed move. An override has to be checked on max HP, not on outgoing damage.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

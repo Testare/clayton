@@ -424,13 +424,19 @@ class Facade:
 
     # -- Battle Compass: the live run --------------------------------------
 
-    def _hunt_battlers(self, hunt, profile):
+    def _hunt_battlers(self, hunt, profile, spread: dict | None = None):
         """(ours, target, bench) as ``battle_compass`` Battlers, from stored configuration.
 
         Our side's stats are entered off the summary screen; the target's are derived from the
         IVs and nature the RNG manipulation fixed (sec 15.4.1). The first party slot is the
         active Pokemon and the rest are the bench it can switch to -- a Phase 1 action, which is
         why the solver never weighs it.
+
+        `spread` overrides the target's nature and IVs for ONE run, as ``{"nature", "ivs"}``.
+        It exists because the configured spread is the one the KEY SEED would have produced, and
+        a run that identifies a different Seed A is facing a different Suicune. The override is
+        deliberately not written back to ``hunt.target``: that record is the plan, and
+        overwriting it would lose the spread every future run is aimed at.
         """
         from claytonlib.battle.stats import derive_species_stats, species as species_data
         from claytonlib.battle_compass.state import Battler
@@ -461,11 +467,13 @@ class Facade:
         from claytonlib.battle_compass.targets import moveset
         from claytonlib.moves import resolve_move
         target_moves = moveset(hunt.target.species)
+        nature = (spread or {}).get("nature") or hunt.target.nature
+        ivs = (spread or {}).get("ivs") or dict(hunt.target.ivs)
         target = Battler(
             name=hunt.target.species.title(), level=hunt.target.level,
             types=tuple(species_data(hunt.target.species)["types"]),
             stats=derive_species_stats(hunt.target.species, hunt.target.level,
-                                       hunt.target.nature, ivs=dict(hunt.target.ivs)),
+                                       nature, ivs=dict(ivs)),
             moves=target_moves,
             pp=tuple(resolve_move(name).pp for name in target_moves))
         return ours, target, bench
@@ -477,6 +485,8 @@ class Facade:
         this way -- you get the page, then search for candidates on it, then adjust and search
         again -- and Battle Compass needs it more, not less: the seed is found *during* the run.
         """
+        from claytonlib.battle.stats import STAT_KEYS, format_iv_spread, nature_names
+
         h = self._load_hunt(hunt_id)
         profile = self._load_profile(h.profile_id)
         return {
@@ -492,7 +502,90 @@ class Facade:
             },
             "capture_ball": h.capture_ball,
             "calibration_model": self.calibration_model_summary(h.profile_id),
+            # Seed A comes first in a real run, and it needs the key seed and initial time that
+            # are already above. What it adds is the roamer/Elm search defaults, remembered per
+            # hunt so a repeat run does not retype them.
+            "seed_a_defaults": dict(h.seed_a_defaults or {}),
+            # The spread the hunt is PLANNED around -- the one the key seed produces. Shown as
+            # the prefill for the spread step, and the thing a different Seed A replaces.
+            "configured_spread": {
+                "nature": h.target.nature,
+                "ivs": dict(h.target.ivs),
+                "text": (format_iv_spread(h.target.ivs)
+                         if all(isinstance(h.target.ivs.get(k), int) for k in STAT_KEYS)
+                         else ""),
+            },
+            "natures": list(nature_names()),
         }
+
+    @staticmethod
+    def _target_spread_from_params(params: dict | None) -> dict | None:
+        """``{"nature", "ivs"}`` for this run, or None to use the hunt's configured spread.
+
+        Both fields must arrive together. A nature without IVs (or the reverse) is a half-entered
+        form rather than a partial override, and silently filling the other half from the
+        configured spread would mix a nature from one Suicune with IVs from another -- stats that
+        belong to no Pokemon at all, and no error anywhere.
+        """
+        from claytonlib.battle.stats import parse_iv_spread
+
+        params = params or {}
+        nature = (params.get("target_nature") or "").strip()
+        raw_ivs = params.get("target_ivs")
+        text = raw_ivs if isinstance(raw_ivs, str) else ""
+        if not nature and not text.strip() and not isinstance(raw_ivs, dict):
+            return None
+        if isinstance(raw_ivs, dict):
+            ivs = dict(raw_ivs)
+        else:
+            if not text.strip():
+                raise ValueError("a target nature was given without IVs; enter both or neither")
+            ivs = parse_iv_spread(text)
+        if not nature:
+            raise ValueError("target IVs were given without a nature; enter both or neither")
+        return {"nature": nature, "ivs": ivs}
+
+    def hunt_save_seed_a_defaults(self, hunt_id: str, defaults: dict) -> dict:
+        """Remember the roamer/Elm search inputs for this hunt's next run.
+
+        The roamers' starting positions are a property of the save file, not of the run, so
+        retyping them every attempt is pure friction -- the same reason Safari Compass keeps
+        them per expedition. Stored on the hunt rather than returned, because the point is for
+        them to survive the app closing.
+        """
+        h = self._load_hunt(hunt_id)
+        h.seed_a_defaults = {**(h.seed_a_defaults or {}), **(defaults or {})}
+        self._store.write(_HUNTS, h.id, h.to_dict())
+        return dict(h.seed_a_defaults)
+
+    def hunt_parse_target_spread(self, hunt_id: str, nature: str, ivs_text: str) -> dict:
+        """Validate a typed spread and show what it derives, without starting anything.
+
+        The derived stats come back deliberately: they are the only part the player can check
+        against something they can see. A transposed pair of IVs is invisible in the spread
+        itself and obvious the moment the HP it implies disagrees with the HP bar.
+        """
+        from claytonlib.battle.stats import derive_species_stats, nature_names
+
+        h = self._load_hunt(hunt_id)
+        try:
+            spread = self._target_spread_from_params(
+                {"target_nature": nature, "target_ivs": ivs_text})
+        except ValueError as exc:
+            return {"ok": False, "problem": str(exc), "natures": list(nature_names())}
+        if spread is None:
+            return {"ok": False, "problem": "enter a nature and six IVs",
+                    "natures": list(nature_names())}
+        if spread["nature"] not in nature_names():
+            return {"ok": False, "problem": f"unknown nature {spread['nature']!r}",
+                    "natures": list(nature_names())}
+        if not h.target.species or h.target.level is None:
+            return {"ok": False, "problem": "configure the target's species and level first",
+                    "natures": list(nature_names())}
+        stats = derive_species_stats(h.target.species, h.target.level,
+                                     spread["nature"], ivs=spread["ivs"])
+        return {"ok": True, "problem": None, "natures": list(nature_names()),
+                "nature": spread["nature"], "ivs": spread["ivs"], "stats": stats}
 
     def hunt_candidates(self, hunt_id: str, params: dict | None = None) -> dict:
         """Build the candidate window, without starting a run.
@@ -586,7 +679,10 @@ class Facade:
             return {"session_id": None, "hunt_id": hunt_id, "window": probe,
                     "problem": probe["problem"]}
 
-        ours, target, bench = self._hunt_battlers(h, profile)
+        # Validated BEFORE the window is built, so a mistyped spread is reported as a spread
+        # problem rather than surfacing later as a battle that does not match.
+        spread = self._target_spread_from_params(params)
+        ours, target, bench = self._hunt_battlers(h, profile, spread)
         models = self._resolve_calibration_models(h.profile_id)
         model = models.get("linear") or next(iter(models.values()), None)
         window = generate(
@@ -606,7 +702,10 @@ class Facade:
                               bench=bench)
         session_id = self._hunt_sessions.add(hunt_id, session)
         return {"session_id": session_id, "hunt_id": hunt_id, "window": probe,
-                "snapshot": session.snapshot()}
+                "snapshot": session.snapshot(),
+                "target_spread": None if spread is None else {
+                    "nature": spread["nature"], "ivs": spread["ivs"],
+                    "stats": dict(target.stats)}}
 
     @staticmethod
     def _apply_hunt_targeting(hunt, params: dict) -> None:

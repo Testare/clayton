@@ -3810,6 +3810,13 @@ function huntModelSummary(model){
 // every mutation returns a whole new snapshot, so the page never renders a half-updated view.
 let _huntRun = null, _huntSnap = null, _huntRunHunt = null;
 let _huntSetup = null, _huntWindow = null;
+// Seed A, and the target spread it may force. A run identifies Seed A first -- same roamer/Elm
+// narrowing as the Metronome and Safari compasses, same facade calls, same candidate table --
+// and only then goes looking for Seed B. The spread matters because the hunt's configured
+// nature and IVs are the ones the KEY SEED would have produced: land on a different Seed A and
+// the Suicune in front of you is a different Pokemon, and every damage figure in the simulation
+// depends on which. The player works that spread out themselves and types it in.
+let _hsa = null;
 // Advice ranks every surviving candidate against every action -- seconds at a few thousand
 // candidates -- so the page renders without it and fetches it after. _huntAdviceFor records the
 // turn number the pending request was issued for: a reply for any other turn is stale and gets
@@ -3902,8 +3909,276 @@ async function huntRunStart(_owner, id){
     _huntRun = _huntSnap = _huntWindow = null;
     huntAdviceInvalidate();
     _huntSetup = await api("hunt_run_setup", id);
+    const d = _huntSetup.seed_a_defaults || {};
+    _hsa = {
+      startrel: d.startrel || "",
+      secondsWindow: d.seconds_window ?? 2,
+      delayWindow: d.delay_window ?? 10,
+      matchParity: !!d.match_parity,
+      seedAParams: null, candidates: null, seedA: null, editing: false, keyInfo: null,
+      // Deliberately NOT prefilled from the hunt's configured spread. That spread is the one the
+      // KEY SEED produces, so on the only path that asks for this -- a Seed A that is not the key
+      // seed -- it is wrong by definition. Prefilling it would validate instantly and enable
+      // Start with the wrong Suicune's stats, which is worse than an empty field. The configured
+      // values are shown in the panel as reference instead.
+      nature: "", ivs: "", spread: null, spreadConfirmed: false,
+    };
     renderHuntSetup();
+    huntSeedAFocus();
   } catch (e) { toast(String(e.message || e)); }
+}
+
+// On opening: the first thing missing, in the order a run needs it.
+function huntSeedAFocus(){
+  if (!$("hrKeySeed")?.value.trim()){ $("hrKeySeed")?.focus(); return; }
+  if (!$("hrInitialTime")?.value.trim()){ $("hrInitialTime")?.focus(); return; }
+  $("hsa-startrel")?.focus();
+}
+
+// --- Seed A (the initial seed) ---------------------------------------------
+// Deliberately the SAME calls and the same candidate table as the Metronome and Safari
+// compasses (metronome_seed_a / metronome_key_seed_info / renderCandA / _seedASummary). This
+// step is not novel and should not look novel -- what is novel about Battle Compass is Seed B.
+
+// Hex, like every other key-seed field in this app. The field is prefilled 0x-prefixed and a
+// pasted seed is usually bare, so both are accepted -- and normalised to an explicit 0x before
+// being sent, because the facade parses with int(x, 0) and would read a bare "12345" as DECIMAL
+// where this function reads it as hex. Unparseable text is passed through unchanged for the
+// facade to reject with its own message rather than being silently swallowed here.
+function huntKeySeedText(){
+  const raw = ($("hrKeySeed")?.value || "").trim();
+  const m = /^(?:0[xX])?([0-9a-fA-F]{1,8})$/.exec(raw);
+  return m ? "0x" + m[1] : raw;
+}
+function huntKeySeedValue(){
+  const t = huntKeySeedText();
+  return /^0x[0-9a-fA-F]+$/.test(t) ? parseInt(t.slice(2), 16) : null;
+}
+
+function huntValidateStartRel(){
+  const el = $("hsa-startrel");
+  if (el) el.classList.toggle("invalid", !_startRelValid(el.value));
+}
+
+function hsaSeedAKey(ev){ if (ev.key === "Enter"){ ev.preventDefault(); huntGenerateSeedA(); } }
+function hsaObsRelKey(ev){ if (ev.key === "Enter"){ ev.preventDefault(); $("hsa-elm")?.focus(); } }
+function hsaElmKey(ev){
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  const c = _hsa.candidates?.candidates;
+  if (c && c.length === 1) huntPickSeedA(c[0].seed);
+}
+
+async function huntGenerateSeedA(){
+  const keySeed = huntKeySeedValue();
+  const time = ($("hrInitialTime")?.value || "").trim();
+  if (keySeed == null){ toast("Enter the key seed first — Seed A is searched around it."); return; }
+  if (!time){ toast("Enter an initial time first."); return; }
+  try {
+    _hsa.startrel = $("hsa-startrel").value;
+    const prev = parseStartRel(_hsa.startrel);
+    _hsa.secondsWindow = Number($("hsa-secwin").value);
+    _hsa.delayWindow = Number($("hsa-delaywin").value);
+    _hsa.matchParity = $("hsa-parity").checked;
+    _hsa.seedAParams = {
+      target_time: time, key_seed: keySeed, prev_routes: prev,
+      seconds_window: _hsa.secondsWindow, delay_window: _hsa.delayWindow,
+      match_parity: _hsa.matchParity };
+    _hsa.candidates = await api("metronome_seed_a", _hsa.seedAParams);
+    _hsa.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
+    // Remembered per hunt: the roamers' starting positions belong to the save file, not the run.
+    await api("hunt_save_seed_a_defaults", _huntRunHunt, {
+      startrel: _hsa.startrel, seconds_window: _hsa.secondsWindow,
+      delay_window: _hsa.delayWindow, match_parity: _hsa.matchParity });
+    renderHuntSetup();
+    $("hsa-obsrel")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function huntNarrowSeedA(){
+  try {
+    const params = {..._hsa.seedAParams,
+      rel_observed: $("hsa-obsrel").value, elm_observed: $("hsa-elm").value};
+    _hsa.candidates = await api("metronome_seed_a", params);
+    $("hsa-obsrel").classList.toggle("invalid", _hsa.candidates.rel_valid === false);
+    $("hsa-candA").innerHTML = renderCandA(_hsa.candidates, "huntPickSeedA");
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function huntSeedAIsKeySeed(){
+  return !!_hsa?.seedA && huntKeySeedValue() === _hsa.seedA.seed;
+}
+
+function huntPickSeedA(seed){
+  const picked = _hsa.candidates.candidates.find(c => c.seed === seed);
+  if (!picked) return;
+  const changed = _hsa.seedA && _hsa.seedA.seed !== picked.seed;
+  _hsa.seedA = picked;
+  _hsa.editing = false;
+  if (changed){
+    // A different Seed A is a different Suicune, so an already-confirmed spread no longer
+    // describes anything, and the Seed B window found under the old one is equally stale.
+    _hsa.spread = null; _hsa.spreadConfirmed = false;
+    _huntWindow = null;
+  }
+  renderHuntSetup();
+  if (huntSeedAIsKeySeed()) $("hrVectorMs")?.focus();
+  else $("hsa-ivs")?.focus();
+}
+function huntChangeSeedA(){ _hsa.editing = true; renderHuntSetup(); }
+function huntKeepSeedA(){ _hsa.editing = false; renderHuntSetup(); }
+
+function renderHuntSeedA(){
+  if (_hsa.seedA && !_hsa.editing){
+    const key = huntSeedAIsKeySeed();
+    return `<h3>Seed A — identified</h3>
+      <div class="info-line done">${_seedASummary(_hsa.seedA)}</div>
+      <div class="hr-small ${key ? "muted" : ""}" style="margin:6px 0">${key
+        ? `This is the key seed, so the target is the Suicune this hunt was planned around —
+           its configured nature and IVs still apply and there is nothing more to enter.`
+        : `<b>Not the key seed.</b> The Suicune this seed generated has a different nature and
+           IV spread from the one the hunt was planned around, and every damage figure depends
+           on it — so it has to be entered below.`}</div>
+      <button class="btn small" onclick="huntChangeSeedA()">Change Seed A</button>`;
+  }
+  const hasCand = !!_hsa.candidates;
+  const keepBar = _hsa.seedA
+    ? `<div class="info-line">Currently: ${_seedASummary(_hsa.seedA)}</div>
+       <button class="btn small" onclick="huntKeepSeedA()">Keep this Seed A</button>` : "";
+  return `<h3>Seed A — ${_hsa.seedA ? "change" : "initial"} seed</h3>
+    ${keepBar}
+    <div class="rel-row">
+      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
+        <input id="hsa-startrel" value="${esc(_hsa.startrel || "")}" placeholder="31 30 7  (- = not roaming)"
+          oninput="huntValidateStartRel()" onkeydown="hsaSeedAKey(event)"></div>
+      <div class="field"><label>± seconds</label><input id="hsa-secwin" type="number" min="0"
+        value="${_hsa.secondsWindow}" onkeydown="hsaSeedAKey(event)"></div>
+      <div class="field"><label>± delays</label><input id="hsa-delaywin" type="number" min="0"
+        value="${_hsa.delayWindow}" onkeydown="hsaSeedAKey(event)"></div>
+      <button class="btn primary" onclick="huntGenerateSeedA()">Generate</button>
+    </div>
+    <div class="field check"><input type="checkbox" id="hsa-parity" ${_hsa.matchParity?"checked":""}>
+      <label for="hsa-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
+    <div class="info-line" id="hsa-keyinfo">${_hsa.keyInfo
+      ? `key seed: R${_hsa.keyInfo.r_route??"\u00b7"} E${_hsa.keyInfo.e_route??"\u00b7"} L${_hsa.keyInfo.l_route??"\u00b7"} · elm ${esc(_hsa.keyInfo.elm)}`
+      : "key seed: —"}</div>
+    <div class="grid2">
+      <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
+        <input id="hsa-obsrel" placeholder="38 42 11  (. = any)" oninput="huntNarrowSeedA()"
+          onkeydown="hsaObsRelKey(event)" ${hasCand?"":"disabled"}></div>
+      <div class="field"><label>Elm calls heard</label>
+        <input id="hsa-elm" placeholder="EKP…" oninput="huntNarrowSeedA()"
+          onkeydown="hsaElmKey(event)" ${hasCand?"":"disabled"}></div>
+    </div>
+    <div id="hsa-candA">${hasCand ? renderCandA(_hsa.candidates, "huntPickSeedA")
+      : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
+}
+
+// --- The target's actual spread -------------------------------------------
+// Only reachable when Seed A is not the key seed. The player derives the spread themselves
+// (Pokefinder, or the seed's own PID) and types it; the app validates and shows what it
+// derives, because the derived stats are the only part they can check against the game.
+
+let _hsaSpreadTimer = null;
+
+function huntSpreadLooksValid(text){
+  // A cheap mirror of claytonlib.battle.stats.parse_iv_spread, for instant invalid-styling
+  // only. The facade re-parses and is the authority -- this exists so the field turns red as
+  // you type rather than after a round trip.
+  const t = (text || "").replace(/,/g, " ").split(/\s+/).filter(Boolean);
+  return t.length === 6 && t.every(v => /^\d+$/.test(v) && Number(v) <= 31);
+}
+
+function huntSpreadInput(){
+  _hsa.ivs = $("hsa-ivs").value;
+  $("hsa-ivs").classList.toggle("invalid", !!_hsa.ivs.trim() && !huntSpreadLooksValid(_hsa.ivs));
+  _hsa.spread = null; _hsa.spreadConfirmed = false;
+  huntRenderStartButton();          // disable NOW, not when the debounced check returns
+  clearTimeout(_hsaSpreadTimer);
+  _hsaSpreadTimer = setTimeout(huntCheckSpread, 250);
+}
+function huntSpreadNature(v){
+  _hsa.nature = v; _hsa.spread = null; _hsa.spreadConfirmed = false;
+  huntCheckSpread();
+}
+
+async function huntCheckSpread(){
+  if (!_hsa.nature || !_hsa.ivs.trim()){ huntRenderSpreadResult(); return; }
+  try {
+    _hsa.spread = await api("hunt_parse_target_spread", _huntRunHunt, _hsa.nature, _hsa.ivs);
+    _hsa.spreadConfirmed = !!_hsa.spread.ok;
+  } catch (e) { _hsa.spread = {ok: false, problem: String(e.message || e)}; }
+  huntRenderSpreadResult();
+  huntRenderStartButton();
+}
+
+function huntRenderSpreadResult(){
+  const box = $("hsa-spread-result");
+  if (box) box.innerHTML = huntSpreadResultHtml();
+}
+
+function huntSpreadResultHtml(){
+  const r = _hsa.spread;
+  if (!r) return `<div class="status">Pick a nature and enter six IVs.</div>`;
+  if (!r.ok) return `<div class="notice warn">${esc(r.problem || "that spread is not valid")}</div>`;
+  const order = ["hp", "atk", "def", "spa", "spd", "spe"];
+  const names = {hp: "HP", atk: "Attack", def: "Defense", spa: "Sp. Atk", spd: "Sp. Def", spe: "Speed"};
+  return `<div class="notice ok-cta"><b>Spread accepted.</b>
+    <div class="hr-small muted">Check these against the target's own summary — a transposed
+      pair of IVs is invisible in the numbers you typed and obvious here.</div>
+    <div class="candtable"><table><thead><tr>${order.map(k =>
+      `<th>${names[k]}</th>`).join("")}</tr></thead><tbody><tr>${order.map(k =>
+      `<td><b>${r.stats[k]}</b> <span class="muted">iv ${r.ivs[k]}</span></td>`).join("")}</tr>
+      </tbody></table></div></div>`;
+}
+
+function renderHuntSpread(){
+  const natures = _huntSetup.natures || [];
+  const cfg = _huntSetup.configured_spread || {};
+  return `<h3>The target's nature and IVs</h3>
+    <div class="hr-small muted" style="margin-bottom:10px">Seed A is not the key seed, so this
+      Suicune is not the one the hunt was planned around — the hunt is configured for
+      <b>${esc(cfg.nature || "—")} ${esc(cfg.text || "—")}</b>, which is <i>not</i> what you are
+      facing. Work out what this seed actually generated and enter it; the fields start empty on
+      purpose, because the simulation derives every stat from them and a plausible-looking wrong
+      spread desynchronises rather than degrades.</div>
+    <div class="rel-row">
+      <div class="field"><label>Nature</label>
+        <select onchange="huntSpreadNature(this.value)">
+          <option value="">—</option>
+          ${natures.map(n => `<option ${_hsa.nature === n ? "selected" : ""}>${esc(n)}</option>`).join("")}
+        </select></div>
+      <div class="field" style="flex:2">${helpLabel('IVs (HP Atk Def SpA SpD Spe)', 'All six IVs separated by spaces, in HP/Attack/Defense/Sp. Atk/Sp. Def/Speed order — the same order the summary screen and Pokefinder use. Each must be 0-31.')}
+        <input id="hsa-ivs" value="${esc(_hsa.ivs || "")}" placeholder="29 15 31 31 31 28"
+          oninput="huntSpreadInput()"></div>
+    </div>
+    <div id="hsa-spread-result">${huntSpreadResultHtml()}</div>`;
+}
+
+// Whether the run may begin: Seed A pinned, and -- when it is not the key seed -- a spread the
+// facade has accepted. Gating the BUTTON rather than the panel, so the player can still look at
+// the candidate window while the spread is outstanding.
+function huntReadyToStart(){
+  if (_huntSetup?.hard_errors?.length) return false;
+  if (!_hsa?.seedA) return false;
+  return huntSeedAIsKeySeed() || _hsa.spreadConfirmed;
+}
+function huntRenderStartButton(){
+  const b = $("hrStart");
+  if (!b) return;
+  b.disabled = !huntReadyToStart();
+  b.title = huntReadyToStart() ? "" : huntStartBlockedReason();
+}
+function huntStartBlockedReason(){
+  if (_huntSetup?.hard_errors?.length) return "This hunt is not configured yet.";
+  if (!_hsa?.seedA) return "Identify Seed A first.";
+  if (!_hsa.spreadConfirmed) return "Seed A is not the key seed — enter this Suicune's nature and IVs.";
+  return "";
+}
+
+function huntSpreadParams(){
+  if (!_hsa || huntSeedAIsKeySeed() || !_hsa.spreadConfirmed) return {};
+  return {target_nature: _hsa.nature, target_ivs: _hsa.ivs};
 }
 
 function huntVectorHint(ms){
@@ -3914,7 +4189,7 @@ function huntVectorPreview(v){ $("hrVectorPreview").innerHTML = huntVectorHint(v
 
 function huntTargetingFromForm(){
   return {
-    key_seed: $("hrKeySeed").value.trim(),
+    key_seed: huntKeySeedText(),
     initial_time: $("hrInitialTime").value.trim(),
     vector_ms: $("hrVectorMs").value.trim(),
     delay_window: $("hrDelayWindow").value.trim(),
@@ -3931,7 +4206,8 @@ async function huntFindCandidates(){
 
 async function huntRunBegin(){
   try {
-    const started = await api("hunt_session_start", _huntRunHunt, huntTargetingFromForm());
+    const started = await api("hunt_session_start", _huntRunHunt,
+                             {...huntTargetingFromForm(), ...huntSpreadParams()});
     _huntWindow = started.window || _huntWindow;
     if (!started.session_id){ renderHuntSetup(); return; }
     _huntRun = started.session_id;
@@ -3943,7 +4219,25 @@ async function huntRunBegin(){
   } catch (e) { toast(String(e.message || e)); }
 }
 
+// Live field values back into the targeting we render FROM. Without this a re-render reverts
+// every typed field to the stored hunt: hunt_candidates deliberately does not persist, so a
+// vector ms typed and searched was lost the moment the page redrew. That was survivable while
+// the page only redrew on Search; it is not now that identifying Seed A redraws it twice.
+// A no-op on the first render, when none of the fields exist yet.
+function huntCaptureTargeting(){
+  if (!_huntSetup || !$("hrKeySeed")) return;
+  const t = _huntSetup.targeting;
+  t.key_seed = huntKeySeedText();
+  t.initial_time = $("hrInitialTime").value.trim();
+  if ($("hrVectorMs")){
+    t.vector_ms = $("hrVectorMs").value.trim() === "" ? null : Number($("hrVectorMs").value);
+    t.delay_window = $("hrDelayWindow").value.trim();
+    t.seconds_window = $("hrSecondsWindow").value.trim();
+  }
+}
+
 function renderHuntSetup(){
+  huntCaptureTargeting();
   const s = _huntSetup;
   if (!s) return;
   const blocked = s.hard_errors.length > 0;
@@ -3979,42 +4273,75 @@ function renderHuntSetup(){
       <div class="hr-small muted">Adjust the targeting above and search again.</div></div>`;
   }
 
+  // Seed A first, then (only on a miss) the spread, then Seed B -- the order a real run goes
+  // in, and the same shape as the Metronome and Safari compasses. Key seed and initial time sit
+  // in a shared header above all three because Seed A is searched around them; vector ms and
+  // the window sizes belong to Seed B alone.
+  const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();
+  const seedBLocked = blocked || !_hsa?.seedA;
+
   mount(`<div class="head"><h2>${esc(s.name)} — Battle Compass</h2>
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="openHuntHome('${esc(s.hunt_id)}')">Back</button>
         <button class="btn" onclick="huntConfigure('${esc(s.hunt_id)}')">Configure</button>
       </div></div>
     ${errors}
-    <div class="panel ${blocked ? "locked" : ""}">
-      <div class="section-label">Where to look for the battle seed</div>
-      <div class="hr-small muted" style="margin-bottom:10px">These centre the candidate window.
-        Nothing has to be right first time — search, look at what comes back, adjust.</div>
-      <div class="rel-row">
+    <form class="panel panel-tight ${blocked ? "locked" : ""}" onsubmit="return false">
+      <div class="grid2">
         <div class="field"><label>Key seed</label>
           <input id="hrKeySeed" value="${esc(t.key_seed || "")}" placeholder="0x…"></div>
-        <div class="field"><label>Vector ms</label>
-          <input id="hrVectorMs" type="number" min="0" value="${t.vector_ms ?? ""}"
-            placeholder="300000" oninput="huntVectorPreview(this.value)">
-          <div id="hrVectorPreview" class="hint"
-            style="font-family:ui-monospace,monospace">${huntVectorHint(t.vector_ms)}</div></div>
-        <div class="field"><label>Delay ±</label>
-          <input id="hrDelayWindow" value="${t.delay_window ?? 60}"></div>
-        <button class="btn" onclick="huntFindCandidates()">Search</button>
-      </div>
-      <div class="rel-row">
         <div class="field"><label>Initial time</label>
           <input id="hrInitialTime" value="${esc(t.initial_time || "")}"
             placeholder="2026-01-01T12:00:00"></div>
-        <div class="field"><label>Seconds ±</label>
-          <input id="hrSecondsWindow" value="${t.seconds_window ?? 0}"></div>
-        <div class="field"></div>
-        <button class="btn primary" onclick="huntRunBegin()"
-          ${blocked ? "disabled" : ""}>Start run</button>
       </div>
-      ${s.calibration_model ? `<div class="hr-small muted">Centred with calibration model
-        <b>${esc(s.calibration_model.name || "active")}</b>.</div>` : ""}
-    </div>
-    ${result}`);
+      <div style="display:flex;gap:10px">
+        <button class="btn small" type="button"
+          onclick="openTimePicker(huntKeySeedValue(), huntPickInitialTime)">Pick time</button>
+      </div>
+      ${s.calibration_model ? `<div class="hr-small muted" style="margin-top:6px">Seed B is
+        centred with calibration model <b>${esc(s.calibration_model.name || "active")}</b>.</div>`
+        : `<div class="hr-small" style="margin-top:6px;color:var(--danger)">No calibration model
+        — build one from Calibrate Model before searching for Seed B.</div>`}
+    </form>
+
+    <div class="nr-stack">
+      <div class="panel ${blocked ? "locked" : ""}" id="hsa-seeda">${renderHuntSeedA()}</div>
+      ${needSpread ? `<div class="panel" id="hsa-spread">${renderHuntSpread()}</div>` : ""}
+      <div class="panel ${seedBLocked ? "locked" : ""}" id="hsa-seedb">
+        <h3>Seed B — the battle seed</h3>
+        <div class="hr-small muted" style="margin-bottom:10px">These centre the candidate window.
+          Nothing has to be right first time — search, look at what comes back, adjust. Vector ms
+          is the gap between Seed A and Seed B, in milliseconds.</div>
+        <div class="rel-row">
+          <div class="field"><label>Vector ms</label>
+            <input id="hrVectorMs" type="number" min="0" value="${t.vector_ms ?? ""}"
+              placeholder="300000" oninput="huntVectorPreview(this.value)">
+            <div id="hrVectorPreview" class="hint"
+              style="font-family:ui-monospace,monospace">${huntVectorHint(t.vector_ms)}</div></div>
+          <div class="field"><label>Delay ±</label>
+            <input id="hrDelayWindow" value="${t.delay_window ?? 60}"></div>
+          <div class="field"><label>Seconds ±</label>
+            <input id="hrSecondsWindow" value="${t.seconds_window ?? 0}"></div>
+          <button class="btn" onclick="huntFindCandidates()">Search</button>
+          <button class="btn primary" id="hrStart" onclick="huntRunBegin()"
+            ${huntReadyToStart() ? "" : `disabled title="${esc(huntStartBlockedReason())}"`}
+            >Start run</button>
+        </div>
+        ${result}
+      </div>
+    </div>`);
+  huntValidateStartRel();
+}
+
+function huntPickInitialTime(t){
+  // Write the FIELD, not the targeting record. renderHuntSetup captures from the DOM, so
+  // setting the record here and re-rendering would read the old field value straight back over
+  // the picked time -- which is the one way this fix could break the thing it was fixing.
+  const el = $("hrInitialTime");
+  if (el) el.value = t;
+  else _huntSetup.targeting.initial_time = t;
+  closeModal();
+  renderHuntSetup();
 }
 
 async function huntRunDo(method, ...args){

@@ -155,3 +155,61 @@ def has_fast_ball_bonus(name: str) -> bool:
     (notes/battle_compass.md sec 4.1).
     """
     return species(name)["base_stats"]["spe"] >= 100
+
+
+#: The stat order a spread is written and read in, everywhere in this project: hp/atk/def/spa/
+#: spd/spe. Public because the run page, the facade and the gdb override all have to agree about
+#: which number is which -- a spread read in the wrong order is still six valid IVs, so nothing
+#: downstream would object to it.
+STAT_KEYS: tuple[StatKey, ...] = _STAT_KEYS
+
+#: Highest legal IV. Gen 4 stores five bits per IV.
+MAX_IV = 31
+
+
+def nature_names() -> tuple[str, ...]:
+    """Every nature, alphabetically — the order a picker should offer them in."""
+    return tuple(sorted(NATURES))
+
+
+def parse_iv_spread(text: str) -> dict[StatKey, int]:
+    """Six IVs from one whitespace-separated string, in :data:`STAT_KEYS` order.
+
+    For the run page, where the player types a spread they derived themselves after
+    identifying a Seed A that was not the key seed. One parser rather than a regex in the page
+    and a loop in the facade, because the failure is silent in the worst way: a spread short by
+    one value shifts every later stat by a position, and five plausible IVs plus a missing
+    Speed is indistinguishable from a typo until the simulation desynchronises mid-battle.
+
+    Raises ValueError naming what is actually wrong -- how many values were found, or which
+    ones are not integers in 0..31 -- since "invalid IVs" sends the player back to count on
+    their fingers.
+    """
+    tokens = (text or "").replace(",", " ").split()
+    if len(tokens) != len(STAT_KEYS):
+        raise ValueError(
+            f"expected {len(STAT_KEYS)} IVs in {'/'.join(STAT_KEYS)} order, got "
+            f"{len(tokens)}: {' '.join(tokens) if tokens else '(nothing)'}")
+    values: list[int] = []
+    bad: list[str] = []
+    for key, token in zip(STAT_KEYS, tokens):
+        try:
+            value = int(token)
+        except ValueError:
+            bad.append(f"{key}={token!r} is not a number")
+            continue
+        if not 0 <= value <= MAX_IV:
+            bad.append(f"{key}={value} is outside 0-{MAX_IV}")
+            continue
+        values.append(value)
+    if bad:
+        raise ValueError("; ".join(bad))
+    return dict(zip(STAT_KEYS, values))
+
+
+def format_iv_spread(ivs: dict[str, int]) -> str:
+    """The inverse of :func:`parse_iv_spread`, for prefilling the field."""
+    missing = [k for k in STAT_KEYS if not isinstance(ivs.get(k), int)]
+    if missing:
+        raise ValueError("spread is missing " + ", ".join(missing))
+    return " ".join(str(ivs[k]) for k in STAT_KEYS)

@@ -615,6 +615,11 @@ class Hunt:
     # the shared calibration tools can run against a Hunt without retyping.
     last_target: dict = field(default_factory=dict)
     last_metronome_defaults: dict = field(default_factory=dict)
+    # Roamer/Elm search defaults for the run page's Seed A step -- starting positions, the two
+    # window sizes and the parity checkbox. Kept per hunt for the same reason Safari Compass
+    # keeps them per expedition: the roamers' starting positions are a property of the save
+    # file, so retyping them every run is pure friction.
+    seed_a_defaults: dict = field(default_factory=dict)
     # NB: no calibration_model_id. Calibration models live on the PROFILE with one marked
     # active, and every profile is seeded with a bundled "Standard" model active by default --
     # so there is never a model to pick, and an Expedition does not carry one either. The Hunt
@@ -661,6 +666,7 @@ class Hunt:
             "vector_ms": self.vector_ms,
             "last_target": self.last_target,
             "last_metronome_defaults": self.last_metronome_defaults,
+            "seed_a_defaults": self.seed_a_defaults,
             "seconds_window": self.seconds_window,
             "delay_window": self.delay_window,
             "completed": self.completed,
@@ -681,6 +687,7 @@ class Hunt:
             vector_ms=d.get("vector_ms"),
             last_target=dict(d.get("last_target", {})),
             last_metronome_defaults=dict(d.get("last_metronome_defaults", {})),
+            seed_a_defaults=dict(d.get("seed_a_defaults", {})),
             seconds_window=d.get("seconds_window", 2),
             delay_window=d.get("delay_window", 60),
             completed=bool(d.get("completed", False)),

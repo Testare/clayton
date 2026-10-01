@@ -66,6 +66,12 @@ The main library is `claytonlib/`, which auto-exports all public names via `__in
   of `MetronomeOpponent`.
 - **`metronome_species.py`** / **`metronome_abilities.py`** — Supported-species gating and
   ability modelling for metronome users, with warnings vs hard errors.
+- **`battle_compass/`** — Battle Compass: Seed B identification and capture solving for an
+  ordinary battle (v1: Suicune at the Bell Tower in a Fast Ball). `candidates.py` (the
+  frame x second grid), `identify.py` (narrowing against reported turns), `sim.py` (turn
+  simulation, `opening_rng` and the verified `BATTLE_START_ADVANCES`), `solver.py` (Dijkstra to
+  a capture), `hunt_session.py` (the layer the app drives), `tokens.py`, `items.py`, `targets.py`.
+  A run identifies **Seed A** first, reusing the Metronome compass's roamer/Elm calls.
 - **`machete.py`** — BFS/DFS solver for capture paths. `machete_one` finds one path,
   `machete_all` finds all paths, `machete_jane` builds optimal decision trees with
   `JaneNode`/`Fraction` probabilities.

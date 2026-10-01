@@ -1075,3 +1075,36 @@ class TestTheBallRiskGauge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTypedTargetingSurvivesARedraw(unittest.TestCase):
+    """hunt_candidates deliberately does not persist, so the page renders targeting from the
+    stored hunt -- and every redraw reverted whatever was typed. Survivable while the page only
+    redrew on Search; not once identifying Seed A redraws it twice.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_render_captures_the_live_fields_first(self):
+        self.assertIn("function huntCaptureTargeting(", self.html)
+        self.assertIn("function renderHuntSetup(){\n  huntCaptureTargeting();", self.html)
+
+    def test_it_is_a_no_op_before_the_fields_exist(self):
+        self.assertIn('if (!_huntSetup || !$("hrKeySeed")) return;', self.html)
+
+    def test_the_time_picker_writes_the_field_not_the_record(self):
+        """Because the capture reads the DOM back, setting the record and re-rendering would
+        overwrite the picked time with the stale field value."""
+        self.assertIn("// Write the FIELD, not the targeting record.", self.html)
+
+    def test_hunt_candidates_still_does_not_persist(self):
+        """The premise. If it ever starts persisting, the capture is redundant rather than
+        wrong -- but the comment above it would be a lie, so pin the premise."""
+        facade, hunt_id = _ready_hunt()
+        before = facade.get_hunt(hunt_id)["vector_ms"]
+        facade.hunt_candidates(hunt_id, {"key_seed": "0x2D005C61",
+                                         "initial_time": "2026-01-01T12:00:00",
+                                         "vector_ms": 99999, "delay_window": 10,
+                                         "seconds_window": 0})
+        self.assertEqual(facade.get_hunt(hunt_id)["vector_ms"], before)
