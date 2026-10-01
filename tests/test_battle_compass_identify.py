@@ -16,7 +16,7 @@ from claytonlib.battle_compass.candidates import (
     CANDIDATES_PER_SECOND, estimate_size, generate,
 )
 from claytonlib.battle_compass.identify import SECOND_SIBLING_MEDIAN_TURNS, Phase, Session
-from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+from claytonlib.battle_compass.sim import HuntConfig, opening_rng, simulate_turn
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
 KEY_SEED = 0xEC1504DC
@@ -68,8 +68,17 @@ def _session(window, phase=Phase.PINNING) -> Session:
 
 
 def _play(session: Session, truth: int, turns: int, action=Action.MOVE_1):
-    """Feed `session` the observations the true seed actually produces."""
-    state = BattleState(ours=_ours(), target=_target(), rng=truth, phase=2)
+    """Feed `session` the observations the true seed actually produces.
+
+    ``opening_rng``, not ``rng=truth``. This line used the raw seed, which is where six of this
+    file's assertions came from and why they all passed while the real thing was broken: the
+    fixture and ``Session`` made the same wrong assumption about where turn 1 starts, so they
+    agreed with each other and disagreed only with the game. Against
+    ``data/battle_logs/test2.jsonl`` the true seed was eliminated on turn 1. The convention now
+    lives in one place, so a fixture cannot drift from the simulator again.
+    """
+    state = BattleState(ours=_ours(), target=_target(),
+                        rng=opening_rng(truth, CONFIG), phase=2)
     results = []
     for _ in range(turns):
         state = simulate_turn(state, action, CONFIG)

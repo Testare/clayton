@@ -2235,6 +2235,74 @@ Nothing in that replay is an assumed input any more.
 simulation consumes and they were right, this run is sound; the IV write needs looking at, and
 the verification should distinguish "stats wrong" from "IVs cosmetically off".
 
+## 16.2 Ground truth: the second run, and the bug simulation could not find [verified]
+
+`data/battle_logs/test2.jsonl` — Bell Tower Suicune, battle seed forced to `0xc5011e3f`, **38
+complete turns**, more than twice test1 and far broader: Gust and a *critical* Aurora Beam, Mist
+set and expiring three times, rain set and expiring twice, Sweet Scent blocked by Mist and then
+driven to −6 evasion ("won't go lower"), three potion tiers, and eight Poké Ball throws.
+
+Unlike test1, the per-turn advance counts here are **derived from the log rather than
+transcribed**. A turn opens with the wild move-selection roll at a distinctive call site
+(`0x0225e46e`, which the symbol table cannot name), so the segmentation is mechanical and no
+number in the fixture is hand-copied. The log's roll values are independently checked against
+`advance_rng` from the forced seed, which validates the parse and the LCRNG together.
+
+**The simulator reproduces it completely.** All 38 advance counts, every move Suicune chose
+(every move in the moveset plus full paralysis), every shake count, the turn-26 crit, the one
+Attack drop in 38 turns (turn 35), our HP at all 19 reads and Suicune's at all five. No assumed
+inputs. That closes R7 far more firmly than test1 did, and it is the first verification of **Gust**
+in either log.
+
+### The bug: identification never burned the battle-start advances
+
+Which is what this log existed to find, because test1 was only ever replayed as a *simulation*
+and this one was replayed as an *identification* — and those seed their states independently.
+
+`Session.__init__` built each candidate's `BattleState` with `rng=c.seed`. But **a battle seed is
+not an RNG state**: the game spends six rolls between generating it and the first turn (§16.1's
+`BATTLE_START_ADVANCES`), so every candidate was running six advances behind the real stream.
+
+It hid perfectly, and the way it hid is the lesson. Every synthetic fixture in
+`test_battle_compass_identify` generated its expected tokens the *same* wrong way, from
+`BattleState(rng=truth)`. Fixture and subject shared the assumption, agreed with each other, and
+disagreed only with the game — so all 39 tests passed against a broken implementation. Only a
+real recording could tell them apart.
+
+The failure was the worst available shape. Replaying test2's own token stream against a
+121-candidate frame window containing the true seed:
+
+| | turn 1 | result |
+|---|---|---|
+| without the advances | true seed **eliminated**, 29 unrelated candidates survive | no contradiction raised; the run proceeds confidently into a wrong seed |
+| with the advances | true seed survives | narrows 121 → 1 by **turn 5**, and holds for all 38 turns |
+
+Note that no contradiction fires. §15.5's "an observation matching nothing is reported rather
+than swallowed" is the safety net for a too-narrow window, and it cannot catch this: a
+six-advance offset does not empty the set, it *relocates* it.
+
+**The fix**, and the shape that stops a recurrence: `sim.opening_rng(seed, config)` is the single
+place the convention lives, `HuntConfig.battle_start_advances` makes the count explicit (and
+venue-configurable — the four animation rolls are the Bell Tower's), `Session` seeds through it,
+and both ground-truth fixtures and `test_battle_compass_identify` now call it rather than
+re-deriving it. The dict stays keyed by the seed the player targeted, so nothing downstream knows
+about the offset.
+
+**A smaller correction from the same run.** The shake-count message ladder is
+`0` "broke free", `1` "appeared to be caught", **`2` "Aargh! Almost had it!"**, `3` "Gah! It was
+so close, too!". Drafting test2's assertions with "Almost had it" at 3 failed against a simulated
+`P2` — the test was wrong and the simulator right.
+
+**IVs, again and resolved as a non-issue.** The override wrote every stat correctly
+(141/63/119/89/109/84, the configured Bold spread, `stats_verified: true`) and two IV bitfields
+still read back wrong — `spa` 31→5 and `spe` 28→26, *the identical two fields and identical two
+values* as the per-bitfield write in test1, which says the problem is not in how the word is
+assembled. Since the simulation consumes the stats and the 38-turn replay confirms them exactly,
+the emulator recording is sound regardless; per the user, the IVs don't matter here. The script
+now records the word's address, 4-byte alignment, intended value and an immediate post-write
+read, which separates "the store did not take" from "something rewrites it afterwards" at no cost
+on the next run.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

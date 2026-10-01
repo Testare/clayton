@@ -727,8 +727,25 @@ if _IN_GDB:
         # Addressed from moves[0], which is an ordinary array and so has a taker-of-address.
         iv_addr = _eval_int(f"(unsigned)&{mon}.moves[0]") + _IV_WORD_OFFSET_FROM_MOVES
         current = _eval_int(f"*(unsigned int *){iv_addr:#x}")
-        gdb.execute(f"set *(unsigned int *){iv_addr:#x} = "
-                    f"{pack_iv_word(plan['after']['ivs'], current)}", to_string=True)
+        intended = pack_iv_word(plan["after"]["ivs"], current)
+        # Hex, not decimal: the word carries the two flag bits, so a preserved `hasNickname`
+        # makes it exceed INT_MAX and a decimal literal that large is at the mercy of how GDB
+        # types it.
+        gdb.execute(f"set *(unsigned int *){iv_addr:#x} = {intended:#x}", to_string=True)
+        # Re-read the word IMMEDIATELY, before anything else touches the struct. The packed
+        # write was supposed to fix the per-bitfield write's failure and did not: both attempts
+        # came back with spAtk 5 and speed 26 against a written 31 and 28 -- the same two
+        # fields, the same two wrong values, which says the problem is not in how the value is
+        # assembled. These three fields separate the remaining explanations, and none of them
+        # can be distinguished from the readback alone:
+        #   * `immediate` == `intended` but `readback.iv_word` differs -> something between the
+        #     write and the readback is rewriting the word.
+        #   * `immediate` != `intended` -> GDB is not storing what it was given at this address.
+        #   * `addr` not 4-byte aligned -> an unaligned u32 store, which ARM handles by
+        #     rotating rather than faulting, and which would corrupt exactly the high bits.
+        plan["iv_word_write"] = {"addr": iv_addr, "aligned": iv_addr % 4 == 0,
+                                 "before": current, "intended": intended,
+                                 "immediate": _eval_int(f"*(unsigned int *){iv_addr:#x}")}
 
         # Read back rather than trusting any of it: a truncated write would otherwise look applied
         # and every damage figure in the log would be measured against a spread never in memory.
@@ -763,9 +780,18 @@ if _IN_GDB:
                   f"Do NOT trust this recording -- every damage figure in it would be measured "
                   f"against a spread that was never in memory.")
         elif bad_ivs:
+            write = plan["iv_word_write"]
             print(f"[battlelog] note: the stats are correct but these IVs read back differently: "
                   f"{bad_ivs}. Harmless for the simulation, which consumes the stats, but worth "
                   f"knowing.")
+            print(f"            IV word @ {write['addr']:#x} "
+                  f"(aligned: {write['aligned']}): was {write['before']:#010x}, "
+                  f"wrote {write['intended']:#010x}, reads {write['immediate']:#010x}")
+            if write["immediate"] == write["intended"]:
+                print("            -- the store took, so something after it is rewriting the "
+                      "word.")
+            else:
+                print("            -- the store itself did not take.")
         return plan
 
     class _GetBattleMonFinish(gdb.FinishBreakpoint):

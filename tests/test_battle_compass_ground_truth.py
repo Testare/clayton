@@ -18,19 +18,23 @@ import unittest
 
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass import tokens as tok
-from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+from claytonlib.battle_compass.sim import (
+    BATTLE_START_ADVANCES as _SIM_START_ADVANCES, HuntConfig, opening_rng,
+    simulate_turn,
+)
 from claytonlib.battle_compass.state import Action, Battler, BattleState
 from claytonlib.battle_compass.targets import moveset
 from claytonlib.metronome_compass import _BATTLE_START_ADVANCES
 from claytonlib.moves import resolve_move
-from claytonlib.safari import advance_rng
 
 LOG = pathlib.Path(__file__).resolve().parent.parent / "data" / "battle_logs" / "test1.jsonl"
 
 FORCED_SEED = 0xC5011C6B
 #: Rolls spent between the seed being forced and the first turn's move-selection roll:
-#: 4 bellShimmerReplaceGraphics + 2 for Pressure's announcement [verified].
-BATTLE_START_ADVANCES = 6
+#: 4 bellShimmerReplaceGraphics + 2 for Pressure's announcement [verified]. Re-exported from
+#: ``sim`` rather than restated, because the identification path has to burn the same six and
+#: for a while did not -- see tests/test_battle_compass_ground_truth_2.py.
+BATTLE_START_ADVANCES = _SIM_START_ADVANCES
 
 #: Advances the game spent on each turn, read off the log by caller attribution.
 ACTUAL_TURN_ADVANCES = [16, 12, 17, 19, 23, 17, 17, 16, 13, 12, 16, 12, 19, 17, 15, 13, 20]
@@ -83,9 +87,7 @@ def _suicune():
 
 def _replay():
     """Simulate the recorded battle, returning per-turn (advances, rendered tokens, state)."""
-    rng = FORCED_SEED
-    for _ in range(BATTLE_START_ADVANCES):
-        rng = advance_rng(rng)
+    rng = opening_rng(FORCED_SEED, HuntConfig(target_catch_rate=3))
     state = BattleState(ours=_magneton(), target=_suicune(), rng=rng,
                         bench=(_smeargle(),), phase=1)
     out = []

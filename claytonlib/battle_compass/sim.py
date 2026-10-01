@@ -359,6 +359,14 @@ def _status_bonus(status: Status) -> int:
     }[status]
 
 
+#: Rolls the game spends between generating the battle seed and the first turn's move-selection
+#: roll. Four for the Bell Tower's Suicune shimmer (`bellShimmerReplaceGraphics`) plus two for
+#: Pressure's announcement [verified: data/battle_logs/test1.jsonl, test2.jsonl].
+#: ``metronome_compass._BATTLE_START_ADVANCES`` independently landed on the same 6 for
+#: Blackthorn, where the 2 are the same ability announcement -- corroboration, not coincidence.
+BATTLE_START_ADVANCES = 6
+
+
 @dataclass(frozen=True)
 class HuntConfig:
     """Everything a simulation needs that does not change during the battle."""
@@ -368,9 +376,35 @@ class HuntConfig:
     target_has_pressure: bool = True
     #: True once the target's base Speed clears the Fast Ball's threshold.
     fast_ball_matched: bool = False
+    #: Rolls to burn before turn 1. A field rather than a bare constant because the count is
+    #: venue-specific: the four animation rolls are the Bell Tower's, and a different encounter
+    #: would spend a different number. See :data:`BATTLE_START_ADVANCES`.
+    battle_start_advances: int = BATTLE_START_ADVANCES
 
     def effective_catch_rate(self) -> int:
         return fast_ball_catch_rate(self.target_catch_rate, 100 if self.fast_ball_matched else 0)
+
+
+def opening_rng(seed: int, config: HuntConfig) -> int:
+    """The RNG state turn 1 actually starts from, given the *battle seed*.
+
+    **A candidate seed is not a usable RNG state.** The game spends
+    ``config.battle_start_advances`` rolls between generating the battle seed and the first turn,
+    so a simulation seeded with the raw seed is running the wrong stream. Every candidate is
+    wrong by the same six advances, which is why the mistake hides so well: a synthetic fixture
+    built with the same convention agrees with itself perfectly, and only a real recording
+    disagrees.
+
+    It disagreed in exactly the way that matters. Replaying ``data/battle_logs/test2.jsonl``
+    against its own forced seed, the true seed was **eliminated on turn 1** while 29 unrelated
+    candidates survived -- no contradiction raised, just a confidently wrong set. With the
+    advances applied the same 121-candidate window narrows to the true seed by turn 5 and holds
+    it for all 38 recorded turns.
+    """
+    rng = seed
+    for _ in range(config.battle_start_advances):
+        rng = advance_rng(rng)
+    return rng
 
 
 def effective_speed(battler: Battler) -> int:

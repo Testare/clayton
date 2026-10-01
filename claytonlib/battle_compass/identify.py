@@ -25,7 +25,7 @@ from enum import IntEnum
 
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.candidates import Candidate
-from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+from claytonlib.battle_compass.sim import HuntConfig, opening_rng, simulate_turn
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
 
@@ -102,8 +102,15 @@ class Session:
         self.config = config
         self.phase = phase
         self.candidate_info = {c.seed: c for c in candidates}
+        # `opening_rng`, not the raw seed: the battle seed is not the state turn 1 runs from.
+        # The game burns `config.battle_start_advances` rolls first, and seeding the simulation
+        # with the seed itself put every candidate six advances into the wrong stream -- which
+        # eliminated the TRUE seed on turn 1 of data/battle_logs/test2.jsonl while leaving 29
+        # unrelated ones alive. The dict stays keyed by the seed the player targeted, so nothing
+        # downstream has to know about the offset.
         self.states: dict[int, BattleState] = {
-            c.seed: BattleState(ours=ours, target=target, rng=c.seed, phase=int(phase))
+            c.seed: BattleState(ours=ours, target=target, rng=opening_rng(c.seed, config),
+                                phase=int(phase))
             for c in candidates
         }
         self.history: list[Observation] = []
