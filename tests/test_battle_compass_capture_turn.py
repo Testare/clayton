@@ -215,3 +215,111 @@ class TestThePageUsesTheLabels(unittest.TestCase):
         self.assertIn("${s.over ? \"\" : `<div class=\"panel\">", self.html)
         self.assertIn("Caught it — in the", self.html)
         self.assertIn("Caught in the wrong ball.", self.html)
+
+
+class TestWhereThePinnedSeedLanded(unittest.TestCase):
+    """A pinned seed on its own says nothing about whether the window was aimed well.
+
+    The deltas are the run's only feedback on its own timing, and the two axes miss
+    near-independently (notes/seed_hitting_process.md sec 3-4) -- so "30 frames late, dead on the
+    second" is a different problem from "a second out", and collapsing them to one number would
+    hide which.
+    """
+
+    def _window_offset_from(self, true_seed, frames=3):
+        """A window centred `frames` below the true seed, so the deltas are not all zero."""
+        candidates = tuple(
+            Candidate(seed=true_seed - frames + i, frame=1000 - frames + i,
+                      second=30 + (i % 2))
+            for i in range(2 * frames + 1))
+        return CandidateWindow(
+            key_seed=0x1234, initial_time=dt.datetime(2026, 1, 1, 12, 0, 0), vector_ms=5000.0,
+            frame_centre=1000, second_centre=30, frame_window=frames, second_window=1,
+            candidates=candidates)
+
+    def _session(self):
+        session = HuntSession(self._window_offset_from(CAPTURING_SEED), _ours(), _target(),
+                              HUNT, capture_ball="Fast Ball")
+        session.enter_pinning()
+        return session
+
+    def test_nothing_is_reported_before_the_seed_is_pinned(self):
+        self.assertIsNone(self._session().snapshot()["identified_at"])
+
+    def test_every_candidate_carries_its_own_deltas(self):
+        rows = self._session().snapshot()["candidates"]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["frame_delta"], row["frame"] - 1000)
+            self.assertEqual(row["second_delta"], row["second"] - 30)
+
+    def test_the_pinned_seed_reports_where_it_landed(self):
+        session = self._session()
+        predicted = session.predict(Action.CAPTURE_BALL)[CAPTURING_SEED]
+        session.observe(Action.CAPTURE_BALL, (predicted,))
+        snapshot = session.snapshot()
+        self.assertEqual(snapshot["identified"], f"{CAPTURING_SEED:#010x}")
+        at = snapshot["identified_at"]
+        self.assertEqual(at["seed"], f"{CAPTURING_SEED:#010x}")
+        self.assertEqual(at["frame"], 1000)
+        self.assertEqual(at["frame_delta"], 0)
+        self.assertEqual(at["second_delta"], at["second"] - 30)
+
+    def test_a_late_seed_reports_a_positive_frame_delta(self):
+        """Sign convention: actual minus aim, so positive is LATE -- the same direction
+        calibration_tools uses for its own frame_delta."""
+        info = Candidate(seed=1, frame=1030, second=30)
+        self.assertEqual(info.frame_delta(1000), 30)
+        self.assertEqual(info.frame_delta(1060), -30)
+
+    def test_the_deltas_follow_a_rebase_rather_than_going_stale(self):
+        """Computed against the LIVE window centre, not stored on the candidate. A stored delta
+        would keep describing the window it was built in after a mid-run widening."""
+        session = self._session()
+        wider = self._window_offset_from(CAPTURING_SEED, frames=6)
+        before = session.snapshot()["candidates"][0]["frame_delta"]
+        session.rebase(wider)
+        rows = {r["seed"]: r for r in session.snapshot()["candidates"]}
+        for row in rows.values():
+            self.assertEqual(row["frame_delta"], row["frame"] - session.window.frame_centre)
+        self.assertIsInstance(before, int)
+
+
+class TestTheCandidateDeltaStubIsGone(unittest.TestCase):
+    """`Candidate.frame_delta` was a no-argument property returning a hardcoded 0, documented as
+    "set by generate" -- which generate could not do, since this is a frozen dataclass and that
+    was a property. Nothing ever read it, so the zero never surfaced."""
+
+    def test_it_now_takes_the_centre_and_computes_a_real_value(self):
+        candidate = Candidate(seed=1, frame=1007, second=31)
+        self.assertEqual(candidate.frame_delta(1000), 7)
+        self.assertEqual(candidate.second_delta(30), 1)
+
+    def test_it_is_not_a_property_any_more(self):
+        self.assertFalse(isinstance(
+            type(Candidate(seed=1, frame=1, second=1)).__dict__.get("frame_delta"), property))
+
+
+class TestThePageShowsTheDeltas(unittest.TestCase):
+    def setUp(self):
+        import pathlib
+        self.html = (pathlib.Path(__file__).resolve().parent.parent
+                     / "app" / "web" / "index.html").read_text()
+
+    def test_the_pinned_line_reports_frame_and_second_with_their_misses(self):
+        self.assertIn("Landed on frame", self.html)
+        self.assertIn("from the ${s.window.frame_centre} aimed for", self.html)
+        self.assertIn("RTC second", self.html)
+
+    def test_a_late_miss_is_shown_with_an_explicit_plus(self):
+        """Matching renderCandA's columns in the other compasses -- the sign is the informative
+        half, so a bare "30" would not say which way."""
+        self.assertIn('const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;', self.html)
+
+    def test_the_candidate_table_gained_both_delta_columns(self):
+        self.assertIn(">Δframe</th>", self.html)
+        self.assertIn(">Δsec</th>", self.html)
+
+    def test_the_truncation_row_spans_the_new_column_count(self):
+        """Five columns now, not three -- a stale colspan leaves the "and N more" row short."""
+        self.assertIn('<tr><td colspan="5" class="muted">', self.html)

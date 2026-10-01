@@ -498,6 +498,22 @@ class HuntSession:
 
     # -- output ---------------------------------------------------------
 
+    def _candidate_row(self, seed: int) -> dict:
+        """One candidate as the page shows it: where it sits, and how far that is from the aim.
+
+        The deltas are computed against the LIVE window centre rather than stored on the
+        candidate, so a mid-run `rebase` cannot leave them describing a window that no longer
+        exists.
+        """
+        info = self._session.candidate_info[seed]
+        return {
+            "seed": f"{seed:#010x}",
+            "frame": info.frame,
+            "second": info.second,
+            "frame_delta": info.frame_delta(self.window.frame_centre),
+            "second_delta": info.second_delta(self.window.second_centre),
+        }
+
     def hp_range(self, side: str) -> dict:
         """(low, high) HP across every surviving candidate, for one side.
 
@@ -547,12 +563,14 @@ class HuntSession:
                 self.config.standard_ball_matches_capture_ball(),
             "survivors": len(self.survivors),
             "identified": None if seed is None else f"{seed:#010x}",
-            "candidates": [
-                {"seed": f"{s:#010x}",
-                 "frame": self._session.candidate_info[s].frame,
-                 "second": self._session.candidate_info[s].second}
-                for s in self.survivors[:CANDIDATE_PREVIEW]
-            ],
+            "candidates": [self._candidate_row(s)
+                           for s in self.survivors[:CANDIDATE_PREVIEW]],
+            # Where the pinned seed actually landed, relative to where it was aimed. This is the
+            # run's only feedback on its own timing: the seed alone says nothing about whether
+            # the window was centred well, and the two axes miss near-independently, so a run
+            # that was 30 frames late but dead-on the second is a different problem from one
+            # that was a second out.
+            "identified_at": None if seed is None else self._candidate_row(seed),
             "candidates_truncated": max(0, len(self.survivors) - CANDIDATE_PREVIEW),
             "window": {
                 "frame_centre": self.window.frame_centre,

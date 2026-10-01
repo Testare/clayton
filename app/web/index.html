@@ -5065,16 +5065,31 @@ function renderHuntRun(){
   if (!s) return;
   const pinned = s.identified !== null;
 
+  // Signed, with an explicit "+" on a late miss, matching renderCandA's Δ columns in the other
+  // compasses. The sign is the informative half: which way the timing was out.
+  const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;
+  const at = s.identified_at;
   const candidates = pinned
-    ? `<div class="hr-pinned">Seed pinned: <code>${esc(s.identified)}</code></div>`
+    ? `<div class="hr-pinned">Seed pinned: <code>${esc(s.identified)}</code></div>
+       ${at ? `<div class="hr-small" style="margin-top:6px">Landed on frame <b>${at.frame}</b>
+           (<b>${signed(at.frame_delta)}</b> from the ${s.window.frame_centre} aimed for) ·
+           RTC second <b>${at.second}</b>
+           (<b>${signed(at.second_delta)}</b> from ${s.window.second_centre})</div>
+         <div class="muted hr-small">The run's only feedback on its own timing — and the two
+           axes miss independently, so 30 frames late on the right second is a different
+           problem from a second out.</div>` : ""}`
     : `<div><b>${s.survivors}</b> candidate seeds remain
          <span class="muted hr-small">(window: ${s.window.size} ·
          frame ${s.window.frame_centre}±${s.window.frame_window} ·
          second ${s.window.second_centre}±${s.window.second_window})</span></div>
-       <div class="candtable"><table><tr><th>seed</th><th>frame</th><th>second</th></tr>
+       <div class="candtable"><table><tr><th>seed</th><th>frame</th>
+         <th title="Signed miss in frames from the frame this window was centred on.">Δframe</th>
+         <th>second</th>
+         <th title="Signed miss in RTC seconds from the second this window was centred on.">Δsec</th></tr>
        ${s.candidates.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
-           <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}
-       ${s.candidates_truncated ? `<tr><td colspan="3" class="muted">
+           <td>${c.frame}</td><td>${signed(c.frame_delta)}</td>
+           <td>${c.second}</td><td>${signed(c.second_delta)}</td></tr>`).join("")}
+       ${s.candidates_truncated ? `<tr><td colspan="5" class="muted">
            …and ${s.candidates_truncated} more</td></tr>` : ""}</table></div>`;
 
   // A set stuck on several RTC seconds cannot be separated by any move, ever -- so say so

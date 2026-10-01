@@ -61,10 +61,23 @@ class Candidate:
     frame: int
     second: int
 
-    @property
-    def frame_delta(self) -> int:
-        """Set by :func:`generate`; kept here so a candidate can be sorted by proximity."""
-        return 0
+    def frame_delta(self, centre: int) -> int:
+        """Signed miss in frames from the frame this window was centred on.
+
+        Takes the centre rather than storing it. An earlier version was a no-argument property
+        returning a hardcoded ``0``, documented as "set by :func:`generate`" -- which `generate`
+        could not do, since this is a frozen dataclass and that was a property. It was never
+        read, so the zero never surfaced; a stored delta would also have gone stale the moment
+        ``HuntSession.rebase`` widened the window under it.
+
+        Sign follows ``calibration_tools``: actual minus target, so positive is late.
+        """
+        return self.frame - centre
+
+    def second_delta(self, centre: int) -> int:
+        """Signed miss in RTC seconds. The two axes miss near-independently
+        (notes/seed_hitting_process.md sec 3-4), which is why both are worth reporting."""
+        return self.second - centre
 
 
 @dataclass(frozen=True)
