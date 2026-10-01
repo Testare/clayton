@@ -15,7 +15,10 @@ LEAD = {
     "name": "Smeargle", "species": "smeargle", "level": 60, "ability": "Technician",
     "stats": {"hp": 170, "atk": 65, "def": 80, "spa": 60, "spd": 80, "spe": 160},
     "moveset": ["False Swipe", "Mean Look", "Sweet Scent", "Spore"],
-    "max_pp": {"0": 40, "1": 5, "2": 20, "3": 15},
+    # Keyed by 1-based move NUMBER, which is what the party form writes and what every saved
+    # profile holds. This fixture used 0-based keys, matching the facade's own (wrong) reader --
+    # so the test agreed with the bug and move 2 silently got move 1's PP.
+    "max_pp": {"1": 40, "2": 5, "3": 20, "4": 15},
 }
 TARGET = {"species": "suicune", "level": 40, "nature": "Bold",
           "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 31, "spd": 31, "spe": 31}}
@@ -527,13 +530,38 @@ class TestThePpFallback(unittest.TestCase):
 
     def test_a_recorded_value_still_wins(self):
         """It is the max, PP Ups included, so it can exceed the move's base PP."""
-        facade, hunt_id = self._hunt_with_pp({"0": 32, "1": 35})
+        facade, hunt_id = self._hunt_with_pp({"1": 32, "2": 35})
         snap = facade.hunt_session_start(hunt_id)["snapshot"]
         self.assertEqual(snap["ours"]["pp"], [32, 35])
 
+    def test_each_move_gets_its_own_recorded_pp_and_not_the_previous_ones(self):
+        """The regression, stated as the failure. `max_pp` is keyed by 1-based move NUMBER, and
+        reading it with a 0-based slot gave move 2 move 1's PP, move 3 move 2's, never read move
+        4's at all, and dropped move 1 through to the base-PP fallback -- which then looked like
+        it was working. Two distinct values, so a shift of one is visible."""
+        facade, hunt_id = self._hunt_with_pp({"1": 7, "2": 29})
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours"]["pp"], [7, 29])
+
+    def test_a_four_move_set_is_not_shifted_either(self):
+        """Move 4's PP was never read at all under the old indexing, so a 2-move fixture cannot
+        catch that half of it."""
+        facade = Facade(FileStore(tempfile.mkdtemp()))
+        profile_id = facade.create_profile({"name": "T"})["id"]
+        lead = facade.add_party_pokemon(profile_id, dict(
+            LEAD, max_pp={"1": 11, "2": 22, "3": 33, "4": 44}))["pokemon_id"]
+        hunt = facade.create_hunt({"name": "H", "profile_id": profile_id})
+        hunt.update({"target": TARGET, "party": [{"pokemon_id": lead}],
+                     "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
+                     "initial_time": "2026-01-01T12:00:00", "vector_ms": 120000,
+                     "seconds_window": 0, "delay_window": 10})
+        facade.save_hunt(hunt)
+        snap = facade.hunt_session_start(hunt["id"])["snapshot"]
+        self.assertEqual(snap["ours"]["pp"], [11, 22, 33, 44])
+
     def test_zero_is_treated_as_unrecorded_rather_than_as_no_pp(self):
         """A configured 0 cannot mean 'this move is unusable' -- it means nobody filled it in."""
-        facade, hunt_id = self._hunt_with_pp({"0": 0, "1": 0})
+        facade, hunt_id = self._hunt_with_pp({"1": 0, "2": 0})
         snap = facade.hunt_session_start(hunt_id)["snapshot"]
         self.assertEqual(snap["ours"]["pp"], [20, 35])
 

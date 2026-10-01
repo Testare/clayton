@@ -80,7 +80,18 @@ class PartyPokemon:
     stats: dict = field(default_factory=dict)
     # Up to four move names, in slot order — the order the M1..M4 tokens refer to.
     moveset: list[str] = field(default_factory=list)
-    # Slot index (as a string key, so it survives JSON) -> max PP for that move.
+    #: Move NUMBER (1-4, as a string key so it survives JSON) -> max PP for that move.
+    #:
+    #: **One-based, unlike every slot index elsewhere in this project.** Move slots are 0-based
+    #: in `moveset`, in `Action.move_slot`, in `move_info` and in the M1-M4 tokens; this one
+    #: field is not, because that is how the party form has always written it and how every
+    #: saved profile holds it. Read it through :meth:`pp_for_slot`, never directly.
+    #:
+    #: Reading it directly is what broke: `_configured_pp` looked up `str(slot)` with a 0-based
+    #: slot, so move 2 got move 1's PP, move 3 got move 2's, move 4's recorded PP was never read
+    #: at all, and move 1 fell through to the move's base PP. Everything the player SAW was
+    #: 1-based and self-consistent -- the form, the read-back, the per-slot warning -- so only
+    #: the simulator was wrong, and it was wrong by one slot in silence.
     max_pp: dict = field(default_factory=dict)
 
     def hard_errors(self) -> list[str]:
@@ -115,14 +126,27 @@ class PartyPokemon:
                 "is a legitimate role (a wall to revive behind), but it cannot attack — and a "
                 "Pokemon with no usable moves is forced to Struggle if you ever pick Fight, "
                 "which would KO a target at 1 HP.")
-        for slot, move in enumerate(self.moveset, start=1):
-            if str(slot) not in self.max_pp and slot not in self.max_pp:
-                notes.append(f"move {slot} ({move}) has no max PP recorded; "
+        for slot, move in enumerate(self.moveset):
+            if self.pp_for_slot(slot) is None:
+                notes.append(f"move {slot + 1} ({move}) has no max PP recorded; "
                              f"PP cannot be budgeted for it")
         if not self.ability:
             notes.append("has no ability recorded; entry abilities and damage modifiers "
                          "that depend on it will not be simulated")
         return notes
+
+    def pp_for_slot(self, slot: int) -> int | None:
+        """Recorded max PP for a **0-based** move slot, or None if it was never entered.
+
+        The one place the 1-based storage of `max_pp` is converted. Every caller uses the
+        project's 0-based slots and none of them has to remember that this field does not.
+
+        Both `"1"` and `1` are accepted: the keys are strings once they have been through JSON,
+        but a dict built in Python need not have been.
+        """
+        key = slot + 1
+        recorded = self.max_pp.get(str(key), self.max_pp.get(key))
+        return recorded if isinstance(recorded, int) and recorded > 0 else None
 
     @property
     def speed(self) -> int | None:

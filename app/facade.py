@@ -31,16 +31,21 @@ _HUNTS = "hunts"
 
 
 def _configured_pp(pokemon, slot: int, move_name: str) -> int:
-    """Max PP for `slot`, which is also its PP at battle start.
+    """Max PP for the 0-based `slot`, which is also its PP at battle start.
 
     The configured value IS the maximum -- PP Ups are already in it -- so a battle begins with
     every move full. When it was never recorded, fall back to the move's own base PP rather than
     to zero: zero makes the move unusable, which silently removed every move from the run's
     action list and left only "use an item" and "switch". It is only a warning on the party
     Pokemon, so the hunt still reported itself ready.
+
+    Through `pp_for_slot`, which owns the fact that `max_pp` is keyed by 1-based move NUMBER.
+    This used to index it with the 0-based slot directly, so every move got the previous move's
+    PP and move 1 fell through to the base-PP fallback above -- a fallback that then looked like
+    it was working.
     """
-    recorded = pokemon.max_pp.get(str(slot))
-    if isinstance(recorded, int) and recorded > 0:
+    recorded = pokemon.pp_for_slot(slot)
+    if recorded is not None:
         return recorded
     from claytonlib.moves import resolve_move
     move = resolve_move(move_name)

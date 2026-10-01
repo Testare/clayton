@@ -6007,6 +6007,8 @@ function partyForm(profileId, pokemonId){
   const m = existing || {stats: {}, moveset: [], max_pp: {}};
   const stat = (k) => (m.stats || {})[k] ?? "";
   const move = (i) => (m.moveset || [])[i] ?? "";
+  // 1-based move NUMBER, matching how the save below writes it and how PartyPokemon.max_pp is
+  // documented. `i` is the 0-based form row.
   const pp = (i) => (m.max_pp || {})[String(i + 1)] ?? (m.max_pp || {})[i + 1] ?? "";
   openModal(`<h3>${existing ? "Edit" : "Add"} party Pokémon</h3>
     <div class="grid4">
@@ -6057,6 +6059,9 @@ async function partyFormSubmit(profileId, pokemonId){
     if(!name) continue;
     moveset.push(name);
     const ppv = $("pf-pp" + i).value;
+    // moveset.length AFTER the push, so this is the 1-based move number -- which is what
+    // max_pp is keyed by. Spelled out because reading it as a slot index is the mistake that
+    // shifted every move's PP by one on the way into the simulator.
     if(ppv !== "") max_pp[String(moveset.length)] = +ppv;
   }
   const fields = {

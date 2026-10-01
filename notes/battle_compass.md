@@ -2528,6 +2528,51 @@ anyone typing at speed — the same class of problem as the re-render).
 **The general rule this leaves behind:** an async reply must never re-render a region the player
 could be typing into. Only an action the player just took may rebuild the interview.
 
+## 16.8 Every move got the previous move's PP [fixed]
+
+`PartyPokemon.max_pp` is keyed by **1-based move number** — unlike every other slot index in
+this project, where `moveset`, `Action.move_slot`, `move_info` and the `M1`-`M4` tokens are all
+0-based. That is not a design preference; it is what the party form has always written and what
+every saved profile holds.
+
+`_configured_pp` indexed it with the 0-based slot. On the reference Smeargle:
+
+| slot | move | recorded | what the simulator read |
+|---|---|---|---|
+| 0 | False Swipe | 40 | 40 — *by luck*, via the base-PP fallback |
+| 1 | Mean Look | 5 | **40** |
+| 2 | Sweet Scent | 20 | **5** |
+| 3 | Spore | 15 | **20** |
+
+Every move got the previous move's PP; move 4's recorded PP was never read at all; and move 1
+fell through to the "unrecorded, use base PP" fallback — which then *looked* like it was working.
+The damage is in the solver: it believed Mean Look had 40 PP and planned paths spending PP that
+does not exist, while Spore ran out eight uses early. Pressure doubles our consumption, so the
+error compounds.
+
+**Everything the player saw was 1-based and self-consistent** — the form, its read-back, the
+per-slot "no max PP recorded" warning — so only the simulator was wrong, and it was wrong by one
+slot in silence.
+
+### Why it survived, which is the part worth remembering
+
+No test crossed the boundary. `test_app_hunt_models` and `test_app_hunt_facade` wrote **1-based**
+fixtures and exercised the model; `test_app_hunt_run` and `test_app_hunt_seed_a` wrote **0-based**
+fixtures and exercised the facade. Each file agreed with the code it tested, and neither ever saw
+the other's convention.
+
+That is the third bug in this component with the same shape — a fixture and its subject sharing a
+wrong assumption, agreeing with each other, and disagreeing only with reality. The other two were
+the six battle-start advances (§16.2) and the hidden item-code default (§16.5). The pattern to
+watch for: **a convention that is written in one module and read in another, with no test that
+spans both.**
+
+The fix is `PartyPokemon.pp_for_slot(slot)`, taking a 0-based slot and owning the conversion, as
+the only reader of `max_pp`; `warnings()` goes through it too, so the warning and the simulator
+cannot disagree about which slots are recorded. `tests/test_app_party_pp.py` is the test that
+spans the boundary, asserting the key the *page* writes is the key the simulator reads — including
+a static check that nothing in the facade indexes `max_pp` directly again.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

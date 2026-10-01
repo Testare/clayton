@@ -19,7 +19,10 @@ LEAD = {
     "name": "Smeargle", "species": "smeargle", "level": 58, "ability": "Technician",
     "stats": {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
     "moveset": ["False Swipe", "Mean Look", "Sweet Scent", "Spore"],
-    "max_pp": {"0": 40, "1": 5, "2": 20, "3": 15},
+    # Keyed by 1-based move NUMBER, which is what the party form writes and what every saved
+    # profile holds. This fixture used 0-based keys, matching the facade's own (wrong) reader --
+    # so the test agreed with the bug and move 2 silently got move 1's PP.
+    "max_pp": {"1": 40, "2": 5, "3": 20, "4": 15},
 }
 #: The configured spread -- what the KEY SEED would produce. All 31s, deliberately unlike the
 #: override below so a stat difference proves which one a run used.
