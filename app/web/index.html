@@ -3883,7 +3883,7 @@ async function huntAdviceLoad(){
   const forTurn = snap.turns.length;
   _huntAdviceLoading = true;
   _huntAdviceFor = forTurn;
-  renderHuntRun();
+  huntRefreshAdvice();
   try {
     const result = await api("hunt_session_advice", _huntRun);
     // Stale: a turn was reported while this was computing. Showing it would advise on a
@@ -3896,7 +3896,7 @@ async function huntAdviceLoad(){
     _huntBallRisk = null;
   } finally {
     if (_huntAdviceFor === forTurn) _huntAdviceLoading = false;
-    renderHuntRun();
+    huntRefreshAdvice();
   }
 }
 
@@ -4929,9 +4929,10 @@ function hrInterview(){
     const who = hrActive();
     blocks.push(`<div class="hr-q"><div class="hr-q-label">${esc(who.name)}'s HP now?
         <span class="muted hr-small">out of ${who.max_hp}</span></div>
-      <input id="hrHp" type="number" min="0" max="${who.max_hp}" value="${esc(String(t.hp))}"
-        style="max-width:120px" oninput="_hrTurn.hp = this.value; hrRefreshPreview()"
-        onkeydown="if(event.key==='Enter')huntRunObserve()"></div>`);
+      <input id="hrHp" type="text" inputmode="numeric" pattern="[0-9]*"
+        value="${esc(String(t.hp))}" autocomplete="off"
+        style="max-width:120px" oninput="hrHpInput(this)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();huntRunObserve();}"></div>`);
   }
 
   const tokens = hrTokens();
@@ -4952,6 +4953,56 @@ function hrInterview(){
     ${_hrBusy ? `<div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`
               : ""}</div>`);
   return blocks.join("");
+}
+
+// Three states, because this arrives after the page does: loading, loaded, or nothing to say.
+// A function rather than inline markup so it can be swapped into #hrAdvice on its own -- see
+// huntRefreshAdvice.
+function huntAdvicePanel(){
+  const s = _huntSnap;
+  if (!s || s.identified !== null) return "";
+  if (_huntAdviceLoading)
+    return `<div class="panel"><div class="section-label">Best next action</div>
+      <div class="muted hr-small">Ranking ${s.survivors} candidates…</div>
+      <div class="progress-wrap"><div class="progress-bar indeterminate"></div></div></div>`;
+  const rows = _huntAdvice || s.advice;
+  if (!rows || !rows.length) return "";
+  return `<div class="panel"><div class="section-label">Best next action</div>
+    <div class="muted hr-small">Ranked by how much each would narrow the set — lower is
+      better.</div>
+    <div class="candtable"><table><tr><th>action</th><th>expected survivors</th>
+        <th>outcomes</th></tr>
+      ${rows.slice(0, 5).map(a => `<tr><td>${esc(a.label || a.action)}</td>
+          <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div>
+    ${huntBallRisk()}</div>`;
+}
+
+// Swap the advice panel in place. Ranking takes seconds at a few thousand candidates, so its
+// reply lands long after the page did -- by which time the player is answering the NEXT turn.
+// A full renderHuntRun there rebuilt the interview underneath them: the HP input was destroyed
+// and recreated, losing the caret, and a re-render landing between mousedown and mouseup on
+// "Report turn" swallowed the click entirely. Same reasoning as hrRefreshPreview, which already
+// updates in place for exactly this reason.
+function huntRefreshAdvice(){
+  const box = $("hrAdvice");
+  if (box) box.innerHTML = huntAdvicePanel();
+  else renderHuntRun();          // the container is not on screen (over, or a different view)
+}
+
+// `type="text" inputmode="numeric"`, not `type="number"`. A focused number input changes its
+// own value on a scroll wheel, and this field sits above the Report button -- so scrolling down
+// to reach that button silently edited the HP on the way past. It also carries spinner arrows
+// that are easy to clip when aiming for the button. Neither is worth the numeric keypad, which
+// inputmode gives anyway. Digits only, so a stray character cannot reach the token builder.
+function hrHpInput(el){
+  const digits = el.value.replace(/\D+/g, "");
+  if (digits !== el.value){
+    const caret = el.selectionStart - (el.value.length - digits.length);
+    el.value = digits;
+    try { el.setSelectionRange(caret, caret); } catch (e) { /* detached or unsupported */ }
+  }
+  _hrTurn.hp = digits;
+  hrRefreshPreview();
 }
 
 function hrRefreshPreview(){
@@ -5192,23 +5243,7 @@ function renderHuntRun(){
         </div></div>`
     : "";
 
-  // Three states, because this arrives after the page does: loading, loaded, or nothing to say.
-  const adviceRows = _huntAdvice || s.advice;
-  let advice = "";
-  if (!pinned && _huntAdviceLoading){
-    advice = `<div class="panel"><div class="section-label">Best next action</div>
-      <div class="muted hr-small">Ranking ${s.survivors} candidates…</div>
-      <div class="progress-wrap"><div class="progress-bar indeterminate"></div></div></div>`;
-  } else if (!pinned && adviceRows && adviceRows.length){
-    advice = `<div class="panel"><div class="section-label">Best next action</div>
-      <div class="muted hr-small">Ranked by how much each would narrow the set — lower is
-        better.</div>
-      <div class="candtable"><table><tr><th>action</th><th>expected survivors</th>
-          <th>outcomes</th></tr>
-        ${adviceRows.slice(0, 5).map(a => `<tr><td>${esc(a.label || a.action)}</td>
-            <td>${a.expected_survivors}</td><td>${a.groups}</td></tr>`).join("")}</table></div>
-      ${huntBallRisk()}</div>`;
-  }
+  const advice = `<div id="hrAdvice">${huntAdvicePanel()}</div>`;
 
   let solver = "";
   if (s.phase === 3 && s.solution && s.solution.found && s.solution.next){

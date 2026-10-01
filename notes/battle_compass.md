@@ -2499,6 +2499,35 @@ Saving is offered on **every** ending, not only a capture: a wrong-ball or faint
 informative record, and a half-finished one is still a real observation of where the seed landed
 relative to where it was aimed.
 
+## 16.7 Typing an HP and clicking Report sometimes edited the HP instead [fixed]
+
+Two independent causes, both real, and no way to tell from the symptom which one fired — so both
+are fixed.
+
+**The advice load re-rendered the whole page.** `huntAdviceLoad` ended with `renderHuntRun()`.
+Ranking every surviving candidate against every action takes seconds at a few thousand
+candidates, so that reply lands *long* after the page did — by which time the player is answering
+the next turn. The re-render rebuilt the interview underneath them: the HP input was destroyed
+and recreated, losing the caret, and a re-render landing between `mousedown` and `mouseup` on
+"Report turn" swallowed the click entirely.
+
+`hrRefreshPreview` already documented exactly this reasoning — *"updated in place rather than by
+re-rendering, which would steal focus from the HP field mid-keystroke"* — and the advice load was
+the one remaining async full re-render that ignored it. The advice panel is now a function
+rendered into a stable `#hrAdvice` container and swapped in place, with a full render only as the
+fallback for when that container is not on screen (a finished run drops it).
+
+**The HP field was `type="number"`.** A focused number input changes its own value on a scroll
+wheel, and this field sits directly above the Report button — so scrolling down to reach the
+button silently edited the HP on the way past. Its spinner arrows are also easy to clip when
+aiming for the button. It is `type="text" inputmode="numeric"` now, which keeps the numeric
+keypad without either hazard, with non-digits stripped on input and the caret preserved while
+stripping (rewriting `value` otherwise sends the caret to the end, which transposes digits for
+anyone typing at speed — the same class of problem as the re-render).
+
+**The general rule this leaves behind:** an async reply must never re-render a region the player
+could be typing into. Only an action the player just took may rebuild the interview.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

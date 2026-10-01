@@ -605,10 +605,15 @@ class TestTheReportButtonRecovers(unittest.TestCase):
         self.assertIn("hrTurnComplete()", body)
 
     def test_the_hp_field_drives_that_refresh(self):
-        self.assertIn("hrRefreshPreview()", self.html)
+        """Through hrHpInput now rather than inline, since the field also has to strip
+        non-digits -- but the invariant is the same: typing HP re-evaluates the button."""
         hp_field = self.html[self.html.index('id="hrHp"'):]
         hp_field = hp_field[:hp_field.index(">")]
-        self.assertIn("hrRefreshPreview", hp_field)
+        self.assertIn("hrHpInput(this)", hp_field)
+        handler = self.html[self.html.index("function hrHpInput("):]
+        handler = handler[:handler.index("\n}") + 2]
+        self.assertIn("hrRefreshPreview()", handler)
+        self.assertIn("_hrTurn.hp", handler)
 
     def test_it_updates_in_place_rather_than_re_rendering(self):
         """A full re-render on each keystroke would steal focus from the HP field."""
@@ -1118,3 +1123,71 @@ class TestTypedTargetingSurvivesARedraw(unittest.TestCase):
                                          "vector_ms": 99999, "delay_window": 10,
                                          "seconds_window": 0})
         self.assertEqual(facade.get_hunt(hunt_id)["vector_ms"], before)
+
+
+class TestTheHpFieldIsNotEditedByAccident(unittest.TestCase):
+    """Typing an HP and clicking "Report turn" sometimes changed the HP instead of reporting.
+
+    Two independent causes, both fixed, because there is no way to tell from the report which
+    one fired and each is a real hazard:
+
+    1. `huntAdviceLoad` ended with a full `renderHuntRun()`. Ranking takes seconds at a few
+       thousand candidates, so that reply lands long after the page did -- by which time the
+       player is answering the NEXT turn. It rebuilt the interview underneath them, destroying
+       and recreating the HP input (losing the caret), and a re-render landing between mousedown
+       and mouseup on the button swallowed the click entirely.
+    2. The field was `type="number"`. A focused number input changes its own value on a scroll
+       wheel, and the field sits directly above the Report button -- so scrolling down to reach
+       the button silently edited the HP on the way past. Its spinner arrows are also easy to
+       clip when aiming for the button.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_advice_panel_updates_in_place(self):
+        self.assertIn("function huntAdvicePanel(", self.html)
+        self.assertIn("function huntRefreshAdvice(", self.html)
+        self.assertIn('<div id="hrAdvice">', self.html)
+
+    def test_the_advice_load_no_longer_re_renders_the_page(self):
+        body = self.html[self.html.index("async function huntAdviceLoad()"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertNotIn("renderHuntRun()", body)
+        self.assertEqual(body.count("huntRefreshAdvice()"), 2,
+                         "both the loading state and the result should refresh in place")
+
+    def test_it_still_falls_back_to_a_full_render_when_the_container_is_gone(self):
+        """A finished run drops the advice panel entirely, so the refresh has nowhere to write
+        and must not silently do nothing."""
+        body = self.html[self.html.index("function huntRefreshAdvice()"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("else renderHuntRun();", body)
+
+    def test_the_hp_field_is_not_a_number_input(self):
+        field = self.html[self.html.index('id="hrHp"'):]
+        field = field[:field.index(">")]
+        self.assertNotIn('type="number"', field)
+        self.assertIn('inputmode="numeric"', field)
+
+    def test_it_keeps_the_numeric_keypad_without_the_wheel_hazard(self):
+        field = self.html[self.html.index('id="hrHp"'):]
+        field = field[:field.index(">")]
+        self.assertIn('pattern="[0-9]*"', field)
+
+    def test_non_digits_are_stripped_rather_than_reaching_the_token_builder(self):
+        handler = self.html[self.html.index("function hrHpInput("):]
+        handler = handler[:handler.index("\n}") + 2]
+        self.assertIn("replace(/\\D+/g", handler)
+
+    def test_stripping_preserves_the_caret(self):
+        """Rewriting value sends the caret to the end, which transposes digits for anyone typing
+        at speed -- the same class of problem as the re-render."""
+        handler = self.html[self.html.index("function hrHpInput("):]
+        handler = handler[:handler.index("\n}") + 2]
+        self.assertIn("setSelectionRange", handler)
+
+    def test_enter_in_the_hp_field_does_not_also_submit_a_form(self):
+        field = self.html[self.html.index('id="hrHp"'):]
+        field = field[:field.index(">")]
+        self.assertIn("event.preventDefault()", field)
