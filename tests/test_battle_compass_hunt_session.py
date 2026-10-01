@@ -1,5 +1,6 @@
 """The layer the app drives: candidates + solver joined into one surface."""
 import datetime as dt
+import statistics
 import unittest
 from dataclasses import replace
 
@@ -1032,7 +1033,12 @@ class TestNoImpossibleMoveOutcomes(unittest.TestCase):
                     offered |= {"h", "!"}
                 else:
                     offered |= {""}
-                if entry["can_miss"] and not entry["guaranteed_fail"]:
+                # `can_miss` alone. This line used to carry `and not guaranteed_fail`, which
+                # is the UI rule it was written to mirror -- and the UI rule was wrong, so the
+                # test agreed with the bug. The fixture's moves never exercise it (Spore is
+                # doomed against a paralyzed target but cannot miss), which is why nothing
+                # failed; TestADoomedMoveThatCanStillMiss below covers the combination.
+                if entry["can_miss"]:
                     offered |= {"-"}
                 self.assertEqual(emitted - offered, set(),
                                  f"{entry['name']} vs {status.value}: simulator can emit "
@@ -1122,3 +1128,80 @@ class TestActionLabels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestADoomedMoveThatCanStillMiss(unittest.TestCase):
+    """Sing against an already-paralyzed target: certain to do nothing, and still able to miss.
+
+    `guaranteed_fail` was being read as "there is nothing to ask", which is only true when the
+    move also cannot miss. A missable move rolls accuracy FIRST -- verified in
+    data/battle_logs/test2.jsonl, where `BattleSystem_CheckMoveHit` fires immediately before
+    "But it failed!" -- so a miss and a went-ahead-and-failed are different observations that
+    render differently. Suppressing both left Sing unreportable.
+
+    It matters more than an unreportable turn, because the accuracy check is a ``% 100`` roll and
+    256 does not divide 100: it is the one observation that separates seeds an RTC second apart
+    (notes/seed_separation.md). Throwing it away discards the sharpest separator available.
+    """
+
+    MOVES = ("Sing", "False Swipe", "Mean Look", "Sweet Scent")
+
+    def _info(self, status=Status.PARALYSIS):
+        ours = _ours(moves=self.MOVES, pp=(15, 40, 5, 20))
+        return {m["name"]: m for m in move_info(ours, _target(status=status))}
+
+    def test_sing_is_both_doomed_and_missable(self):
+        entry = self._info()["Sing"]
+        self.assertTrue(entry["guaranteed_fail"])
+        self.assertTrue(entry["can_miss"])
+
+    def test_spore_is_doomed_but_not_missable_which_is_why_it_hid_this(self):
+        spore = {m["name"]: m for m in move_info(_ours(), _target(status=Status.PARALYSIS))}
+        self.assertTrue(spore["Spore"]["guaranteed_fail"])
+        self.assertFalse(spore["Spore"]["can_miss"])
+
+    def test_the_simulator_renders_the_two_outcomes_differently(self):
+        """The contract the interview question depends on. If these ever collapsed to one token
+        the question would be pointless -- and the seeds would stop separating."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        ours = _ours(moves=self.MOVES, pp=(15, 40, 5, 20))
+        target = _target(status=Status.PARALYSIS)
+        emitted = set()
+        for seed in range(SEED, SEED + 300):
+            nxt = simulate_turn(BattleState(ours=ours, target=target, rng=seed, phase=1),
+                                Action.MOVE_1, HUNT)
+            rendered = tok.render_turn(tok.normalise(nxt.log[-1]))
+            emitted.add(rendered.split("E")[0])
+        self.assertEqual(emitted, {"M1", "M1-"},
+                         "a doomed missable move must render a miss and a bare slot, and only "
+                         f"those; got {sorted(emitted)}")
+
+    def test_both_renderings_are_grammatical(self):
+        self.assertEqual(tok.validate_turn(["M1"]), [])
+        self.assertEqual(tok.validate_turn(["M1-"]), [])
+
+    def test_it_separates_second_siblings_in_a_handful_of_turns(self):
+        """The payoff, stated as a measurement rather than a hope. Seeds one RTC second apart
+        differ by exactly k*2**24, so their rolls differ by 256*k -- invisible to the % 4 move
+        choice and the % 16 crit and damage rolls, visible to the % 100 accuracy check.
+
+        Against the same pairs, 100%-accuracy filler took a median of 13-14 turns and failed to
+        separate roughly a third of them inside 60.
+        """
+        from claytonlib.battle_compass.sim import simulate_turn
+        step = 1 << 24
+        turns = []
+        for i in range(40):
+            seed = (SEED + i * 7919) & 0xFFFFFFFF
+            ours = _ours(moves=self.MOVES, pp=(99, 99, 99, 99))
+            target = _target(status=Status.PARALYSIS, hp=1)
+            a = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            b = BattleState(ours=ours, target=target, rng=(seed + step) & 0xFFFFFFFF, phase=2)
+            for n in range(1, 16):
+                a = simulate_turn(a, Action.MOVE_1, HUNT)
+                b = simulate_turn(b, Action.MOVE_1, HUNT)
+                if a.log[-1] != b.log[-1]:
+                    turns.append(n)
+                    break
+        self.assertEqual(len(turns), 40, "every pair should separate well inside 15 turns")
+        self.assertLessEqual(statistics.median(turns), 3)

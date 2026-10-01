@@ -4208,14 +4208,25 @@ function hrOurOutcomeBlock(){
   if (info.damaging){
     opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
     opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
-  } else if (!info.guaranteed_fail){
+  } else if (info.guaranteed_fail){
+    // Doomed to do nothing -- but that only removes the QUESTION when the move also cannot
+    // miss. A missable move still rolls accuracy first (verified: BattleSystem_CheckMoveHit
+    // fires before "But it failed!" in data/battle_logs/test2.jsonl), and the two outcomes
+    // render differently: "M1-" for a miss against the bare "M1" for went-ahead-and-failed.
+    // Suppressing both left Sing unreportable, and threw away the sharpest separator there is
+    // -- the accuracy check is a %100 roll, the one thing that distinguishes seeds an RTC
+    // second apart (notes/seed_separation.md).
+    if (info.can_miss)
+      opts.push(hrChip("It failed", `hrSet('ours',{result:''})`,
+                       t.ours && t.ours.result === "" && !t.ours.prevented,
+                       `It went ahead and did nothing — ${_huntSnap.target.name} is already `
+                       + `${_huntSnap.target.status}.`));
+  } else {
     opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
                      t.ours && t.ours.result === "" && !t.ours.prevented));
   }
-  // A move certain to do nothing renders as the bare slot, NOT as a miss -- so there is nothing
-  // to ask, and offering "missed" produced a token no candidate could match.
-  if (info.can_miss && !info.guaranteed_fail)
-    opts.push(hrChip("Missed / failed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
+  if (info.can_miss)
+    opts.push(hrChip("Missed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
   // Only what state allows: an unparalyzed Pokemon cannot be fully paralyzed, and it cannot
   // flinch unless the other side has a flinching move and moved first.
   (s.prevention.ours || []).forEach(o =>
@@ -4268,12 +4279,20 @@ function hrTargetBlocks(){
       opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
       opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
                         t.target.result === "!"));
-    } else if (!info.guaranteed_fail){
+    } else if (info.guaranteed_fail){
+      // Same rule as our own side: a doomed move that can still MISS has two distinguishable
+      // outcomes. Nothing in Suicune's moveset is both (Mist and Rain Dance bypass the
+      // accuracy check), so this branch is dormant for the v1 fixture -- but it is the same
+      // mechanic, and the two sides disagreeing about it is how a token stream goes unmatchable.
+      if (info.can_miss)
+        opts2.push(hrChip("It failed", `hrSet('target',${base},result:''})`,
+                          t.target.result === ""));
+    } else {
       opts2.push(hrChip("It worked", `hrSet('target',${base},result:''})`,
                         t.target.result === ""));
     }
-    if (info.can_miss && !info.guaranteed_fail)
-      opts2.push(hrChip("Missed / failed", `hrSet('target',${base},result:'-'})`,
+    if (info.can_miss)
+      opts2.push(hrChip("Missed", `hrSet('target',${base},result:'-'})`,
                         t.target.result === "-"));
     // Rain Dance cannot miss and deals no damage, so there is nothing to ask.
     if (!hrAutoAnswer(opts2, () => {

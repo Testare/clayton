@@ -134,6 +134,9 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
   (the P0–P3 phasing vocabulary), `branching_paths.md`, `effects.md`, `critical_hits.md`,
   `held_items.md`, `fainting.md`, `todo.md`.
 - `notes/seed_hitting_process.md` — The t0–t3 timing model behind the calibration work.
+- `notes/seed_separation.md` — How to tell two candidate battle seeds apart when the battle
+  refuses to: why RTC-second siblings are nearly invisible, and why a sub-100-accuracy move is
+  the fix. Verified mechanism, measured figures, proposals tagged as design.
 - `notes/battle_compass.md` — **Design document** for Battle Compass: extending
   compass/machete to ordinary battles, v1 target being Suicune in a Fast Ball. Design only,
   nothing implemented; claims are tagged [verified]/[derived]/[illustrative]/[needs gdb].

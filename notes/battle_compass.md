@@ -2405,6 +2405,23 @@ can see. They see the frame and never the second. Worth remembering as a general
 entropy count says how much information an observation carries, not which unknowns it is capable
 of addressing.
 
+### 17.1b Second-siblings: separate them, do not plan around them — **see notes/seed_separation.md**
+
+§17.1a measured that seeds one RTC second apart *do* separate, median 19 turns. The follow-up
+question — what to do about the wait — has its own document, because the answer turned out to be a
+configuration change rather than an algorithm.
+
+The short version. Sibling rolls differ by `256 · c`, invisible to every modulus dividing 256
+(`% 4` move selection, `% 16` crit and damage) and visible to the `% 100` accuracy check. A
+100%-accuracy move *spends* that roll and always reports "hit", so the information is destroyed
+rather than absent. Swapping one filler slot for a ~55% accuracy status move — which against an
+already-paralyzed target is doomed to fail *and* still rolls accuracy, verified in test2.jsonl —
+takes separation from a median of 13 turns to **1**, with no state change and no extra advances.
+
+And planning around *not* identifying does not work: only 2% of a seed's capture windows fall at
+the same offset in its one-second sibling, so a single-seed optimal path captured the sibling 0
+times in 80 pairs.
+
 ### 17.2 Smaller open items
 
 - ~~Confirm Suicune's moveset and level~~ — **closed** [user]: Lv 40, slots in order **1 Rain

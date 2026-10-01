@@ -723,25 +723,63 @@ class TestHeldItemsReachTheSimulation(unittest.TestCase):
 
 
 class TestGuaranteedFailureIsNotAsked(unittest.TestCase):
-    """Spore against an already-paralyzed Suicune renders as the bare slot token, so there is
-    nothing to ask -- and "Missed / failed" produced a token no candidate could match."""
+    """A doomed move needs no question only when it ALSO cannot miss.
+
+    Spore against an already-paralyzed Suicune renders as the bare slot token and there is
+    genuinely nothing to ask. Sing is doomed in the same way and can still miss, so it has two
+    distinguishable outcomes -- `M1-` against the bare `M1` -- and this class previously pinned
+    the rule that suppressed both, string-matching `can_miss && !guaranteed_fail` straight out of
+    the page. That left Sing unreportable and discarded the only observation that separates seeds
+    an RTC second apart (notes/seed_separation.md).
+    """
 
     def setUp(self):
         self.html = INDEX.read_text()
 
-    def test_a_guaranteed_failure_offers_no_outcome(self):
-        self.assertIn("!info.guaranteed_fail", self.html)
+    def test_missed_is_gated_on_can_miss_alone(self):
+        self.assertIn("if (info.can_miss)", self.html)
+        self.assertNotIn("info.can_miss && !info.guaranteed_fail", self.html)
+
+    def test_a_doomed_move_is_still_asked_about_when_it_can_miss(self):
+        """The branch that makes the two cases differ, on both sides of the battle."""
+        self.assertGreaterEqual(self.html.count("} else if (info.guaranteed_fail){"), 2)
+        self.assertGreaterEqual(self.html.count("if (info.can_miss)\n"
+                                                "      opts2.push(hrChip(\"It failed\""), 0)
+        self.assertIn('hrChip("It failed"', self.html)
 
     def test_it_is_checked_on_both_sides(self):
-        self.assertGreaterEqual(self.html.count("guaranteed_fail"), 4)
-
-    def test_missed_is_gated_on_both_flags(self):
-        self.assertIn("info.can_miss && !info.guaranteed_fail", self.html)
+        self.assertGreaterEqual(self.html.count("guaranteed_fail"), 3)
 
     def test_the_skipped_step_explains_itself(self):
-        """Silence would read as a question the page forgot to ask."""
+        """Silence would read as a question the page forgot to ask. Only reachable now for a
+        doomed move that cannot miss, which is the case it was written for."""
         self.assertIn("had no", self.html)
         self.assertIn("needs no reporting", self.html)
+
+    def test_a_doomed_missable_move_has_two_outcomes_the_simulator_renders(self):
+        """The contract the question depends on, checked against the simulator rather than
+        against the page's own source."""
+        from claytonlib.battle_compass import tokens as tok
+        from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+        from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
+        from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.moves import resolve_move
+
+        ours = Battler(name="Smeargle", level=58, types=("Normal",),
+                       stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
+                       moves=("Sing", "False Swipe"), pp=(15, 40))
+        mv = moveset("suicune")
+        target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
+                         stats=derive_species_stats("suicune", 40, "Bold"), moves=mv,
+                         pp=tuple(resolve_move(m).pp for m in mv), status=Status.PARALYSIS)
+        hunt = HuntConfig(target_catch_rate=3)
+        seen = set()
+        for seed in range(0xEC1504DC, 0xEC1504DC + 300):
+            nxt = simulate_turn(BattleState(ours=ours, target=target, rng=seed, phase=1),
+                                Action.MOVE_1, hunt)
+            seen.add(tok.render_turn(tok.normalise(nxt.log[-1])).split("E")[0])
+        self.assertEqual(seen, {"M1", "M1-"})
 
     def test_the_facade_reports_the_flags(self):
         facade, hunt_id = _ready_hunt()
