@@ -323,3 +323,113 @@ class TestThePageShowsTheDeltas(unittest.TestCase):
     def test_the_truncation_row_spans_the_new_column_count(self):
         """Five columns now, not three -- a stale colspan leaves the "and N more" row short."""
         self.assertIn('<tr><td colspan="5" class="muted">', self.html)
+
+
+class TestTheHyperPotionWasSimulatedAsAPotion(unittest.TestCase):
+    """The solver priced a Hyper Potion, labelled a Hyper Potion, and simulated a Potion.
+
+    `_legal_actions` yields `(Action.ITEM, distance, "hp")` and the solver recorded that `item`
+    on the Step -- but never passed it to `simulate_turn`, which had a hidden
+    `item_code or "p"` fallback. So the step cost 1200, read "Use a Hyper Potion", healed 20,
+    and emitted `Ip`.
+
+    Three separate consequences, and the HP was the least of them:
+
+    * The predicted HP was wrong -- 11 to 31 instead of 11 to full, which is how it was spotted.
+    * The TOKEN was wrong: the plan said `Ip` where the real turn emits `Ihp`, so following the
+      plan contradicted it on the very next report.
+    * The SEARCH was wrong: a heal of 20 instead of 200 changes which states survive the danger
+      floor, so the solver was exploring paths that cannot occur.
+    """
+
+    def _hurt_state(self, hp=11):
+        return BattleState(ours=_ours(hp=hp), target=_target(),
+                           rng=opening_rng(0xEC1504DC, HUNT), phase=2)
+
+    def test_a_badly_hurt_smeargle_is_prescribed_the_hyper_potion(self):
+        from claytonlib.battle_compass.solver import choose_item
+        code, price = choose_item(self._hurt_state(), SolverConfig(danger_floor=56))
+        self.assertEqual(code, "hp")
+        self.assertEqual(price, 1200)
+
+    def test_the_solved_step_heals_by_the_item_it_names(self):
+        solution = solve(self._hurt_state(), HUNT, SolverConfig(danger_floor=56))
+        self.assertIsInstance(solution, Solution)
+        step = solution.steps[0]
+        self.assertEqual(step.item, "hp")
+        state = simulate_turn(self._hurt_state(), step.action, HUNT, item_code=step.item)
+        self.assertEqual(state.ours.hp, state.ours.max_hp,
+                         "a Hyper Potion on an 11/153 Smeargle restores it to full")
+
+    def test_the_step_the_solver_recorded_emits_the_token_it_claims(self):
+        """The consequence that would have desynchronised a real run: the plan said `Ip`."""
+        solution = solve(self._hurt_state(), HUNT, SolverConfig(danger_floor=56))
+        step = solution.steps[0]
+        self.assertIn("Ihp", "".join(step.tokens))
+        self.assertNotIn("Ip", "".join(step.tokens).replace("Ihp", ""))
+
+    def test_the_simulator_refuses_an_item_turn_with_no_item(self):
+        """The fallback is gone. Potions differ by an order of magnitude, so there is no safe
+        default -- a missing code is a caller bug and says so."""
+        with self.assertRaises(ValueError) as caught:
+            simulate_turn(self._hurt_state(), Action.ITEM, HUNT)
+        self.assertIn("item_code", str(caught.exception))
+
+    def test_a_status_cure_may_still_default(self):
+        """ITEM_CURE has one sensible reading, unlike "a potion"."""
+        state = simulate_turn(self._hurt_state(), Action.ITEM_CURE, HUNT)
+        self.assertIn("Ifh", "".join(state.log[-1]))
+
+    def test_ranking_supplies_its_own_stand_in_explicitly(self):
+        """An item costs zero advances, so for information-gain ranking the choice cannot matter
+        -- but the default belongs where that contract is stated, not in the simulator where
+        every caller inherited it silently."""
+        from claytonlib.battle_compass.identify import RANKING_ITEM, Session
+        session = _pinned_session()._session
+        self.assertEqual(session.ranking_extra(Action.ITEM), {"item_code": RANKING_ITEM})
+        self.assertEqual(session.ranking_extra(Action.MOVE_1), {})
+
+    def test_every_item_choose_item_can_return_is_simulable(self):
+        """So no future tier can reintroduce a code the simulator rejects."""
+        from claytonlib.battle_compass.solver import choose_item
+        seen = set()
+        for hp in (1, 11, 56, 57, 100, 152, 153):
+            for spdef in (0, 6):
+                state = BattleState(
+                    ours=_ours(hp=hp, spdef_stage=spdef), target=_target(),
+                    rng=opening_rng(0xEC1504DC, HUNT), phase=2)
+                chosen = choose_item(state, SolverConfig(danger_floor=56))
+                if chosen is None:
+                    continue
+                seen.add(chosen[0])
+                simulate_turn(state, Action.ITEM, HUNT, item_code=chosen[0])
+        self.assertTrue({"hp", "xsd"} <= seen, seen)
+
+
+class TestSavingTheRun(unittest.TestCase):
+    """A finished run had nowhere to go. Diagnostic only -- no fit consumes these."""
+
+    def test_the_record_describes_the_attempt(self):
+        session = _pinned_session()
+        session.observe(Action.CAPTURE_BALL, ("C",))
+        record = session.run_record()
+        self.assertEqual(record["outcome"], "caught")
+        self.assertEqual(record["turns"], 1)
+        self.assertEqual(record["path"], "C")
+        self.assertEqual(record["b_seed"]["seed"], f"{CAPTURING_SEED:#010x}")
+
+    def test_an_unfinished_run_has_no_outcome_rather_than_a_wrong_one(self):
+        self.assertEqual(_pinned_session().outcome(), "")
+
+    def test_items_are_read_off_what_happened_not_off_the_plan(self):
+        """The difference between advice and play is exactly what a diagnostic record is for."""
+        session = _pinned_session()
+        self.assertEqual(session.items_spent(), {})
+        predicted = session.predict(Action.ITEM, item_code="sp")[CAPTURING_SEED]
+        session.observe(Action.ITEM, (predicted,), item_code="sp")
+        self.assertEqual(session.items_spent(), {"sp": 1})
+
+    def test_the_record_carries_the_window_it_was_found_in(self):
+        record = _pinned_session().run_record()
+        self.assertIn("frame_centre", record["window"])
+        self.assertIn("size", record["window"])

@@ -139,18 +139,23 @@ class TestTurnAccounting(unittest.TestCase):
         self.assertGreater(state.rng_offset, 4 * self.FIXED)
 
     def test_a_turn_costs_at_least_the_fixed_overhead(self):
-        """Item turns spend nothing of their own, so they are the floor (sec 12.1)."""
-        item = simulate_turn(_state(), Action.ITEM, CONFIG)
+        """Item turns spend nothing of their own, so they are the floor (sec 12.1).
+
+        The explicit `item_code` is required now. It used to default to a Potion inside the
+        simulator, which is how the solver came to price a Hyper Potion and simulate a Potion.
+        """
+        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="p")
         self.assertGreaterEqual(item.rng_offset, self.FIXED)
 
     def test_an_item_turn_is_cheaper_than_a_move_turn(self):
-        item = simulate_turn(_state(), Action.ITEM, CONFIG).rng_offset
+        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="p").rng_offset
         move = simulate_turn(_state(), Action.MOVE_1, CONFIG).rng_offset
         self.assertLess(item, move)
 
     def test_our_action_choice_changes_the_offset(self):
         """The whole basis of steering: different actions cost different numbers of rolls."""
-        offsets = {a: simulate_turn(_state(), a, CONFIG).rng_offset
+        offsets = {a: simulate_turn(_state(), a, CONFIG,
+                                   **({"item_code": "p"} if a is Action.ITEM else {})).rng_offset
                    for a in (Action.ITEM, Action.MOVE_2, Action.MOVE_4, Action.MOVE_1)}
         self.assertGreater(len(set(offsets.values())), 1)
 

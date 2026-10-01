@@ -386,7 +386,12 @@ def solve(state: BattleState, hunt: HuntConfig,
             bucket.append((current, dist_so_far))
 
         for action, step_distance, item in _legal_actions(current, config, hunt):
-            nxt = simulate_turn(current, action, hunt)
+            # `item_code=item`, which was missing. The step was PRICED as whatever
+            # `choose_item` picked and SIMULATED as `sim`'s fallback Potion, so a Hyper Potion
+            # cost 1200 and healed 20 -- and the search explored states that cannot occur. The
+            # token was wrong too: the path said `Ip` where the real turn emits `Ihp`, so
+            # following the plan contradicted it on the next report.
+            nxt = simulate_turn(current, action, hunt, item_code=item)
             if nxt.captured_in_wrong_ball:
                 continue          # never a path; the run would be lost
             if nxt.ours.fainted:

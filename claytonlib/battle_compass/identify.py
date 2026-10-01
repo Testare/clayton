@@ -33,6 +33,12 @@ from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 #: False Swipe every turn against the section 11 fixture (120 pairs: all separated, max 54).
 SECOND_SIBLING_MEDIAN_TURNS = 19
 
+#: Stand-in item for RANKING an unspecified "use an item" action. Legitimate because an item
+#: costs zero RNG advances, so every candidate consumes the same stream whichever is used and the
+#: partition this ranking measures is identical. It is a Potion only because something had to be
+#: named; nothing should read it as a recommendation.
+RANKING_ITEM = "p"
+
 
 class Phase(IntEnum):
     SETUP = 1          # Phase 1
@@ -295,11 +301,18 @@ class Session:
         can affect information gain: both cost zero RNG advances, so every candidate consumes the
         same stream whichever is picked, and the partition is identical. So ranking may default
         them, where actually *observing* the turn must not.
+
+        The item half of that was described here and never supplied -- `simulate_turn` had a
+        hidden fallback instead, which is what let the solver price a Hyper Potion and simulate a
+        Potion. The default belongs here, where "this is for ranking only" is the stated contract,
+        rather than buried in the simulator where every caller inherits it silently.
         """
         if action is Action.SWITCH:
             state = next(iter(self.states.values()), None)
             if state is not None and state.bench:
                 return {"bench_slot": 0}
+        if action is Action.ITEM:
+            return {"item_code": RANKING_ITEM}
         return {}
 
     def partition(self, action: Action) -> dict[str, tuple[int, ...]]:

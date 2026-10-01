@@ -129,7 +129,10 @@ class TestTurnUpperBound(unittest.TestCase):
             for action in Action:
                 if action is Action.SWITCH:
                     continue
-                spent = simulate_turn(state, action, hunt).rng_offset - state.rng_offset
+                # ITEM needs its code stated; the simulator no longer guesses one.
+                extra = {"item_code": "p"} if action is Action.ITEM else {}
+                spent = (simulate_turn(state, action, hunt, **extra).rng_offset
+                         - state.rng_offset)
                 worst = max(worst, spent)
                 self.assertLessEqual(spent, max_turn_advances(), action.name)
         self.assertGreater(worst, 12, "the sample never exercised an expensive turn")

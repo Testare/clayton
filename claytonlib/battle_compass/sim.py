@@ -535,7 +535,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Items cost no advances of their own (verified) -- but they are not inert. A potion
             # that healed nothing here would make the predicted HP diverge from the real one and
             # contradict every candidate on the next report.
-            code = item_code or ("fh" if action is Action.ITEM_CURE else "p")
+            # ITEM_CURE has one sensible reading, so it defaults. ITEM does NOT: potions
+            # differ by an order of magnitude, and a silent fallback here let the solver price a
+            # Hyper Potion and simulate a Potion for as long as nobody checked the numbers. A
+            # missing code is a caller bug, so it is raised rather than guessed.
+            if action is Action.ITEM and not item_code:
+                raise ValueError(
+                    "Action.ITEM needs an item_code: there is no safe default among items that "
+                    "heal 20 and 200. Pass the code the player actually used.")
+            code = item_code or "fh"
             entry = items.item(code)
             if entry.heals and new.ours.hp is not None:
                 healed = items.heal_amount(code, new.ours.hp, new.ours.max_hp)

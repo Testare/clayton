@@ -1254,6 +1254,63 @@ class Facade:
         self._store.write(_RUNS, run.id, run.to_dict())
         return run.to_dict()
 
+    def hunt_session_run_record(self, session_id: str) -> dict:
+        """What `save_hunt_run` would store, for the page to show before committing."""
+        session = self._hunt_sessions.get(session_id)
+        hunt_id = self._hunt_sessions.hunt_of(session_id)
+        record = session.run_record()
+        record["hunt_id"] = hunt_id
+        hunt = self._load_hunt(hunt_id) if hunt_id else None
+        if hunt is not None:
+            record["vector_ms"] = hunt.vector_ms
+            record["hunt_name"] = hunt.name
+        return record
+
+    def save_hunt_run(self, session_id: str, data: dict | None = None) -> dict:
+        """Persist this Battle Compass attempt (kind="battle").
+
+        Diagnostic only -- no fit consumes these, which is why nothing here is validated against
+        a calibration model. Taken from the SESSION rather than from the page: the session is
+        what knows the path, the items actually spent and how it ended, and a record assembled
+        from whatever the page had in hand is the kind that turns out to be missing the one field
+        you needed.
+
+        Saveable at any point, not only on a capture. A run that ended in the wrong ball or a
+        faint is the more informative record, and a half-finished one is still a real
+        observation of where the seed landed.
+        """
+        data = data or {}
+        session = self._hunt_sessions.get(session_id)
+        hunt_id = self._hunt_sessions.hunt_of(session_id)
+        if not hunt_id:
+            raise ValueError("this session is not attached to a hunt any more")
+        hunt = self._load_hunt(hunt_id)
+        self._load_profile(hunt.profile_id)
+        record = session.run_record()
+        run = Run(
+            profile_id=hunt.profile_id,
+            kind="battle",
+            hunt_id=hunt_id,
+            tag=data.get("tag", ""),
+            notes=data.get("notes", ""),
+            vector_ms=hunt.vector_ms,
+            # Seed A and its advance frame come from the PAGE: they are identified before the
+            # session exists, so the session has never seen them.
+            a_seed=dict(data.get("a_seed", {})),
+            advance_frame=data.get("advance_frame"),
+            elm_calls=data.get("elm_calls"),
+            chatot_flips=data.get("chatot_flips"),
+            frame_guide=data.get("frame_guide", ""),
+            b_seed=record["b_seed"],
+            outcome=data.get("outcome") or record["outcome"] or "abandoned",
+            turns=record["turns"],
+            path=record["path"],
+            target_spread=dict(data.get("target_spread", {})),
+            items=record["items"],
+        )
+        self._store.write(_RUNS, run.id, run.to_dict())
+        return run.to_dict()
+
     def list_runs(self, profile_id: str, kind: str | None = None) -> list[dict]:
         """Runs for a profile (optionally filtered to a kind), newest first."""
         out = []

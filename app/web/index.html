@@ -5012,6 +5012,76 @@ function huntReportWidening(){
       + `The report is more likely mistyped than out of range.`);
 }
 
+// --- Saving a Battle Compass run ------------------------------------------
+// The record itself is assembled by the SESSION (HuntSession.run_record), not here: it knows
+// the path, the items actually spent and how the run ended. What the page contributes is the
+// part the session has never seen -- Seed A and its advance frame, which were identified before
+// the session existed -- plus the tag and notes.
+
+async function openSaveHuntRunModal(){
+  let record;
+  try {
+    record = await api("hunt_session_run_record", _huntRun);
+  } catch (e) { toast(String(e.message || e)); return; }
+  const outcomeWord = {caught: "caught", wrong_ball: "caught in the WRONG ball",
+                       fainted: "fainted"}[record.outcome] || "unfinished";
+  const spread = (_hsa && _hsa.spreadConfirmed)
+    ? `${_hsa.nature} ${_hsa.ivs}` : "the hunt's configured spread";
+  openModal(`<h3>Save run</h3>
+    <div class="hr-small muted" style="margin-bottom:10px">Diagnostic record — nothing here
+      feeds calibration. ${record.turns} turn${record.turns === 1 ? "" : "s"},
+      <b>${esc(outcomeWord)}</b>.</div>
+    <div class="candtable" style="margin-bottom:10px"><table>
+      ${record.b_seed.seed ? `<tr><td>Seed B</td><td><code>${esc(record.b_seed.seed)}</code>
+        <span class="muted">frame ${record.b_seed.frame}
+        (${record.b_seed.frame_delta >= 0 ? "+" : ""}${record.b_seed.frame_delta}) ·
+        second ${record.b_seed.second}
+        (${record.b_seed.second_delta >= 0 ? "+" : ""}${record.b_seed.second_delta})</span></td></tr>`
+        : `<tr><td>Seed B</td><td class="muted">never pinned</td></tr>`}
+      ${_hsa && _hsa.seedA ? `<tr><td>Seed A</td>
+        <td><code>${esc(_hsa.seedA.seed_hex)}</code>
+        ${_hsa.pinnedFrame != null ? `<span class="muted">advance frame ${_hsa.pinnedFrame}</span>`
+          : ""}</td></tr>` : ""}
+      <tr><td>Target spread</td><td class="muted">${esc(spread)}</td></tr>
+      <tr><td>Path</td><td><code>${esc(record.path || "—")}</code></td></tr>
+      ${Object.keys(record.items).length ? `<tr><td>Items used</td><td>${Object.entries(
+        record.items).map(([k, n]) => `${esc(k)} ×${n}`).join(", ")}</td></tr>` : ""}
+    </table></div>
+    <form onsubmit="return huntSaveRun(event)">
+      <div class="field"><label>Tag</label>
+        <input name="tag" placeholder="BC1" autofocus></div>
+      <div class="field"><label>Notes</label><input name="notes" placeholder="optional"></div>
+      <div class="actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" onclick="closeModal()">Cancel</button>
+      </div>
+    </form>`);
+}
+
+async function huntSaveRun(ev){
+  ev.preventDefault();
+  const f = ev.target;
+  try {
+    await api("save_hunt_run", _huntRun, {
+      tag: f.tag.value.trim(),
+      notes: f.notes.value.trim(),
+      // The page's half: identified before the session existed, so the session cannot supply it.
+      a_seed: (_hsa && _hsa.seedA) ? _hsa.seedA : {},
+      advance_frame: (_hsa && _hsa.pinnedFrame != null) ? _hsa.pinnedFrame : null,
+      elm_calls: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.elm_before_scent : null,
+      chatot_flips: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.chatot_flips : null,
+      frame_guide: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.description || "" : "",
+      // The spread the run was actually simulated against -- without it a saved run on a
+      // non-key-seed Seed A cannot be reproduced.
+      target_spread: (_hsa && _hsa.spreadConfirmed)
+        ? {nature: _hsa.nature, ivs: _hsa.ivs} : {},
+    });
+    closeModal();
+    toast("Run saved.");
+  } catch (e) { toast(String(e.message || e)); }
+  return false;
+}
+
 function huntRunAbandon(){
   // No confirmation on a finished run: there is nothing left to lose, and asking "are you sure?"
   // after a capture reads as though closing might undo it.
@@ -5210,22 +5280,31 @@ function renderHuntRun(){
   // How it ended. Without this the page kept asking for the next turn after a landed ball, and
   // the only thing standing between a won run and a fresh question was the solver crashing on
   // the empty path it had just correctly produced.
+  // Saving is offered on every ending, not only a win. A run that ended in the wrong ball or a
+  // faint is the more informative record, and either way it is an observation of where the seed
+  // landed relative to where it was aimed.
+  const saveBar = `<div style="display:flex;gap:8px;margin-top:10px">
+    <button class="btn primary" onclick="openSaveHuntRunModal()">Save run</button>
+    <button class="btn" onclick="huntRunAbandon()">Start another</button></div>`;
   const outcome = s.captured
     ? `<div class="notice ok-cta"><b>Caught it — in the
          ${esc(s.capture_ball || "capture ball")}.</b>
        <div class="hr-small">That is the run. ${s.turns.length}
-         turn${s.turns.length === 1 ? "" : "s"} reported.</div></div>`
+         turn${s.turns.length === 1 ? "" : "s"} reported.</div>${saveBar}</div>`
     : s.captured_in_wrong_ball
     ? `<div class="notice danger"><b>Caught in the wrong ball.</b>
        <div class="hr-small">A plain Poké Ball landed, so the target is caught but not in the
-         ${esc(s.capture_ball || "capture ball")} — the run is lost (sec 2.3).</div></div>`
+         ${esc(s.capture_ball || "capture ball")} — the run is lost (sec 2.3).</div>
+       ${saveBar}</div>`
     : s.we_fainted
     ? `<div class="notice danger"><b>${esc(s.ours.name)} fainted.</b>
-       <div class="hr-small">The battle is over.</div></div>`
+       <div class="hr-small">The battle is over.</div>${saveBar}</div>`
     : "";
 
   mount(`<div class="head"><h2>Battle Compass</h2>
       <div style="display:flex;gap:10px">
+        ${s.over || !s.turns.length ? "" :
+          `<button class="btn" onclick="openSaveHuntRunModal()">Save run</button>`}
         <button class="btn" onclick="huntRunAbandon()">${s.over ? "Close" : "End run"}</button>
       </div></div>
     <div class="hr-phase">${esc(s.phase_label)}</div>

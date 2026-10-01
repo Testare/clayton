@@ -408,7 +408,7 @@ class Run:
     """
 
     profile_id: str
-    kind: str = "metronome"  # "metronome" | "safari"
+    kind: str = "metronome"  # "metronome" | "safari" | "battle"
     id: str = field(default_factory=_new_id)
     tag: str = ""
     vector_ms: int | None = None
@@ -431,6 +431,22 @@ class Run:
     # (app.safari_compass.plan_frame_route / claytonlib.safari_advance), saved alongside the
     # run so it's still visible after the fact — not just during the live session.
     frame_guide: str = ""
+    # -- Battle Compass runs (kind="battle") -------------------------------
+    # The hunt this attempt came from. Runs are profile-owned like the others, so this is a
+    # back-reference rather than ownership -- a hunt can be attempted many times, and deleting
+    # one should not take its history with it.
+    hunt_id: str = ""
+    #: "caught" | "wrong_ball" | "fainted" | "abandoned". The thing a diagnostic record is for:
+    #: a run that ended is only interesting alongside HOW it ended.
+    outcome: str = ""
+    turns: int | None = None
+    #: The whole reported path, in token form -- the one field that makes a run replayable.
+    path: str = ""
+    #: The nature and IVs the run was actually simulated against, which on a non-key-seed Seed A
+    #: are not the hunt's configured ones. Without it a saved run cannot be reproduced.
+    target_spread: dict = field(default_factory=dict)
+    #: Items spent, code -> count.
+    items: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -454,6 +470,12 @@ class Run:
             chatot_flips=d.get("chatot_flips"),
             advance_frame=d.get("advance_frame"),
             frame_guide=d.get("frame_guide", ""),
+            hunt_id=d.get("hunt_id", ""),
+            outcome=d.get("outcome", ""),
+            turns=d.get("turns"),
+            path=d.get("path", ""),
+            target_spread=dict(d.get("target_spread", {})),
+            items=dict(d.get("items", {})),
         )
 
 

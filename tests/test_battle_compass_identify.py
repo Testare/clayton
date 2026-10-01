@@ -266,7 +266,7 @@ class TestSecondAmbiguity(unittest.TestCase):
         session = _session(window)
         _play(session, _second_sibling_truth(window), turns=6)
         identical = sum(
-            len(set(session.predict(a).values())) == 1
+            len(set(session.predict(a, **session.ranking_extra(a)).values())) == 1
             for a in (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4, Action.ITEM))
         # Most, not all: modelling field conditions gave the target's failing moves their own
         # offsets, so a couple of actions now distinguish seconds where none used to.

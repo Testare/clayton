@@ -478,3 +478,86 @@ class TestKeySeedHitVersusFrameToAimFor(unittest.TestCase):
         """The in-flight state is also where a thrown plan lands, and a toast has faded by the
         time the player looks."""
         self.assertIn('onclick="huntPlanFrameRoute(${target})">Retry', self.html)
+
+
+class TestSavingAHuntRun(unittest.TestCase):
+    """A finished run had nowhere to go. Runs are profile-owned like the other two kinds, with
+    `hunt_id` a back-reference: a hunt is attempted many times, and deleting one should not take
+    its history with it."""
+
+    def setUp(self):
+        self.facade, self.hunt_id = _ready_hunt()
+        started = self.facade.hunt_session_start(self.hunt_id)
+        self.sid = started["session_id"]
+        truth = started["snapshot"]["candidates"][0]["seed"]
+        predicted = self.facade.hunt_session_predict(self.sid, "M1")[truth]
+        self.facade.hunt_session_observe(self.sid, "M1", [predicted])
+        self.profile_id = self.facade.get_hunt(self.hunt_id)["profile_id"]
+
+    def test_the_record_can_be_previewed_before_committing(self):
+        record = self.facade.hunt_session_run_record(self.sid)
+        self.assertEqual(record["turns"], 1)
+        self.assertEqual(record["hunt_id"], self.hunt_id)
+        self.assertEqual(record["hunt_name"], "Suicune")
+        self.assertEqual(record["vector_ms"], 5000)
+
+    def test_saving_stores_a_battle_kind_run(self):
+        run = self.facade.save_hunt_run(self.sid, {"tag": "BC1"})
+        self.assertEqual(run["kind"], "battle")
+        self.assertEqual(run["hunt_id"], self.hunt_id)
+        self.assertEqual(run["tag"], "BC1")
+        self.assertEqual(len(self.facade.list_runs(self.profile_id, "battle")), 1)
+
+    def test_it_does_not_show_up_among_the_other_kinds(self):
+        """A third kind alongside metronome and safari, not mixed into either -- they feed fits
+        this one deliberately does not."""
+        self.facade.save_hunt_run(self.sid, {})
+        self.assertEqual(self.facade.list_runs(self.profile_id, "safari"), [])
+        self.assertEqual(self.facade.list_runs(self.profile_id, "metronome"), [])
+        self.assertEqual(len(self.facade.list_runs(self.profile_id)), 1)
+
+    def test_an_unfinished_run_saves_as_abandoned(self):
+        """Saveable at any point. A half-finished run is still a real observation of where the
+        seed landed."""
+        self.assertEqual(self.facade.save_hunt_run(self.sid, {})["outcome"], "abandoned")
+
+    def test_the_spread_is_stored_so_the_run_can_be_reproduced(self):
+        """Without it a run on a non-key-seed Seed A is unreplayable -- and that is most runs."""
+        run = self.facade.save_hunt_run(self.sid, {
+            "target_spread": {"nature": "Bold", "ivs": ACTUAL_TEXT}})
+        self.assertEqual(run["target_spread"], {"nature": "Bold", "ivs": ACTUAL_TEXT})
+
+    def test_the_page_supplies_the_half_the_session_never_saw(self):
+        """Seed A and its advance frame are identified before the session exists."""
+        run = self.facade.save_hunt_run(self.sid, {
+            "a_seed": {"seed_hex": "0x2D005C61"}, "advance_frame": 81, "elm_calls": 3})
+        self.assertEqual(run["a_seed"]["seed_hex"], "0x2D005C61")
+        self.assertEqual(run["advance_frame"], 81)
+        self.assertEqual(run["elm_calls"], 3)
+
+    def test_the_path_is_stored(self):
+        self.assertTrue(self.facade.save_hunt_run(self.sid, {})["path"])
+
+
+class TestTheSaveRunUi(unittest.TestCase):
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_finished_run_offers_to_save(self):
+        self.assertIn("function openSaveHuntRunModal(", self.html)
+        self.assertIn('onclick="openSaveHuntRunModal()">Save run', self.html)
+
+    def test_it_is_offered_on_every_ending_not_only_a_win(self):
+        """A wrong-ball or fainted run is the more informative record."""
+        self.assertIn("const saveBar =", self.html)
+        self.assertIn("${saveBar}</div>`\n    : s.we_fainted", self.html)
+
+    def test_a_run_in_progress_can_be_saved_too(self):
+        self.assertIn('${s.over || !s.turns.length ? "" :', self.html)
+
+    def test_the_record_comes_from_the_session_not_the_page(self):
+        self.assertIn('api("hunt_session_run_record", _huntRun)', self.html)
+
+    def test_the_page_contributes_seed_a_and_the_spread(self):
+        self.assertIn("a_seed: (_hsa && _hsa.seedA) ? _hsa.seedA : {},", self.html)
+        self.assertIn("? {nature: _hsa.nature, ivs: _hsa.ivs} : {},", self.html)

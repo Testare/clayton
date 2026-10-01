@@ -498,6 +498,62 @@ class HuntSession:
 
     # -- output ---------------------------------------------------------
 
+    def run_record(self) -> dict:
+        """This attempt as a saveable record (sec 15.4).
+
+        Assembled here rather than in the page so the stored shape is decided by the thing that
+        knows the run, not by whatever the UI happened to have in hand. Diagnostic only: nothing
+        feeds it back into calibration.
+
+        The two fields that make it worth keeping are `path` and `target_spread` -- together they
+        are enough to replay the attempt. A record without the spread is unreproducible whenever
+        Seed A was not the key seed, which is most runs.
+        """
+        return {
+            "outcome": self.outcome(),
+            "turns": len(self.turns),
+            "path": tok.render_path([list(t.tokens) for t in self.turns]),
+            "b_seed": self._candidate_row(self.identified) if self.identified else {},
+            "items": self.items_spent(),
+            "capture_ball": self.capture_ball,
+            "window": {"frame_centre": self.window.frame_centre,
+                       "second_centre": self.window.second_centre,
+                       "frame_window": self.window.frame_window,
+                       "second_window": self.window.second_window,
+                       "size": len(self.window.candidates)},
+            "widenings": list(self.widenings),
+        }
+
+    def outcome(self) -> str:
+        """How the run ended, as one word -- or "" while it is still going.
+
+        `all`, for the same reason the snapshot's flags use it: a candidate set that disagrees
+        about whether the ball landed has not finished.
+        """
+        states = list(self._session.states.values())
+        if not states:
+            return ""
+        if all(st.captured for st in states):
+            return "caught"
+        if all(st.captured_in_wrong_ball for st in states):
+            return "wrong_ball"
+        if all(st.ours.fainted for st in states):
+            return "fainted"
+        return ""
+
+    def items_spent(self) -> dict[str, int]:
+        """Items actually used, code -> count, from the reported turns.
+
+        Read off the history rather than off the solver's plan: the plan is what was advised and
+        the history is what happened, and the difference is exactly what a diagnostic record
+        exists to show.
+        """
+        spent: dict[str, int] = {}
+        for turn in self.turns:
+            if turn.item_code:
+                spent[turn.item_code] = spent.get(turn.item_code, 0) + 1
+        return spent
+
     def _candidate_row(self, seed: int) -> dict:
         """One candidate as the page shows it: where it sits, and how far that is from the aim.
 

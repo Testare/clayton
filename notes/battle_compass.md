@@ -2449,6 +2449,56 @@ active Pokemon's moveset, so labelling a turn played before a switch would confi
 wrong move — and the history is a record that pairs with the path string, where `next` is an
 instruction.
 
+## 16.5 The solver priced one item and simulated another [fixed]
+
+`_legal_actions` yields `(Action.ITEM, distance, "hp")` for a badly hurt Pokemon, and `solve`
+recorded that `item` on the `Step` — but never passed it to `simulate_turn`, which carried a
+hidden `item_code or "p"` fallback. So a step **cost 1200, read "Use a Hyper Potion", healed 20,
+and emitted `Ip`**.
+
+The wrong HP is how it was spotted (11 → 31 instead of 11 → full) and is the least of the three
+consequences:
+
+* The **token** was wrong. The plan said `Ip` where the real turn emits `Ihp`, so a player
+  following the advice contradicted the path on the very next report.
+* The **search** was wrong. A heal of 20 instead of 200 changes which states survive the danger
+  floor, so the solver was exploring and discarding paths on the strength of a heal that could
+  not happen.
+
+The fix is one argument, but the hidden default was the real defect, so it is gone:
+`Action.ITEM` without an `item_code` now **raises**. There is no safe default among items that
+heal 20 and 200, and a silent substitution is exactly the kind of bug that survives until
+someone checks the arithmetic by hand.
+
+Ranking genuinely does need a stand-in — an "use an item" action has no item until the player
+picks one — and `Session.ranking_extra` already existed for that case and already documented it
+("an item needs to know which item"), while only ever handling the switch. It supplies
+`RANKING_ITEM` now. That is the right home: the contract *there* is "for ranking only, and the
+choice provably cannot matter because an item costs zero RNG advances", where in the simulator
+every caller inherited the default silently.
+
+## 16.6 Run records [implemented]
+
+Closes sec 15.4's third `list_runs` kind: `kind="battle"`, profile-owned like the other two, with
+`hunt_id` as a back-reference rather than ownership — a hunt is attempted many times and deleting
+one should not take its history. Diagnostic only; nothing feeds it back into calibration, which
+is why none of it is validated against a model.
+
+`HuntSession.run_record` assembles it, not the page: the session is what knows the path, the
+items actually spent and how the run ended. The page contributes only the half the session has
+never seen — Seed A and its advance frame, identified before the session existed — plus tag and
+notes.
+
+Two fields make a record worth keeping. `path` and `target_spread` together are enough to replay
+the attempt, and without the spread a run whose Seed A was not the key seed is unreproducible —
+which is most runs. `items` is read off the reported turns rather than off the solver's plan,
+because the difference between what was advised and what was played is precisely what a
+diagnostic record exists to show.
+
+Saving is offered on **every** ending, not only a capture: a wrong-ball or fainted run is the more
+informative record, and a half-finished one is still a real observation of where the seed landed
+relative to where it was aimed.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED
