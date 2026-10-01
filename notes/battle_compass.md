@@ -178,19 +178,42 @@ because of the heal policy (§11.2 item 4); the target contributes nothing.
 Cost: at 1 HP, Suicune's first Struggle KOs it (§4.4). Accepted — a median of 8 turns means
 the deadline is never approached.
 
-### 2.3 Why no balls in Phase 1
+### 2.3 Balls in Phase 1 — the ban is LIFTED, and the risk disclosed instead
 
 A plain Poke Ball is **also x1 on Suicune**, exactly like the Fast Ball. So a practice throw
-that succeeds catches Suicune *in the wrong ball* and the run is lost [derived]:
+that succeeds catches Suicune *in the wrong ball* and the run is lost. That fact stands; the
+blanket Phase 1 ban it was used to justify does not, and was wrong on both halves
+(notes/seed_separation.md sec 2a).
 
-| State | per throw | over 20 throws |
+**The capture ball never carried a risk at all.** If it lands, the run is *won*. Forbidding it
+only discarded information, and the shake check is good information.
+
+**The standard ball's risk gets smaller the earlier it is thrown** [measured, 4000 seeds each]:
+
+| State | shake threshold `b` | per throw |
 |---|---|---|
-| Full HP, no status | 0.416% | **8.0%** |
-| 1 HP, paralyzed | 1.234% | **22.0%** |
+| **Full HP, no status** | 16643 | **0.35%** |
+| Full HP, paralyzed | 16643 | 0.35% |
+| 1 HP, no status | 19784 | 0.80% |
+| 1 HP, paralyzed | 21845 | 1.25% |
 
-Phase 1 ends with the target at its **most catchable** state, so throwing balls during setup
-means accepting rising risk for information we mostly get free from moves. Hence the rule:
-**no throws until setup is complete and the decision in §2.4 has been made explicitly.**
+The original reasoning — "Phase 1 ends with the target at its most catchable state, so throwing
+during setup means accepting *rising* risk" — had the sign backwards. The risk does rise as Phase
+1 proceeds, which is an argument for throwing **early**, not for deferring to Phase 2 where it is
+3.6x worse. Note also that paralysis does not move the full-HP figure at all, so there is no
+"paralyze first, then probe" ordering to exploit.
+
+And the information is not something "we mostly get free from moves": the shake check is a
+*magnitude* comparison, so it separates RTC-second siblings 44.5% of the time per roll, where
+every 100%-accuracy move in the fixture separates them 0% of the time and the whole turn relies
+on Aurora Beam's secondary (median 13 turns, a third never separating).
+
+**So the rule is now disclosure, not permission.** Both balls are legal in every phase;
+`HuntSession.standard_ball_risk` reports the live fraction of surviving candidates a plain ball
+would catch, and `HuntConfig.standard_ball_matches_capture_ball` says whether this matchup is the
+dangerous one at all — against a target the Fast Ball genuinely matches, a standard ball is far
+weaker and a probe is cheap. `Phase.balls_allowed` is gone rather than pinned to True, so the gate
+cannot quietly grow back.
 
 **This worry disappears once the seed is identified.** Capture requires all four rolls `< b`,
 and the capture ball's `b` is never smaller than a plain Poké Ball's, so *the capture ball

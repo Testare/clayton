@@ -117,10 +117,13 @@ class TestRunningTheLoop(unittest.TestCase):
         first = self.facade.hunt_session_state(self.sid)
         self.assertEqual(first, self.facade.hunt_session_state(self.sid))
 
-    def test_a_ball_is_refused_during_setup(self):
-        with self.assertRaises(ValueError) as caught:
-            self.facade.hunt_session_observe(self.sid, "C", ["C0"])
-        self.assertIn("wrong ball", str(caught.exception))
+    def test_a_ball_is_accepted_during_setup(self):
+        """The Phase 1 ban is lifted (notes/seed_separation.md sec 2a). Phase 1 is where a probe
+        is cheapest, so it is the last place a throw should have been forbidden."""
+        predicted = self.facade.hunt_session_predict(self.sid, "C")[self._truth()]
+        snap = self.facade.hunt_session_observe(self.sid, "C", [predicted])
+        self.assertEqual(len(snap["turns"]), 1)
+        self.assertIsNone(snap["contradiction"])
 
     def test_abandoning_closes_the_session(self):
         self.assertTrue(self.facade.hunt_session_abandon(self.sid)["closed"])
@@ -437,8 +440,15 @@ class TestNoActionSilentlyVanishes(unittest.TestCase):
         self.html = INDEX.read_text()
 
     def test_forbidden_actions_are_shown_with_a_reason(self):
+        """Still the rule for genuinely unavailable actions -- an empty bench. Balls are no
+        longer among them: they are offered with their risk stated rather than withheld."""
         self.assertTrue("function hrChipOff(" in self.html)
-        self.assertIn("WRONG ball", self.html)
+        self.assertIn("Nobody else on the hunt's party", self.html)
+
+    def test_the_ball_chips_carry_their_stakes_rather_than_being_disabled(self):
+        self.assertTrue("function hrStandardBallWarning(" in self.html)
+        self.assertIn("if it lands, the run is won", self.html)
+        self.assertIn("wrong ball and the run is lost", self.html)
 
     def test_an_empty_bench_explains_why_switching_is_unavailable(self):
         self.assertIn("Nobody else on the hunt's party", self.html)
@@ -1028,11 +1038,22 @@ class TestTheBallRiskGauge(unittest.TestCase):
         self.assertIn("candidates", risk)
         self.assertIn("safe", risk)
 
-    def test_it_is_absent_during_setup(self):
-        """Balls are forbidden in Phase 1, so there is nothing to gauge."""
+    def test_it_is_reported_during_setup(self):
+        """It used to be suppressed here, on the reasoning that Phase 1 forbade balls. With the
+        ban lifted this is the phase where the figure matters most, because it is the phase where
+        a probe is cheapest."""
         facade, hunt_id = _ready_hunt()
         sid = facade.hunt_session_start(hunt_id)["session_id"]
-        self.assertIsNone(facade.hunt_session_advice(sid)["standard_ball_risk"])
+        risk = facade.hunt_session_advice(sid)["standard_ball_risk"]
+        self.assertIsNotNone(risk)
+        self.assertTrue(risk["matches_capture_ball"])
+
+    def test_the_advice_ranks_balls_alongside_moves(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        offered = {row["action"] for row in facade.hunt_session_advice(sid)["advice"]}
+        self.assertIn("C", offered)
+        self.assertIn("P", offered)
 
     def test_the_page_renders_it(self):
         self.assertTrue("function huntBallRisk(" in self.html)

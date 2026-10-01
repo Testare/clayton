@@ -384,6 +384,19 @@ class HuntConfig:
     def effective_catch_rate(self) -> int:
         return fast_ball_catch_rate(self.target_catch_rate, 100 if self.fast_ball_matched else 0)
 
+    def standard_ball_matches_capture_ball(self) -> bool:
+        """Whether a plain Poke Ball is exactly as likely to catch as the capture ball.
+
+        This is the fact behind sec 2.3's warning, and it is a property of the MATCHUP rather
+        than of the phase. On Suicune the Fast Ball misses its base-Speed threshold, so both
+        balls are a flat x1 and a standard ball that lands is a lost run. Against a target the
+        Fast Ball actually matches, a standard ball is far weaker and a probe is correspondingly
+        cheaper. Reported to the UI so the warning can say which case the player is in instead of
+        asserting the harsher one.
+        """
+        return (self.capture_ball_multiplier == BALL_POKE
+                and self.effective_catch_rate() == self.target_catch_rate)
+
 
 def opening_rng(seed: int, config: HuntConfig) -> int:
     """The RNG state turn 1 actually starts from, given the *battle seed*.

@@ -45,11 +45,23 @@ class Phase(IntEnum):
                 Phase.PINNING: "Phase 1.5 — pinning the seed",
                 Phase.SOLVING: "Phase 2 — solving"}[self]
 
-    @property
-    def balls_allowed(self) -> bool:
-        """No throws during setup: the target ends Phase 1 at its most catchable, so a practice
-        ball is rising risk for information that moves mostly get for free (sec 2.3)."""
-        return self is not Phase.SETUP
+    #: Balls are legal in EVERY phase. The blanket Phase 1 ban this replaces was wrong on both
+    #: halves. The capture ball is never a risk -- if it lands, the run is won -- so forbidding
+    #: it only wasted information. And a standard ball IS a risk, but a measured one that gets
+    #: *cheaper* the earlier it is thrown: 0.35% per throw at full HP against 1.25% at 1 HP and
+    #: paralyzed, because the shake threshold rises as the target weakens
+    #: (notes/seed_separation.md sec 2a). The ban's own reasoning had this backwards -- it
+    #: assumed the target "ends Phase 1 at its most catchable" and so deferred throws to exactly
+    #: the point where they cost the most.
+    #:
+    #: The information was worth having, too: the shake check is a magnitude comparison rather
+    #: than a modulus, so it separates RTC-second siblings 44.5% of the time per roll -- a median
+    #: of 2 turns, against 13 for the 100%-accuracy filler the ban forced instead.
+    #:
+    #: What replaces the gate is disclosure, not permission: `HuntSession.standard_ball_risk`
+    #: reports the live fraction of candidates a plain ball would catch, and
+    #: `HuntConfig.standard_ball_matches_capture_ball` says whether this matchup is the dangerous
+    #: one at all.
 
 
 @dataclass
@@ -153,13 +165,6 @@ class Session:
         every candidate is genuinely excluded, and discarding the set would destroy the evidence
         needed to tell which (sec 15.5).
         """
-        if not self.phase.balls_allowed and action in (Action.CAPTURE_BALL,
-                                                       Action.STANDARD_BALL):
-            raise ValueError(
-                f"balls are not thrown during {self.phase.label}: a standard Poke Ball shares "
-                f"the capture ball's multiplier here, so a throw that lands catches the target "
-                f"in the wrong ball")
-
         observed = tok.render_turn(tok.normalise(tokens))
         advanced: dict[int, BattleState] = {}
         predictions: dict[int, str] = {}
@@ -319,14 +324,15 @@ class Session:
     def rank_actions(self, actions: list[Action] | tuple[Action, ...]) -> list[tuple[Action, float]]:
         """`actions` ordered by how well each separates the set, best first.
 
-        Only actions legal in the current phase are considered, so a ball never appears during
-        setup.
+        Balls are ranked alongside moves rather than filtered out by phase, and they rank well:
+        the shake check is a magnitude comparison, so it sees differences every modulus dividing
+        256 is blind to. Ranking is about INFORMATION only -- a standard ball's risk of ending
+        the run is priced nowhere in this number, which is why `standard_ball_risk` is reported
+        next to it rather than folded into it.
         """
         allowed = [a for a in actions
-                   if (self.phase.balls_allowed
-                       or a not in (Action.CAPTURE_BALL, Action.STANDARD_BALL))
-                   and (a is not Action.SWITCH
-                        or any(st.bench for st in self.states.values()))]
+                   if a is not Action.SWITCH
+                   or any(st.bench for st in self.states.values())]
         scored = [(a, self.expected_survivors(a)) for a in allowed]
         scored.sort(key=lambda pair: (pair[1], pair[0].value))
         return scored

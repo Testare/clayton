@@ -3833,6 +3833,22 @@ function huntAdviceInvalidate(){
 // target in the wrong ball and the run is over (sec 2.3). This says how likely that is across the
 // candidates still alive -- the one number that decides whether a throw is free information or a
 // gamble.
+// What to say on the plain-Poke-Ball chip. The live figure when the risk sweep has returned,
+// and the matchup fact when it has not -- never silence, because this is the one action that can
+// end a run outright.
+function hrStandardBallWarning(){
+  const r = _huntBallRisk, s = _huntSnap;
+  const same = !s || s.standard_ball_matches_capture_ball;
+  const stake = same
+    ? `A plain Poké Ball is the same ×1 as the ${s ? (s.capture_ball || "capture ball") : "capture ball"} here, so one that LANDS catches the target in the wrong ball and the run is lost.`
+    : `A plain Poké Ball is much weaker than the ${s.capture_ball || "capture ball"} here, so a probe is cheap — but one that lands still loses the run.`;
+  if (!r) return `${stake} Risk is still being measured.`;
+  if (r.safe) return `${stake} Right now NONE of the ${r.candidates} surviving candidates would `
+                   + `catch, so this throw is free information.`;
+  return `${stake} Right now it would catch on ${r.percent}% of candidates `
+       + `(${r.would_catch} of ${r.candidates}).`;
+}
+
 function huntBallRisk(){
   const r = _huntBallRisk;
   if (!r) return "";
@@ -3843,9 +3859,15 @@ function huntBallRisk(){
       </div>`;
   return `<div class="notice warn"><b>A Poké Ball would catch on ${r.percent}% of candidates
       (${r.would_catch} of ${r.candidates}).</b>
-    <div class="hr-small">That many runs end here: a plain Poké Ball is the same ×1 as the
-      ${esc(_huntSnap.capture_ball || "capture ball")} on this target, so one that lands catches it
-      in the wrong ball.</div></div>`;
+    <div class="hr-small">That many runs end here: ${r.matches_capture_ball
+      ? `a plain Poké Ball is the same ×1 as the
+         ${esc(_huntSnap.capture_ball || "capture ball")} on this target, so`
+      : `a plain Poké Ball is weaker than the
+         ${esc(_huntSnap.capture_ball || "capture ball")} here, but`} one that lands catches it
+      in the wrong ball.</div>
+    <div class="hr-small muted">Throwing earlier is cheaper — the shake threshold rises as the
+      target weakens, so a probe at full HP risks about a third as much as one at 1 HP and
+      paralyzed.</div></div>`;
 }
 
 async function huntAdviceLoad(){
@@ -4323,16 +4345,15 @@ function hrInterview(){
     .map(m => hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
                      t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
   actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
+  // Both balls, in every phase. The capture ball never carried a risk -- a landing wins -- and
+  // a standard ball's risk is DISCLOSED rather than forbidden: it is smallest early (0.35% per
+  // throw at full HP against 1.25% at 1 HP and paralyzed), and the shake check separates
+  // RTC-second siblings better than any 100%-accuracy move can. See notes/seed_separation.md.
   const ballLabel = `Threw the ${s.capture_ball || "capture ball"}`;
-  if (s.legal_actions.includes("C")){
-    actionChips.push(hrChip(ballLabel, "hrSet('action','C')", t.action === "C"));
-    actionChips.push(hrChip("Threw a Poké Ball", "hrSet('action','P')", t.action === "P"));
-  } else {
-    const why = "No balls during setup: a plain Poké Ball is also ×1 here, so a practice throw "
-              + "that lands catches the target in the WRONG ball and the run is lost.";
-    actionChips.push(hrChipOff(ballLabel, why));
-    actionChips.push(hrChipOff("Threw a Poké Ball", why));
-  }
+  actionChips.push(hrChip(ballLabel, "hrSet('action','C')", t.action === "C",
+                          "Always safe to throw — if it lands, the run is won."));
+  actionChips.push(hrChip("Threw a Poké Ball", "hrSet('action','P')", t.action === "P",
+                          hrStandardBallWarning()));
   if (s.legal_actions.includes("S"))
     actionChips.push(hrChip("Switched", "hrSet('action','S')", t.action === "S"));
   else if (s.phase === 1)
@@ -4644,8 +4665,7 @@ function renderHuntRun(){
       <div style="display:flex;gap:10px">
         <button class="btn" onclick="huntRunAbandon()">End run</button>
       </div></div>
-    <div class="hr-phase">${esc(s.phase_label)}
-      ${!s.balls_allowed ? `<span class="chip">no balls yet</span>` : ""}</div>
+    <div class="hr-phase">${esc(s.phase_label)}</div>
     ${ambiguity}${contra}
     <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor)}${hrSide("Target:", s.target, 0)}</div>
     ${solver}

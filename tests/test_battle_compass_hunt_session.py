@@ -106,17 +106,25 @@ class TestConstruction(unittest.TestCase):
             HuntSession(window, _ours(), _target(), HUNT)
         self.assertIn("widen the window", str(caught.exception))
 
-    def test_it_starts_in_setup_with_no_balls(self):
-        s = _session()
-        self.assertIs(s.phase, Phase.SETUP)
-        self.assertFalse(s.snapshot()["balls_allowed"])
+    def test_it_starts_in_setup(self):
+        self.assertIs(_session().phase, Phase.SETUP)
 
-    def test_no_ball_action_is_offered_during_setup(self):
-        """A plain Poke Ball is also x1 on Suicune, so a practice throw that lands loses the
-        run to the wrong ball (sec 2.3)."""
+    def test_both_balls_are_offered_during_setup(self):
+        """The Phase 1 ban is gone. The capture ball never needed one -- a landing wins -- and a
+        standard ball's risk is disclosed instead, and is at its SMALLEST here
+        (notes/seed_separation.md sec 2a)."""
         actions = _session().legal_actions()
-        self.assertNotIn(Action.CAPTURE_BALL, actions)
-        self.assertNotIn(Action.STANDARD_BALL, actions)
+        self.assertIn(Action.CAPTURE_BALL, actions)
+        self.assertIn(Action.STANDARD_BALL, actions)
+
+    def test_the_snapshot_says_whether_a_plain_ball_is_as_catchable(self):
+        """What replaced `balls_allowed`. That flag was always true once the ban lifted, so it
+        told the page nothing; this says which warning to show, and is config arithmetic rather
+        than a candidate sweep so it is cheap enough for the snapshot."""
+        snap = _session().snapshot()
+        self.assertNotIn("balls_allowed", snap)
+        # Suicune misses the Fast Ball's base-Speed threshold, so both balls are a flat x1.
+        self.assertTrue(snap["standard_ball_matches_capture_ball"])
 
     def test_only_move_slots_with_pp_are_offered(self):
         s = _session()
@@ -220,10 +228,11 @@ class TestUndoIsReplay(unittest.TestCase):
 
 
 class TestPhases(unittest.TestCase):
-    def test_pinning_allows_balls(self):
+    def test_pinning_still_offers_balls(self):
         s = _session()
-        self.assertTrue(s.enter_pinning()["balls_allowed"])
+        s.enter_pinning()
         self.assertIn(Action.CAPTURE_BALL, s.legal_actions())
+        self.assertIn(Action.STANDARD_BALL, s.legal_actions())
 
     def test_solving_is_blocked_until_the_preconditions_hold(self):
         s = _session()
@@ -1053,9 +1062,32 @@ class TestStandardBallRisk(unittest.TestCase):
     target in the wrong ball and the run is over (sec 2.3). This is the gauge for whether a throw
     is free information or a gamble -- and it is a RISK, so lower is better."""
 
-    def test_it_is_not_offered_during_setup(self):
-        """No balls in Phase 1 at all, so there is nothing to gauge."""
-        self.assertIsNone(_session().standard_ball_risk())
+    def test_it_is_reported_during_setup_too(self):
+        """Which is the point of lifting the ban: Phase 1 is where a probe is CHEAPEST, so it is
+        exactly where the figure needs to be visible."""
+        risk = _session().standard_ball_risk()
+        self.assertIsNotNone(risk)
+        self.assertIn("percent", risk)
+        self.assertTrue(risk["matches_capture_ball"])
+
+    def test_a_probe_is_safer_at_full_hp_than_at_one_hp_paralyzed(self):
+        """The fact that inverted the ban's own reasoning: the shake threshold RISES as the target
+        weakens, so deferring a throw out of Phase 1 made it more dangerous, not less.
+
+        Asserted on the threshold rather than on `percent`, because at a realistic candidate
+        count both percentages round to 0.0 -- a per-throw risk of 0.35% against 1.25% simply
+        does not show up in 60 samples, and writing the comparison that way made the test a
+        measure of sample size rather than of the mechanism.
+        """
+        from claytonlib.battle_compass.solver import target_threshold
+        early = _session(n=4)
+        late = _session(n=4, hp=1, status=Status.PARALYSIS)
+        b_early = target_threshold(next(iter(early._session.states.values())), HUNT)
+        b_late = target_threshold(next(iter(late._session.states.values())), HUNT)
+        self.assertLess(b_early, b_late)
+        # Four rolls must all land under the threshold, so the per-throw gap is the fourth power
+        # of the threshold ratio -- which is what turns a modest threshold rise into a ~3x risk.
+        self.assertGreater((b_late / b_early) ** 4, 2.5)
 
     def test_a_full_hp_target_is_safe_to_throw_at(self):
         session = _session(n=60)

@@ -286,18 +286,27 @@ class TestSecondAmbiguity(unittest.TestCase):
 
 
 class TestPhases(unittest.TestCase):
-    def test_balls_are_refused_during_setup(self):
-        """A standard ball shares the capture ball's multiplier here, so a throw that lands
-        catches the target in the wrong ball (sec 2.3)."""
-        session = _session(_window(frame_window=5), phase=Phase.SETUP)
-        for action in (Action.CAPTURE_BALL, Action.STANDARD_BALL):
-            with self.assertRaises(ValueError, msg=action):
-                session.observe(action, ("P0",))
+    def test_balls_are_accepted_in_every_phase_including_setup(self):
+        """The Phase 1 ban is gone, and both halves of it were wrong.
 
-    def test_balls_are_allowed_once_pinning(self):
-        self.assertFalse(Phase.SETUP.balls_allowed)
-        self.assertTrue(Phase.PINNING.balls_allowed)
-        self.assertTrue(Phase.SOLVING.balls_allowed)
+        The capture ball never carried a risk -- a landing wins the run -- so refusing it only
+        discarded information. A standard ball does carry one, but it gets *cheaper* the earlier
+        it is thrown (0.35% per throw at full HP against 1.25% at 1 HP and paralyzed), so a ban
+        that deferred throws out of Phase 1 pushed them to where they cost most. What replaces it
+        is disclosure: `HuntSession.standard_ball_risk` (notes/seed_separation.md sec 2a).
+        """
+        for phase in (Phase.SETUP, Phase.PINNING, Phase.SOLVING):
+            for action in (Action.CAPTURE_BALL, Action.STANDARD_BALL):
+                session = _session(_window(frame_window=5), phase=phase)
+                predicted = session.predict(action)[session.survivors[0]]
+                result = session.observe(action, (predicted,))
+                self.assertFalse(result.contradiction, f"{phase.name}/{action.value}")
+
+    def test_no_phase_carries_a_ball_gate_any_more(self):
+        """`balls_allowed` is gone rather than pinned to True: a flag that is always true tells a
+        caller nothing, and leaving it invited the gate to grow back."""
+        for phase in (Phase.SETUP, Phase.PINNING, Phase.SOLVING):
+            self.assertFalse(hasattr(phase, "balls_allowed"))
 
     def test_the_transition_out_of_setup_is_explicit(self):
         session = _session(_window(frame_window=5), phase=Phase.SETUP)
@@ -339,11 +348,22 @@ class TestInformationGain(unittest.TestCase):
         ranked = session.rank_actions([Action.MOVE_1, Action.MOVE_2, Action.ITEM])
         self.assertEqual([score for _, score in ranked], sorted(score for _, score in ranked))
 
-    def test_ranking_excludes_balls_during_setup(self):
+    def test_ranking_includes_balls_during_setup(self):
+        """And ranks them on information alone. A standard ball's chance of ending the run is
+        priced nowhere in this score, which is why the risk is reported beside it, not folded in.
+        """
         session = _session(_window(frame_window=5), phase=Phase.SETUP)
         actions = [a for a, _ in session.rank_actions(
             [Action.MOVE_1, Action.CAPTURE_BALL, Action.STANDARD_BALL])]
-        self.assertEqual(actions, [Action.MOVE_1])
+        self.assertEqual(set(actions),
+                         {Action.MOVE_1, Action.CAPTURE_BALL, Action.STANDARD_BALL})
+
+    def test_a_ball_separates_better_than_a_move_that_cannot_miss(self):
+        """The reason lifting the ban is a gain and not just a permission. The shake check is a
+        magnitude comparison, so it sees differences that `% 4` and `% 16` are blind to."""
+        session = _session(_window(frame_window=60), phase=Phase.SETUP)
+        scores = dict(session.rank_actions([Action.MOVE_1, Action.CAPTURE_BALL]))
+        self.assertLess(scores[Action.CAPTURE_BALL], scores[Action.MOVE_1])
 
     def test_a_partition_covers_every_survivor_exactly_once(self):
         session = _session(_window(frame_window=20))

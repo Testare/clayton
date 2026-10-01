@@ -288,10 +288,8 @@ class TestIdentificationPinsTheTrueSeed(unittest.TestCase):
 
         pinned_at = None
         for n, (action, kwargs, tokens) in enumerate(_truth_tokens(), 1):
-            if not session.phase.balls_allowed and action in (Action.CAPTURE_BALL,
-                                                              Action.STANDARD_BALL):
-                session.enter_pinning()
-                session.enter_solving()
+            # No phase juggling needed any more: balls are legal from Phase 1 on. The log's own
+            # eight Poke Ball throws replay as ordinary turns, which is what the real run does.
             result = session.observe(action, tokens, **kwargs)
             self.assertFalse(result.contradiction, f"turn {n} matched no candidate")
             self.assertIn(FORCED_SEED, session.states,

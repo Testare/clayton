@@ -302,13 +302,16 @@ class HuntSession:
         """Actions the player could report this turn, in slot order.
 
         Move slots are filtered to those with PP left in *every* surviving candidate, since PP is
-        not a thing candidates can disagree about. Balls are excluded during setup (sec 2.3).
+        not a thing candidates can disagree about.
+
+        Both balls are legal in every phase -- see `Phase`. A standard ball's danger is reported
+        by `standard_ball_risk` rather than removed from the list, because the risk is small,
+        quantified, and the player's to weigh; and the capture ball never carried one.
         """
         state = next(iter(self._session.states.values()))
         actions = [_MOVE_ACTIONS[slot] for slot in state.ours.usable_slots()]
         actions.extend([Action.ITEM, Action.ITEM_CURE])
-        if self.phase.balls_allowed:
-            actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
+        actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
         if self.phase is Phase.SETUP and state.bench:
             actions.append(Action.SWITCH)
         return actions
@@ -343,11 +346,17 @@ class HuntSession:
         gauge, not a progress one: 0% means the throw is free information, and anything above that
         is the chance of throwing the hunt away.
 
-        None when a ball is not a legal action, or once the seed is pinned -- with one candidate
-        the answer is not a percentage but a fact, and the solver decides it.
+        Reported in every phase, including Phase 1 and including a pinned seed. With one
+        candidate it is no longer a percentage but a verdict -- 0% or 100%, "free information" or
+        "this throw ends the run" -- which is the most actionable it ever gets, so suppressing it
+        there would hide the answer exactly when it is certain.
+
+        `matches_capture_ball` says whether the risk is the harsh kind. On Suicune both balls are
+        a flat x1 so a landing is a lost run; where the capture ball actually matches, a standard
+        ball is far weaker and a probe is cheap.
+
+        None only when there are no candidates left to measure.
         """
-        if not self.phase.balls_allowed:
-            return None
         states = list(self._session.states.values())
         if not states:
             return None
@@ -360,6 +369,7 @@ class HuntSession:
             "would_catch": caught,
             "percent": round(100.0 * caught / len(states), 1),
             "safe": caught == 0,
+            "matches_capture_ball": self.config.standard_ball_matches_capture_ball(),
         }
 
     def advice(self) -> list[dict]:
@@ -506,7 +516,14 @@ class HuntSession:
         out = {
             "phase": int(self.phase),
             "phase_label": self.phase.label,
-            "balls_allowed": self.phase.balls_allowed,
+            # Whether a plain Poke Ball is exactly as catchable as the capture ball here, which
+            # is what decides how harshly to word a standard-ball throw. Replaces the old
+            # `balls_allowed` flag: balls are always allowed now, so a key that was always true
+            # told the page nothing, while this tells it which warning to show. Cheap -- config
+            # arithmetic, not a candidate sweep, so it belongs on the snapshot where
+            # `standard_ball_risk` does not.
+            "standard_ball_matches_capture_ball":
+                self.config.standard_ball_matches_capture_ball(),
             "survivors": len(self.survivors),
             "identified": None if seed is None else f"{seed:#010x}",
             "candidates": [

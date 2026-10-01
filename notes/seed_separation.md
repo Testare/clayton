@@ -192,12 +192,22 @@ show the live figure (it does) rather than decide.
 HP and status together, and at full HP the HP term dominates; `b` is identical with and without
 paralysis there. So there is no "paralyze first, then probe" ordering benefit.
 
-### What this means for the phase rules
+### What this means for the phase rules — **implemented**
 
-Phase 1's ban should become a ban on **standard** balls only, surfaced with its live risk
-percentage, with the capture ball allowed throughout and priced against inventory. That also makes
-Phase 1.5 less of a distinct phase: "throw the capture ball to pin the seed" is simply the best
-information-gain action, which is what Phase 1.5 already ranks for.
+Both balls are now legal in every phase. `Phase.balls_allowed` is deleted rather than pinned to
+True, so the gate cannot quietly grow back, and what replaces it is disclosure:
+
+* `HuntSession.standard_ball_risk` is reported in **every** phase, including Phase 1 and including
+  a pinned seed — where it stops being a percentage and becomes a verdict, which is the most
+  actionable it ever gets.
+* `HuntConfig.standard_ball_matches_capture_ball` says whether this matchup is the dangerous one,
+  so the warning states the player's actual case rather than always the harsher one.
+* `Session.rank_actions` ranks balls alongside moves, on information alone. A standard ball's
+  chance of ending the run is priced nowhere in that score, which is exactly why the risk sits
+  beside the ranking instead of being folded into it.
+
+It also makes Phase 1.5 less of a distinct phase: "throw the capture ball to pin the seed" is
+simply the best information-gain action, which is what Phase 1.5 already ranks for.
 
 ## 3. Why we cannot simply solve for all of them at once
 
