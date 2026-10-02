@@ -1219,3 +1219,93 @@ class TestTheHpFieldIsNotEditedByAccident(unittest.TestCase):
         field = self.html[self.html.index('id="hrHp"'):]
         field = field[:field.index(">")]
         self.assertIn("event.preventDefault()", field)
+
+
+class TestFocusSurvivesARerender(unittest.TestCase):
+    """Filling a stat and tabbing to the next field: the next field gained focus and then lost it.
+
+    Every field on the hunt-configure page is `onchange` -> save -> re-render, and Tab fires the
+    change on the field you LEFT. So the field you moved to was built, focused by the browser,
+    and then destroyed a couple of awaits later when `mount` replaced innerHTML. Same class as
+    the HP-field bug: an async reply re-rendering a region the player is working in.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_mount_restores_focus(self):
+        body = self.html[self.html.index("function mount(html){"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertIn("document.activeElement", body)
+        self.assertIn("after.focus()", body)
+
+    def test_it_keys_on_the_elements_own_id_rather_than_guessing(self):
+        """So nothing is restored by position or index: no id, or no surviving element with that
+        id, means focus is simply left alone."""
+        body = self.html[self.html.index("function mount(html){"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertIn("before.id ? before.id : null", body)
+        self.assertIn("if (!after", body)
+
+    def test_only_text_entry_controls_are_eligible(self):
+        """Stealing focus back onto a button would change what Enter and Space do."""
+        body = self.html[self.html.index("function mount(html){"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertIn("/^(INPUT|SELECT|TEXTAREA)$/", body)
+
+    def test_the_caret_is_preserved(self):
+        """Refocusing without it sends the cursor to the end, which transposes digits for anyone
+        typing at speed -- the same secondary problem the HP field had."""
+        body = self.html[self.html.index("function mount(html){"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertIn("selectionStart", body)
+        self.assertIn("setSelectionRange", body)
+
+    def test_the_caret_read_and_write_are_both_guarded(self):
+        """`selectionStart` throws on number and date inputs in some engines, and the stat fields
+        this was reported against are all type=number."""
+        body = self.html[self.html.index("function mount(html){"):]
+        body = body[:body.index("\n}\n") + 3]
+        self.assertEqual(body.count("try {"), 2, body)
+
+    def test_every_field_on_the_configure_page_has_an_id_to_key_on(self):
+        """The fix is inert for a field without one, so this is the half that makes it work."""
+        import re
+        body = self.html[self.html.index("function renderHuntConfigure()"):]
+        body = body[:body.index("\n}\n")]
+        without = [attrs.strip()[:60] for tag, attrs in
+                   re.findall(r"<(input|select)([^>]*)>", body) if "id=" not in attrs]
+        self.assertEqual(without, [])
+
+    def test_the_per_member_fields_key_their_ids_on_the_member(self):
+        """A party row's id has to be stable across the re-render, and unique within it."""
+        self.assertIn('id="hc-party-${p.id}"', self.html)
+        self.assertIn('id="hc-held-${p.id}"', self.html)
+
+
+class TestTheConfigureTabHasATimePicker(unittest.TestCase):
+    """The set of initial times a key seed can be loaded at is fixed and small, so every other
+    tool offers a picker rather than asking you to type one."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_button_is_there(self):
+        self.assertIn("onclick=\"openTimePicker(${h.key_seed ?? \"null\"}, huntConfigurePickTime)\"",
+                      self.html)
+
+    def test_its_handler_saves_through_the_normal_path(self):
+        body = self.html[self.html.index("function huntConfigurePickTime("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('huntSetField("initial_time", t)', body)
+        self.assertIn("closeModal()", body)
+
+    def test_it_reuses_the_shared_picker(self):
+        """Rather than a second implementation that could drift from `times_on_date`."""
+        self.assertIn("function openTimePicker(keySeed, onPick){", self.html)
+
+    def test_the_picker_handles_a_missing_key_seed_itself(self):
+        """So the button needs no guard of its own -- openTimePicker toasts and returns."""
+        body = self.html[self.html.index("function openTimePicker(keySeed, onPick){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("Set a key seed first.", body)

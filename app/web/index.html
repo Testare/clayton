@@ -483,7 +483,36 @@ function fmtDuration(ms){
 // whether the page it was rendering into is still the one on screen, without hardcoding a
 // "current page" concept — see ctBuildCanon/ctClaimPrecomputeWatch.
 let mountGen = 0;
-function mount(html){ mountGen++; $("main").innerHTML = html; }
+// Replacing innerHTML destroys whatever had focus, so anything that re-renders on a field
+// change throws focus away. That is not hypothetical: on the hunt-configure page every field
+// is `onchange` -> save -> re-render, and Tab fires the change on the field you LEFT, so the
+// field you just moved to was being built, focused by the browser, and then destroyed a couple
+// of awaits later. It read as a field that "gains focus briefly and then loses it".
+//
+// Restoring is keyed on the element's own id, so nothing is guessed: if the focused element had
+// no id, or no element with that id survives the render, focus is simply not restored. Only
+// text-entry controls are eligible -- stealing focus back onto a button would change what Enter
+// and Space do.
+function mount(html){
+  const before = document.activeElement;
+  const id = before && before.id ? before.id : null;
+  const restorable = id && /^(INPUT|SELECT|TEXTAREA)$/.test(before.tagName);
+  // Caret, so restoring focus mid-edit does not jump the cursor to the end. Not every input
+  // type exposes it (number and date throw on selectionStart in some engines).
+  let caret = null;
+  if (restorable){
+    try { caret = [before.selectionStart, before.selectionEnd]; } catch (e) { caret = null; }
+  }
+  mountGen++;
+  $("main").innerHTML = html;
+  if (!restorable) return;
+  const after = $(id);
+  if (!after || !/^(INPUT|SELECT|TEXTAREA)$/.test(after.tagName)) return;
+  after.focus();
+  if (caret && caret[0] != null){
+    try { after.setSelectionRange(caret[0], caret[1]); } catch (e) { /* unsupported type */ }
+  }
+}
 
 function openModal(html, wide){
   closeModal();
@@ -5566,7 +5595,8 @@ function renderHuntConfigure(){
     const slot = (h.party || []).find(s => s.pokemon_id === p.id);
     const issues = [...(p.hard_errors||[]), ...(p.warnings||[])];
     return `<tr>
-      <td><input type="checkbox" ${slot ? "checked" : ""} ${p.is_hunt_ready ? "" : "disabled"}
+      <td><input id="hc-party-${p.id}" type="checkbox" ${slot ? "checked" : ""}
+        ${p.is_hunt_ready ? "" : "disabled"}
         onchange="huntToggleParty(${p.id}, this.checked)"></td>
       <td>${esc(p.name)}</td>
       <td class="muted">${esc(capName(p.species) || "—")}${p.level ? " · Lv " + p.level : ""}</td>
@@ -5575,7 +5605,8 @@ function renderHuntConfigure(){
                 ? `<span class="badge warn" title="${esc(issues.join('; '))}">${p.warnings.length} note(s)</span>`
                 : `<span class="badge ok">ready</span>`)
             : `<span class="badge danger" title="${esc(issues.join('; '))}">incomplete</span>`}</td>
-      <td><input placeholder="held item" value="${esc(slot ? slot.held_item : "")}"
+      <td><input id="hc-held-${p.id}" placeholder="held item"
+        value="${esc(slot ? slot.held_item : "")}"
         ${slot ? "" : "disabled"} onchange="huntSetHeldItem(${p.id}, this.value)"></td>
     </tr>`;
   }).join("");
@@ -5628,18 +5659,18 @@ function renderHuntConfigure(){
     <div class="panel">
       <div class="grid4">
         <div class="field"><label>Species</label>
-          <input value="${esc(t.species||"")}" placeholder="suicune"
+          <input id="hc-species" value="${esc(t.species||"")}" placeholder="suicune"
             onchange="huntSetTarget('species', this.value.trim().toLowerCase())"></div>
         <div class="field"><label>Level</label>
-          <input type="number" min="1" max="100" value="${t.level ?? ""}"
+          <input id="hc-level" type="number" min="1" max="100" value="${t.level ?? ""}"
             onchange="huntSetTarget('level', this.value ? +this.value : null)"></div>
         <div class="field"><label>Nature</label>
-          <select onchange="huntSetTarget('nature', this.value)">
+          <select id="hc-nature" onchange="huntSetTarget('nature', this.value)">
             <option value="">—</option>
             ${NATURES.map(n => `<option ${t.nature===n?"selected":""}>${n}</option>`).join("")}
           </select></div>
         <div class="field"><label>Capture ball</label>
-          <select onchange="huntSetField('capture_ball', this.value)">
+          <select id="hc-ball" onchange="huntSetField('capture_ball', this.value)">
             <option value="">—</option>
             ${BALLS.map(b => `<option ${h.capture_ball===b?"selected":""}>${esc(b)}</option>`).join("")}
           </select>
@@ -5650,7 +5681,7 @@ function renderHuntConfigure(){
           These are what let Battle Compass read the damage you take, so they have to be exact.</span></div>
       <div class="grid6">
         ${STATS.map(k => `<div class="field"><label>${STAT_LABEL[k]}</label>
-          <input type="number" min="0" max="31" value="${ivs[k] ?? ""}"
+          <input id="hc-iv-${k}" type="number" min="0" max="31" value="${ivs[k] ?? ""}"
             onchange="huntSetIv('${k}', this.value)"></div>`).join("")}
       </div>
       ${r.target_stats && !r.target_stats.error ? `<div class="hr-small muted">
@@ -5674,14 +5705,17 @@ function renderHuntConfigure(){
         the centring uses is the profile's active one; see the hunt page.</div>
       <div class="grid4">
         <div class="field"><label>Key seed</label>
-          <input value="${h.key_seed != null ? "0x" + h.key_seed.toString(16).toUpperCase() : ""}"
+          <input id="hc-key-seed" value="${h.key_seed != null ? "0x" + h.key_seed.toString(16).toUpperCase() : ""}"
             placeholder="0xEC1504DC" onchange="huntSetSeed(this.value)"></div>
         <div class="field"><label>Advances</label>
-          <input type="number" min="0" value="${h.key_seed_advances ?? ""}"
+          <input id="hc-advances" type="number" min="0" value="${h.key_seed_advances ?? ""}"
             onchange="huntSetField('key_seed_advances', this.value ? +this.value : null)"></div>
         <div class="field"><label>Initial time</label>
-          <input value="${esc(h.initial_time||"")}" placeholder="2026-09-29T12:00:00"
-            onchange="huntSetField('initial_time', this.value.trim())"></div>
+          <input id="hc-initial-time" value="${esc(h.initial_time||"")}" placeholder="2026-09-29T12:00:00"
+            onchange="huntSetField('initial_time', this.value.trim())">
+          <button class="btn small" type="button" style="margin-top:4px"
+            onclick="openTimePicker(${h.key_seed ?? "null"}, huntConfigurePickTime)">Pick
+            time</button></div>
         <div class="field"><label>Vector ms</label>
           <input id="hcVectorMs" type="number" min="0" value="${h.vector_ms ?? ""}"
             placeholder="300000"
@@ -5690,10 +5724,10 @@ function renderHuntConfigure(){
           <div id="hcVectorPreview" class="hint"
             style="font-family:ui-monospace,monospace">${fmtVectorMs(h.vector_ms)}</div></div>
         <div class="field"><label>Seconds window (±)</label>
-          <input type="number" min="0" value="${h.seconds_window ?? 2}"
+          <input id="hc-seconds-window" type="number" min="0" value="${h.seconds_window ?? 2}"
             onchange="huntSetField('seconds_window', +this.value)"></div>
         <div class="field"><label>Delay window (±)</label>
-          <input type="number" min="0" value="${h.delay_window ?? 60}"
+          <input id="hc-delay-window" type="number" min="0" value="${h.delay_window ?? 60}"
             onchange="huntSetField('delay_window', +this.value)"></div>
       </div>
     </div>`);
@@ -5724,6 +5758,14 @@ function huntReadinessPanel(r){
             <span class="muted"> · target's Speed is ${r.speed.target_speed}</span></div>`}</div>`;
   }
   return `<div class="panel" style="margin-top:12px">${alphabet}${speed}</div>`;
+}
+
+// The set of initial times a key seed can be loaded at is fixed and small, so the other tools
+// let you pick one rather than type it; this is the same `openTimePicker`, which toasts for
+// itself when no key seed is set yet.
+function huntConfigurePickTime(t){
+  closeModal();
+  huntSetField("initial_time", t);
 }
 
 function huntSetField(key, value){ _hunt[key] = value; huntSaveAndRefresh(); }
