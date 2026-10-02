@@ -363,3 +363,68 @@ class TestNothingRegressed(unittest.TestCase):
         snap = facade.hunt_session_observe(sid, "M1", [predicted])
         self.assertEqual(len(snap["turns"]), 1)
         self.assertTrue(snap["turns"][0]["explain"])
+
+
+class TestTheConfirmButtonShowsItIsWorking(unittest.TestCase):
+    """"It isn't obvious when the click actually happened."
+
+    The button disabled itself the instant it was clicked -- `huntRunDo` sets `_hrBusy` and
+    re-renders synchronously, before its first await -- so the state change was already
+    happening. It just was not VISIBLE: there is no `.btn:disabled` rule in the stylesheet, so a
+    disabled button got only the UA default, which against `.btn.primary`'s grass fill is barely
+    a change. `.chip:disabled` has had `opacity:.5` since it was written; `.btn` never did.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_disabled_button_is_visibly_disabled(self):
+        self.assertIn(".btn:disabled{opacity:.5;cursor:not-allowed}", self.html)
+
+    def test_it_matches_what_chips_already_did(self):
+        self.assertIn(".chip:disabled{opacity:.5;cursor:not-allowed}", self.html)
+
+    def test_the_confirm_button_says_what_it_is_doing(self):
+        block = self.html[self.html.index("function hrExpectedBlock()"):]
+        block = block[:block.index("\n}") + 2]
+        self.assertIn("Reporting…", block)
+        self.assertIn('<span class="spin"></span>', block)
+
+    def test_it_also_shows_the_progress_bar_while_in_flight(self):
+        block = self.html[self.html.index("function hrExpectedBlock()"):]
+        block = block[:block.index("\n}") + 2]
+        self.assertIn('<div class="progress-wrap">', block)
+
+    def test_the_hint_about_answering_below_is_dropped_while_busy(self):
+        """It invites an action that is not available mid-report, so leaving it up reads as the
+        click having been ignored."""
+        block = self.html[self.html.index("function hrExpectedBlock()"):]
+        block = block[:block.index("\n}") + 2]
+        self.assertIn('${_hrBusy ? "" : `<span class="muted hr-small">If anything differed',
+                      block)
+
+    def test_the_interviews_report_button_gained_the_same_spinner(self):
+        """Both paths report a turn, so both should look the same while doing it."""
+        self.assertIn('${_hrBusy ? `<span class="spin"></span>Checking…` : "Report turn"}',
+                      self.html)
+
+    def test_the_spinner_has_an_animation_to_run(self):
+        self.assertIn(".spin{", self.html)
+        self.assertIn("@keyframes spin{to{transform:rotate(360deg)}}", self.html)
+
+    def test_it_inherits_the_button_text_colour(self):
+        """currentColor, so the same element works on the grass primary and on a plain button
+        without a second rule to keep in step."""
+        rule = self.html[self.html.index(".spin{"):]
+        rule = rule[:rule.index("}") + 1]
+        self.assertIn("border:2px solid currentColor", rule)
+
+    def test_the_busy_flag_is_set_before_the_await(self):
+        """The whole fix assumes the re-render happens on click rather than on reply. huntRunDo
+        is async, so this only holds because the assignment and the render precede its first
+        await."""
+        body = self.html[self.html.index("async function huntRunDo("):]
+        body = body[:body.index("\n}") + 2]
+        before = body[:body.index("await api(")]
+        self.assertIn("_hrBusy = true;", before)
+        self.assertIn("renderHuntRun();", before)

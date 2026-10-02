@@ -2626,6 +2626,14 @@ The rest:
   It shows the paralysed Speed beside the raw one, since raw Speed is what the summary screen
   shows and effective Speed is what decides turn order — showing only one makes the other look
   wrong.
+* **Nothing visible on click** — the one-click confirm disabled itself the instant it was
+  pressed (`huntRunDo` sets `_hrBusy` and re-renders synchronously, before its first `await`), so
+  the state change was already happening. It simply was not *visible*: the stylesheet had **no
+  `.btn:disabled` rule at all**, so a disabled button got only the UA default, which against
+  `.btn.primary`'s grass fill is barely a change. `.chip:disabled` has had `opacity:.5` since it
+  was written; `.btn` never did. It does now, plus an inline `currentColor` spinner on the
+  control, a "Reporting…" label and the in-flight progress bar — and the interview's own Report
+  button got the same spinner, since both paths report a turn and should look alike doing it.
 * **Selectable text, and click-to-copy** on Seed A, Seed B and the path. Selection is now stated
   in CSS rather than left to the host engine, with controls kept unselectable so dragging across a
   chip row does not highlight the labels. Copy falls back to selecting the text when

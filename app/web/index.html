@@ -68,6 +68,17 @@
   .btn.primary:hover{filter:brightness(1.05)}
   .btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--line))}
   .btn.small{padding:5px 10px;font-size:12.5px}
+  /* A disabled .btn had no rule of its own -- only the UA default, which against .btn.primary's
+     grass fill is barely a change. So a button that disabled itself the instant it was clicked
+     looked like a button that had not registered the click at all. .chip:disabled has always
+     had this; .btn never did. */
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  /* An inline spinner for a button that is mid-flight, so "working" is visible ON the control
+     rather than only in a bar underneath it. */
+  .spin{display:inline-block;width:11px;height:11px;margin-right:7px;vertical-align:-1px;
+    border:2px solid currentColor;border-right-color:transparent;border-radius:50%;
+    animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .badge{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap}
   .badge.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
   .badge.warn{background:color-mix(in srgb,var(--ember) 20%,transparent);color:var(--ember)}
@@ -4995,7 +5006,7 @@ function hrInterview(){
     <div class="chip-row">
       <button class="btn primary" id="hrReport" onclick="huntRunObserve()"
         ${ready && !_hrBusy ? "" : "disabled"}>
-        ${_hrBusy ? "Checking…" : "Report turn"}</button>
+        ${_hrBusy ? `<span class="spin"></span>Checking…` : "Report turn"}</button>
       <button class="btn" onclick="hrTurnReset();renderHuntRun()">Start over</button>
     </div>
     ${_hrBusy ? `<div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`
@@ -5115,10 +5126,13 @@ function hrExpectedBlock(){
       `<li>${esc(line)}</li>`).join("")}</ul>
     <div class="chip-row">
       <button class="btn primary" onclick="hrConfirmExpected()" ${_hrBusy ? "disabled" : ""}>
-        Yes — report it</button>
-      <span class="muted hr-small">If anything differed, answer the questions below instead.</span>
+        ${_hrBusy ? `<span class="spin"></span>Reporting…` : "Yes — report it"}</button>
+      ${_hrBusy ? "" : `<span class="muted hr-small">If anything differed, answer the questions
+        below instead.</span>`}
     </div>
-    <div class="muted hr-small">Reports <code>${esc(next.expect)}</code>.</div></div>`;
+    ${_hrBusy ? `<div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`
+              : `<div class="muted hr-small">Reports <code>${esc(next.expect)}</code>.</div>`}
+    </div>`;
 }
 
 // Straight to observe with the predicted tokens -- no interview state involved, so a half-filled
