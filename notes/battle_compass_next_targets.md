@@ -241,6 +241,75 @@ Two asymmetries between the paths, both worth knowing:
 
 (`followerFlag` gates both, but the decomp comment notes it is always FALSE in HGSS.)
 
+### Predicting which advance frames give the roamer — one bit, no generation
+
+**You do not have to simulate Pokemon generation at all.** For a Sweet Scent with exactly one
+active roamer on the map:
+
+```python
+roamer_on_frame = (advance_rng_n_times(seed, frame + 1) >> 16) & 1 == 1
+```
+
+That is *the same roll* `safari_encounters.frame_slot` already computes — one advance past the
+frame — taken `% 2` instead of `% 10`. The machinery exists; only the modulus changes.
+
+Two facts make generation irrelevant:
+
+1. **The flip precedes all generation.** On the Sweet Scent path it is the *first* roll: there is
+   no encounter-rate roll, and `getRandomActiveRoamerInCurrMap` runs before
+   `FieldSystem_CreateBattleSetupForWildBattle`.
+2. **A winning flip generates nothing.** `initRoamingWildmon` calls
+   `CreateMonWithFixedIVs(species, level, ivs, pid)` → `CreateMon(..., fixedIV=0,
+   hasFixedPersonality=1, otIdType=0, ...)`, and in `CreateBoxMon` every one of those arguments
+   takes the branch that skips the RNG: `hasFixedPersonality == 1` skips the two personality
+   rolls, `otIdType == 0` is neither 2 nor 1 so the OT-ID rolls are skipped, and `fixedIV < 0x20`
+   takes the no-roll IV branch (then `MON_DATA_COMBINED_IVS` overwrites it with the saved word).
+   **Zero generation rolls.** Species, level, IVs, PID, status and HP all come out of the save.
+
+So a roamer encounter is *cheaper* to predict than a normal one: a normal Sweet Scent needs the
+slot draw plus the species/level table, the roamer needs one bit and nothing else.
+
+> **The 50% is what the code says, and it is worth a measurement.** The only probability gate on
+> the roamer path is that single `LCRandRange(2)`. I searched for another: there are exactly two
+> call sites, both unguarded beyond `followerFlag`, and the only other roamer RNG anywhere is
+> relocation (`field_roamer.c`'s `LCRandom() % 16` teleport-vs-adjacent choice, and the location
+> draws themselves). Nothing multiplies the rate down. But a believed figure of **1 in 4** is on
+> the record from play experience, and if that is right then this predicate is wrong — it would
+> be two bits, not one, and the frame density would quarter. Settle it before relying on it:
+> the flip is a single identifiable roll, so one forced-seed capture on the roamer's route shows
+> directly whether the first roll's low bit predicted the outcome.
+
+Measured over 2000 frames of a real seed (`0x0C0E02CA`), **assuming the 50% above**:
+
+| | |
+|---|---|
+| frames that give the roamer | **999 / 2000 = 50.0%** |
+| gap to the next roamer frame | min 1, **max 11**, mean 2.00 |
+| half the time | the very next frame works |
+
+The bit is also well behaved, which was worth checking because `% 2` on an LCRNG is exactly where
+weak low-order bits show up: 49.7% ones over 4000 rolls, and agreement at lags 1, 2, 3, 4, 8 and
+16 all sit within a point of 0.5. No short period, no bias. Roamer frames are *abundant* — hitting
+one is a far easier targeting problem than finding a shiny frame.
+
+**Three caveats.**
+
+* **Two roamers cannot share a map, so the tiebreak roll never fires.** An earlier draft here
+  claimed Raikou, Entei and a Lati twin could overlap and cost a second bit. They cannot:
+  `RoamerLocationSetRandom` confines Raikou and Entei to `ROAMER_LOC_JOHTO_*` indices and the
+  Lati twin to `ROAMER_LOC_KANTO_*`, so `nRoamers` is always 1 in practice and
+  `LCRandRange(nRoamers)` is effectively dead code. (The location *table* is shared, which is
+  what made the overlap look possible — but the index range each roamer draws from is not.)
+* **Walking is messier than Sweet Scent.** `FieldSystem_EncounterRateRoll` spends one
+  `LCRandRange(100)`, and a *second* one via `FieldSystem_SecondEncounterRoll` only if the first
+  passes — so the number of rolls before the flip is outcome-dependent (1 or 2), against a rate
+  that depends on the tile, the lead's ability, a flute and a held item. Predictable, but fragile.
+  Sweet Scent is the clean way to frame-target a roamer.
+* **Multi-attempt is the one place generation would matter.** A *failed* flip runs the full normal
+  encounter generation, so predicting a second attempt from the same starting point needs that
+  roll cost. In practice you re-pin the frame from Elm calls between attempts — which the frame
+  guide already does — so it does not come up.
+
 ### Two structural notes on the roamer
 
 **Its IVs are fixed in your save, not by the encounter.** `CreateRoamer`
@@ -270,3 +339,59 @@ simulation each needs.
    save-fixed spread. Treat as its own project rather than a new `STATIC_ENCOUNTERS` row.
 
 Steps 1-2 are "add a target". Steps 3-4 are "extend the model".
+
+---
+
+## 6. The roamer-rate experiment
+
+`utils/gdb-overworld-reader.py` records the **overworld** (Seed A) stream and every roamer
+encounter check, to settle 1-in-2 against 1-in-4. Analysis lives in `claytonlib/roamer_check.py`
+(pure Python, tested) because everything in the recorder needs a live emulator.
+
+```
+(gdb) source utils/gdb-overworld-reader.py
+(gdb) owlog 0x0C0E02CA bluetest     # force a seed and start; or `owlog` to just record
+(gdb) owpredict 40                  # frames this seed should give a roamer on
+... walk onto the roamer's route and Sweet Scent ...
+(gdb) owstatus                      # running verdict
+(gdb) owsave                        # -> data/overworld_logs/<name>.jsonl
+```
+
+**It brackets rather than attributes, and that is the whole design.** `LCRandRange` is
+`static inline`, so the flip has no symbol and cannot be hooked directly. The obvious
+alternative — hook `LCRandom` and symbolise the caller — is exactly what misled this project in
+§2: gdb resolves a caller to the nearest symbol, which credited six verified battle-start
+advances to a function that makes no RNG call. So the recorder breaks on the **entry and return**
+of `getRandomActiveRoamerInCurrMap` and treats every roll in between as that call's. No
+symbolisation, nothing a neighbour can spoof.
+
+The bracketed roll count is itself a measurement:
+
+| rolls spent | means |
+|---|---|
+| 0 | no active roamer on that map — says nothing about the rate |
+| 1 | the flip alone decided it, which the decompilation says is universal |
+| 2+ | a tiebreak fired, so two roamers shared a map — which §4a says is impossible |
+
+`initRoamingWildmon` is hooked as an **independent witness**: it runs only on a roamer battle, so
+if it ever disagrees with the check's return value then the recorder is wrong and nothing else in
+the log is safe. `claytonlib.roamer_check` reports that as a recorder problem rather than folding
+it into the result.
+
+Two findings are kept separate on purpose, because they can differ: whether **the bit predicts
+the outcome**, and what the **observed rate** is. A 1-in-4 recording would show the bit agreeing
+on every single event while the rate came out at 25% — which would mean the gate is not the
+`LCRandRange(2)` this reading assumes, and the predicate needs more than one bit.
+
+**On forcing the seed.** `gdb-seed-reader.py` records that this emulator's GDB stub corrupts
+memory writes (writing `0x082A8651` left memory holding `0x0A7D8651`), which is why the battle
+reader forces its seed through a register hijack instead. `sLCRNG_State` is plain memory, so
+`owlog` writes it, reads it back, retries, and **refuses to record** under a seed it could not
+verify — a silently-unforced seed would mislabel every frame number in the log. Recording without
+forcing is fully supported and is all the rate test needs; forcing only buys frame numbers that
+are reproducible across runs.
+
+> Worth noting: that same stub hazard is the most likely explanation for the unresolved IV-word
+> write in §16.x of the battle notes, where a single `u32` store came back with its low half
+> correct and two fields in the high half wrong. A partially-landed memory write is exactly what
+> the stub was already known to do.
