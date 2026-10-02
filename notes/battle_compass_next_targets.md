@@ -393,6 +393,84 @@ advances where the game skips them — precisely the bug that desynchronised tes
 way Lugia does (§3) and Suicune never did. Mist Ball's 50% Sp. Atk drop lands on us and does not
 matter; Water Sport is a no-op against anything we do.
 
+## 4c. Itemised: what supporting Latias actually requires
+
+Grounded in the code rather than estimated. Each item names the line that assumes otherwise.
+
+### A. Lift the paralysis precondition — 4 places, all small
+
+The contract "1 HP and **permanently paralyzed**" is asserted in two places and stated in several
+more. Sleep satisfies the *purpose* (a frozen target, a constant `b`) but not the letter.
+
+| # | where | what it does now |
+|---|---|---|
+| A1 | `identify.solver_blockers` (~L225) | `if state.target.status is not Status.PARALYSIS` → "the target is not paralyzed" |
+| A2 | `solver.solve` (~L320) | same check again, returns `Unreachable` with `proven=False` |
+| A3 | `battle_compass/__init__.py`, `state.py`, `solver.py` docstrings | state the contract as paralysis specifically |
+| A4 | `app/web/index.html` (~L3922, L5160, L5466) | "Suicune is at 1 HP and paralyzed", and the force-solving confirm text |
+
+The replacement is not "accept any status": it is **accept paralysis, or sleep with a known
+remaining duration**. Burn and poison would also satisfy the catch bonus and fail the frozen-state
+requirement, because they tick HP every turn.
+
+### B. Model sleep properly — the real prerequisite (`clayton-hdo.1`)
+
+This is the bulk of the work, and it is worse than "unmodelled": it is currently **wrong**.
+
+| # | gap | detail |
+|---|---|---|
+| B1 | **A sleeping target acts normally** | `sim.act_target` (~L592) checks only `Status.PARALYSIS`. A sleeping target falls through and attacks. Not an omission — a wrong simulation. |
+| B2 | The duration is rolled and **discarded** | `MoveOutcome.sleep_turns` is computed (~L243) and never stored. `BattleState`/`Battler` have no sleep counter, so the target never wakes. |
+| B3 | Wake-up roll accounting | whether the per-turn sleep check costs a roll is an R7-style question. Cross-validate against `metronome_compass.effects._eff_sleep` first, which the project already does for Spore's application roll. |
+| B4 | `_dominance_key` must include it | exactly the argument the field conditions already won (~L292): two states at the same offset with different remaining sleep are not interchangeable, because one wakes sooner and spends different advances. |
+| B5 | The solver gains a **second clock** | `struggle_deadline` caps the horizon by the target's PP. A sleep window caps it again, and much sooner: a path must land its throw before the target wakes, or plan the re-Spore. |
+| B6 | Re-application is a sequence, not a top-up | a status move against a statused target fails, so "wait for the wake, then Spore" has to be a legal plan. Spore's 15 PP is 15 applications here (see E2). |
+
+### C. Flinch — `can_flinch` exists but nothing applies one
+
+`sim.act_ours` checks only paralysis, and only effect **68** (Aurora Beam's Attack drop) is applied
+from a secondary proc (~L609). So Zen Headbutt's 20% flinch is *reportable by the player and
+unpredictable by the simulator* — a real flinch turn would match no candidate and read as a
+contradiction. This is the one item that bites even without the sleep work.
+
+### D. Two `will_fail` cases
+
+`will_fail` knows status-against-a-statused-target and three field conditions, and neither of
+these:
+
+* **D1 — Refresh with nothing to cure.** With sleep as the status this is the *common* case: an
+  awake unstatused Latias wastes ~1 turn in 4 on it.
+* **D2 — Water Sport already active.** Needs a field flag alongside rain and mist. Without it a
+  second Water Sport wrongly spends its two post-successful-move advances.
+
+Both are the bug that desynchronised test1 at turn 3, in a new costume.
+
+### E. Target configuration — small but easy to get wrong
+
+* **E1** `targets.py`: `"latias": (40, ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt"))`.
+  Base stats are already present for both twins.
+* **E2 — `target_has_pressure` is hardcoded True in practice.** It is a `HuntConfig` field
+  defaulting to `True`, and `app/facade.py` never sets it. Correct for all three birds
+  (`ABILITY_PRESSURE`) and **wrong for both Lati twins** (`ABILITY_LEVITATE`), where it would
+  double-count our PP and halve every budget the solver plans against. Should be derived from the
+  species' ability, not defaulted.
+* **E3** Mist Ball's 50% Sp. Atk drop is tokenised and not applied. Harmless — nothing we use is a
+  special move — but it should be *documented* as ignorable rather than left looking like an
+  oversight.
+
+### F. Not code
+
+The Enigma Stone was a Mystery Gift distribution. Whether this encounter is reachable at all on a
+given cartridge is a real-world prerequisite, not a work item — worth settling before any of the
+above is built.
+
+### What this means for ordering
+
+**C and D are worth doing regardless** — C is a live correctness hole for any target with a
+flinching move (Extrasensory is in both Lv45 bird sets), and D is the same class of bug the
+simulator has already been caught by once. **A is half a day.** **B is the project**, and
+`clayton-957.11` now depends on `clayton-hdo.1` for exactly that reason.
+
 ## 5. Suggested order — by machinery needed, not by difficulty
 
 Every target is catch rate 3 at ×1, so none is easier to *catch*. They differ only in how much new
