@@ -122,7 +122,8 @@ class TestCaptureWindows(unittest.TestCase):
 
 class TestPreconditions(unittest.TestCase):
     """The solver asserts its preconditions rather than coping without them: a target at exactly
-    1 HP and paralyzed is what makes b a single constant (sec 2.2)."""
+    1 HP and held still -- paralyzed or asleep -- is what makes b a single constant
+    (sec 2.2)."""
 
     def test_a_target_above_one_hp_is_refused(self):
         result = solve(_state(hp=50), HUNT, _config())
@@ -130,10 +131,29 @@ class TestPreconditions(unittest.TestCase):
         self.assertFalse(result.proven)
         self.assertIn("1 HP", result.reason)
 
-    def test_an_unparalyzed_target_is_refused(self):
+    def test_an_unstatused_target_is_refused(self):
         result = solve(_state(status=Status.NONE), HUNT, _config())
         self.assertIsInstance(result, Unreachable)
-        self.assertIn("paralyzed", result.reason)
+        self.assertIn("held still", result.reason)
+
+    def test_a_status_that_ticks_hp_is_refused_too(self):
+        """Burn and poison carry the same x1.5 catch bonus as paralysis, so "has a status" is
+        not the test -- they damage the target every turn, so it is not frozen and b is not a
+        constant (Battler.frozen_for_phase2)."""
+        for status in (Status.BURN, Status.POISON):
+            result = solve(_state(status=status), HUNT, _config())
+            self.assertIsInstance(result, Unreachable, status)
+            self.assertIn("held still", result.reason)
+
+    def test_sleep_is_accepted(self):
+        """Stronger than paralysis -- the target cannot act at all -- and the status of choice
+        against a target that knows Refresh (notes/battle_compass_next_targets.md sec 4b)."""
+        state = _state(status=Status.SLEEP)
+        state.target = state.target.with_status(Status.NONE).with_status(
+            Status.SLEEP, sleep_turns=4)
+        result = solve(state, HUNT, _config())
+        if isinstance(result, Unreachable):
+            self.assertNotIn("preconditions do not hold", result.reason)
 
     def test_refusal_is_not_reported_as_a_proof(self):
         """It says nothing about the seed, so it must not look like unreachability."""

@@ -44,7 +44,18 @@ SLEEP_DURATION_SPAN = 4
 
 #: Move effect ids that can cause a flinch: 31 (the generic "may flinch"), 150 (Stomp) and
 #: 158 (Fake Out). Nothing in Suicune's moveset is among them, which is why "flinched" must not
-#: be offered as an outcome against it.
+#: be offered as an outcome against it -- but Extrasensory is in both Lv45 bird sets and Zen
+#: Headbutt in both Pewter sets, so it is live for every target after the first.
+#:
+#: A flinched turn spends **no roll of its own**, and the flinch is checked **before** the
+#: paralysis check. Both taken from ``metronome_compass``, which is RNG-verified against
+#: Blackthorn ground truth and resolves a turn in the order sleep -> freeze -> flinch ->
+#: confusion -> paralysis, emitting the flinch with ``raw_emit`` (no advance). The proc roll
+#: itself is already spent by the flincher's own move, through ``effect_chance``.
+#:
+#: The order matters only when a Pokemon is both paralyzed and flinched, which among these
+#: targets arises solely against Latios -- its Dragon Breath can leave us paralyzed on an
+#: earlier turn than its Zen Headbutt flinches us.
 FLINCH_EFFECTS = frozenset({31, 150, 158})
 
 
@@ -91,6 +102,7 @@ class MoveOutcome:
     sets_rain: bool = False
     sets_mist: bool = False
     traps: bool = False
+    sets_water_sport: bool = False
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
@@ -153,23 +165,40 @@ def can_miss(move: Move, net_stage: int = 0) -> bool:
     return 0 < _effective_accuracy(move, net_stage) < 100
 
 
-def will_fail(move: Move, defender: "Battler", field=None) -> bool:
+def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None) -> bool:
     """Whether this move is certain to do nothing, from state alone.
 
-    Three families, all verified against data/battle_logs/test1.jsonl, and all of them costing
-    the turn its two post-successful-move advances when they fire:
+    Five families now, all costing the turn its two post-successful-move advances when they fire
+    -- which is exactly how the emulator log diverged from this simulator on turn 3, so each
+    addition here is a bug avoided rather than a nicety:
 
     * A status-inflicting move against an already-statused target -- non-volatile statuses are
-      mutually exclusive (sec 4.2). "But it failed!"
+      mutually exclusive (sec 4.2). "But it failed!"  [verified: test1.jsonl]
     * A field-condition move whose condition is already up: Rain Dance while raining, Mist while
-      misted. Suicune re-used both repeatedly in the log.
-    * Mean Look against an already-trapped target.
+      misted. Suicune re-used both repeatedly in the log.  [verified: test1.jsonl]
+    * Mean Look against an already-trapped target.  [verified: test1.jsonl]
+    * **Refresh with nothing to cure.** Self-targeting, so it reads `actor`, not `defender` --
+      the one family here that does. It cures burn, paralysis and poison only, so an unstatused
+      user simply fails. Once sleep is the Phase 2 status this is the COMMON case rather than an
+      edge one: an awake, unstatused Latias wastes roughly one turn in four on it
+      (notes/battle_compass_next_targets.md sec 4b).
+    * **Water Sport while it is already up.** Mirrors
+      ``metronome_compass.effects._eff_water_sport``, which returns False when `user_water_sport`
+      is already set.
+
+    `actor` is keyword-only and optional so that callers which only care about the
+    defender-facing families -- `hunt_session.move_info`, which asks "can this move of OURS do
+    nothing to the target" -- need not pretend to know who is acting.
 
     None of these renders as a miss: the simulator emits the bare slot token.
     """
     status = _status_for(move)
     if status is not None and defender.status is not Status.NONE:
         return True
+    if move.effect == EFFECT_REFRESH:
+        # No actor given means "cannot tell", and guessing True would suppress a question the
+        # interview must still ask. Only a known-unstatused user is a known failure.
+        return actor is not None and actor.status not in REFRESH_CURES
     if field is None:
         return False
     if move.effect == EFFECT_RAIN_DANCE and field.rain_turns > 0:
@@ -177,6 +206,8 @@ def will_fail(move: Move, defender: "Battler", field=None) -> bool:
     if move.effect == EFFECT_MIST and field.mist_turns > 0:
         return True
     if move.effect == EFFECT_MEAN_LOOK and field.target_trapped:
+        return True
+    if move.effect == EFFECT_WATER_SPORT and field.target_water_sport:
         return True
     return False
 
@@ -189,6 +220,17 @@ EFFECT_RAIN_DANCE = 136
 EFFECT_MIST = 46
 EFFECT_MEAN_LOOK = 106
 EFFECT_LOWER_EVASION = 24
+#: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
+#: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
+EFFECT_REFRESH = 193
+#: Water Sport. A per-battler volatile flag in the ROM (MOVE_EFFECT_FLAG_WATER_SPORT) rather
+#: than a turn counter, so once up it stays up for the rest of a wild battle -- the user never
+#: switches out. It halves Fire damage, which nothing in any configured moveset of ours is.
+EFFECT_WATER_SPORT = 210
+
+#: What Refresh can cure. Sleep and freeze are absent from the ROM's list, and in any case a
+#: sleeping or frozen Pokemon cannot act to use it.
+REFRESH_CURES = frozenset({Status.BURN, Status.PARALYSIS, Status.POISON})
 
 #: Both last five turns, counted inclusive of the turn they are set [verified: test1.jsonl, where
 #: rain set on turn 1 stops on turn 5 and mist set on turn 4 wears off on turn 8].
@@ -230,7 +272,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # Every failure below spends the accuracy roll and then stops, so it costs the turn its
         # two post-successful-move advances. Getting this wrong is what desynchronised the
         # simulator from data/battle_logs/test1.jsonl at turn 3.
-        if will_fail(move, defender, field):
+        if will_fail(move, defender, field, actor=attacker):
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
         status = _status_for(move)
         sleep_turns = 0
@@ -252,6 +294,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_rain=move.effect == EFFECT_RAIN_DANCE,
             sets_mist=move.effect == EFFECT_MIST,
             traps=move.effect == EFFECT_MEAN_LOOK,
+            sets_water_sport=move.effect == EFFECT_WATER_SPORT,
             blocked_by_mist=blocked)
 
     # Damaging.
@@ -490,6 +533,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.mist_turns = MIST_TURNS
         if outcome.traps:
             new.target_trapped = True
+        if outcome.sets_water_sport:
+            new.target_water_sport = True
+
+    #: Set when the actor that moved FIRST procced a flinch, so the second actor loses its move.
+    #: A dict rather than two nonlocals because both sides are symmetric and only one can ever be
+    #: set in a turn -- the flincher has to have moved already.
+    flinched = {"M": False, "E": False}
 
     def act_ours() -> bool:
         nonlocal rng, hp_before
@@ -565,6 +615,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         move = new.ours.move(slot)
         if move is None:
             return False
+        # sleep -> flinch -> paralysis, which is metronome_compass's verified turn order.
+        # A sleeping or flinched turn spends no roll; the paralysis CHECK does.
+        new.ours, awake = new.ours.tick_sleep()
+        if not awake:
+            parts.append(tok.prevented_token("M", "slp"))
+            return False
+        if flinched["M"]:
+            parts.append(tok.prevented_token("M", "fln"))
+            return False
         if new.ours.status is Status.PARALYSIS:
             # R7 residual: a paralysis check costs one roll, as metronome_compass models it.
             rng, roll = advance(rng)
@@ -582,12 +641,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if outcome.damage:
             new.target = new.target.with_hp(new.target.hp - outcome.damage)
         if outcome.applied_status is not None:
-            new.target = new.target.with_status(outcome.applied_status)
+            # The rolled duration was being thrown away, so a slept target never woke.
+            new.target = new.target.with_status(outcome.applied_status,
+                                                sleep_turns=outcome.sleep_turns)
+        if outcome.secondary and move.effect in FLINCH_EFFECTS:
+            flinched["E"] = True
         return outcome.successful
 
     def act_target() -> bool:
         nonlocal rng
         if target_slot is None:
+            return False
+        new.target, awake = new.target.tick_sleep()
+        if not awake:
+            parts.append(tok.prevented_token("E", "slp"))
+            return False
+        if flinched["E"]:
+            parts.append(tok.prevented_token("E", "fln"))
             return False
         if new.target.status is Status.PARALYSIS:
             rng, roll = advance(rng)
@@ -608,6 +678,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
         if outcome.secondary and move.effect == 68:
             new.our_attack_stage = max(-6, new.our_attack_stage - 1)
+        if outcome.secondary and move.effect in FLINCH_EFFECTS:
+            flinched["M"] = True
         return outcome.successful
 
     first, second = (act_ours, act_target) if ours_first else (act_target, act_ours)

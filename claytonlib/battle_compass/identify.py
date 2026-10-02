@@ -7,10 +7,9 @@ there is no second implementation to keep in step (sec 13.1).
 
 Phases, per sec 15.3, because they optimise different things:
 
-* **Phase 1** — setup, player-driven, working the target to 1 HP and paralyzed. No balls
-  (sec 2.3): a plain Poke Ball is also x1 on Suicune, so a practice throw that lands catches it
-  in the wrong ball and the run is lost.
-* **Phase 1.5** — already at 1 HP and paralyzed, pinning the seed. The tool advises; the
+* **Phase 1** — setup, player-driven, working the target to 1 HP and *held still*: paralyzed, or
+  asleep where the target can shed paralysis (`Battler.frozen_for_phase2`).
+* **Phase 1.5** — already at 1 HP and held still, pinning the seed. The tool advises; the
   objective is **information gain**.
 * **Phase 2** — seed pinned, solver-driven; the objective is **minimum distance**.
 
@@ -211,8 +210,15 @@ class Session:
         """Why Phase 2 cannot start yet. Empty means it can.
 
         The solver asserts its preconditions rather than coping with their absence: the target at
-        exactly 1 HP and paralyzed is what makes ``b`` a single constant and the battle state
-        nearly frozen (sec 2.2).
+        exactly 1 HP with a *freezing* status is what makes ``b`` a single constant and the battle
+        state nearly frozen (sec 2.2).
+
+        Paralysis is no longer the only answer. **Sleep** satisfies the same purpose more
+        strongly -- a sleeping target cannot act at all -- and is the status of choice against a
+        target that knows Refresh, which sheds paralysis but cannot be used while asleep
+        (notes/battle_compass_next_targets.md sec 4b). Burn and poison are still refused: they
+        carry the same catch bonus as paralysis and tick HP every turn, so the target is not
+        frozen and ``b`` is not a constant. See `Battler.frozen_for_phase2`.
         """
         problems: list[str] = []
         if self.phase is Phase.SETUP:
@@ -222,8 +228,10 @@ class Session:
         for state in self.states.values():
             if state.target.hp != 1:
                 problems.append(f"the target is at {state.target.hp} HP, not 1")
-            if state.target.status is not Status.PARALYSIS:
-                problems.append("the target is not paralyzed")
+            if not state.target.frozen_for_phase2:
+                problems.append(
+                    f"the target is {state.target.status.value}, which does not hold it still — "
+                    f"it needs to be paralyzed or asleep")
             break
         return problems
 

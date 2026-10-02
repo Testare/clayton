@@ -673,7 +673,9 @@ class Facade:
 
         from claytonlib.battle_compass.candidates import generate
         from claytonlib.battle_compass.hunt_session import HuntSession
-        from claytonlib.battle.stats import has_fast_ball_bonus, species as species_data
+        from claytonlib.battle.stats import (
+            has_fast_ball_bonus, has_pressure, species as species_data,
+        )
         from claytonlib.battle_compass.sim import HuntConfig
 
         h = self._load_hunt(hunt_id)
@@ -710,7 +712,13 @@ class Facade:
             # A Fast Ball only gets its x4 above base Speed 100, and Suicune's 85 misses it --
             # which is the whole reason this target is the hard case (sec 2.2).
             fast_ball_matched=(h.capture_ball.strip().lower() == "fast ball"
-                               and has_fast_ball_bonus(h.target.species)))
+                               and has_fast_ball_bonus(h.target.species)),
+            # Derived, not defaulted. `HuntConfig.target_has_pressure` defaults True and this
+            # never set it, so every target was assumed to have Pressure -- right for all three
+            # tower birds and wrong for both Lati twins, which have Levitate. Assuming it where
+            # there is none DOUBLE-COUNTS our PP, halving every budget the solver plans against,
+            # and the run quietly runs out of moves earlier than the plan said it would.
+            target_has_pressure=has_pressure(h.target.species))
         session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball,
                               bench=bench)
         session_id = self._hunt_sessions.add(hunt_id, session)

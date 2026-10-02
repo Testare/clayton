@@ -148,6 +148,30 @@ def derive_species_stats(name: str, level: int, nature: str = "Hardy",
     return derive_stats(species(name)["base_stats"], level, nature, ivs, evs)
 
 
+def abilities(name: str) -> tuple[str, ...]:
+    """The species' possible abilities, in slot order.
+
+    Gen 4 values, taken from the ROM's own `personal.json` rather than from PokeAPI's Gen 9 view
+    -- several species gained or swapped abilities after Gen 4, and the one the simulator reads
+    changes how a battle is scored.
+    """
+    return tuple(species(name).get("abilities", ()))
+
+
+def has_pressure(name: str) -> bool:
+    """Whether this species has Pressure, which **doubles OUR PP consumption** (sec 4.4).
+
+    Worth its own function because the cost of guessing is asymmetric and invisible: assuming
+    Pressure where there is none halves every PP budget the solver plans against, and the run
+    simply runs out of moves earlier than the plan said it would. All three tower birds have it;
+    both Lati twins have Levitate instead.
+
+    A species with Pressure in *either* slot counts: a wild Pokemon's ability is drawn from its
+    slots, and none of the targets here has Pressure in only one.
+    """
+    return any(a.strip().lower() == "pressure" for a in abilities(name))
+
+
 def has_fast_ball_bonus(name: str) -> bool:
     """Whether the Fast Ball's x4 applies: base Speed >= 100.
 

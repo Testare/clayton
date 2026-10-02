@@ -2,7 +2,8 @@
 
 Two things keep this much smaller than ``metronome_compass``'s state.
 
-*The target is frozen.* Phase 2 begins with it at exactly 1 HP and permanently paralyzed, and
+*The target is frozen.* Phase 2 begins with it at exactly 1 HP and held still -- paralyzed, or
+asleep against a target that can shed paralysis -- and
 we never damage it again, so almost nothing about it changes turn to turn
 (notes/battle_compass.md sec 2.2).  Its HP is a declared binary rather than a tracked number.
 
@@ -91,6 +92,10 @@ class Battler:
     #: is dropped or its evasion is raised -- so they are tracked rather than assumed neutral.
     accuracy_stage: int = 0
     evasion_stage: int = 0
+    #: Turns of sleep remaining, counted the way ``metronome_compass`` counts them: the status
+    #: ends when this reaches 1, and the Pokemon ACTS on that turn. So a rolled duration of 2
+    #: costs one turn and 5 costs four. Zero whenever `status` is not SLEEP.
+    sleep_turns: int = 0
     #: Confusion is volatile, so it sits outside `status` -- it can coexist with paralysis, and
     #: it is the one status a Pokemon can keep while still attacking (sec 13.4). Nothing in
     #: Suicune's moveset inflicts it, so it stays False for the v1 fixture.
@@ -107,6 +112,24 @@ class Battler:
     @property
     def fainted(self) -> bool:
         return self.hp <= 0
+
+    @property
+    def frozen_for_phase2(self) -> bool:
+        """Whether this status leaves the target's state still, which is what Phase 2 needs.
+
+        Not "has any status". Three of the six qualify and three do not, for reasons that matter:
+
+        * **Paralysis** -- permanent, and quarters Speed, which is how sec 4.2 guarantees no
+          speed tie. The original and still the default.
+        * **Sleep** -- the target cannot act at all, which is stronger. It EXPIRES, so a caller
+          also has to respect `sleep_turns`; that is a horizon, not a disqualification.
+        * **Freeze** -- same shape as sleep, with a thaw check instead of a counter. Allowed for
+          symmetry; nothing in any configured moveset can inflict it.
+        * **Burn and poison** are refused: they give the same x1.5 catch bonus as paralysis and
+          tick HP every turn, so the target is not frozen and `b` is not a constant.
+        * **NONE** is refused because the catch bonus is the point of the precondition at all.
+        """
+        return self.status in (Status.PARALYSIS, Status.SLEEP, Status.FREEZE)
 
     def move(self, slot: int) -> Move | None:
         """The Move in `slot`, or None if the slot is empty or unknown.
@@ -145,11 +168,34 @@ class Battler:
     def with_hp(self, hp: int) -> "Battler":
         return replace(self, hp=max(0, min(hp, self.max_hp)))
 
-    def with_status(self, status: Status) -> "Battler":
-        """Apply a non-volatile status, which fails if one is already present."""
+    def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
+        """Apply a non-volatile status, which fails if one is already present.
+
+        `sleep_turns` is the rolled duration, and is required in practice for SLEEP: a sleeping
+        Battler with a zero counter wakes on its very next turn, which is not what the game
+        rolled. Clearing a status clears the counter with it.
+        """
         if self.status is not Status.NONE and status is not Status.NONE:
             return self
-        return replace(self, status=status)
+        if status is Status.NONE:
+            return replace(self, status=status, sleep_turns=0)
+        return replace(self, status=status,
+                       sleep_turns=sleep_turns if status is Status.SLEEP else 0)
+
+    def tick_sleep(self) -> tuple["Battler", bool]:
+        """Resolve a sleeping Battler's turn: ``(battler, acts)``.
+
+        The counting is ``metronome_compass``'s, which is RNG-verified: the status ends when the
+        remaining count reaches 1, and the Pokemon acts on that turn -- so this returns
+        ``(awake, True)`` then, and ``(still asleep with one fewer turn, False)`` otherwise.
+        Spends no rolls; the wake is self-evident from the Pokemon acting, so there is no
+        wear-off token either.
+        """
+        if self.status is not Status.SLEEP:
+            return self, True
+        if self.sleep_turns <= 1:
+            return replace(self, status=Status.NONE, sleep_turns=0), True
+        return replace(self, sleep_turns=self.sleep_turns - 1), False
 
 
 @dataclass
@@ -171,6 +217,12 @@ class BattleState:
     target_trapped: bool = False
     mist_turns: int = 0
     rain_turns: int = 0
+    #: Water Sport, set by the TARGET. A per-battler volatile flag in the ROM rather than a turn
+    #: counter, so once up it stays up for the rest of a wild battle -- the user never switches
+    #: out. A bool, not a counter, for that reason. Our own side using Water Sport is unmodelled
+    #: and no configured moveset contains it; it is tracked at all because a SECOND Water Sport
+    #: fails, and a failing move costs the turn two fewer advances.
+    target_water_sport: bool = False
     #: Rolls consumed since the battle started, so a turn can be located in the stream.
     rng_offset: int = 0
     balls_thrown: int = 0
@@ -197,6 +249,7 @@ class BattleState:
             turn=self.turn, phase=self.phase,
             our_attack_stage=self.our_attack_stage, target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
+            target_water_sport=self.target_water_sport,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,
             log=list(self.log))

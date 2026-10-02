@@ -1,353 +1,419 @@
 {
   "dialga": {
-    "name": "dialga",
-    "dex_no": 483,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 100,
       "atk": 120,
       "def": 120,
+      "hp": 100,
       "spa": 150,
       "spd": 100,
       "spe": 90
     },
+    "catch_rate": 3,
+    "dex_no": 483,
+    "name": "dialga",
     "types": [
       "Steel",
       "Dragon"
     ],
-    "weight_hg": 6830,
-    "catch_rate": 3
+    "weight_hg": 6830
   },
   "entei": {
-    "name": "entei",
-    "dex_no": 244,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 115,
       "atk": 115,
       "def": 85,
+      "hp": 115,
       "spa": 90,
       "spd": 75,
       "spe": 100
     },
+    "catch_rate": 3,
+    "dex_no": 244,
+    "name": "entei",
     "types": [
       "Fire"
     ],
-    "weight_hg": 1980,
-    "catch_rate": 3
+    "weight_hg": 1980
   },
   "giratina-altered": {
-    "name": "giratina-altered",
-    "dex_no": 487,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 150,
       "atk": 100,
       "def": 120,
+      "hp": 150,
       "spa": 100,
       "spd": 120,
       "spe": 90
     },
+    "catch_rate": 3,
+    "dex_no": 487,
+    "name": "giratina-altered",
     "types": [
       "Ghost",
       "Dragon"
     ],
-    "weight_hg": 7500,
-    "catch_rate": 3
+    "weight_hg": 7500
   },
   "groudon": {
-    "name": "groudon",
-    "dex_no": 383,
+    "abilities": [
+      "Drought"
+    ],
     "base_stats": {
-      "hp": 100,
       "atk": 150,
       "def": 140,
+      "hp": 100,
       "spa": 100,
       "spd": 90,
       "spe": 90
     },
+    "catch_rate": 3,
+    "dex_no": 383,
+    "name": "groudon",
     "types": [
       "Ground"
     ],
-    "weight_hg": 9500,
-    "catch_rate": 3
+    "weight_hg": 9500
   },
   "ho-oh": {
-    "name": "ho-oh",
-    "dex_no": 250,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 106,
       "atk": 130,
       "def": 90,
+      "hp": 106,
       "spa": 110,
       "spd": 154,
       "spe": 90
     },
+    "catch_rate": 3,
+    "dex_no": 250,
+    "name": "ho-oh",
     "types": [
       "Fire",
       "Flying"
     ],
-    "weight_hg": 1990,
-    "catch_rate": 3
+    "weight_hg": 1990
   },
   "kyogre": {
-    "name": "kyogre",
-    "dex_no": 382,
+    "abilities": [
+      "Drizzle"
+    ],
     "base_stats": {
-      "hp": 100,
       "atk": 100,
       "def": 90,
+      "hp": 100,
       "spa": 150,
       "spd": 140,
       "spe": 90
     },
+    "catch_rate": 3,
+    "dex_no": 382,
+    "name": "kyogre",
     "types": [
       "Water"
     ],
-    "weight_hg": 3520,
-    "catch_rate": 3
+    "weight_hg": 3520
   },
   "latias": {
-    "name": "latias",
-    "dex_no": 380,
+    "abilities": [
+      "Levitate"
+    ],
     "base_stats": {
-      "hp": 80,
       "atk": 80,
       "def": 90,
+      "hp": 80,
       "spa": 110,
       "spd": 130,
       "spe": 110
     },
+    "catch_rate": 3,
+    "dex_no": 380,
+    "name": "latias",
     "types": [
       "Dragon",
       "Psychic"
     ],
-    "weight_hg": 400,
-    "catch_rate": 3
+    "weight_hg": 400
   },
   "latios": {
-    "name": "latios",
-    "dex_no": 381,
+    "abilities": [
+      "Levitate"
+    ],
     "base_stats": {
-      "hp": 80,
       "atk": 90,
       "def": 80,
+      "hp": 80,
       "spa": 130,
       "spd": 110,
       "spe": 110
     },
+    "catch_rate": 3,
+    "dex_no": 381,
+    "name": "latios",
     "types": [
       "Dragon",
       "Psychic"
     ],
-    "weight_hg": 600,
-    "catch_rate": 3
+    "weight_hg": 600
   },
   "lugia": {
-    "name": "lugia",
-    "dex_no": 249,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 106,
       "atk": 90,
       "def": 130,
+      "hp": 106,
       "spa": 90,
       "spd": 154,
       "spe": 110
     },
+    "catch_rate": 3,
+    "dex_no": 249,
+    "name": "lugia",
     "types": [
       "Psychic",
       "Flying"
     ],
-    "weight_hg": 2160,
-    "catch_rate": 3
+    "weight_hg": 2160
   },
   "magnemite": {
-    "name": "magnemite",
-    "dex_no": 81,
+    "abilities": [
+      "Magnet Pull",
+      "Sturdy"
+    ],
     "base_stats": {
-      "hp": 25,
       "atk": 35,
       "def": 70,
+      "hp": 25,
       "spa": 95,
       "spd": 55,
       "spe": 45
     },
+    "catch_rate": 190,
+    "dex_no": 81,
+    "name": "magnemite",
     "types": [
       "Electric",
       "Steel"
     ],
-    "weight_hg": 60,
-    "catch_rate": 190
+    "weight_hg": 60
   },
   "magneton": {
-    "name": "magneton",
-    "dex_no": 82,
+    "abilities": [
+      "Magnet Pull",
+      "Sturdy"
+    ],
     "base_stats": {
-      "hp": 50,
       "atk": 60,
       "def": 95,
+      "hp": 50,
       "spa": 120,
       "spd": 70,
       "spe": 70
     },
+    "catch_rate": 60,
+    "dex_no": 82,
+    "name": "magneton",
     "types": [
       "Electric",
       "Steel"
     ],
-    "weight_hg": 600,
-    "catch_rate": 60
+    "weight_hg": 600
   },
   "mamoswine": {
-    "name": "mamoswine",
-    "dex_no": 473,
+    "abilities": [
+      "Oblivious",
+      "Snow Cloak"
+    ],
     "base_stats": {
-      "hp": 110,
       "atk": 130,
       "def": 80,
+      "hp": 110,
       "spa": 70,
       "spd": 60,
       "spe": 80
     },
+    "catch_rate": 50,
+    "dex_no": 473,
+    "name": "mamoswine",
     "types": [
       "Ice",
       "Ground"
     ],
-    "weight_hg": 2910,
-    "catch_rate": 50
+    "weight_hg": 2910
   },
   "mewtwo": {
-    "name": "mewtwo",
-    "dex_no": 150,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 106,
       "atk": 110,
       "def": 90,
+      "hp": 106,
       "spa": 154,
       "spd": 90,
       "spe": 130
     },
+    "catch_rate": 3,
+    "dex_no": 150,
+    "name": "mewtwo",
     "types": [
       "Psychic"
     ],
-    "weight_hg": 1220,
-    "catch_rate": 3
+    "weight_hg": 1220
   },
   "palkia": {
-    "name": "palkia",
-    "dex_no": 484,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 90,
       "atk": 120,
       "def": 100,
+      "hp": 90,
       "spa": 150,
       "spd": 120,
       "spe": 100
     },
+    "catch_rate": 3,
+    "dex_no": 484,
+    "name": "palkia",
     "types": [
       "Water",
       "Dragon"
     ],
-    "weight_hg": 3360,
-    "catch_rate": 3
+    "weight_hg": 3360
   },
   "raikou": {
-    "name": "raikou",
-    "dex_no": 243,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 90,
       "atk": 85,
       "def": 75,
+      "hp": 90,
       "spa": 115,
       "spd": 100,
       "spe": 115
     },
+    "catch_rate": 3,
+    "dex_no": 243,
+    "name": "raikou",
     "types": [
       "Electric"
     ],
-    "weight_hg": 1780,
-    "catch_rate": 3
+    "weight_hg": 1780
   },
   "rayquaza": {
-    "name": "rayquaza",
-    "dex_no": 384,
+    "abilities": [
+      "Air Lock"
+    ],
     "base_stats": {
-      "hp": 105,
       "atk": 150,
       "def": 90,
+      "hp": 105,
       "spa": 150,
       "spd": 90,
       "spe": 95
     },
+    "catch_rate": 45,
+    "dex_no": 384,
+    "name": "rayquaza",
     "types": [
       "Dragon",
       "Flying"
     ],
-    "weight_hg": 2065,
-    "catch_rate": 45
+    "weight_hg": 2065
   },
   "smeargle": {
-    "name": "smeargle",
-    "dex_no": 235,
+    "abilities": [
+      "Own Tempo",
+      "Technician"
+    ],
     "base_stats": {
-      "hp": 55,
       "atk": 20,
       "def": 35,
+      "hp": 55,
       "spa": 20,
       "spd": 45,
       "spe": 75
     },
+    "catch_rate": 45,
+    "dex_no": 235,
+    "name": "smeargle",
     "types": [
       "Normal"
     ],
-    "weight_hg": 580,
-    "catch_rate": 45
+    "weight_hg": 580
   },
   "snorlax": {
-    "name": "snorlax",
-    "dex_no": 143,
+    "abilities": [
+      "Immunity",
+      "Thick Fat"
+    ],
     "base_stats": {
-      "hp": 160,
       "atk": 110,
       "def": 65,
+      "hp": 160,
       "spa": 65,
       "spd": 110,
       "spe": 30
     },
+    "catch_rate": 25,
+    "dex_no": 143,
+    "name": "snorlax",
     "types": [
       "Normal"
     ],
-    "weight_hg": 4600,
-    "catch_rate": 25
+    "weight_hg": 4600
   },
   "sudowoodo": {
-    "name": "sudowoodo",
-    "dex_no": 185,
+    "abilities": [
+      "Sturdy",
+      "Rock Head"
+    ],
     "base_stats": {
-      "hp": 70,
       "atk": 100,
       "def": 115,
+      "hp": 70,
       "spa": 30,
       "spd": 65,
       "spe": 30
     },
+    "catch_rate": 65,
+    "dex_no": 185,
+    "name": "sudowoodo",
     "types": [
       "Rock"
     ],
-    "weight_hg": 380,
-    "catch_rate": 65
+    "weight_hg": 380
   },
   "suicune": {
-    "name": "suicune",
-    "dex_no": 245,
+    "abilities": [
+      "Pressure"
+    ],
     "base_stats": {
-      "hp": 100,
       "atk": 75,
       "def": 115,
+      "hp": 100,
       "spa": 90,
       "spd": 115,
       "spe": 85
     },
+    "catch_rate": 3,
+    "dex_no": 245,
+    "name": "suicune",
     "types": [
       "Water"
     ],
-    "weight_hg": 1870,
-    "catch_rate": 3
+    "weight_hg": 1870
   }
 }

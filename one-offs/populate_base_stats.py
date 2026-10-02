@@ -64,6 +64,18 @@ KNOWN_POST_GEN4_CHANGES: dict[str, str] = {
     "golem": "base stats revised in Gen 6", "ampharos": "base stats revised in Gen 6",
 }
 
+# Species whose ABILITIES differ from what PokeAPI reports, which is a shorter list than it
+# looks only because DEFAULT_SPECIES is short.  Abilities were revised far more often than base
+# stats were -- Gen 7 and Gen 9 both reshuffled several -- so this refuses rather than guesses.
+# The values currently in base_stats.json were taken from the ROM's own personal.json, which is
+# Gen 4 by construction; this table exists so a regeneration cannot quietly replace them.
+KNOWN_POST_GEN4_ABILITY_CHANGES: dict[str, str] = {
+    "gyarados": "gained Moxie in Gen 5",
+    "snorlax": "gained Gluttony in Gen 5 as a second slot",
+    "magnemite": "gained Analytic in Gen 5", "magneton": "gained Analytic in Gen 5",
+    "mamoswine": "gained Thick Fat in Gen 5",
+}
+
 # The section 11 fixture plus the HGSS statics Battle Compass is likely to target next.
 DEFAULT_SPECIES = [
     # fixture
@@ -116,6 +128,21 @@ def fetch(name: str, retries: int = 3) -> dict:
     catch_rate = species.get("capture_rate")
     if not isinstance(catch_rate, int) or not 1 <= catch_rate <= 255:
         raise SystemExit(f"{name}: PokeAPI returned capture_rate {catch_rate!r}")
+    # Abilities, for `battle.stats.has_pressure` -- Pressure doubles OUR PP consumption, and
+    # assuming it where there is none halves every PP budget the solver plans against.
+    #
+    # Hidden abilities are dropped: they are a Gen 5 concept and a Gen 4 wild Pokemon cannot
+    # have one, so including them would let a Gen 5+ hidden ability answer a Gen 4 question.
+    # Abilities DID change after Gen 4 more often than stats or types did, so any species whose
+    # ability matters is listed in KNOWN_POST_GEN4_ABILITY_CHANGES below and refused outright
+    # rather than silently taking the modern value.
+    abilities = [a["ability"]["name"].replace("-", " ").title()
+                 for a in sorted(payload["abilities"], key=lambda a: a["slot"])
+                 if not a.get("is_hidden")]
+    changed = KNOWN_POST_GEN4_ABILITY_CHANGES.get(payload["name"])
+    if changed:
+        raise SystemExit(f"{name}: abilities changed after Gen 4 ({changed}); take them from "
+                         f"the ROM's personal.json instead of PokeAPI.")
     return {
         "name": payload["name"],
         "dex_no": payload["id"],
@@ -123,6 +150,7 @@ def fetch(name: str, retries: int = 3) -> dict:
         "types": types,
         "weight_hg": payload["weight"],
         "catch_rate": catch_rate,
+        "abilities": abilities,
     }
 
 

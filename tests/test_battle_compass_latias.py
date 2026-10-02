@@ -1,0 +1,406 @@
+"""Supporting Latias: the pieces that are not the sleep model.
+
+Itemised in notes/battle_compass_next_targets.md sec 4c. This file covers C (flinch), D (the two
+`will_fail` cases) and E (target configuration). The sleep work (B) and lifting the paralysis
+precondition (A) land separately, because A depends on B.
+"""
+import unittest
+
+from claytonlib.battle.stats import abilities, derive_species_stats, has_pressure, species
+from claytonlib.battle_compass import tokens as tok
+from claytonlib.battle_compass.sim import (
+    EFFECT_REFRESH, EFFECT_WATER_SPORT, FLINCH_EFFECTS, HuntConfig, REFRESH_CURES,
+    simulate_turn, will_fail,
+)
+from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
+from claytonlib.battle_compass.targets import encounter_level, moveset, supported
+from claytonlib.moves import resolve_move
+
+HUNT = HuntConfig(target_catch_rate=3, target_has_pressure=False)
+
+
+def _ours(speed=160, **kw):
+    fields = dict(name="Smeargle", level=58, types=("Normal",),
+                  stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": speed},
+                  moves=("False Swipe", "Mean Look", "Sweet Scent", "Spore"),
+                  pp=(40, 5, 20, 15))
+    fields.update(kw)
+    return Battler(**fields)
+
+
+def _latias(**kw):
+    mv = moveset("latias")
+    fields = dict(name="Latias", level=40, types=tuple(species("latias")["types"]),
+                  stats=derive_species_stats("latias", 40, "Bold"), moves=mv,
+                  pp=tuple(resolve_move(m).pp for m in mv), hp=1)
+    fields.update(kw)
+    return Battler(**fields)
+
+
+class TestTheTargetRow(unittest.TestCase):
+    """E1. Derived from wotbl.narc, not transcribed -- InitBoxMonMoveset keeps the last four
+    learnable moves IN LEARN ORDER, which is the slot order E1-E4 depends on."""
+
+    def test_latias_is_a_supported_target(self):
+        self.assertIn("latias", supported())
+        self.assertEqual(encounter_level("latias"), 40)
+        self.assertEqual(moveset("latias"),
+                         ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt"))
+
+    def test_latios_differs_only_in_two_slots(self):
+        """Both twins learn Refresh at L30 and Zen Headbutt at L40; the other two differ."""
+        self.assertEqual(moveset("latios"),
+                         ("Protect", "Refresh", "Luster Purge", "Zen Headbutt"))
+
+    def test_every_move_in_both_sets_resolves(self):
+        for target in ("latias", "latios"):
+            for name in moveset(target):
+                self.assertIsNotNone(resolve_move(name), f"{target}: {name}")
+
+
+class TestPressureIsDerived(unittest.TestCase):
+    """E2. `target_has_pressure` defaulted True and nothing set it, so a Latias hunt would have
+    double-counted our PP and halved every budget the solver plans against."""
+
+    def test_the_twins_have_levitate(self):
+        for name in ("latias", "latios"):
+            self.assertEqual(abilities(name), ("Levitate",))
+            self.assertFalse(has_pressure(name))
+
+    def test_the_birds_still_have_pressure(self):
+        for name in ("suicune", "lugia", "ho-oh"):
+            self.assertTrue(has_pressure(name))
+
+
+class TestRefreshFails(unittest.TestCase):
+    """D1. Self-targeting, so it reads the ACTOR -- the only family in `will_fail` that does."""
+
+    def setUp(self):
+        self.refresh = resolve_move("Refresh")
+
+    def test_it_cures_only_the_three_the_rom_lists(self):
+        self.assertEqual(REFRESH_CURES,
+                         {Status.BURN, Status.PARALYSIS, Status.POISON})
+
+    def test_an_unstatused_user_fails(self):
+        self.assertTrue(will_fail(self.refresh, _ours(), None, actor=_latias()))
+
+    def test_a_paralyzed_user_succeeds(self):
+        self.assertFalse(will_fail(self.refresh, _ours(), None,
+                                   actor=_latias(status=Status.PARALYSIS)))
+
+    def test_sleep_is_not_curable_by_it(self):
+        """The whole reason sleep is the status of choice against a target that knows Refresh --
+        and doubly so, since a sleeping Pokemon cannot act to use it at all."""
+        self.assertTrue(will_fail(self.refresh, _ours(), None,
+                                  actor=_latias(status=Status.SLEEP)))
+
+    def test_freeze_is_not_curable_either(self):
+        self.assertTrue(will_fail(self.refresh, _ours(), None,
+                                  actor=_latias(status=Status.FREEZE)))
+
+    def test_without_an_actor_it_does_not_claim_to_know(self):
+        """`move_info` asks "can this move of ours do nothing to the target" and has no actor to
+        offer. Guessing True there would suppress a question the interview must still ask."""
+        self.assertFalse(will_fail(self.refresh, _ours()))
+
+    def test_it_is_the_effect_id_the_sim_names(self):
+        self.assertEqual(self.refresh.effect, EFFECT_REFRESH)
+
+
+class TestWaterSportFails(unittest.TestCase):
+    """D2. A per-battler volatile flag in the ROM, not a turn counter -- so once up it stays up
+    for a wild battle, and a bool is the right shape."""
+
+    def setUp(self):
+        self.ws = resolve_move("Water Sport")
+        self.state = BattleState(ours=_ours(), target=_latias(), rng=1, phase=2)
+
+    def test_the_first_one_works(self):
+        self.assertFalse(will_fail(self.ws, _ours(), self.state))
+
+    def test_the_second_one_fails(self):
+        self.state.target_water_sport = True
+        self.assertTrue(will_fail(self.ws, _ours(), self.state))
+
+    def test_using_it_sets_the_flag(self):
+        """Swept rather than forced: the target's move comes from the RNG, so the only way to
+        see Water Sport used is to find a seed on which it picks slot 1."""
+        ours, target = _ours(), _latias()
+        for seed in range(0xEC1504DC, 0xEC1504DC + 400):
+            state = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            if "E1" in tok.render_turn(tok.normalise(nxt.log[-1])):
+                self.assertTrue(nxt.target_water_sport,
+                                "Water Sport was used and the flag did not set")
+                return
+        self.fail("no seed in the sweep had Latias pick Water Sport")
+
+    def test_a_second_water_sport_costs_two_fewer_advances(self):
+        """Why the flag is tracked at all: a failing move earns no post-successful-move
+        advances, and getting that wrong is what desynchronised test1 at turn 3."""
+        ours, target = _ours(), _latias()
+        for seed in range(0xEC1504DC, 0xEC1504DC + 400):
+            fresh = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            if "E1" not in tok.render_turn(
+                    tok.normalise(simulate_turn(fresh, Action.MOVE_1, HUNT).log[-1])):
+                continue
+            first = simulate_turn(
+                BattleState(ours=ours, target=target, rng=seed, phase=2), Action.MOVE_1, HUNT)
+            already = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            already.target_water_sport = True
+            repeat = simulate_turn(already, Action.MOVE_1, HUNT)
+            self.assertEqual(first.rng_offset - repeat.rng_offset, 2)
+            return
+        self.fail("no seed in the sweep had Latias pick Water Sport")
+
+    def test_it_survives_a_state_copy(self):
+        """`copy` is how the solver branches, so a flag it drops is a flag that silently resets."""
+        self.state.target_water_sport = True
+        self.assertTrue(self.state.copy().target_water_sport)
+
+    def test_the_dominance_key_separates_on_it(self):
+        """Same argument rain and mist already won: it changes which of the target's moves FAIL,
+        and a failing move costs the turn two fewer advances -- so two states at one offset that
+        disagree about it are not interchangeable."""
+        from claytonlib.battle_compass.solver import _dominance_key
+        a = BattleState(ours=_ours(), target=_latias(), rng=1, phase=2)
+        b = a.copy()
+        b.target_water_sport = True
+        self.assertNotEqual(_dominance_key(a), _dominance_key(b))
+
+    def test_it_is_the_effect_id_the_sim_names(self):
+        self.assertEqual(self.ws.effect, EFFECT_WATER_SPORT)
+
+
+class TestFlinchIsApplied(unittest.TestCase):
+    """C. `can_flinch`, `FLINCH_EFFECTS` and the `fln` token all existed for the UI, but nothing
+    applied one -- so a player could report a flinch the simulator could never predict, and the
+    turn would match no candidate and read as a contradiction."""
+
+    def test_zen_headbutt_is_a_flinching_move(self):
+        self.assertIn(resolve_move("Zen Headbutt").effect, FLINCH_EFFECTS)
+        self.assertEqual(resolve_move("Zen Headbutt").effect_chance, 20)
+
+    def test_extrasensory_is_too(self):
+        """Which is why this matters before Latias: it is in both Lv45 bird sets."""
+        self.assertIn(resolve_move("Extrasensory").effect, FLINCH_EFFECTS)
+
+    def _sweep(self, our_speed, n=4000):
+        ours, target = _ours(speed=our_speed), _latias()
+        seen = {}
+        for seed in range(0xEC1504DC, 0xEC1504DC + n):
+            state = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            seen[tok.render_turn(tok.normalise(nxt.log[-1]))] = True
+        return list(seen)
+
+    def test_a_flinch_prevents_our_move_when_the_target_moved_first(self):
+        rendered = self._sweep(our_speed=20)
+        flinched = [r for r in rendered if "Mfln" in r]
+        self.assertTrue(flinched, "no flinch was ever simulated")
+        for r in flinched:
+            self.assertNotIn("M1", r, f"our move happened anyway: {r}")
+
+    def test_a_flinch_only_lands_after_a_procced_flinching_move(self):
+        for r in self._sweep(our_speed=20):
+            if "Mfln" in r:
+                self.assertIn("E4", r, f"flinched without Zen Headbutt: {r}")
+                self.assertIn("~", r, f"flinched without the secondary proccing: {r}")
+
+    def test_we_are_never_flinched_when_we_move_first(self):
+        """The flincher has to have moved already. Smeargle at 160 outspeeds every Lv40 Latias
+        spread, so in the real matchup this can never happen -- which is exactly why the bug
+        stayed hidden."""
+        for r in self._sweep(our_speed=160):
+            self.assertNotIn("Mfln", r, r)
+
+    def test_the_rate_matches_the_arithmetic(self):
+        """1/4 move choice x 90% accuracy x 20% proc = 4.5%."""
+        ours, target = _ours(speed=20), _latias()
+        hits = 0
+        for seed in range(0xEC1504DC, 0xEC1504DC + 4000):
+            state = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            if "fln" in tok.render_turn(tok.normalise(nxt.log[-1])):
+                hits += 1
+        self.assertAlmostEqual(hits / 4000, 0.045, delta=0.012)
+
+    def test_a_flinched_turn_is_grammatical(self):
+        for r in self._sweep(our_speed=20):
+            self.assertEqual(tok.validate_turn(tok.tokenise(r)), [], r)
+
+
+class TestSleepIsModelled(unittest.TestCase):
+    """B. Not merely unmodelled before this -- actively wrong: `act_target` checked only
+    PARALYSIS, so a sleeping target fell through and ATTACKED, and the rolled duration was
+    computed and discarded so it would never have woken either.
+
+    The counting mirrors `metronome_compass`, which is RNG-verified against Blackthorn ground
+    truth: the status ends when the remaining count reaches 1 and the Pokemon ACTS on that turn,
+    and a sleeping turn spends no roll (`raw_emit`, no advance).
+    """
+
+    def test_applying_sleep_stores_the_rolled_duration(self):
+        self.assertEqual(_latias().with_status(Status.SLEEP, sleep_turns=4).sleep_turns, 4)
+
+    def test_clearing_a_status_clears_the_counter(self):
+        slept = _latias().with_status(Status.SLEEP, sleep_turns=4)
+        self.assertEqual(slept.with_status(Status.NONE).sleep_turns, 0)
+
+    def test_a_non_sleep_status_carries_no_counter(self):
+        self.assertEqual(
+            _latias().with_status(Status.PARALYSIS, sleep_turns=4).sleep_turns, 0)
+
+    def test_the_counter_ends_at_one_and_the_target_acts_that_turn(self):
+        slept = _latias().with_status(Status.SLEEP, sleep_turns=3)
+        acted = []
+        for _ in range(4):
+            slept, acts = slept.tick_sleep()
+            acted.append(acts)
+        self.assertEqual(acted, [False, False, True, True])
+
+    def test_a_rolled_two_costs_exactly_one_turn(self):
+        """So the 2..5 the game rolls is 1..4 turns of lost action."""
+        slept, acts = _latias().with_status(Status.SLEEP, sleep_turns=2).tick_sleep()
+        self.assertFalse(acts)
+        _, acts_next = slept.tick_sleep()
+        self.assertTrue(acts_next)
+
+    def test_an_awake_battler_always_acts(self):
+        for status in (Status.NONE, Status.PARALYSIS, Status.BURN):
+            battler, acts = _latias(status=status).tick_sleep()
+            self.assertTrue(acts, status)
+
+    def test_a_sleeping_target_does_not_act_in_a_real_turn(self):
+        """The bug, stated as the failure: before this the target attacked while asleep."""
+        ours = _ours(moves=("Spore", "False Swipe"), pp=(15, 40))
+        state = BattleState(ours=ours, target=_latias(), rng=0xEC1504DC, phase=2)
+        state = simulate_turn(state, Action.MOVE_1, HUNT)          # Spore
+        self.assertIs(state.target.status, Status.SLEEP)
+        self.assertGreater(state.target.sleep_turns, 0)
+        rendered = tok.render_turn(tok.normalise(state.log[-1]))
+        self.assertIn("Eslp", rendered)
+        self.assertNotIn("E1", rendered)
+        self.assertNotIn("E2", rendered)
+
+    def test_it_wakes_and_acts_after_the_counter_runs_out(self):
+        """The counter READ BACK after the Spore turn equals the number of turns the target will
+        miss, because that same turn already ticked it once. So a rolled 2..5 costs 1..4 turns,
+        and the visible counter is the honest "turns left asleep"."""
+        for seed in (0xEC1504DC, 0xEC150500, 0xEC150600):
+            ours = _ours(moves=("Spore", "False Swipe"), pp=(15, 40))
+            state = BattleState(ours=ours, target=_latias(), rng=seed, phase=2)
+            state = simulate_turn(state, Action.MOVE_1, HUNT)
+            if state.target.status is not Status.SLEEP:
+                continue                      # Spore missed on this seed
+            remaining = state.target.sleep_turns
+            asleep = 1 if "Eslp" in tok.render_turn(tok.normalise(state.log[-1])) else 0
+            for _ in range(remaining + 3):
+                state = simulate_turn(state, Action.MOVE_2, HUNT)
+                if "Eslp" in tok.render_turn(tok.normalise(state.log[-1])):
+                    asleep += 1
+                else:
+                    break
+            self.assertIs(state.target.status, Status.NONE, f"{seed:#x}: it never woke")
+            self.assertEqual(asleep, remaining, f"{seed:#x}")
+            self.assertTrue(1 <= remaining <= 4, f"{seed:#x}: {remaining} turns")
+
+    def test_a_sleeping_turn_spends_no_roll_of_its_own(self):
+        """Verified in metronome_compass by `raw_emit`, and measured here against the only fair
+        comparison: a turn the target spends FULLY PARALYZED, which also takes no action but DOES
+        pay for its check roll. Comparing against an ordinary paralyzed turn would measure the
+        target's move instead, which is a seven-roll difference and no evidence at all.
+        """
+        ours = _ours(moves=("False Swipe",), pp=(40,))
+        for seed in range(0xEC1504DC, 0xEC1504DC + 400):
+            para = simulate_turn(
+                BattleState(ours=ours, target=_latias().with_status(Status.PARALYSIS),
+                            rng=seed, phase=2), Action.MOVE_1, HUNT)
+            if "Epar" not in tok.render_turn(tok.normalise(para.log[-1])):
+                continue
+            slept = simulate_turn(
+                BattleState(ours=ours,
+                            target=_latias().with_status(Status.SLEEP, sleep_turns=4),
+                            rng=seed, phase=2), Action.MOVE_1, HUNT)
+            self.assertIn("Eslp", tok.render_turn(tok.normalise(slept.log[-1])))
+            self.assertEqual(para.rng_offset - slept.rng_offset, 1,
+                             "a fully-paralyzed turn should cost exactly one roll more")
+            return
+        self.fail("no seed in the sweep had the target fully paralyzed")
+
+    def test_a_sleeping_turn_is_grammatical(self):
+        ours = _ours(moves=("Spore", "False Swipe"), pp=(15, 40))
+        state = BattleState(ours=ours, target=_latias(), rng=0xEC1504DC, phase=2)
+        state = simulate_turn(state, Action.MOVE_1, HUNT)
+        for _ in range(3):
+            state = simulate_turn(state, Action.MOVE_2, HUNT)
+        for entry in state.log:
+            self.assertEqual(tok.validate_turn(tok.normalise(entry)), [], entry)
+
+    def test_the_dominance_key_separates_on_remaining_sleep(self):
+        """Two states at one offset with different remaining sleep are not interchangeable: one
+        wakes sooner and from then on spends different advances."""
+        from claytonlib.battle_compass.solver import _dominance_key
+        a = BattleState(ours=_ours(), target=_latias().with_status(Status.SLEEP, sleep_turns=4),
+                        rng=1, phase=2)
+        b = BattleState(ours=_ours(), target=_latias().with_status(Status.SLEEP, sleep_turns=2),
+                        rng=1, phase=2)
+        self.assertNotEqual(_dominance_key(a), _dominance_key(b))
+
+
+class TestThePreconditionAcceptsSleep(unittest.TestCase):
+    """A. Paralysis was asserted twice; sleep satisfies the purpose more strongly. Burn and
+    poison are still refused -- same catch bonus, but they tick HP, so the target is not frozen
+    and `b` is not a constant."""
+
+    def test_which_statuses_hold_the_target_still(self):
+        for status in (Status.PARALYSIS, Status.SLEEP, Status.FREEZE):
+            self.assertTrue(_latias(status=status).frozen_for_phase2, status)
+        for status in (Status.NONE, Status.BURN, Status.POISON):
+            self.assertFalse(_latias(status=status).frozen_for_phase2, status)
+
+    def test_the_solver_accepts_a_sleeping_target(self):
+        from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
+        state = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                            target=_latias().with_status(Status.SLEEP, sleep_turns=4))
+        result = solve(state, HUNT, SolverConfig(danger_floor=56))
+        self.assertNotIsInstance(result, Unreachable) if isinstance(result, Solution) else None
+        if isinstance(result, Unreachable):
+            self.assertNotIn("preconditions do not hold", result.reason)
+
+    def test_the_solver_still_refuses_a_burned_target(self):
+        from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
+        state = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                            target=_latias().with_status(Status.BURN))
+        result = solve(state, HUNT, SolverConfig(danger_floor=56))
+        self.assertIsInstance(result, Unreachable)
+        self.assertIn("preconditions do not hold", result.reason)
+
+    def test_the_blocker_message_names_what_is_needed(self):
+        from claytonlib.battle_compass.candidates import Candidate
+        from claytonlib.battle_compass.identify import Phase, Session
+        session = Session([Candidate(seed=0xEC1504DC, frame=1, second=0)],
+                          _ours(), _latias(status=Status.BURN), HUNT, phase=Phase.PINNING)
+        blockers = session.solver_blockers()
+        self.assertTrue(any("paralyzed or asleep" in b for b in blockers), blockers)
+
+    def test_a_sleeping_one_hp_target_has_no_status_blocker(self):
+        from claytonlib.battle_compass.candidates import Candidate
+        from claytonlib.battle_compass.identify import Phase, Session
+        session = Session([Candidate(seed=0xEC1504DC, frame=1, second=0)], _ours(),
+                          _latias().with_status(Status.SLEEP, sleep_turns=4), HUNT,
+                          phase=Phase.PINNING)
+        self.assertEqual([b for b in session.solver_blockers() if "asleep" in b], [])
+
+    def test_sleep_is_the_better_catch_status(self):
+        """Which is the other half of why this is worth doing, not just a workaround."""
+        from claytonlib.battle.catch import (BALL_POKE, STATUS_PARALYSIS, STATUS_SLEEP,
+                                             catch_value, shake_threshold)
+        stats = derive_species_stats("latias", 40, "Bold", ivs=31)
+        b = {}
+        for label, bonus in (("par", STATUS_PARALYSIS), ("slp", STATUS_SLEEP)):
+            b[label] = shake_threshold(catch_value(
+                12, ball_multiplier=BALL_POKE, cur_hp=1, max_hp=stats["hp"],
+                status_bonus=bonus))
+        self.assertGreater(b["slp"], b["par"])

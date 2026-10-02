@@ -1,6 +1,6 @@
 """Phase 2: steer the RNG until the capture ball captures.
 
-Given an identified seed and a target at exactly 1 HP and permanently paralyzed, find the
+Given an identified seed and a target at exactly 1 HP and held still (paralyzed or asleep), find the
 sequence of actions whose ball throw succeeds.  The state is nearly frozen — the target's HP and
 status do not change, so ``b`` is a single constant — which is why the search is cheap
 (notes/battle_compass.md sec 2.2).
@@ -297,7 +297,11 @@ def _dominance_key(state: BattleState) -> tuple:
     post-move advances on turns 3 and 12.
     """
     return (state.rng_offset, state.rain_turns > 0, state.mist_turns > 0,
-            state.target_trapped, state.target.pp)
+            state.target_trapped, state.target_water_sport,
+            # Remaining sleep, for the same reason as the field conditions: one of two states
+            # that disagree about it wakes sooner, and from that turn on spends different
+            # advances. The status itself is in here too, since waking changes it.
+            state.target.status, state.target.sleep_turns, state.target.pp)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:
@@ -317,11 +321,11 @@ def solve(state: BattleState, hunt: HuntConfig,
     greater accumulated distance makes the other pointless to explore.
     """
     config = config or SolverConfig()
-    if state.target.hp != 1 or state.target.status is not Status.PARALYSIS:
+    if state.target.hp != 1 or not state.target.frozen_for_phase2:
         return Unreachable(
             reason=(f"the solver's preconditions do not hold: the target is at "
                     f"{state.target.hp} HP and {state.target.status.value}, not 1 HP and "
-                    f"paralyzed"),
+                    f"held still by paralysis or sleep"),
             proven=False, states_explored=0)
 
     deadline = struggle_deadline(state.target, config.turns_per_pp)

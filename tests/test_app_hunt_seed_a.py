@@ -564,3 +564,49 @@ class TestTheSaveRunUi(unittest.TestCase):
     def test_the_page_contributes_seed_a_and_the_spread(self):
         self.assertIn("a_seed: (_hsa && _hsa.seedA) ? _hsa.seedA : {},", self.html)
         self.assertIn("? {nature: _hsa.nature, ivs: _hsa.ivs} : {},", self.html)
+
+
+class TestPressureIsDerivedNotDefaulted(unittest.TestCase):
+    """HuntConfig.target_has_pressure defaults True and the facade never set it."""
+
+    def test_a_pressure_target_still_doubles_our_pp(self):
+        facade, hunt_id = _ready_hunt()
+        facade.hunt_session_start(hunt_id)
+        sid = facade._hunt_sessions.for_hunt(hunt_id)[0]
+        self.assertTrue(facade._hunt_sessions.get(sid).config.target_has_pressure,
+                        "Suicune has Pressure")
+
+    def test_a_levitate_target_does_not(self):
+        """Latias has Levitate. Assuming Pressure here would halve every PP budget."""
+        facade, hunt_id = _ready_hunt()
+        hunt = facade.get_hunt(hunt_id)
+        hunt["target"] = dict(CONFIGURED, species="latias")
+        facade.save_hunt(hunt)
+        facade.hunt_session_start(hunt_id)
+        sid = facade._hunt_sessions.for_hunt(hunt_id)[0]
+        self.assertFalse(facade._hunt_sessions.get(sid).config.target_has_pressure)
+
+    def test_it_changes_the_pp_a_turn_actually_spends(self):
+        """The consequence, not just the flag."""
+        from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+        from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
+        from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.moves import resolve_move
+
+        ours = Battler(name="Smeargle", level=58, types=("Normal",),
+                       stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79,
+                              "spe": 160},
+                       moves=("False Swipe", "Mean Look"), pp=(40, 5))
+        mv = moveset("suicune")
+        target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
+                         stats=derive_species_stats("suicune", 40, "Bold"), moves=mv,
+                         pp=tuple(resolve_move(m).pp for m in mv),
+                         hp=1, status=Status.PARALYSIS)
+        spent = {}
+        for label, pressure in (("pressure", True), ("levitate", False)):
+            state = BattleState(ours=ours, target=target, rng=0xEC1504DC, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1,
+                                HuntConfig(target_catch_rate=3, target_has_pressure=pressure))
+            spent[label] = 40 - nxt.ours.pp_left(0)
+        self.assertEqual(spent, {"pressure": 2, "levitate": 1})

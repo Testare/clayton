@@ -464,6 +464,31 @@ The Enigma Stone was a Mystery Gift distribution. Whether this encounter is reac
 given cartridge is a real-world prerequisite, not a work item — worth settling before any of the
 above is built.
 
+### Status: A, C, D and E are implemented; B is implemented for the target's side
+
+| item | state |
+|---|---|
+| A — lift the paralysis precondition | **done**. `Battler.frozen_for_phase2` accepts paralysis, sleep and freeze and refuses burn, poison and none; both assertion sites and the UI copy go through it. |
+| B — sleep | **done for the target.** `Battler.sleep_turns` + `tick_sleep`, the rolled duration is stored instead of discarded, `_dominance_key` carries the status and the counter. The solver's *second clock* (B5) and the re-Spore sequence (B6) are not yet taught to the planner. |
+| C — flinch | **done**, both sides. |
+| D — `will_fail` | **done**, both cases, with `target_water_sport` on the state and in the dominance key. |
+| E — configuration | **done**. Abilities are in `base_stats.json` from the ROM, `has_pressure` derives it, the facade passes it, and both twins have target rows. |
+
+Two things the implementation settled that the plan had left open:
+
+* **A sleeping turn and a flinched turn each spend no roll**, and the turn order is
+  sleep → freeze → flinch → confusion → paralysis. Both come from `metronome_compass`, which is
+  RNG-verified against Blackthorn ground truth and emits each prevention with `raw_emit` (no
+  advance). §4c had flagged the flinch accounting as unverified and the ordering as a guess; it
+  is neither — the project already had the answer in a module Battle Compass does not import.
+* **The sleep counter read back after application is the number of turns the target will miss.**
+  The application turn ticks it once itself, so a rolled 2..5 costs 1..4 turns and the visible
+  counter is the honest "turns left asleep" rather than something needing an off-by-one in the
+  reader's head.
+
+Still open for Latias specifically: the solver does not yet plan *around* the wake, so a Phase 2
+path may be proposed that outlives the sleep window. That is B5/B6 and is the remaining real work.
+
 ### What this means for ordering
 
 **C and D are worth doing regardless** — C is a live correctness hole for any target with a

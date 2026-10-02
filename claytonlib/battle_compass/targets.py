@@ -15,7 +15,22 @@ from __future__ import annotations
 #: species key -> (level, moves in slot order). Levels are the encounter's, not a range.
 STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # HGSS Bell Tower, after the Burned Tower release. Roaming Suicune is the same set.
+    # `WildBattle SPECIES_SUICUNE, 40, 0` with no version branch, so Lv40 in both versions
+    # (files/fielddata/script/scr_seq/scr_seq_0024_D18R0102.s:247).
     "suicune": (40, ("Rain Dance", "Gust", "Aurora Beam", "Mist")),
+    # HGSS Pewter City museum, the Enigma Stone event. `WildBattle <species>, 40, 0` with the
+    # species version-gated (scr_seq_0750_T03.s:364-381): HeartGold gets Latios here and
+    # SoulSilver gets Latias, with the OTHER twin roaming at Lv35.
+    #
+    # Derived from wotbl.narc rather than transcribed: entries are `(level << 9) | moveId` and
+    # `InitBoxMonMoveset` keeps the last four learnable moves IN LEARN ORDER, which is exactly
+    # the slot order E1-E4 and the wild selection roll depend on.
+    #
+    # Refresh is the reason this target wants SLEEP rather than paralysis: it sheds paralysis,
+    # but it is self-targeting, so a sleeping Latias cannot use it -- and awake and unstatused it
+    # cures nothing and simply fails (notes/battle_compass_next_targets.md sec 4b).
+    "latias": (40, ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt")),
+    "latios": (40, ("Protect", "Refresh", "Luster Purge", "Zen Headbutt")),
 }
 
 

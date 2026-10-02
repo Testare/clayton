@@ -88,3 +88,60 @@ class TestNatureNames(unittest.TestCase):
         for name in nature_names():
             stats = derive_species_stats("suicune", 40, name, ivs=31)
             self.assertEqual(set(stats), set(STAT_KEYS), name)
+
+
+class TestAbilitiesAndPressure(unittest.TestCase):
+    """`target_has_pressure` was a HuntConfig field defaulting to True that the facade never set,
+    so every target was assumed to have Pressure. Right for all three tower birds and wrong for
+    both Lati twins -- and the cost is invisible: assuming Pressure where there is none
+    double-counts our PP, halving every budget the solver plans against, so a run quietly runs
+    out of moves earlier than the plan said it would.
+    """
+
+    def test_the_tower_birds_have_pressure(self):
+        from claytonlib.battle.stats import has_pressure
+        for name in ("suicune", "lugia", "ho-oh"):
+            self.assertTrue(has_pressure(name), name)
+
+    def test_the_lati_twins_have_levitate_instead(self):
+        from claytonlib.battle.stats import abilities, has_pressure
+        for name in ("latias", "latios"):
+            self.assertEqual(abilities(name), ("Levitate",), name)
+            self.assertFalse(has_pressure(name), name)
+
+    def test_our_own_party_does_not_read_as_pressure(self):
+        from claytonlib.battle.stats import has_pressure
+        for name in ("smeargle", "magneton", "mamoswine"):
+            self.assertFalse(has_pressure(name), name)
+
+    def test_abilities_are_in_slot_order(self):
+        from claytonlib.battle.stats import abilities
+        self.assertEqual(abilities("smeargle"), ("Own Tempo", "Technician"))
+
+    def test_every_species_in_the_table_has_abilities_recorded(self):
+        """So a new row cannot be added without them and silently read as no Pressure."""
+        import json
+        import pathlib
+        data = json.loads((pathlib.Path(__file__).resolve().parent.parent / "claytonlib"
+                           / "basedata" / "base_stats.json").read_text())
+        missing = [k for k, v in data.items() if not v.get("abilities")]
+        self.assertEqual(missing, [])
+
+    def test_the_values_match_the_roms_own_table_where_it_is_available(self):
+        """base_stats.json is built from PokeAPI, which reports Gen 9 abilities -- and abilities
+        changed after Gen 4 far more often than stats or types did. These came from the ROM's
+        personal.json instead, so this checks them against it when the decompilation is present.
+        """
+        import json
+        import pathlib
+        rom = pathlib.Path.home() / "arch/pokeheartgold/files/poketool/personal/personal.json"
+        if not rom.exists():
+            self.skipTest("pokeheartgold decompilation not present")
+        personal = json.loads(rom.read_text())["baseStats"]
+        data = json.loads((pathlib.Path(__file__).resolve().parent.parent / "claytonlib"
+                           / "basedata" / "base_stats.json").read_text())
+        for key, entry in data.items():
+            expected = [a.replace("ABILITY_", "").title().replace("_", " ")
+                        for a in personal[entry["dex_no"]]["abilities"]
+                        if a != "ABILITY_NONE"]
+            self.assertEqual(entry["abilities"], expected, key)

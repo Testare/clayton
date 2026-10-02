@@ -5157,7 +5157,7 @@ function huntRunObserve(){
 function huntForceSolving(){
   const blockers = (_huntSnap.solver_blockers || []).join("; ");
   if (!confirm(`Our model says: ${blockers}.\n\nStart solving anyway? Do this only if the game `
-             + `itself shows the target at 1 HP and paralyzed.`)) return;
+             + `itself shows the target at 1 HP and held still.`)) return;
   huntRunDo("hunt_session_enter_solving", true);
 }
 
@@ -5462,8 +5462,8 @@ function renderHuntRun(){
              <div class="hr-small muted">If the game disagrees, trust the game — our damage model
                can lag reality.</div>
              <button class="btn" onclick="huntForceSolving()">Start solving anyway</button></div>`
-          : `<div class="panel ok-cta"><div class="section-label">Suicune is at 1 HP and
-               paralyzed</div>
+          : `<div class="panel ok-cta"><div class="section-label">${esc(s.target.name)} is at
+               1 HP and held still</div>
              <div class="hr-small muted">Everything the solver needs is in place.</div>
              <button class="btn primary"
                onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button></div>`)
