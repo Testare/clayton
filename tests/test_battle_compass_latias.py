@@ -404,3 +404,142 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
                 12, ball_multiplier=BALL_POKE, cur_hp=1, max_hp=stats["hp"],
                 status_bonus=bonus))
         self.assertGreater(b["slp"], b["par"])
+
+
+class TestTheSolverPlansWithSleep(unittest.TestCase):
+    """Sleep needs no second clock, and no backwards reasoning.
+
+    The initial plan (sec 4c, B5/B6) said a Phase 2 path "must land its throw before the target
+    wakes, or plan the re-Spore", and treated the sleep window as a deadline. That was the wrong
+    shape. Sleep is a *state*, the catch bonus is read at the throw and nowhere else, and
+    ordinary Dijkstra over states handles entering and leaving it with no special case: Spore is
+    an action, waking is a transition, and a re-Spore is just the search taking Spore again.
+
+    What sleep genuinely changes is one thing, and it is a soundness bug rather than a feature:
+    `b` is no longer constant across a path, so the single threshold used to PRUNE the search was
+    being taken from the entry state.
+    """
+
+    HUNT = HuntConfig(target_catch_rate=3, fast_ball_matched=True, target_has_pressure=False)
+
+    def _state(self, status=Status.PARALYSIS, sleep_turns=0, rng=0xEC1504DC):
+        target = _latias(status=status, sleep_turns=sleep_turns)
+        return BattleState(ours=_ours(), target=target, rng=rng, phase=2)
+
+    def _config(self):
+        from claytonlib.battle_compass.solver import SolverConfig
+        return SolverConfig(danger_floor=56)
+
+    def test_spore_cannot_miss_so_sleep_is_guaranteed(self):
+        """Which is why the forward search needs no assumption: Spore is 100 accuracy, Latias
+        has no Safeguard in its set and nothing in Gen 4 is powder-immune, so an awake unstatused
+        Latias is asleep next turn with certainty rather than with probability."""
+        from claytonlib.battle_compass.sim import can_miss
+        spore = resolve_move("Spore")
+        self.assertEqual(spore.accuracy, 100)
+        self.assertFalse(can_miss(spore, 0))
+        self.assertNotIn("Safeguard", moveset("latias"))
+
+    def test_sporing_an_awake_target_always_sleeps_it(self):
+        """Swept rather than argued: every seed, not most."""
+        ours = _ours(moves=("Spore",), pp=(15,))
+        for seed in range(0xEC1504DC, 0xEC1504DC + 300):
+            state = BattleState(ours=ours, target=_latias(status=Status.NONE),
+                                rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, self.HUNT)
+            self.assertIs(nxt.target.status, Status.SLEEP, f"{seed:#x}")
+            self.assertGreaterEqual(nxt.target.sleep_turns, 1, f"{seed:#x}")
+
+    def test_the_reachable_statuses_are_the_current_one_none_and_what_we_can_inflict(self):
+        from claytonlib.battle_compass.solver import reachable_statuses
+        got = reachable_statuses(self._state(), self._config())
+        self.assertEqual(got, {Status.PARALYSIS, Status.NONE, Status.SLEEP})
+
+    def test_a_move_with_no_pp_left_cannot_inflict_anything(self):
+        from claytonlib.battle_compass.solver import reachable_statuses
+        state = self._state()
+        state.ours = state.ours.spend_pp(3, 99)            # Spore exhausted
+        self.assertNotIn(Status.SLEEP, reachable_statuses(state, self._config()))
+
+    def test_the_prune_threshold_is_the_largest_reachable_one(self):
+        from claytonlib.battle_compass.solver import (max_reachable_threshold,
+                                                      target_threshold)
+        state = self._state()
+        entry = target_threshold(state, self.HUNT)
+        largest = max_reachable_threshold(state, self.HUNT, self._config())
+        self.assertGreater(largest, entry, "Spore reaches a more generous b than paralysis")
+        self.assertEqual(largest, target_threshold(state, self.HUNT, Status.SLEEP))
+
+    def test_pruning_at_the_entry_threshold_would_prove_unreachability_falsely(self):
+        """The bug, as the failure it would have been. These seeds have NO capture window at a
+        paralyzed target's b and several at a sleeping one's -- so the old prune would have
+        returned `proven=True`, and `proven` is the signal that justifies a soft reset (sec 6.3).
+        A false proof there does not lose a path, it costs the run.
+        """
+        from claytonlib.battle_compass.solver import capture_windows_in_horizon
+        b_par, b_slp = 33824, 36157
+        cases = [(0x10000023, 60), (0x1000002f, 120), (0x1000004b, 60)]
+        for seed, horizon in cases:
+            self.assertEqual(capture_windows_in_horizon(seed, b_par, horizon), [],
+                             f"{seed:#x}: fixture expects no window at the paralyzed b")
+            self.assertTrue(capture_windows_in_horizon(seed, b_slp, horizon),
+                            f"{seed:#x}: fixture expects a window at the sleeping b")
+
+    def test_a_sleeping_entry_state_reaches_the_same_maximum(self):
+        """Entering asleep already has the largest b, so nothing changes for that case -- the
+        old code was only ever wrong in the direction of too SMALL a threshold."""
+        from claytonlib.battle_compass.solver import max_reachable_threshold, target_threshold
+        state = self._state(status=Status.SLEEP, sleep_turns=4)
+        self.assertEqual(max_reachable_threshold(state, self.HUNT, self._config()),
+                         target_threshold(state, self.HUNT))
+
+    def test_the_unreachable_message_says_which_threshold_it_proved_against(self):
+        """A proof the player cannot audit is a proof they have to take on trust."""
+        from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
+        state = self._state(rng=0x10000023)
+        result = solve(state, self.HUNT, SolverConfig(danger_floor=56, max_turns=2))
+        if isinstance(result, Unreachable) and result.capture_windows == 0:
+            self.assertIn("most generous", result.reason)
+
+    def test_the_solver_finds_a_path_from_a_paralyzed_latias(self):
+        """End to end: ordinary Dijkstra, no sleep-specific machinery."""
+        from claytonlib.battle_compass.solver import Solution, solve
+        result = solve(self._state(), self.HUNT, self._config())
+        self.assertIsInstance(result, Solution, getattr(result, "reason", ""))
+        self.assertTrue(result.steps)
+        self.assertIs(result.steps[-1].action, Action.CAPTURE_BALL)
+
+    def test_a_solved_path_replays_to_an_actual_capture(self):
+        """The goal test is `simulate_turn`, so replaying the path must capture -- which is also
+        what proves the throw's status was read at the throw rather than at entry."""
+        from claytonlib.battle_compass.solver import Solution, solve
+        result = solve(self._state(), self.HUNT, self._config())
+        self.assertIsInstance(result, Solution)
+        state = self._state()
+        for step in result.steps:
+            state = simulate_turn(state, step.action, self.HUNT,
+                                  **({"item_code": step.item} if step.item else {}))
+        self.assertTrue(state.captured, "the solved path did not capture on replay")
+
+    def test_it_can_solve_from_an_asleep_latias_too(self):
+        from claytonlib.battle_compass.solver import Solution, solve
+        result = solve(self._state(status=Status.SLEEP, sleep_turns=4), self.HUNT,
+                       self._config())
+        self.assertIsInstance(result, Solution, getattr(result, "reason", ""))
+
+    def test_a_path_may_outlive_the_sleep_window_and_that_is_fine(self):
+        """The plan treated this as the thing to prevent. It is not: the bonus is read at the
+        throw, so a path that lets the target wake and throws later is simply a path at the awake
+        threshold, and distance decides between them. Checked by replaying: whatever the solver
+        returns, it captures."""
+        from claytonlib.battle_compass.solver import Solution, solve
+        for rng in (0xEC1504DC, 0xEC150700, 0xEC150900):
+            state = self._state(status=Status.SLEEP, sleep_turns=2, rng=rng)
+            result = solve(state, self.HUNT, self._config())
+            if not isinstance(result, Solution):
+                continue
+            replay = self._state(status=Status.SLEEP, sleep_turns=2, rng=rng)
+            for step in result.steps:
+                replay = simulate_turn(replay, step.action, self.HUNT,
+                                       **({"item_code": step.item} if step.item else {}))
+            self.assertTrue(replay.captured, f"{rng:#x}")

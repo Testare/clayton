@@ -486,8 +486,49 @@ Two things the implementation settled that the plan had left open:
   counter is the honest "turns left asleep" rather than something needing an off-by-one in the
   reader's head.
 
-Still open for Latias specifically: the solver does not yet plan *around* the wake, so a Phase 2
-path may be proposed that outlives the sleep window. That is B5/B6 and is the remaining real work.
+### B5/B6 were the wrong shape, and the correction is worth recording
+
+The plan said a Phase 2 path "must land its throw before the target wakes, or plan the re-Spore",
+and treated the sleep window as a second deadline alongside `struggle_deadline`. That is not what
+sleep is.
+
+**The catch bonus is read at the throw and nowhere else** (`sim.throw_ball` takes
+`status_bonus=_status_bonus(new.target.status)` at the moment of the throw). So sleep does not
+need to be *maintained*; it needs to be true on one turn. Everything else sleep does — shielding
+us, denying the target PP, changing the advance count of its turn — is state the search already
+reasons about, not a constraint to add.
+
+So there is no second clock and no backward reasoning. Ordinary Dijkstra over states handles it:
+Spore is an action, waking is a transition, a re-Spore is the search taking Spore again, and a
+path that lets the target wake and throws later is simply a path at the awake threshold, with
+distance deciding between them. The user's reading was right and the plan's was not.
+
+**One real bug fell out of it, in the other direction.** `b` is no longer constant across a path,
+and the single threshold used to PRUNE the search was taken from the entry state:
+
+* `target_threshold` was documented "constant for the whole of Phase 2" — true while the only
+  permitted status was permanent paralysis, false the moment sleep was allowed.
+* Against a **paralyzed** Latias the entry `b` is 33824 while Spore reaches 36157. Pruning at
+  33824 can report *"no four consecutive rolls fall under b"* with **`proven=True`** while a
+  Spore-then-throw path exists at 36157. And `proven=True` is the signal that justifies a soft
+  reset (§6.3), so a false proof there does not lose a path — it costs the run.
+* Real examples, in the test: seeds `0x10000023` and `0x1000004b` have **zero** windows in 60
+  advances at 33824 and three and four respectively at 36157.
+
+The fix is `max_reachable_threshold`, which maximises over the statuses the target can actually
+reach — its current one, NONE (sleep and freeze wear off), and whatever our own permitted moves
+with PP left can inflict. That keeps the precondition *necessary*, which is all a prune has to
+be: a window that exists only at some other status is a harmless false positive, and every actual
+throw is still settled by `simulate_turn`.
+
+**And the forward search needs no assumption about Spore landing**, because Spore cannot miss
+here: 100 accuracy, no Safeguard in Latias's set, and Gen 4 has no powder immunity. A sweep
+asserts it over 300 seeds rather than arguing it — so "Spore now, throw next turn" is a certainty
+the search can rely on, not a probability it has to hedge.
+
+What remains genuinely open: `struggle_deadline` is computed from the target's PP at entry, and a
+sleeping target spends none, so the real deadline is *later* than the horizon the solver uses.
+That loses paths rather than inventing them, so it is conservative in the safe direction.
 
 ### What this means for ordering
 

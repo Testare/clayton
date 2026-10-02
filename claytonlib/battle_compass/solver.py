@@ -215,14 +215,63 @@ def capture_windows_in_horizon(seed: int, threshold: int, advances: int) -> list
     return _capture_windows(rolls, threshold)
 
 
-def target_threshold(state: BattleState, config: HuntConfig) -> int:
-    """``b`` for the capture ball against this target. Constant for the whole of Phase 2."""
+def target_threshold(state: BattleState, config: HuntConfig,
+                     status: Status | None = None) -> int:
+    """``b`` for the capture ball against this target, **at one moment**.
+
+    It used to be documented as constant for the whole of Phase 2, which was true while the only
+    permitted status was permanent paralysis. It is not true now that sleep is permitted: sleep
+    expires, and a woken target has a smaller ``b`` than a sleeping one. The throw itself has
+    always been settled by `sim.simulate_turn`, which reads the status at that instant, so the
+    GOAL test was never affected -- but a single `b` used to prune the search was.
+
+    `status` overrides the target's own, for asking what ``b`` *would* be in some other state.
+    """
     from claytonlib.battle_compass.sim import _status_bonus
     a = catch_value(config.effective_catch_rate(),
                     ball_multiplier=config.capture_ball_multiplier,
                     cur_hp=max(state.target.hp, 1), max_hp=state.target.max_hp,
-                    status_bonus=_status_bonus(state.target.status))
+                    status_bonus=_status_bonus(status or state.target.status))
     return shake_threshold(a)
+
+
+def reachable_statuses(state: BattleState, config: "SolverConfig") -> set[Status]:
+    """Every status the target could hold at some point in a path from `state`.
+
+    Its current one; NONE, because sleep and freeze wear off; and anything our own permitted
+    moves can inflict once it is unstatused. Nothing else -- the target cannot status itself, and
+    no item of ours does.
+    """
+    from claytonlib.battle_compass.sim import _status_for
+
+    out = {state.target.status, Status.NONE}
+    for slot in config.allowed_moves:
+        move = state.ours.move(slot)
+        if move is None or state.ours.pp_left(slot) <= 0:
+            continue
+        inflicted = _status_for(move)
+        if inflicted is not None:
+            out.add(inflicted)
+    return out
+
+
+def max_reachable_threshold(state: BattleState, hunt: HuntConfig,
+                            config: "SolverConfig") -> int:
+    """The largest ``b`` any turn of any path from `state` could throw against.
+
+    This is the threshold the window precomputation must use, and using the *entry* state's
+    instead is unsound in one direction that matters. Against a paralyzed Latias, ``b`` is 33824
+    awake-and-paralyzed and 36157 asleep; a prune at the smaller figure can report "no four
+    consecutive rolls fall under b" -- with ``proven=True`` -- while a Spore-then-throw path
+    exists at the larger one. And ``proven=True`` is the signal that justifies a soft reset
+    (sec 6.3), so an unsound proof does not merely lose a path, it costs the player the run.
+
+    Taking the maximum keeps the precondition *necessary*, which is all it has to be: a window
+    that only exists at some other status is a false positive, and the search settles every
+    actual throw with `simulate_turn` anyway.
+    """
+    return max(target_threshold(state, hunt, status)
+               for status in reachable_statuses(state, config))
 
 
 def choose_item(state: BattleState, config: SolverConfig) -> tuple[str, int] | None:
@@ -330,16 +379,18 @@ def solve(state: BattleState, hunt: HuntConfig,
 
     deadline = struggle_deadline(state.target, config.turns_per_pp)
     max_turns = min(config.max_turns, deadline)
-    threshold = target_threshold(state, hunt)
-    if is_guaranteed(threshold):
-        pass  # any throw captures; the search will find it on turn one
+    # The MAXIMUM b any reachable status allows, not the entry state's -- see
+    # `max_reachable_threshold`. Pruning at the entry figure can prove unreachability that a
+    # Spore would have disproved, and `proven=True` is what justifies a soft reset.
+    threshold = max_reachable_threshold(state, hunt, config)
     horizon_advances = max_turns * turn_costs.max_turn_advances()
     windows = capture_windows_in_horizon(state.rng, threshold, horizon_advances)
     if not windows:
         return Unreachable(
-            reason=(f"no four consecutive rolls fall under b={threshold} within "
-                    f"{horizon_advances} advances -- an upper bound on what {max_turns} turns "
-                    f"can spend -- so no action sequence captures inside that budget"),
+            reason=(f"no four consecutive rolls fall under b={threshold} -- the most generous "
+                    f"threshold any status the target can reach allows -- within "
+                    f"{horizon_advances} advances, an upper bound on what {max_turns} turns "
+                    f"can spend. So no action sequence captures inside that budget."),
             proven=True, states_explored=0, capture_windows=0,
             searched_turns=max_turns)
 
