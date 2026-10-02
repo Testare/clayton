@@ -55,6 +55,26 @@ STATUS_FREEZE = 20
 # A shake roll uses the RNG's high 16 bits.
 ROLL_CEILING = 0x10000
 SHAKES_TO_CAPTURE = 4
+
+#: What the game SAYS for each shake count, which is what a player actually remembers -- nobody
+#: counts wobbles, they read the line that follows. A strictly ordered ladder, and transcribing it
+#: carelessly is how a shake count gets "verified" against the wrong wording: "Aargh! Almost had
+#: it!" is TWO shakes and "Gah! It was so close, too!" is three. Drafting a test with both at
+#: three failed against a simulated P2 -- the test was wrong and the simulator right
+#: [verified: data/battle_logs/test2.jsonl, eight throws covering 0, 1 and 2].
+SHAKE_MESSAGES: tuple[str, ...] = (
+    "Oh, no! The Pokémon broke free!",
+    "Aww! It appeared to be caught!",
+    "Aargh! Almost had it!",
+    "Gah! It was so close, too!",
+)
+
+
+def shake_message(shakes: int) -> str:
+    """The line the game prints after `shakes` wobbles, 0-3."""
+    if not 0 <= shakes < len(SHAKE_MESSAGES):
+        raise ValueError(f"shake count out of range: {shakes}")
+    return SHAKE_MESSAGES[shakes]
 # At or above this, the ROM skips the shake rolls entirely and the catch is guaranteed.
 GUARANTEED_CATCH_VALUE = 255
 

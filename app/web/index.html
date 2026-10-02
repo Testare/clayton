@@ -21,7 +21,14 @@
   }
   *{box-sizing:border-box}
   body{margin:0;font:14.5px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    background:var(--bg);color:var(--ink)}
+    background:var(--bg);color:var(--ink);
+    /* Stated rather than left to the host engine, which was not allowing selection. A seed or a
+       path you cannot copy has to be transcribed by hand, which is exactly the kind of thing
+       this app exists to stop you doing. */
+    -webkit-user-select:text;user-select:text}
+  /* Controls stay unselectable: dragging across a chip row should not leave the labels
+     highlighted, and a double-click on a button should not select its text. */
+  button,.chip,.btn{-webkit-user-select:none;user-select:none}
   h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
   button{font:inherit;cursor:pointer}
   a{color:var(--grass)}
@@ -94,8 +101,18 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
   .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:0 12px}
   .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:0 12px}
-  /* Six columns fits the stat/IV rows exactly, so HP..Speed reads in one line. */
-  .grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:0 10px}
+  /* Six columns fits the stat/IV rows exactly, so HP..Speed reads in one line. minmax(0,1fr)
+     rather than 1fr: a bare 1fr has an auto minimum, so an input's intrinsic width can push the
+     track wider than its share and overflow the row. */
+  .grid6{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0 10px}
+  /* A three-digit stat has to fit. At six columns the track is narrow, and the default input
+     padding plus a number input's spinner left barely one digit of text area visible. Tighter
+     padding, and the spinner goes -- it is useless at this width, and a focused number input
+     also edits itself on a scroll wheel, which is no better here than it was on the HP field. */
+  .grid6 .field input{padding-left:7px;padding-right:7px;min-width:0;text-align:center}
+  .grid6 .field input[type=number]{appearance:textfield;-moz-appearance:textfield}
+  .grid6 .field input[type=number]::-webkit-outer-spin-button,
+  .grid6 .field input[type=number]::-webkit-inner-spin-button{appearance:none;margin:0}
   @media(max-width:820px){.grid3,.grid4{grid-template-columns:1fr 1fr}
     .grid6{grid-template-columns:repeat(3,1fr)}}
   .rel-row{display:grid;grid-template-columns:1.6fr .7fr .7fr auto;gap:0 10px;
@@ -192,6 +209,12 @@
     padding:6px 13px;font-size:12.5px;font-weight:550;cursor:pointer;border-radius:20px}
   .chip.active{background:var(--grass);color:var(--grass-ink);border-color:transparent}
   .chip:hover:not(:disabled){background:var(--surface-2)}
+  /* The ACTIVE chip needs its own hover, or the rule above replaces the grass background while
+     leaving color:var(--grass-ink) in place -- near-black ink on the near-black surface-2, i.e.
+     the selected chip vanishes under the cursor. Brightness, matching .btn.primary:hover, which
+     already solved this for buttons. */
+  .chip.active:hover:not(:disabled){background:var(--grass);color:var(--grass-ink);
+    filter:brightness(1.08)}
   .chip:disabled{opacity:.5;cursor:not-allowed}
 
 /* Battle Compass run page. The two-sided HP panel has no existing equivalent -- every other
@@ -203,6 +226,16 @@
 .hr-side { background:var(--surface);border:1px solid var(--line);
   border-radius:var(--radius);padding:12px 14px }
 .hr-side-top { display:flex;gap:8px;align-items:center;margin-bottom:6px }
+/* Click-to-copy: a seed or a path you want in the clipboard WHOLE, rather than dragged across. */
+.hr-copy { cursor:pointer;border-bottom:1px dotted var(--ink-soft);
+  -webkit-user-select:all;user-select:all }
+.hr-copy:hover { color:var(--grass) }
+.hr-copy.copied { color:var(--ok);border-bottom-color:transparent }
+/* A token string with a plain-language tooltip on its row. The underline is the affordance --
+   without it nothing says the dense code can be explained. */
+.hr-explained { border-bottom:1px dotted var(--ink-soft);cursor:help }
+/* The solver's expected turn, as the sentences it means. */
+.hr-expect { margin:0 0 8px;padding-left:20px;font-size:13px;line-height:1.7 }
 .hr-bar { height:6px;background:var(--surface-2);border-radius:4px;overflow:hidden;margin:6px 0 }
 .hr-bar > div { height:100%;background:var(--ok);transition:width .2s }
 .hr-danger { color:var(--danger);font-weight:600 }
@@ -1043,7 +1076,8 @@ function nrValidateStartRel(){
 function _seedASummary(a){
   // The absolute delay depends on the year (see claytonlib.times.calculate_seed); only the
   // delta from the search center is meaningful across a re-run in a different real year.
-  return `Seed A ${esc(a.seed_hex)} · delay ${a.delay_delta>=0?"+":""}${a.delay_delta}
+  // The seed itself is click-to-copy: it is the one value here you want elsewhere.
+  return `Seed A ${hrCopyable(a.seed_hex, "Seed A")} · delay ${a.delay_delta>=0?"+":""}${a.delay_delta}
     · R${a.r_route??"·"} E${a.e_route??"·"} L${a.l_route??"·"} · elm ${esc(a.elm)}`;
 }
 
@@ -4558,6 +4592,17 @@ async function huntRunDo(method, ...args){
 // crit and a never-miss move is never offered "missed".
 let _hrTurn = null;
 
+// claytonlib.battle.catch.SHAKE_MESSAGES, mirrored for rendering. A strictly ordered ladder --
+// "Aargh! Almost had it!" is TWO shakes and "Gah! It was so close, too!" is three -- and
+// test_app_hunt_run asserts this list matches the Python one exactly, because getting it wrong
+// would have the player report a shake count they never saw.
+const HR_SHAKE_MESSAGES = [
+  "Oh, no! The Pok\u00e9mon broke free!",
+  "Aww! It appeared to be caught!",
+  "Aargh! Almost had it!",
+  "Gah! It was so close, too!",
+];
+
 function hrTurnReset(){ _hrTurn = { action: null, ours: null, target: null, hp: "" }; }
 
 const HR_PREVENTED = [
@@ -4890,11 +4935,18 @@ function hrInterview(){
       `${b.hp}/${b.max_hp} HP`))));
     if (t.ours?.bench === undefined) return blocks.join("");
   } else if (t.action === "C" || t.action === "P"){
-    const opts = [0, 1, 2, 3].map(n => hrChip(`${n} shake${n === 1 ? "" : "s"}`,
-      `hrSet('ours',{result:'${n}'})`, t.ours?.result === String(n)));
-    opts.push(hrChip("Caught it!", `hrSet('ours',{result:'c'})`, t.ours?.result === "c"));
-    blocks.push(hrChips("How many times did the ball shake?", opts,
-      "Count the shakes before it broke free."));
+    // Nobody counts wobbles -- they read the line that follows. So the MESSAGE is the label and
+    // the count is the subtitle, which is the way round the player actually remembers it.
+    const opts = HR_SHAKE_MESSAGES.map((msg, n) => hrChip(
+      msg, `hrSet('ours',{result:'${n}'})`, t.ours?.result === String(n),
+      `${n} shake${n === 1 ? "" : "s"}`));
+    opts.push(hrChip("It was caught!", `hrSet('ours',{result:'c'})`, t.ours?.result === "c",
+                     t.action === "C" ? "The run is won" : "Caught in the WRONG ball"));
+    blocks.push(hrChips("What did the game say?", opts,
+      "The message after the throw — easier to recall than a shake count."));
+    if (t.ours?.result && t.ours.result !== "c")
+      blocks.push(`<div class="hr-small muted" style="margin:-4px 0 10px">That is
+        <b>${Number(t.ours.result)} shake${t.ours.result === "1" ? "" : "s"}</b>.</div>`);
     if (!t.ours?.result) return blocks.join("");
   }
 
@@ -4945,10 +4997,6 @@ function hrInterview(){
         ${ready && !_hrBusy ? "" : "disabled"}>
         ${_hrBusy ? "Checking…" : "Report turn"}</button>
       <button class="btn" onclick="hrTurnReset();renderHuntRun()">Start over</button>
-      <button class="btn" onclick="huntRunDo('hunt_session_undo')"
-        ${s.turns.length && !_hrBusy ? "" : "disabled"}
-        title="Rewind a MISREPORT. A misplay can't be undone -- the game has advanced, so report what actually happened instead."
-      >Undo last turn</button>
     </div>
     ${_hrBusy ? `<div class="progress-wrap"><div class="progress-bar indeterminate"></div></div>`
               : ""}</div>`);
@@ -5005,6 +5053,43 @@ function hrHpInput(el){
   hrRefreshPreview();
 }
 
+// Click to copy. Selection is enabled in CSS now, but a seed is a thing you want in the
+// clipboard whole -- dragging across eight hex digits to miss one is the failure mode this
+// avoids. Falls back to a selection when the clipboard API is unavailable, which it may be in
+// a packaged webview.
+function hrCopyable(text, what){
+  return `<code class="hr-copy" title="Click to copy ${esc(what || "this")}"
+    onclick="hrCopy(this, ${JSON.stringify(String(text))})">${esc(text)}</code>`;
+}
+
+function hrCopy(el, text){
+  const done = () => {
+    const was = el.textContent;
+    el.textContent = "copied";
+    el.classList.add("copied");
+    setTimeout(() => { el.textContent = was; el.classList.remove("copied"); }, 700);
+  };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done, () => hrSelect(el));
+      return;
+    }
+  } catch (e) { /* fall through */ }
+  hrSelect(el);
+}
+
+// No clipboard: select the text so Ctrl+C works. Better than a toast saying it failed.
+function hrSelect(el){
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    if (!document.execCommand || !document.execCommand("copy")) toast("Selected — press Ctrl+C.");
+  } catch (e) { toast("Could not copy that."); }
+}
+
 function hrRefreshPreview(){
   const preview = $("hrPreview");
   if (preview) preview.textContent = hrTokens() || "…";
@@ -5012,6 +5097,37 @@ function hrRefreshPreview(){
   // mid-keystroke. Without this the last answer never re-enabled the button.
   const report = $("hrReport");
   if (report) report.disabled = !(hrTurnComplete() && !_hrBusy);
+}
+
+// The solver's recommended turn, offered as one button. Reporting a turn through the interview
+// is five or six clicks, and in Phase 2 the overwhelmingly common case is that the predicted turn
+// is exactly what happened -- so there is a shortcut for it. The interview stays below, because
+// the whole point of Phase 2 is catching the turn that DOESN'T match.
+function hrExpectedBlock(){
+  const s = _huntSnap;
+  const next = s.solution && s.solution.found && s.solution.next;
+  if (!next || s.over) return "";
+  return `<div class="panel ok-cta">
+    <div class="section-label">Did this happen?</div>
+    <div class="hr-small muted" style="margin-bottom:8px">What the solver expects from
+      <b>${esc(next.label || next.action)}</b>:</div>
+    <ul class="hr-expect">${(next.explain || []).map(line =>
+      `<li>${esc(line)}</li>`).join("")}</ul>
+    <div class="chip-row">
+      <button class="btn primary" onclick="hrConfirmExpected()" ${_hrBusy ? "disabled" : ""}>
+        Yes — report it</button>
+      <span class="muted hr-small">If anything differed, answer the questions below instead.</span>
+    </div>
+    <div class="muted hr-small">Reports <code>${esc(next.expect)}</code>.</div></div>`;
+}
+
+// Straight to observe with the predicted tokens -- no interview state involved, so a half-filled
+// form cannot leak into it. The item code comes from the solver's own step, which is the field
+// that was missing when the solver priced one potion and simulated another.
+function hrConfirmExpected(){
+  const next = _huntSnap.solution?.next;
+  if (!next) return;
+  huntRunDo("hunt_session_observe", next.action, [next.expect], next.item || null, null);
 }
 
 function huntRunObserve(){
@@ -5161,7 +5277,7 @@ function hrHpText(range, max){
                        : `${range.low}–${range.high} / ${max}`;
 }
 
-function hrSide(label, m, danger){
+function hrSide(label, m, danger, side){
   const range = m.hp_range || {low: m.hp, high: m.hp, certain: true};
   // Danger is judged on the WORST case the candidates allow, not the best.
   const low = danger && range.low !== null && range.low <= danger;
@@ -5170,7 +5286,11 @@ function hrSide(label, m, danger){
   if (m.held_item) extras.push(esc(m.held_item));
   return `<div class="hr-side">
     <div class="hr-side-top"><b>${esc(label)}</b> ${esc(m.name)}
-      ${m.status && m.status !== "none" ? `<span class="chip">${esc(m.status)}</span>` : ""}</div>
+      ${m.status && m.status !== "none" ? `<span class="chip">${esc(m.status)}</span>` : ""}
+      ${side ? `<button class="btn small" style="margin-left:auto"
+        onclick="hrShowSpread('${side}')"
+        title="The full stat spread this run is simulating — check it against the Pokémon">
+        Spread</button>` : ""}</div>
     <div class="${low ? "hr-danger" : ""}">${hrHpText(range, m.max_hp)}
       ${low ? " — in range of one hit" : ""}
       ${range.certain ? "" : `<span class="muted hr-small">candidates disagree</span>`}</div>
@@ -5179,6 +5299,37 @@ function hrSide(label, m, danger){
     <div class="muted hr-small">${m.moves.map((mv, i) =>
       `${esc(mv)} ${m.pp[i]}`).join(" · ")}</div>
   </div>`;
+}
+
+// The spread, shown HERE rather than only on the search screen. The search screen is before the
+// catch; this is during it, which is when the player can finally put the numbers next to the
+// Pokemon and see whether they agree. A wrong spread desynchronises rather than degrades, so the
+// moment it becomes checkable is the moment worth offering the check.
+function hrShowSpread(side){
+  const m = _huntSnap[side];
+  if (!m) return;
+  const order = ["hp", "atk", "def", "spa", "spd", "spe"];
+  const names = {hp: "HP", atk: "Attack", def: "Defense", spa: "Sp. Atk", spd: "Sp. Def",
+                 spe: "Speed"};
+  const derived = side === "target";
+  openModal(`<h3>${esc(m.name)} — the spread being simulated</h3>
+    <div class="hr-small muted" style="margin-bottom:10px">${derived
+      ? `Derived from the nature and IVs this run was configured with. Check them against the
+         Pokémon's own summary screen — if any number disagrees, the simulation has been
+         working from the wrong Pokémon and the path it found does not apply.`
+      : `Entered from the in-game summary screen, so these should match it exactly.`}</div>
+    <div class="candtable"><table>
+      <tr><th>stat</th><th>value</th></tr>
+      ${order.map(k => `<tr><td>${names[k]}</td><td><b>${m.stats[k] ?? "—"}</b>${
+        k === "spe" && m.effective_speed !== m.stats[k]
+          ? ` <span class="muted">(${m.effective_speed} after paralysis)</span>` : ""
+      }</td></tr>`).join("")}
+      <tr><td>Level</td><td>${m.level ?? "—"}</td></tr>
+      <tr><td>Type</td><td>${(m.types || []).map(esc).join(" / ") || "—"}</td></tr>
+      ${m.ability ? `<tr><td>Ability</td><td>${esc(m.ability)}</td></tr>` : ""}
+      ${m.held_item ? `<tr><td>Held item</td><td>${esc(m.held_item)}</td></tr>` : ""}
+    </table></div>
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`);
 }
 
 function renderHuntRun(){
@@ -5191,7 +5342,7 @@ function renderHuntRun(){
   const signed = (n) => `${n >= 0 ? "+" : ""}${n}`;
   const at = s.identified_at;
   const candidates = pinned
-    ? `<div class="hr-pinned">Seed pinned: <code>${esc(s.identified)}</code></div>
+    ? `<div class="hr-pinned">Seed pinned: ${hrCopyable(s.identified, "the battle seed")}</div>
        ${at ? `<div class="hr-small" style="margin-top:6px">Landed on frame <b>${at.frame}</b>
            (<b>${signed(at.frame_delta)}</b> from the ${s.window.frame_centre} aimed for) ·
            RTC second <b>${at.second}</b>
@@ -5304,11 +5455,17 @@ function renderHuntRun(){
                onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button></div>`)
       : "";
 
+  // Tooltip per row, from the session's own replay -- so a turn played before a switch is
+  // described by whoever was actually out for it, which is why the code column can stay a code.
   const history = s.turns.length
     ? `<div class="candtable"><table><tr><th>#</th><th>action</th><th>reported</th><th>seeds</th></tr>
-       ${s.turns.map(t => `<tr><td>${t.n}</td><td><code>${esc(t.action)}</code></td>
-          <td><code>${esc(t.rendered)}</code></td>
-          <td class="muted">${t.survivors_before} → ${t.survivors_after}</td></tr>`).join("")}
+       ${s.turns.map(t => {
+          const tip = (t.explain || []).join(" · ");
+          return `<tr title="${esc(tip)}"><td>${t.n}</td>
+            <td><code>${esc(t.action)}</code></td>
+            <td><code class="hr-explained">${esc(t.rendered)}</code></td>
+            <td class="muted">${t.survivors_before} → ${t.survivors_after}</td></tr>`;
+        }).join("")}
        </table></div>`
     : `<div class="muted hr-small">No turns reported yet.</div>`;
 
@@ -5342,10 +5499,15 @@ function renderHuntRun(){
           `<button class="btn" onclick="openSaveHuntRunModal()">Save run</button>`}
         <button class="btn" onclick="huntRunAbandon()">${s.over ? "Close" : "End run"}</button>
       </div></div>
-    <div class="hr-phase">${esc(s.phase_label)}</div>
+    <div class="hr-phase">${esc(s.phase_label)}
+      <span class="chip">Turn ${s.turns.length + (s.over ? 0 : 1)}</span>
+      ${s.turns.length ? `<span class="muted" style="text-transform:none;font-weight:400">
+        ${s.turns.length} reported</span>` : ""}</div>
     ${outcome}${ambiguity}${contra}
-    <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor)}${hrSide("Target:", s.target, 0)}</div>
+    <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor, "ours")}${
+      hrSide("Target:", s.target, 0, "target")}</div>
     ${s.over ? "" : solver}
+    ${s.over ? "" : hrExpectedBlock()}
     ${s.over ? "" : `<div class="panel">
       <div class="section-label">Report the turn you just played</div>
       ${hrInterview()}
@@ -5355,7 +5517,14 @@ function renderHuntRun(){
     <div class="panel"><div class="section-label">Candidates</div>${candidates}</div>
     <div class="panel"><div class="section-label">Turns so far</div>${history}
       ${s.path ? `<div class="muted hr-small" style="margin-top:8px">Path:
-        <code>${esc(s.path)}</code></div>` : ""}</div>`);
+        ${hrCopyable(s.path, "the path so far")}</div>` : ""}
+      <div class="chip-row">
+        <button class="btn small" onclick="huntRunDo('hunt_session_undo')"
+          ${s.turns.length && !_hrBusy ? "" : "disabled"}
+          title="${s.turns.length
+            ? "Rewind a MISREPORT. A misplay cannot be undone -- the game has advanced, so report what actually happened instead."
+            : "Nothing reported yet."}">Undo last turn</button>
+      </div></div>`);
 }
 
 async function huntConfigure(id){
@@ -6044,7 +6213,7 @@ function partyForm(profileId, pokemonId){
       <button class="btn primary" onclick="partyFormSubmit('${esc(profileId)}', ${pokemonId ?? "null"})">
         ${existing ? "Save" : "Add"}</button>
       <button class="btn" onclick="closeModal()">Cancel</button>
-    </div>`);
+    </div>`, true);   // wide: six stat columns plus four move+PP pairs do not fit 440px
 }
 
 async function partyFormSubmit(profileId, pokemonId){

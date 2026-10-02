@@ -283,3 +283,101 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
     if terminal and tokens[-1] not in ("C", "Pc"):
         problems.append(f"{terminal[0]!r} is terminal; nothing may follow it")
     return problems
+
+
+# --- Plain language -------------------------------------------------------------------------
+#
+# A token stream is dense on purpose: `M1hE3h~HP103` is one turn and reads as one turn once you
+# know the grammar. The player does not, and should not have to -- the interview exists so they
+# never type one. But tokens still surface in three places where they have to be understood:
+# the solver's recommended next turn, the turns-so-far table, and a contradiction report.
+#
+# So the same grammar gets a second renderer. It takes the names from the battle rather than
+# holding its own, because "M1" means a different move for every party member.
+
+#: What each prevention marker means, in words.
+_PREVENTION_PROSE = {
+    "par": "was fully paralyzed and couldn't move",
+    "slp": "was asleep",
+    "frz": "was frozen solid",
+    "cfz": "hurt itself in confusion",
+    "fln": "flinched",
+}
+
+
+def _move_name(names: tuple[str, ...] | list[str], slot: int) -> str:
+    """Move `slot` (0-based) by name, falling back to its number."""
+    if 0 <= slot < len(names) and names[slot]:
+        return names[slot]
+    return f"move {slot + 1}"
+
+
+def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
+    """One M/E token's detail, as a sentence fragment about `actor`."""
+    for marker in STATUS_MARKERS:
+        if not detail.startswith(marker):
+            continue
+        rest = detail[len(marker):]
+        if marker in RESOLUTION_DETAIL:
+            slot = int(rest[0]) - 1 if rest[:1].isdigit() else 0
+            return (f"{actor} snapped out of confusion and used "
+                    f"{_move_name(names, slot)}")
+        return f"{actor} {_PREVENTION_PROSE.get(marker, marker)}"
+    if not detail[:1].isdigit():
+        return f"{actor} acted"
+    slot = int(detail[0]) - 1
+    rest = detail[1:]
+    move = _move_name(names, slot)
+    secondary = SECONDARY in rest
+    if MISS in rest:
+        phrase = f"{actor} used {move} and it missed"
+    elif CRIT in rest:
+        phrase = f"{actor} used {move} — a critical hit on {defender}"
+    elif HIT in rest:
+        phrase = f"{actor} used {move} and hit {defender}"
+    else:
+        phrase = f"{actor} used {move}"
+    if secondary:
+        phrase += ", and its extra effect happened"
+    return phrase
+
+
+def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the target",
+                 target_moves=(), capture_ball: str = "the capture ball",
+                 item_name=None) -> list[str]:
+    """One turn's tokens as plain sentences, in the order they happened.
+
+    `item_name` maps an item code to its name; without it an ``Ihp`` token reads as its code,
+    which is better than nothing but worse than "a Hyper Potion".
+
+    Returns a list so a caller can join it however it likes -- a tooltip wants one line, a
+    confirmation box wants bullets.
+    """
+    from claytonlib.battle.catch import SHAKE_MESSAGES
+
+    out: list[str] = []
+    for token in normalise(tokens):
+        prefix, detail = token[0], token[1:]
+        if token.startswith("HP"):
+            out.append(f"{ours} ended the turn on {int(token[2:])} HP")
+        elif prefix == "M":
+            out.append(_explain_actor(detail, ours, ours_moves, defender=target))
+        elif prefix == "E":
+            out.append(_explain_actor(detail, target, target_moves, defender=ours))
+        elif prefix == "I":
+            name = item_name(detail) if callable(item_name) else detail
+            out.append(f"You used {name}")
+        elif prefix == "S":
+            out.append(f"You switched to party slot {detail}" if detail else "You switched")
+        elif token == "C":
+            out.append(f"The {capture_ball} CAUGHT it — the run is won")
+        elif token == "Pc":
+            out.append("A Poké Ball caught it — in the WRONG ball, so the run is lost")
+        elif prefix in ("C", "P"):
+            ball = f"the {capture_ball}" if prefix == "C" else "a Poké Ball"
+            shakes = int(detail) if detail.isdigit() else 0
+            out.append(f"You threw {ball}: {SHAKE_MESSAGES[shakes]} "
+                       f"({shakes} shake{'' if shakes == 1 else 's'})")
+        else:
+            out.append(token)
+    return out

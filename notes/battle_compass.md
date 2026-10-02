@@ -2573,6 +2573,65 @@ cannot disagree about which slots are recorded. `tests/test_app_party_pp.py` is 
 spans the boundary, asserting the key the *page* writes is the key the simulator reads — including
 a static check that nothing in the facade indexes `max_pp` directly again.
 
+## 16.9 Run-page polish — the nine feedback items [implemented]
+
+Collected in `notes/feedback_battle_compass.md` once the functionality was sound. Three are worth
+more than their size.
+
+**Shake counts are reported by MESSAGE.** Nobody counts wobbles; they read the line that follows.
+So the chip's label is the message and the shake count is its tooltip, with the count shown back
+once chosen because the token is written in shakes. `claytonlib.battle.catch.SHAKE_MESSAGES` is
+the one source, and a test decodes the page's own copy and compares it to the Python list —
+because a drift here would have the player report a count they never saw, and this component has
+been bitten three times by a convention written in one module and read in another with no test
+spanning both (§16.2, §16.5, §16.8).
+
+**One renderer for plain language, serving two features.** `tokens.explain_turn` turns a turn's
+tokens into sentences, taking the names from the battle rather than holding its own. It feeds both
+the solver's "Did this happen?" box and the per-row tooltip on the turns table, so the two cannot
+describe the same turn differently. A sweep over 120 seeds × 5 actions asserts no token the
+simulator can render is left as a bare code.
+
+Two accessors, deliberately: `HuntSession.explain` uses the *current* active Pokemon — right for a
+recommendation — while `explain_history` **replays the run**, so a turn played before a switch is
+described by whoever was actually out for it. Naming a pre-switch turn's moves from whoever is out
+now would confidently describe the wrong move; that is the same hazard that keeps the history's
+action column in codes, and replaying is what makes a plain-language version of it safe.
+
+**The one-click confirm.** Reporting through the interview is five or six clicks, and in Phase 2
+the predicted turn is overwhelmingly what happened. "Did this happen?" lists the expected turn in
+words with a Yes that reports it directly — bypassing the interview entirely, so a half-filled
+form cannot leak in, and passing the solver's own item code (the field whose absence caused
+§16.5). The interview stays below it, because the whole point of Phase 2 is catching the turn that
+does *not* match.
+
+The rest:
+
+* **Buttons invisible on hover** — `.chip:hover` replaced `.chip.active`'s grass background while
+  leaving `color:var(--grass-ink)` in place: near-black ink on the near-black `--surface-2`, so
+  the *selected* chip vanished under the cursor. `.btn.primary:hover` had solved this with
+  `brightness` long before; the chip just never got the same treatment.
+* **Undo from the first turn** — it lived inside the report block, which only renders once a whole
+  other turn has been answered, so the button was missing exactly when it was wanted. It sits with
+  the turn history now, and explains itself when disabled.
+* **Turn counter** on the phase line, counting the turn *being played* rather than the ones done,
+  and not advancing past the end of a finished run.
+* **Party stat fields** — six columns in a 440px modal left about one digit visible once the input
+  padding and the number spinner were accounted for. The form opens `wide`, the spinners go (they
+  are useless at that width and a focused number input edits itself on a scroll wheel, which was
+  no better here than on the HP field), and the tracks are `minmax(0,1fr)` so an input's intrinsic
+  width cannot overflow the row.
+* **Spread popup** on both battler bars. The search screen shows the spread *before* the catch;
+  this shows it during, which is when the player can finally hold the numbers next to the Pokemon.
+  It shows the paralysed Speed beside the raw one, since raw Speed is what the summary screen
+  shows and effective Speed is what decides turn order — showing only one makes the other look
+  wrong.
+* **Selectable text, and click-to-copy** on Seed A, Seed B and the path. Selection is now stated
+  in CSS rather than left to the host engine, with controls kept unselectable so dragging across a
+  chip row does not highlight the labels. Copy falls back to selecting the text when
+  `navigator.clipboard` is absent, which a packaged webview may not expose — a toast saying "copy
+  failed" would be worse than leaving Ctrl+C ready.
+
 ## 17. Remaining questions
 
 ### 17.1 Candidate generation — ANSWERED

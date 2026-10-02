@@ -42,6 +42,14 @@ from claytonlib.moves import CATEGORY_STATUS, resolve_move
 CANDIDATE_PREVIEW = 12
 
 
+def _item_name(code: str) -> str:
+    """An item code as its name, for plain-language rendering. Falls back to the code."""
+    try:
+        return f"a {items.item(code).name}"
+    except ValueError:
+        return code
+
+
 def worst_incoming_hit(ours: Battler, target: Battler) -> int:
     """The largest single hit the target can land: max roll, critical, over all its moves.
 
@@ -554,6 +562,44 @@ class HuntSession:
                 spent[turn.item_code] = spent.get(turn.item_code, 0) + 1
         return spent
 
+    def explain(self, tokens) -> list[str]:
+        """One turn's tokens as plain sentences, with this battle's names filled in.
+
+        The grammar is dense on purpose and the interview exists so the player never types one --
+        but tokens still surface where they have to be understood: the solver's recommended turn,
+        the turns-so-far table, and a contradiction report. Same renderer for all three, so they
+        cannot describe the same turn differently.
+
+        Names come from the CURRENT active Pokemon, which is right for a recommendation and wrong
+        for a history row played before a switch. `explain_history` handles that; this does not.
+        """
+        state = next(iter(self._session.states.values()))
+        return tok.explain_turn(
+            tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
+            target=state.target.name, target_moves=tuple(state.target.moves),
+            capture_ball=self.capture_ball or "capture ball",
+            item_name=_item_name)
+
+    def explain_history(self) -> list[list[str]]:
+        """Every reported turn explained, one list of sentences per turn.
+
+        Replayed from the window rather than read off the current state, because a turn played
+        before a switch belongs to a different Pokemon with a different moveset -- naming its
+        moves from whoever is out NOW would confidently describe the wrong move. This is the same
+        hazard that keeps the turn table's action column in codes; replaying is what makes a
+        plain-language version of it safe.
+        """
+        session = self._fresh()
+        out: list[list[str]] = []
+        for turn in self.turns:
+            state = next(iter(session.states.values()))
+            out.append(tok.explain_turn(
+                turn.tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
+                target=state.target.name, target_moves=tuple(state.target.moves),
+                capture_ball=self.capture_ball or "capture ball", item_name=_item_name))
+            session.observe(turn.action, turn.tokens, **turn.extra)
+        return out
+
     def _candidate_row(self, seed: int) -> dict:
         """One candidate as the page shows it: where it sits, and how far that is from the aim.
 
@@ -656,6 +702,9 @@ class HuntSession:
                      "ability": state.ours.ability,
                      "held_item": state.ours.held_item,
                      "effective_speed": effective_speed(state.ours),
+                     "level": state.ours.level,
+                     "types": list(state.ours.types),
+                     "stats": dict(state.ours.stats),
                      "pp": [state.ours.pp_left(i) for i in range(len(state.ours.moves))],
                      "moves": list(state.ours.moves),
                      "move_info": move_info(state.ours, state.target)},
@@ -667,6 +716,13 @@ class HuntSession:
                        "ability": state.target.ability,
                        "held_item": state.target.held_item,
                        "effective_speed": effective_speed(state.target),
+                       "level": state.target.level,
+                       "types": list(state.target.types),
+                       # The full spread, for the popup that lets the player check it against the
+                       # Pokemon once they have it. The run page shows HP and Speed inline, but
+                       # the rest is only verifiable AFTER the catch -- so it is offered where
+                       # that check happens rather than buried back in the search screen.
+                       "stats": dict(state.target.stats),
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
                        "move_info": move_info(state.target, state.ours)},
@@ -682,14 +738,17 @@ class HuntSession:
             "capture_ball": self.capture_ball,
             "danger_floor": self.danger_floor,
             "in_danger": state.ours.hp is not None and state.ours.hp <= self.danger_floor,
-            # Codes here, not labels, and deliberately: `action_label` names a move from the
-            # CURRENTLY active Pokemon's moveset, so labelling a turn played before a switch
-            # would confidently name the wrong move. The history pairs with `path` below, which
-            # is in codes anyway -- it is a record, where the solver's `next` is an instruction.
+            # The action column stays a CODE: `action_label` names a move from the currently
+            # active Pokemon, so labelling a turn played before a switch would name the wrong
+            # move, and the column pairs with `path` below, which is in codes anyway. `explain`
+            # is the plain-language version and is safe because `explain_history` replays the
+            # run, so each turn is described by whoever was actually out for it.
             "turns": [{"n": i + 1, "action": t.action.value, "rendered": t.rendered,
+                       "explain": explanation,
                        "survivors_before": t.survivors_before,
                        "survivors_after": t.survivors_after}
-                      for i, t in enumerate(self.turns)],
+                      for i, (t, explanation) in enumerate(
+                          zip(self.turns, self.explain_history()))],
             "path": tok.render_path([list(t.tokens) for t in self.turns]),
             "legal_actions": [a.value for a in self.legal_actions()],
             "advice": self.advice() if include_advice else None,
@@ -720,7 +779,8 @@ class HuntSession:
                     "action": steps[0].action.value,
                     "label": self.action_label(steps[0].action, steps[0].item),
                     "item": steps[0].item,
-                    "expect": steps[0].rendered},
+                    "expect": steps[0].rendered,
+                    "explain": self.explain(steps[0].tokens)},
                 "steps": [{"n": i + 1, "action": s.action.value,
                            "label": self.action_label(s.action, s.item), "item": s.item,
                            "expect": s.rendered, "distance": s.distance}
