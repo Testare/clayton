@@ -62,72 +62,64 @@ problem for any of these.
 
 ---
 
-## 2. A correction to §16.2 that this turned up
+## 2. Start advances: 6, and now believed GENERAL rather than venue-specific
 
-§16.2 explains the verified `BATTLE_START_ADVANCES = 6` as "4 `bellShimmerReplaceGraphics` (the
-Bell Tower's Suicune shimmer) + 2 Pressure", and calls the 4 venue-specific.
+§16.2 and §16.1 explain the verified `BATTLE_START_ADVANCES = 6` as "4
+`bellShimmerReplaceGraphics` (the Bell Tower's Suicune shimmer) + 2 Pressure", and call the 4
+venue-specific. **The count stands; the breakdown and the venue claim do not.**
 
-**The attribution is wrong.** `bellShimmerReplaceGraphics`
-(`src/field/legend_cutscene_camera.c`) only loads and swaps model animations — it makes no RNG
-call — and it is reached only through `ScrCmd_LegendCutsceneClearBellShimmer`, which the Suicune
-script **never calls**. The gdb reader resolves a caller address to the nearest symbol, so
-`0x02251056` was attributed to a neighbouring function in the same overlay rather than to the
-actual consumer.
+`bellShimmerReplaceGraphics` (`src/field/legend_cutscene_camera.c`) only loads and swaps model
+animations — it makes no RNG call — and it is reached only through
+`ScrCmd_LegendCutsceneClearBellShimmer`, which the Suicune encounter script **never calls**. The
+gdb reader resolves a caller address to the nearest symbol, so `0x02251056` was attributed to a
+neighbouring function in the same overlay rather than to the real consumer.
 
-What survives is the measurement: **6 advances, verified in two independent logs** (test1 and
-test2). What does not survive is the story about where 4 of them come from, and therefore the
-claim that they are venue-specific. The honest status:
+**And 6 has held across every encounter this project has measured** — Suicune (Bell Tower static),
+Metang (Safari Zone), Magikarp (Blackthorn) — which is three different venues and three different
+encounter *kinds*. That is much better evidence than the attribution was: whatever spends those
+four rolls is generic wild-battle setup, not a venue cutscene.
 
-> The count is ground truth for the Bell Tower Suicune. Whether it holds for Whirl Islands Lugia
-> or Bell Tower Ho-Oh is **unknown** and must be measured, not inferred — CLAUDE.md's rule about
-> verified advance counts exists for exactly this.
+So: **treat 6 as general and do not re-derive it per target.** The number is not in doubt; only the
+story about its composition was, and that story is now simply deleted rather than replaced. If a
+future encounter ever disagrees, that disagreement is the evidence that reopens it — per CLAUDE.md,
+a ground-truth capture is what changes a verified count, and nothing short of one should.
 
-Encouragingly, both bird scripts *do* call `LegendCutsceneClearBellShimmer` while Suicune's does
-not, so if the 4 were that cutscene the count would have been *lower* for Suicune, not equal.
-That points at a generic wild-battle setup cost, which would carry over. It is still a hypothesis.
+## 3. The ball decides the multiplier, and the plan is to catch all of them
 
-**This is the first thing to measure for any new target, and it is cheap:** force a seed, start
-the encounter, count the rolls before the first move-selection roll. `utils/gdb-battle-reader.py`
-already prints exactly that, and `test_battle_compass_ground_truth_2.py` already asserts it.
+The planned balls are a **Love Ball for Lugia** and probably a **Luxury Ball for Ho-Oh**. Both are
+**×1**, verified in `src/battle/battle_command.c`:
 
----
+* `ballMultiplier = 10; // All ball multipliers are /10, so this is x1.` is the default, and
+  **Luxury Ball has no case in the switch at all** — so it stays ×1. It only affects friendship.
+* **Love Ball** takes `catchRate *= 8` only when
+  `attacker.species == target.species && attacker.gender != target.gender`. Lugia is
+  **genderless**, so even Lugia-against-Lugia fails the gender test. **×1.**
 
-## 3. Why Lugia Lv45 is the right next target
+So every remaining target is catch rate 3 at ×1 — `b = 21845 / 65536`, **1.23% per throw** at 1 HP
+and paralyzed. **Identical to Suicune.** That is the case Battle Compass was built for, and no
+target here is a softer version of it.
 
-On SoulSilver it is the early bird, and it is *easier than Suicune in the way that matters most*.
+> An earlier draft of this section ranked the targets by ease and led with Lugia on the strength
+> of a ×4 Fast Ball. Two things wrong with that. The ×4 is real — `ITEM_FAST_BALL` does
+> `catchRate *= 4` when base Speed ≥ 100, and Lugia's 110 clears it — but it is a property of
+> **throwing a Fast Ball**, not of Lugia, whose catch rate is 3 like every other legendary here.
+> And ranking by ease answers a question nobody asked: the goal is all of them, so the useful
+> ordering is by **how much new machinery each one needs**, which is what §5 now does.
 
-**The Fast Ball actually works on it.** Lugia's base Speed is 110, clearing the Fast Ball's 100
-threshold, so the catch rate is ×4 instead of ×1:
-
-| target | base Spe | Fast Ball | catch rate | `b` at 1 HP + paralyzed | P(catch) per throw |
-|---|---|---|---|---|---|
-| Suicune Lv40 | 85 | ×1 | 3 | 21845 | 1.23% |
-| **Lugia Lv45** | **110** | **×4** | **12** | **33824** | **7.10%** |
-| Ho-Oh Lv70 | 90 | ×1 | 3 | 21845 | 1.23% |
-
-Nearly six times the per-throw chance, which means capture windows are far denser and Phase 2
-paths get much shorter. `has_fast_ball_bonus` already returns True for it and `HuntConfig`
-already threads `fast_ball_matched` through, so none of that needs writing.
-
-**Its moveset is almost entirely covered already:**
+What *does* make Lugia Lv45 the easiest one to *build* is its moveset:
 
 | move | status | note |
 |---|---|---|
 | Rain Dance | **implemented** | `EFFECT_RAIN_DANCE`, including its `will_fail` when already raining |
 | Hydro Pump | **generic** | fixed power, acc 80 — `execute_move` handles it as-is |
 | Extrasensory | **mostly** | generic damaging; 10% flinch, and effect 31 is already in `FLINCH_EFFECTS` with a `fln` token and `can_flinch()` |
-| Aeroblast | **one gap** | generic damaging, acc 95 — but effect 43 is the high-crit group (Karate Chop, Slash, Crabhammer, Stone Edge…), and `execute_move` hardcodes `CRIT_MODIFIERS[0]` |
+| Aeroblast | **one gap** | generic damaging, acc 95 — but effect 43 is the high-crit group (Karate Chop, Slash, Crabhammer, Stone Edge…), and `execute_move` hardcodes `CRIT_MODIFIERS[0]`, so it would crit 1/16 instead of 1/8 |
 
 **And accuracy 80 on Hydro Pump is a gift.** Per `notes/seed_separation.md`, a sub-100 accuracy
 check is the sharpest seed separator there is — ~49% disagreement per roll between RTC-second
 siblings, against 0% for every 100%-accuracy move. Suicune's moveset could not miss at all, which
-is why its siblings took a median of 13 turns to separate. Lugia misses on its own, for free, on
-any turn it picks Hydro Pump or Aeroblast.
-
-So Lugia Lv45 needs **one real mechanic** (crit stage) plus a check that the flinch *consequence*
-is applied, not just tokenised.
-
----
+is why its siblings took a median of 13 turns to separate. Lugia misses on its own, for free,
+whenever it picks Hydro Pump or Aeroblast.
 
 ## 4. What each other target needs
 
@@ -146,30 +138,135 @@ Ranked by how many targets share the mechanic.
 | **Paralysis on us** | Dragon Breath (30%) | a paralyzed Smeargle may stop outspeeding, losing the speed-tie guarantee |
 | **Roamer fleeing** | the roaming twin | a roamer flees at end of turn unless trapped, so Mean Look becomes mandatory on turn 1 and a flee is a terminal outcome the state machine has no concept of |
 
+### Safeguard, and winning the Thunder Wave race
+
+Safeguard is slot 4 in **both** Lv70 sets, so on this profile Ho-Oh will raise it roughly one turn
+in four. §2.2's Phase 2 precondition is a *permanently paralyzed* target, so a Safeguard up before
+we land Thunder Wave is a hard block — wait out its five turns and try again, or get in first.
+
+Getting in first is the part worth planning, and it has a catch: **the speed guarantee we normally
+rely on comes FROM paralysis**, so it does not exist on the turn we are trying to apply paralysis.
+That turn is the one race in the whole run we have to win on raw Speed.
+
+**The spread being targeted is 31 Speed IV with a non-boosting nature**, which puts Ho-Oh Lv70 at
+**Speed 152**. So the bar is:
+
+* **153+** bare, or
+* **102+** with a Choice Scarf (×1.5, floored).
+
+It has to be *strictly* greater. A tie is not neutral — a speed tie consumes an extra roll
+(`notes/ss_rng/speed.md`), which is exactly the unpredictability §4.2 exists to eliminate. Pikachu
+is the illustration: at Lv70 with 31 IVs and a neutral nature it lands on **exactly 152** and ties.
+
+Every species that learns Thunder Wave **by level-up** in HGSS, by base Speed (22 of them;
+Thunder Wave is also TM73, which opens the list up enormously, so treat this as a floor not a
+menu):
+
+| species | base Spe | learns TW | Lv50 | Lv70 | clears 152? |
+|---|---|---|---|---|---|
+| Jolteon | 130 | L57 | 150 | 208 | Lv50 scarfed · **Lv70 bare** |
+| Manectric | 105 | L1 | 125 | 173 | Lv50 scarfed · **Lv70 bare** |
+| Zapdos | 100 | L8 | 120 | 166 | Lv50 scarfed · **Lv70 bare** |
+| Rotom | 91 | L1 | 111 | 154 | Lv50 scarfed · **Lv70 bare** |
+| Pikachu | 90 | L10 | 110 | 152 | Lv50 scarfed · Lv70 **ties — avoid** |
+| **Magneton** | 70 | L17 | 90 | 124 | Lv70 scarfed (186) |
+
+Two things worth drawing out:
+
+* **The Magneton already in the party gets there** — at Lv70 it is 124 bare, 186 scarfed, clear of
+  152. At its current Lv31 (Speed 50) it is 75 scarfed and nowhere near, so this is a levelling
+  job rather than a new Pokemon.
+* **A Lv70 Jolteon needs no scarf at all** (208 bare), which sidesteps the Choice lock entirely.
+
+Two small pieces of machinery this needs: `effective_speed()` reads `battler.stats["spe"]` and
+knows nothing about held items, and the in-game summary screen does not include a Choice Scarf's
+boost either — so a Speed-modifying held item has to be modelled rather than entered. And a Choice
+item **locks the holder into its first move**, which is fine for a dedicated paralyzer that
+switches out afterwards, but the solver must not be allowed to pick a second move for it.
+
+---
+
+## 4a. How the game picks the roamer over the normal encounter
+
+Answered exactly, in `src/field/encounter_check.c`.
+
+Both the walking and Sweet Scent paths call the same helper, `getRandomActiveRoamerInCurrMap`:
+
+```c
+for (u8 i = 0; i < ROAMER_MAX; ++i) {
+    u32 mapId = GetRoamMapByLocationIdx(Roamer_GetLocation(saveRoamers, i));
+    if (GetRoamerIsActiveByIndex(saveRoamers, i) && mapId == fieldSystem->location->mapId) {
+        foundRoamers[nRoamers] = ...; ++nRoamers;
+    }
+}
+if (nRoamers == 0)      return FALSE;
+if (LCRandRange(2) == 0) return FALSE;          // <-- a 50/50 coin flip
+if (nRoamers > 1) {
+    u16 chosenRoamer = LCRandRange(nRoamers);   // <-- which one, if several
+    *pRoamer = foundRoamers[chosenRoamer];
+}
+return TRUE;
+```
+
+So, in order:
+
+1. Collect every **active** roamer whose current location maps to the map you are standing on.
+2. None → normal encounter.
+3. **`LCRandRange(2) == 0` → normal encounter anyway.** Standing on the right route is a coin flip,
+   not a guarantee.
+4. More than one roamer on the map (Raikou, Entei and a Lati twin can overlap) → a second roll
+   `LCRandRange(nRoamers)` picks which.
+5. Otherwise: `BATTLE_TYPE_ROAMER`, `initRoamingWildmon` reads species/level/IVs/PID straight out of
+   the save, and a forced wild battle starts.
+
+**The consequence that matters for this project:** `LCRandRange(n)` is
+`LCRandom() % n` (`include/math_util.h:30`), so that coin flip **spends one advance of the overworld
+(Seed A) stream** — and it is spent *before* the normal encounter generation. Two things follow:
+
+* On a route with an active roamer, an encounter check costs **one extra Seed A advance** compared
+  to a roamer-free route (**two** if two roamers are on the map). Every advance-frame calculation
+  in `safari_advance` and the frame guide is off by that much on such a route.
+* But the outcome is therefore **deterministic and steerable**. At a known Seed A frame you know
+  which way the coin falls, so "stand on the route and hope" becomes "land on a frame where the
+  flip gives the roamer". That is the same kind of problem the frame guide already solves.
+
+Two asymmetries between the paths, both worth knowing:
+
+* **Walking** runs `FieldSystem_EncounterRateRoll` *first*; if that fails there is no encounter and
+  the coin flip is never spent. Sweet Scent has no rate roll, so the flip happens every time.
+* **Repel**: on the walking path, a roamer that wins the flip can still be suppressed by Repel —
+  and when it is, the function returns `FALSE` outright, so the encounter is *lost* rather than
+  falling through to a normal one. The Sweet Scent path has no Repel check on the roamer branch at
+  all.
+
+(`followerFlag` gates both, but the decomp comment notes it is always FALSE in HGSS.)
+
 ### Two structural notes on the roamer
 
 **Its IVs are fixed in your save, not by the encounter.** `CreateRoamer`
 (`field_roamer.c:204-215`) calls `CreateMon` and stores `ROAMER_DATA_IVS` / `ROAMER_DATA_PERSONALITY`
-at *setup* time — a one-off story event. So unlike the birds, there is nothing to steer: the
-spread is already decided, you read it off once rather than targeting an advance frame. The Seed A
-advances step is irrelevant for it, and the spread entry becomes a one-time profile fact.
+at *setup* time — a one-off story event. So unlike the birds there is nothing to steer: the spread
+is already decided, and you read it off once rather than targeting an advance frame. What Seed A is
+still good for is the roamer's **location** — a seed that puts it on a chosen route is what lets
+you go and wait there — and for centring Seed B, which is unchanged.
 
 **Seed B's provenance differs.** Seed B is verified for Sweet-Scent and static A-press encounters
-(CLAUDE.md). A roamer is a route encounter, closer to the Sweet-Scent case, but the battle-start
-advances will not be the Bell Tower's and need their own capture.
+(CLAUDE.md). A roamer is a route encounter, closest to the Sweet-Scent case.
 
----
+## 5. Suggested order — by machinery needed, not by difficulty
 
-## 5. Suggested order
+Every target is catch rate 3 at ×1, so none is easier to *catch*. They differ only in how much new
+simulation each needs.
 
-1. **Lugia Lv45** — crit stage, confirm the flinch consequence, measure its start advances. Gets a
-   ×4 ball and a self-separating moveset. By far the best value.
-2. **Ho-Oh Lv70** — the other half of this profile. Needs burn, Punishment, Ancient Power and
-   Safeguard; no sun, since Sunny Day is only in the Lv45 set. The hardest of the birds.
-3. **Latias Lv40 (Pewter)** — static, so no fleeing, but Refresh still breaks the frozen-target
-   model. Worth doing before the roamer because it isolates that one problem.
-4. **Latios Lv35 (roamer)** — Refresh *and* fleeing *and* a different Seed B provenance. Treat as
-   a separate project, not a new row in `STATIC_ENCOUNTERS`.
+1. **Crit stage** (one task) — then **Lugia Lv45** is reachable, because the rest of its moveset is
+   already covered or generic. Cheapest path to a second working target.
+2. **Ho-Oh Lv70** — the other half of this profile, and the heaviest lift: burn with its residual
+   tick, Punishment's variable power, Ancient Power's self-boost, Safeguard, plus a Speed-modifying
+   held item for the Thunder Wave race. No sun needed, since Sunny Day is only in the Lv45 set this
+   version never sees.
+3. **Latias Lv40 (Pewter)** — static, so no fleeing, which makes it the right place to isolate the
+   Refresh problem on its own.
+4. **Latios Lv35 (roamer)** — Refresh *and* fleeing *and* the extra Seed A advance from §4a *and* a
+   save-fixed spread. Treat as its own project rather than a new `STATIC_ENCOUNTERS` row.
 
-Steps 1 and 2 are "add a target". Steps 3 and 4 are "extend the model", and step 4 arguably wants
-its own compass.
+Steps 1-2 are "add a target". Steps 3-4 are "extend the model".

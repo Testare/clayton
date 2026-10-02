@@ -2293,8 +2293,11 @@ not an RNG state**: the game spends six rolls between generating it and the firs
 > reached only via `ScrCmd_LegendCutsceneClearBellShimmer`, which the Suicune encounter script
 > never calls. The gdb reader resolves a caller to the nearest symbol, so the address was
 > attributed to a neighbour in the same overlay. Consequence: the claim that 4 of the 6 are
-> venue-specific is unsupported, and the count must be **re-measured per encounter** rather than
-> carried over or inferred. See notes/battle_compass_next_targets.md §2.
+> **venue-specific** is unsupported — and the measurements say the opposite. Six has held for
+> Suicune (Bell Tower static), Metang (Safari Zone) and Magikarp (Blackthorn): three venues,
+> three encounter kinds. So **treat 6 as general**; only the story about its composition was
+> wrong, and that story is deleted rather than replaced. See
+> notes/battle_compass_next_targets.md §2.
 
 It hid perfectly, and the way it hid is the lesson. Every synthetic fixture in
 `test_battle_compass_identify` generated its expected tokens the *same* wrong way, from
