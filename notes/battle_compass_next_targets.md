@@ -322,6 +322,77 @@ you go and wait there — and for centring Seed B, which is unchanged.
 **Seed B's provenance differs.** Seed B is verified for Sweet-Scent and static A-press encounters
 (CLAUDE.md). A roamer is a route encounter, closest to the Sweet-Scent case.
 
+## 4b. Latias Lv40 (SoulSilver Pewter event): put it to SLEEP, not to sleep-adjacent
+
+Moveset confirmed from `wotbl.narc`: **Water Sport / Refresh / Mist Ball / Zen Headbutt**. Two
+things about it pull in opposite directions, and the resolution is cleaner than either.
+
+**The Fast Ball really does apply.** Latias's base Speed is 110, clearing the ×4 threshold
+(`catchRate *= 4` when base Speed ≥ 100), so catch rate 3 becomes 12. Unlike Lugia-in-a-Love-Ball
+this one is not academic.
+
+**Refresh really does shed paralysis** — and it is the only move in any planned target's set that
+breaks §2.2's frozen-target precondition at the root.
+
+### The resolution: Refresh is self-targeting, so a sleeping Latias cannot use it
+
+Use **sleep** as the status instead of paralysis, and Refresh stops being a problem in three
+separate ways:
+
+1. **It cannot be used at all while the target is asleep**, because sleep prevents the move.
+2. **Awake and unstatused, Refresh cures nothing**, so it fails — a wasted turn for Latias on
+   roughly one turn in four. Refresh goes from a threat to a gift.
+3. **Sleep is the better catch status anyway**: ×2 against paralysis's ×1.5
+   (`STATUS_SLEEP = 20`, `STATUS_PARALYSIS = 15`, in tenths).
+
+Latias Lv40 at 1 HP, 31 HP IV (max HP 126):
+
+| ball | status | `b` | P(catch) per throw |
+|---|---|---|---|
+| ×1 | paralyzed | 21845 | 1.23% |
+| Fast (×4) | none | 29958 | 4.37% |
+| Fast (×4) | paralyzed | 33824 | 7.10% |
+| **Fast (×4)** | **asleep** | **36157** | **9.27%** |
+
+For scale, Suicune and Ho-Oh are both 1.23% — so a sleeping Latias in a Fast Ball is **7.5×
+easier per throw** than either.
+
+### And sleep costs nothing on turn order, which is the only reason paralysis was mandated
+
+§4.2 requires paralysis because quartering the target's Speed guarantees we move first, and a
+speed tie costs an extra roll. Here that guarantee survives without it: Smeargle at Lv58 has
+Speed 160, and a Lv40 Latias tops out at **115** even with 31 IVs and a boosting nature. We
+outspeed every possible spread, awake or not.
+
+| Latias Lv40 spread | Speed | Smeargle (160) first? |
+|---|---|---|
+| 0 IV, hindering | 83 | yes |
+| neutral, 31 IV | 105 | yes |
+| max | 115 | yes |
+
+### What it actually costs, and what needs building
+
+**Sleep expires.** The duration is `2 + RAND % 4`, so 2-5 turns, rolled when it is applied (the
+simulator already spends that roll — `SLEEP_DURATION_MIN/SPAN`). So this is a *window*, not the
+permanent state §2.2's model is built on, and Phase 2 would have to carry the sleep counter and
+the wake-up. That is `clayton-hdo.1`, already open: *"sleep on the target is unmodelled beyond its
+duration roll."* It is the one genuine prerequisite.
+
+**It cannot be topped up.** A status move against an already-statused target fails, so you wait
+for the wake and re-Spore — you do not refresh the counter early. Budget is comfortable though:
+**Latias's ability is Levitate, not Pressure** (`personal.json`), so our PP consumption is *not*
+doubled and Spore's 15 PP is 15 applications rather than 7. (Levitate itself is irrelevant to
+False Swipe and Spore.)
+
+**`will_fail` needs a Refresh case.** It currently returns True for a status move against an
+already-statused target and for the three field conditions, and knows nothing about a Refresh
+with nothing to cure. Without it the simulator would spend Refresh's two post-successful-move
+advances where the game skips them — precisely the bug that desynchronised test1 at turn 3.
+
+**A bonus:** Zen Headbutt is 90 accuracy, so Latias self-separates for RTC-second siblings the
+way Lugia does (§3) and Suicune never did. Mist Ball's 50% Sp. Atk drop lands on us and does not
+matter; Water Sport is a no-op against anything we do.
+
 ## 5. Suggested order — by machinery needed, not by difficulty
 
 Every target is catch rate 3 at ×1, so none is easier to *catch*. They differ only in how much new
