@@ -140,6 +140,9 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
   (the P0–P3 phasing vocabulary), `branching_paths.md`, `effects.md`, `critical_hits.md`,
   `held_items.md`, `fainting.md`, `todo.md`.
 - `notes/seed_hitting_process.md` — The t0–t3 timing model behind the calibration work.
+- `notes/battle_compass_next_targets.md` — Plan for Lugia / Ho-Oh / Latias+Latios: the
+  ROM-derived encounter levels and movesets (they differ by version), which mechanics each needs,
+  and a correction to the BATTLE_START_ADVANCES attribution.
 - `notes/seed_separation.md` — How to tell two candidate battle seeds apart when the battle
   refuses to: why RTC-second siblings are nearly invisible, and why a sub-100-accuracy move is
   the fix. Verified mechanism, measured figures, proposals tagged as design.

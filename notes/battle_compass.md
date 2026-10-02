@@ -2286,6 +2286,16 @@ and this one was replayed as an *identification* — and those seed their states
 not an RNG state**: the game spends six rolls between generating it and the first turn (§16.1's
 `BATTLE_START_ADVANCES`), so every candidate was running six advances behind the real stream.
 
+> **Correction to the attribution, found while planning the next targets.** This section and
+> §16.1 explain the six as "4 `bellShimmerReplaceGraphics` + 2 Pressure". The *count* is ground
+> truth from two logs and stands. The breakdown does not:
+> `bellShimmerReplaceGraphics` only swaps model animations and makes no RNG call, and it is
+> reached only via `ScrCmd_LegendCutsceneClearBellShimmer`, which the Suicune encounter script
+> never calls. The gdb reader resolves a caller to the nearest symbol, so the address was
+> attributed to a neighbour in the same overlay. Consequence: the claim that 4 of the 6 are
+> venue-specific is unsupported, and the count must be **re-measured per encounter** rather than
+> carried over or inferred. See notes/battle_compass_next_targets.md §2.
+
 It hid perfectly, and the way it hid is the lesson. Every synthetic fixture in
 `test_battle_compass_identify` generated its expected tokens the *same* wrong way, from
 `BattleState(rng=truth)`. Fixture and subject shared the assumption, agreed with each other, and
