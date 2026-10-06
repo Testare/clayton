@@ -1667,9 +1667,43 @@ ambiguous.
 | `P0`-`P3` | standard ball, that many shakes |
 | `Pc` | **accidental capture** in a standard ball — terminal, run lost |
 | `S1`-`S6` | switch to that party slot |
+| `R1`-`R6` | Revive used on that party slot — back on half its max HP, rounded down |
+| `X1`-`X6` | our Pokémon **fainted**, and that party slot came in to replace it |
+| `XX` | our Pokémon fainted with nothing left to send — terminal, run lost |
 | `E1`-`E4` | enemy used that move, by slot in its known moveset |
 | `E` | enemy's move was intervened on by a status — followed by the status detail; see §13.4 |
 | `HP###` | our active Pokémon's HP at end of turn, zero-padded to 3 digits |
+
+The party-slot numbers in `S`, `R` and `X` are **stable**: HGSS never reorders a party, so `1` is
+the first Pokémon in the hunt configuration for the whole run, whoever happens to be out.
+Switching Magneton out for Smeargle and back again reads `S3` then `S1` (clayton-0w3.1).
+
+`R` and `X` both carry a slot for the same reason, and it is the reason no other action needs one:
+every item in the bag is used on whoever is out, so an item token needs no target. A Revive is the
+exception — it is used on somebody who is *not* out — and a forced replacement is not an action we
+chose at all.
+
+A faint turn carries **no `HP###` token**: zero is implied by the `X`, and once the replacement is
+out an HP number would be describing a different Pokémon. This is the one place §13.8's HP rule is
+enforced in both directions, because here a surplus token is as checkable as a missing one.
+
+#### 13.3.1 What a faint costs the stream
+
+Measured in-game; recorded in `notes/ss_rng/fainting.md` and constant-ified in
+`claytonlib/battle/turn.py`. A faint **shortens** the turn rather than ending it:
+
+* the attacker keeps every roll it was going to spend, its secondary-effect roll included — only
+  the *outcome* of that roll goes unseen, so the `~` is suppressed while the stream is untouched;
+* fainted **before** we moved, we spend none of our own rolls and the two between-turn advances
+  are dropped as well;
+* the end-of-turn block shrinks from 4 advances to **3** (fainted before moving) or **2** (after);
+* fainting to an end-of-turn effect — a burn or poison tick — changes nothing, and keeps its 4;
+* sending the replacement out costs nothing, like every other switch.
+
+The last two matter together, and give the grammar two readable outcomes for the same attack:
+`E3hX2` is "the move fainted us outright", while `E3h~X2` is "the move burned us, we survived it,
+and the tick finished us at end of turn". Residual damage is not modelled yet, so only the first
+form is reachable today.
 
 ### 13.4 Tokens are chronological, and a status can resolve *and* let the action through
 

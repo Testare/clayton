@@ -40,9 +40,13 @@ CRIT = "!"
 MISS = "-"
 SECONDARY = "~"
 
-#: Uppercase action prefixes, longest-match. Prefix-free: "H" alone is deliberately not one,
-#: which is what lets "HP" be two characters.
-ACTION_PREFIXES = ("HP", "I", "C", "M", "P", "S", "E")
+#: Uppercase action prefixes, longest-match, so LONGER ONES MUST COME FIRST. Prefix-free apart
+#: from that: "H" alone is deliberately not one, which is what lets "HP" be two characters, and
+#: "XX" has to be tried before "X" or a wipe would tokenise as two separate faints.
+ACTION_PREFIXES = ("HP", "XX", "I", "C", "M", "P", "R", "S", "X", "E")
+
+#: We fainted and nobody is left. Terminal, like ``C`` and ``Pc``.
+WIPED = "XX"
 
 
 def hp_token(hp: int) -> str:
@@ -134,10 +138,44 @@ def item_token(code: str) -> str:
 
 
 def switch_token(party_slot: int) -> str:
-    """``S1``..``S6`` — switch to that party slot. Phase 1 only (sec 12.5)."""
+    """``S1``..``S6`` — switch to that party slot. Phase 1 only (sec 12.5).
+
+    The number is the **stable** party slot, not a position in whatever is left on the bench:
+    HGSS never reorders a party, so switching Magneton out for Smeargle and back again reads
+    ``S3`` then ``S1``.
+    """
     if not 1 <= party_slot <= 6:
         raise ValueError(f"party slot out of range: {party_slot}")
     return f"S{party_slot}"
+
+
+def faint_token(party_slot: int | None) -> str:
+    """``X1``..``X6`` — our Pokemon fainted and that party slot came in to replace it.
+
+    ``None`` means nothing was left to send, which renders :data:`WIPED` (``XX``) and ends the
+    run as definitively as ``C`` or ``Pc``.
+
+    The replacement is part of the token rather than a separate ``S`` because a forced switch is
+    not an action we chose and spends no advances of its own -- and because a faint with no
+    replacement after it would be an incomplete report of the turn.
+    """
+    if party_slot is None:
+        return WIPED
+    if not 1 <= party_slot <= 6:
+        raise ValueError(f"party slot out of range: {party_slot}")
+    return f"X{party_slot}"
+
+
+def revive_token(party_slot: int) -> str:
+    """``R1``..``R6`` — a Revive used on that party slot, restoring half its max HP.
+
+    Carries the slot for the same reason ``X`` does, and for one more: every other item in the
+    bag is used on whoever is out, so an item token needs no target. A Revive is the exception --
+    it is used on somebody who is *not* out.
+    """
+    if not 1 <= party_slot <= 6:
+        raise ValueError(f"party slot out of range: {party_slot}")
+    return f"R{party_slot}"
 
 
 def render_turn(tokens: list[str] | tuple[str, ...]) -> str:
@@ -209,7 +247,13 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
     """
     from claytonlib.battle_compass.items import BY_CODE
 
-    for token in normalise(tokens):
+    tokens = normalise(tokens)
+    # A faint ends the question. The HP is zero by definition, so "HP000" states nothing the
+    # X token has not already said -- and after the replacement switches in, an HP number would
+    # be describing a DIFFERENT Pokemon from the one the turn damaged.
+    if any(t.startswith("X") for t in tokens):
+        return False
+    for token in tokens:
         # Our own confusion self-hit damages us with no E token in sight.
         if token == "Mcfz":
             return True
@@ -265,9 +309,16 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
                                     f"{marker!r}")
                 break
             continue
-        if token[0] in ("I", "C", "P", "S") and seen_move:
+        if token[0] == "X":
+            if token != WIPED and not (len(token) == 2 and token[1] in "123456"):
+                problems.append(
+                    f"{token!r} is not a faint; expected {WIPED!r} or X plus a party slot 1-6")
+            continue
+        if token[0] in ("I", "C", "P", "S", "R") and seen_move:
             problems.append(
                 f"{token!r} is a bag action but follows a move; bag actions resolve first")
+        if token[0] == "R" and not (len(token) == 2 and token[1] in "123456"):
+            problems.append(f"{token!r} is not a Revive; expected R plus a party slot 1-6")
         if token[0] in ("C", "P") and token not in BALL_TOKENS:
             # Worth checking explicitly because the failure is otherwise invisible. A malformed
             # ball token is still a well-formed *token* -- it parses, it sits in the right place
@@ -279,8 +330,14 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
                 f"{token!r} is not a ball outcome; expected one of {sorted(BALL_TOKENS)}")
     if turn_requires_hp(tokens) and not any(t.startswith("HP") for t in tokens):
         problems.append("the target hit us, so this turn needs an HP token")
-    terminal = [t for t in tokens if t in ("C", "Pc")]
-    if terminal and tokens[-1] not in ("C", "Pc"):
+    # The one place a SURPLUS HP token is rejected, because here it is checkable in both
+    # directions: a fainted Pokemon is on zero by definition and the replacement's HP is not
+    # something this turn changed. Everywhere else the rule stays one-directional -- see
+    # `turn_requires_hp` on the causes that are not modelled yet.
+    if any(t.startswith("X") for t in tokens) and any(t.startswith("HP") for t in tokens):
+        problems.append("we fainted, so the HP token is redundant and must be left out")
+    terminal = [t for t in tokens if t in ("C", "Pc", WIPED)]
+    if terminal and tokens[-1] not in ("C", "Pc", WIPED):
         problems.append(f"{terminal[0]!r} is terminal; nothing may follow it")
     return problems
 
@@ -344,15 +401,23 @@ def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
 
 def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the target",
                  target_moves=(), capture_ball: str = "the capture ball",
-                 item_name=None) -> list[str]:
+                 item_name=None, party_name=None) -> list[str]:
     """One turn's tokens as plain sentences, in the order they happened.
 
     `item_name` maps an item code to its name; without it an ``Ihp`` token reads as its code,
-    which is better than nothing but worse than "a Hyper Potion".
+    which is better than nothing but worse than "a Hyper Potion". `party_name` does the same for
+    a party slot, so ``X3`` reads as "sent out Smeargle" rather than "sent out party slot 3".
 
     Returns a list so a caller can join it however it likes -- a tooltip wants one line, a
     confirmation box wants bullets.
     """
+    def member(slot: str) -> str:
+        """A party slot as a name where one is known, and as the slot otherwise."""
+        if callable(party_name):
+            named = party_name(int(slot)) if slot.isdigit() else None
+            if named:
+                return named
+        return f"party slot {slot}"
     from claytonlib.battle.catch import SHAKE_MESSAGES
 
     out: list[str] = []
@@ -368,7 +433,13 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
             name = item_name(detail) if callable(item_name) else detail
             out.append(f"You used {name}")
         elif prefix == "S":
-            out.append(f"You switched to party slot {detail}" if detail else "You switched")
+            out.append(f"You switched to {member(detail)}" if detail else "You switched")
+        elif token == WIPED:
+            out.append(f"{ours} fainted, with nothing left to send out — the run is over")
+        elif prefix == "X":
+            out.append(f"{ours} fainted, and you sent out {member(detail)}")
+        elif prefix == "R":
+            out.append(f"You used a Revive on {member(detail)}")
         elif token == "C":
             out.append(f"The {capture_ball} CAUGHT it — the run is won")
         elif token == "Pc":

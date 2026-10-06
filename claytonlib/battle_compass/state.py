@@ -47,6 +47,14 @@ class Action(Enum):
     ITEM = "I"
     ITEM_CURE = "Ic"
     SWITCH = "S"
+    #: A Revive, used on a party member rather than on whoever is out -- which is why it is its
+    #: own action with its own ``R<slot>`` token instead of an item code. Phase 1 only: the
+    #: solver never plans one (notes/feedback_battle_compass.md).
+    REVIVE = "R"
+    #: We were fainted before our move went off, so we took no action at all. Not a choice the
+    #: player makes -- it is what the turn did to them -- but it has to be *reportable*, because
+    #: the move they selected never executed, spent no PP and cost the stream nothing.
+    FAINTED = "X"
 
     @property
     def move_slot(self) -> int | None:
@@ -56,9 +64,13 @@ class Action(Enum):
 
     @property
     def is_bag_action(self) -> bool:
-        """Bag actions resolve before any move and cost no RNG advances of their own."""
+        """Bag actions resolve before any move and cost no RNG advances of their own.
+
+        ``FAINTED`` is deliberately absent. Bag actions resolve FIRST, and being fainted before
+        moving is the opposite: the other side has already moved, which is how we got here.
+        """
         return self in (Action.CAPTURE_BALL, Action.STANDARD_BALL,
-                        Action.ITEM, Action.ITEM_CURE, Action.SWITCH)
+                        Action.ITEM, Action.ITEM_CURE, Action.SWITCH, Action.REVIVE)
 
 
 @dataclass(frozen=True)
@@ -100,6 +112,13 @@ class Battler:
     #: it is the one status a Pokemon can keep while still attacking (sec 13.4). Nothing in
     #: Suicune's moveset inflicts it, so it stays False for the v1 fixture.
     confused: bool = False
+    #: 1-based position in the hunt's configured party, and the number the ``S``, ``X`` and ``R``
+    #: tokens name. **Stable** -- HGSS never reorders a party, so slot 1 is the first Pokemon in
+    #: the hunt configuration for the whole run, whoever happens to be out and however often we
+    #: switch. Zero means "no party was built", which is the case for a Battler constructed
+    #: directly as the simulator's own tests do; `sim.party_number` then falls back to the old
+    #: positional guess. Last in the field order so positional construction keeps working.
+    party_slot: int = 0
 
     def __post_init__(self):
         if self.hp is None:
@@ -223,6 +242,12 @@ class BattleState:
     #: and no configured moveset contains it; it is tracked at all because a SECOND Water Sport
     #: fails, and a failing move costs the turn two fewer advances.
     target_water_sport: bool = False
+    #: How many of our Pokemon have gone down. Needed because a faint no longer leaves a trace
+    #: in `ours`: the replacement switches in at the end of the turn, so ``ours.fainted`` is
+    #: False again by the time anyone inspects the result. The solver prunes on this -- a path
+    #: that spends a Pokemon is not a path (sec 6.2) -- and without it the check silently stopped
+    #: firing the moment fainting became survivable.
+    faints: int = 0
     #: Rolls consumed since the battle started, so a turn can be located in the stream.
     rng_offset: int = 0
     balls_thrown: int = 0
@@ -232,16 +257,38 @@ class BattleState:
     log: list = field(default_factory=list)
 
     @property
+    def healthy_bench(self) -> tuple[int, ...]:
+        """Bench indices that could be sent out — anything not already fainted."""
+        return tuple(i for i, b in enumerate(self.bench) if not b.fainted)
+
+    @property
+    def party_wiped(self) -> bool:
+        """Our active Pokemon is down and there is nobody to replace it.
+
+        This, and not ``ours.fainted``, is what ends a run on our side. A faint with a
+        replacement available is a reportable *turn* -- the ``X`` token, plus which party slot
+        came in -- after which the battle carries on with somebody else out. Before fainting was
+        modelled the two were the same thing, which is why ``over`` used to read ``ours.fainted``.
+        """
+        return self.ours.fainted and not self.healthy_bench
+
+    @property
     def over(self) -> bool:
         """Whether the battle has stopped advancing.
 
-        Our own Pokemon fainting counts. Without it the simulator kept taking turns for a
-        Pokemon at 0 HP and rendered hits that changed nothing -- ``E2h`` with no ``HP`` token,
-        which ``tokens.validate_turn`` correctly rejects as ungrammatical. The solver already
-        treats fainting as a hard constraint (sec 6.2); this makes the simulator agree.
+        A wipe counts -- ``XX`` is as terminal as ``C`` or ``Pc``. Our active Pokemon merely
+        fainting does not, as long as something can replace it: the simulator switches the
+        replacement in at the end of the turn and keeps going. Without the distinction the
+        simulator stopped at the first faint and rendered hits that changed nothing -- ``E2h``
+        with no ``HP`` token, which ``tokens.validate_turn`` correctly rejects as ungrammatical.
+
+        The solver still treats any faint as a hard constraint (sec 6.2): a path that spends a
+        Pokemon is not a path. It prunes on `faints` rather than on this, and for that matter
+        rather than on ``ours.fainted``, which the replacement switch-in clears before the turn
+        even returns.
         """
         return (self.captured or self.captured_in_wrong_ball
-                or self.target.fainted or self.ours.fainted)
+                or self.target.fainted or self.party_wiped)
 
     def copy(self) -> "BattleState":
         return BattleState(
@@ -249,7 +296,7 @@ class BattleState:
             turn=self.turn, phase=self.phase,
             our_attack_stage=self.our_attack_stage, target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
-            target_water_sport=self.target_water_sport,
+            target_water_sport=self.target_water_sport, faints=self.faints,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,
             log=list(self.log))

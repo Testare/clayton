@@ -1309,3 +1309,284 @@ class TestTheConfigureTabHasATimePicker(unittest.TestCase):
         body = self.html[self.html.index("function openTimePicker(keySeed, onPick){"):]
         body = body[:body.index("\n}") + 2]
         self.assertIn("Set a key seed first.", body)
+
+
+class TestAFreshlyAppliedStatusReachesTheOptions(unittest.TestCase):
+    """Reported: using Spore on an awake Latias, "Latias remains asleep" was not offered as
+    something Latias could have done -- when it is in fact the ONLY thing it could have done.
+
+    The cause is a timing mismatch rather than a missing option. `prevention_options` is built
+    from the state the turn OPENED in, where the target was still awake; the status our move
+    applies lands between that and the target's half of the same turn. So the page has to add it,
+    which is what `applies_status` on `move_info` is for.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_move_info_says_which_status_a_move_inflicts(self):
+        from claytonlib.battle_compass.hunt_session import move_info
+
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        session = facade._hunt_sessions.get(started["session_id"])
+        state = next(iter(session._session.states.values()))
+        info = {m["name"]: m for m in move_info(state.ours, state.target)}
+        self.assertEqual(info["Spore"]["applies_status"], "slp")
+        self.assertIsNone(info["False Swipe"]["applies_status"])
+        self.assertIsNone(info["Mean Look"]["applies_status"])
+
+    def test_an_empty_slot_still_carries_the_key(self):
+        """The page reads it unconditionally, so a missing key would read as `undefined` and
+        quietly disable the whole rule."""
+        from claytonlib.battle_compass.hunt_session import move_info
+        from claytonlib.battle_compass.state import Battler
+
+        bare = Battler(name="X", level=5, types=("Normal",),
+                       stats={"hp": 20, "atk": 5, "def": 5, "spa": 5, "spd": 5, "spe": 5},
+                       moves=("",), pp=(0,))
+        self.assertIn("applies_status", move_info(bare)[0])
+        self.assertIn("flinch_secondary", move_info(bare)[0])
+
+    def test_the_page_derives_it_from_our_answered_move(self):
+        body = self.html[self.html.index("function hrStatusWeJustApplied(){"):]
+        body = body[:body.index("\n}") + 2]
+        # Exactly the four escapes the report names: we moved second, we never got the move off,
+        # it went ahead and failed, or it missed.
+        self.assertIn("if (!hrWeActFirst()) return null;", body)
+        self.assertIn("t.ours.prevented", body)
+        self.assertIn("info.guaranteed_fail", body)
+        self.assertIn('t.ours.result === ""', body)
+
+    def test_sleep_settles_the_targets_whole_turn(self):
+        """Sleep lasts a minimum of two turns, so a target put to sleep before its own turn
+        cannot act on it -- one answer, not a question."""
+        body = self.html[self.html.index("function hrTargetBlocks(){"):]
+        self.assertIn('hrStatusWeJustApplied() === "slp"', body)
+        self.assertIn('t.target = {prevented: "slp"}', body)
+
+    def test_paralysis_joins_the_options_instead_of_replacing_them(self):
+        body = self.html[self.html.index("function hrTargetBlocks(){"):]
+        self.assertIn('hrStatusWeJustApplied() === "par"', body)
+
+
+class TestAnInvisibleFlinchIsNotAsked(unittest.TestCase):
+    """Reported: the interview asked whether Zen Headbutt's extra effect procced on turns where
+    Latias moved AFTER us. A flinch is announced on the victim's turn, so a flincher that moves
+    second shows nothing -- the answer was a guess, and the `~` it produced then filtered the
+    candidate set on it.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_move_info_flags_a_flinching_move(self):
+        from claytonlib.battle_compass.hunt_session import move_info
+        from claytonlib.battle_compass.state import Battler
+        from claytonlib.moves import resolve_move
+
+        b = Battler(name="Latias", level=40, types=("Psychic", "Dragon"),
+                    stats={"hp": 120, "atk": 80, "def": 90, "spa": 110, "spd": 110, "spe": 110},
+                    moves=("Zen Headbutt", "Mist Ball"),
+                    pp=tuple(resolve_move(m).pp for m in ("Zen Headbutt", "Mist Ball")))
+        info = {m["name"]: m for m in move_info(b)}
+        self.assertTrue(info["Zen Headbutt"]["flinch_secondary"])
+        self.assertTrue(info["Zen Headbutt"]["has_secondary"])
+        # Mist Ball drops Sp. Atk, which the player SEES -- so it keeps its question.
+        self.assertFalse(info["Mist Ball"]["flinch_secondary"])
+        self.assertTrue(info["Mist Ball"]["has_secondary"])
+
+    def test_neither_side_asks_the_question_for_one(self):
+        for fn in ("function hrOurSecondaryBlock(){", "function hrTargetBlocks(){"):
+            body = self.html[self.html.index(fn):]
+            body = body[:body.index("\n}\n") + 3]
+            self.assertIn("flinch_secondary", body, fn)
+
+    def test_the_marker_is_deduced_from_the_victims_answer(self):
+        body = self.html[self.html.index("function hrSecondaryMark(side){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('victim.prevented === "fln"', body)
+
+    def test_an_unanswerable_question_cannot_hold_the_turn_open(self):
+        """The informational note renders where the question was, so the gate had to stop
+        keying on `secondary === undefined` or the turn would never become reportable."""
+        self.assertIn("function hrOurSecondaryPending(){", self.html)
+        self.assertIn("if (hrOurSecondaryPending()) return blocks.join", self.html)
+        body = self.html[self.html.index("function hrOurSecondaryPending(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("!info.flinch_secondary", body)
+
+    def test_the_flinch_option_needs_a_flinching_move_that_actually_landed(self):
+        """`prevention_options` can only check the MOVESET, so "flinched" was on offer whenever
+        the target held Zen Headbutt at all -- including turns it used something else."""
+        for fn in ("function hrFlinchPossibleOnUs(){", "function hrFlinchPossibleOnTarget(){"):
+            body = self.html[self.html.index(fn):]
+            body = body[:body.index("\n}") + 2]
+            self.assertIn("flinch_secondary", body, fn)
+            self.assertIn("hrLanded(", body, fn)
+
+    def test_the_skipped_question_still_says_why(self):
+        self.assertIn("a flinch would never have shown", self.html)
+
+
+class TestTheInterviewCanReportAFaint(unittest.TestCase):
+    """A faint is a turn, not an ending, so the interview has to be able to say so: did we go
+    down, who came in, and no HP token either way.
+
+    The token stream is X<party slot> or XX, and the advance accounting behind it is measured
+    in-game (notes/ss_rng/fainting.md).
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_the_faint_question_comes_before_the_hp_one(self):
+        """Because it REPLACES it. `tokens.validate_turn` rejects a turn carrying both, so a
+        page that asked for HP first would build an invalid report and then have to retract it.
+        """
+        faint = self.html.index("Did ${who.name} faint?")
+        hp = self.html.index("'s HP now?")
+        self.assertLess(faint, hp)
+
+    def test_a_faint_turn_asks_for_no_hp(self):
+        body = self.html[self.html.index("function hrNeedsHp(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("if (hrFainted()) return false;", body)
+
+    def test_it_asks_who_came_in_and_offers_only_the_standing(self):
+        self.assertIn("Who did you send out?", self.html)
+        body = self.html[self.html.index("function hrHealthyBench(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("!b.fainted", body)
+
+    def test_a_switch_then_a_faint_offers_the_pokemon_that_just_left(self):
+        """A switch resolves before any move, so by the time the replacement is chosen the
+        Pokemon we switched TO is the one that went down and the one it replaced is available
+        again. A bench index from the pre-turn snapshot would name the wrong Pokemon."""
+        body = self.html[self.html.index("function hrHealthyBench(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('t.action !== "S"', body)
+        self.assertIn("outgoing", body)
+
+    def test_the_replacement_travels_as_a_party_slot(self):
+        body = self.html[self.html.index("function hrFaintToken(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("b.party_slot === t.replacement", body)
+
+    def test_a_wipe_needs_no_replacement_and_says_so(self):
+        body = self.html[self.html.index("function hrFaintToken(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('return "XX"', body)
+        self.assertIn("Nothing left to send out", self.html)
+
+    def test_the_token_names_the_stable_party_slot(self):
+        """Not the bench position: HGSS never reorders a party, so the number the player reads
+        in-game is the number the token has to carry."""
+        body = self.html[self.html.index("function hrFaintToken(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('"X" + chosen.party_slot', body)
+
+    def test_an_unanswered_faint_question_is_not_a_no(self):
+        body = self.html[self.html.index("function hrTurnComplete(){"):]
+        body = body[:body.index("\n  return true;\n}") + 17]
+        self.assertIn("t.fainted === undefined) return false", body)
+        self.assertIn("hrFaintToken() === null) return false", body)
+
+    def test_fainted_before_moving_is_an_action_gated_on_turn_order(self):
+        """Offered only when the target could lead -- by Speed, by its own priority move, or by
+        ours being slower-bracket. If we always move first it cannot have happened."""
+        self.assertIn('s.legal_actions.includes("X")', self.html)
+        self.assertIn("fainted before moving", self.html)
+
+    def test_reporting_it_skips_our_half_of_the_turn_entirely(self):
+        """The move we picked never executed, so there is no outcome to report and no PP spent --
+        which is why the token stream need not say which move it was."""
+        body = self.html[self.html.index("function hrTokens(){"):]
+        self.assertIn('if (t.action === "X"){', body)
+        interview = self.html[self.html.index("function hrInterview(){"):]
+        self.assertIn('if (hrWeActFirst() && t.action !== "X"){', interview)
+
+    def test_its_turn_order_matches_the_simulator(self):
+        """Saying we were fainted before moving IS saying the target went first."""
+        body = self.html[self.html.index("function hrWeActFirst(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('if (t.action === "X") return false;', body)
+
+    def test_a_ko_hides_the_attackers_secondary_effect(self):
+        """Verified: the roll is spent, the outcome is never shown. Asking anyway would filter
+        the candidate set on something the player could not have seen."""
+        body = self.html[self.html.index("function hrSecondaryMark(side){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('if (side === "target" && hrFainted()) return "";', body)
+
+    def test_the_replacement_reaches_the_facade(self):
+        import inspect
+
+        from app.facade import Facade
+
+        body = self.html[self.html.index("function huntRunObserve(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("t.replacement", body)
+        # Same name on both sides of the bridge, or the keyword silently goes nowhere.
+        self.assertIn("replacement",
+                      inspect.signature(Facade.hunt_session_observe).parameters)
+
+
+class TestTheInterviewCanReportARevive(unittest.TestCase):
+    """The one bag item used on somebody who is NOT out, which is why it carries a party slot."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_it_is_offered_only_while_somebody_is_down(self):
+        self.assertIn('s.legal_actions.includes("R")', self.html)
+
+    def test_it_asks_who_and_offers_only_the_fainted(self):
+        self.assertIn("Revived who?", self.html)
+        start = self.html.index('} else if (t.action === "R"){')
+        body = self.html[start + 1:]
+        body = body[:body.index("} else if")]
+        self.assertIn("b.fainted", body)
+
+    def test_it_renders_the_stable_party_slot(self):
+        body = self.html[self.html.index("function hrTokens(){"):]
+        self.assertIn('(t.action === "S" ? "S" : "R") + member.party_slot', body)
+
+    def test_the_session_prices_it(self):
+        from claytonlib.battle_compass import items
+
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        snap = started["snapshot"]
+        self.assertEqual(snap["revive_price"], items.REVIVE_PRICE)
+
+    def test_it_is_not_offered_among_the_potions(self):
+        """Every entry in `items` is used on whoever is out; a Revive is not."""
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertNotIn("rev", {i["code"] for i in snap["items"]})
+
+
+class TestPartySlotsReachThePage(unittest.TestCase):
+    """clayton-0w3.1: the S token's digit used to be a position in a shifting bench, so
+    switching out and back emitted the same number twice."""
+
+    def test_the_bench_carries_both_numbers(self):
+        """`slot` is the bench index every call back into the session takes; `party_slot` is what
+        the player sees and what the tokens name. They stop agreeing after the first switch."""
+        facade, hunt_id = _ready_hunt()
+        profile_id = facade.list_profiles()[0]["id"]
+        second = facade.add_party_pokemon(profile_id, dict(LEAD, name="Magneton"))["pokemon_id"]
+        hunt = facade.get_hunt(hunt_id)
+        lead = hunt["party"][0]
+        hunt["party"] = [lead, {"pokemon_id": second, "held_item": ""}]
+        facade.save_hunt(hunt)
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertEqual(snap["ours_party_slot"], 1)
+        self.assertEqual([(b["slot"], b["party_slot"]) for b in snap["bench"]], [(0, 2)])
+
+    def test_the_page_reads_the_party_slot_for_a_switch(self):
+        html = INDEX.read_text()
+        body = html[html.index("function hrTokens(){"):]
+        self.assertIn("member.party_slot", body)
+        self.assertNotIn('parts.push("S" + (t.ours.bench + 2))', body)

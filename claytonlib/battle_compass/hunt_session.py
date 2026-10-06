@@ -30,8 +30,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import (
-    HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed, simulate_turn,
-    will_fail,
+    FLINCH_EFFECTS, HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed,
+    simulate_turn, status_applied_by, will_fail,
 )
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler, Status
@@ -48,6 +48,19 @@ def _item_name(code: str) -> str:
         return f"a {items.item(code).name}"
     except ValueError:
         return code
+
+
+def _party_namer(state):
+    """A lookup from party slot to Pokemon name, for plain-language rendering.
+
+    Built off the state being described rather than held on the session, so a history row
+    replayed from before a switch names the Pokemon who was in that slot then -- which, because
+    slots are stable, is the same Pokemon either way. That is the point of making them stable.
+    """
+    by_slot = {state.ours.party_slot or 1: state.ours.name}
+    for i, b in enumerate(state.bench):
+        by_slot.setdefault(b.party_slot or i + 2, b.name)
+    return by_slot.get
 
 
 def worst_incoming_hit(ours: Battler, target: Battler) -> int:
@@ -138,6 +151,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
         if move is None:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
+                        "flinch_secondary": False, "applies_status": None,
                         "effect_chance": 0, "priority": 0, "pp": 0})
             continue
         out.append({
@@ -153,7 +167,16 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
             "has_secondary": move.effect_chance > 0,
+            # ...with one exception, which is why this flag exists. A flinch is announced on the
+            # VICTIM's turn, so a flinching move that goes SECOND leaves no trace at all: there
+            # is nothing to ask and nothing to report. See `sim.flinch_visible`.
+            "flinch_secondary": move.effect in FLINCH_EFFECTS,
             "effect_chance": move.effect_chance,
+            # The non-volatile status this move inflicts, as its token marker, or None. The
+            # interview needs it because a status WE apply lands before the target's turn: once
+            # Spore connects, "is asleep" is the only thing the target can have done, and it was
+            # not on offer because the snapshot's options are read off the turn's OPENING state.
+            "applies_status": (st.value if (st := status_applied_by(move)) else None),
             #: Priority decides turn order before Speed does, so the page needs it to know
             #: which side's tokens come first.
             "priority": move.priority,
@@ -172,6 +195,9 @@ class TurnLog:
     #: Which item, or which bench slot -- part of the action, so replay needs them.
     item_code: str | None = None
     bench_slot: int | None = None
+    #: Which party member came in after a faint. Not part of the action -- a faint is something
+    #: the turn did to us -- but replay needs it just the same, since it decides who is out next.
+    replacement: int | None = None
 
     @property
     def extra(self) -> dict:
@@ -180,6 +206,8 @@ class TurnLog:
             out["item_code"] = self.item_code
         if self.bench_slot is not None:
             out["bench_slot"] = self.bench_slot
+        if self.replacement is not None:
+            out["replacement"] = self.replacement
         return out
 
     @property
@@ -196,8 +224,14 @@ class HuntSession:
         if not window.candidates:
             raise ValueError("no candidate seeds: widen the window or check the seed targeting")
         self.window = window
-        self.ours = ours
-        self.bench = tuple(bench)
+        # Party slots are assigned here when the caller did not set them, so every S/X/R token a
+        # run emits names a STABLE position: the lead is slot 1 and the bench follows it in
+        # order, exactly as the hunt configuration lists them. The app sets them explicitly from
+        # `hunt.party` (which is more accurate, since a missing member leaves a gap); this is the
+        # fallback that keeps a directly-constructed party sane.
+        self.ours = ours if ours.party_slot else replace(ours, party_slot=1)
+        self.bench = tuple(b if b.party_slot else replace(b, party_slot=i + 2)
+                           for i, b in enumerate(bench))
         self.target = target
         self.config = config
         self.capture_ball = capture_ball
@@ -255,7 +289,8 @@ class HuntSession:
             replayed.append(TurnLog(action=turn.action, tokens=turn.tokens,
                                     survivors_before=before,
                                     survivors_after=len(self._session.survivors),
-                                    item_code=turn.item_code, bench_slot=turn.bench_slot))
+                                    item_code=turn.item_code, bench_slot=turn.bench_slot,
+                                    replacement=turn.replacement))
         self.turns = replayed
         # A transition recorded after the last surviving turn has not happened yet.
         self.transitions = [(at, p) for at, p in self.transitions if at <= len(replayed)]
@@ -315,14 +350,41 @@ class HuntSession:
         Both balls are legal in every phase -- see `Phase`. A standard ball's danger is reported
         by `standard_ball_risk` rather than removed from the list, because the risk is small,
         quantified, and the player's to weigh; and the capture ball never carried one.
+
+        ``REVIVE`` appears only while somebody is actually down to revive, and ``FAINTED`` only
+        while the target could move before us -- otherwise we always got our move off, so being
+        fainted before moving is not a thing that can have happened.
         """
         state = next(iter(self._session.states.values()))
         actions = [_MOVE_ACTIONS[slot] for slot in state.ours.usable_slots()]
         actions.extend([Action.ITEM, Action.ITEM_CURE])
         actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
-        if self.phase is Phase.SETUP and state.bench:
+        if self.phase is Phase.SETUP and state.healthy_bench:
             actions.append(Action.SWITCH)
+        if any(b.fainted for b in state.bench):
+            actions.append(Action.REVIVE)
+        if self.target_can_move_first():
+            actions.append(Action.FAINTED)
         return actions
+
+    def target_can_move_first(self) -> bool:
+        """Whether the target could take its turn before ours, by Speed or by priority.
+
+        The gate on reporting "fainted before moving": if we always move first, we always got the
+        move off, and offering the option would invite a report no candidate can predict.
+
+        Three ways it is true, which is how the feedback put it: the target outspeeds us, the
+        target has a raised-priority move, or one of ours has a lowered-priority move. Checked
+        against the moves both sides actually have rather than on Speed alone.
+        """
+        state = next(iter(self._session.states.values()))
+        if effective_speed(state.target) > effective_speed(state.ours):
+            return True
+        theirs = [m.priority for slot in range(len(state.target.moves))
+                  if (m := state.target.move(slot)) is not None]
+        ours = [m.priority for slot in range(len(state.ours.moves))
+                if (m := state.ours.move(slot)) is not None]
+        return max(theirs, default=0) > min(ours, default=0)
 
     def predict(self, action: Action, **extra) -> dict[int, str]:
         return self._session.predict(action, **extra)
@@ -355,6 +417,8 @@ class HuntSession:
             Action.CAPTURE_BALL: f"Throw the {self.capture_ball or 'capture ball'}",
             Action.STANDARD_BALL: "Throw a Poke Ball",
             Action.SWITCH: "Switch Pokemon",
+            Action.REVIVE: "Use a Revive",
+            Action.FAINTED: "Fainted before moving",
         }.get(action, action.value)
 
     def standard_ball_risk(self) -> dict | None:
@@ -399,7 +463,12 @@ class HuntSession:
         """
         if self.identified is not None:
             return []
-        ranked = self._session.rank_actions(self.legal_actions())
+        # Only actions the player can CHOOSE. A Revive needs a target this does not know, and
+        # being fainted before moving is not a choice at all -- ranking either would offer advice
+        # nobody can act on.
+        choosable = [a for a in self.legal_actions()
+                     if a not in (Action.REVIVE, Action.FAINTED)]
+        ranked = self._session.rank_actions(choosable)
         return [{"action": a.value, "label": self.action_label(a),
                  "expected_survivors": round(score, 2),
                  "groups": len(self._session.partition(a))} for a, score in ranked]
@@ -407,7 +476,8 @@ class HuntSession:
     # -- the loop -------------------------------------------------------
 
     def observe(self, action: Action, tokens: tuple[str, ...] | list[str],
-                item_code: str | None = None, bench_slot: int | None = None) -> dict:
+                item_code: str | None = None, bench_slot: int | None = None,
+                replacement: int | None = None) -> dict:
         """Accept one reported turn. Returns the new snapshot.
 
         A contradiction does **not** advance the turn or shrink the set: it is surfaced on the
@@ -426,6 +496,8 @@ class HuntSession:
             extra["item_code"] = item_code
         if bench_slot is not None:
             extra["bench_slot"] = bench_slot
+        if replacement is not None:
+            extra["replacement"] = replacement
         before = len(self._session.survivors)
         result = self._session.observe(action, tokens, **extra)
         if result.contradiction:
@@ -444,7 +516,8 @@ class HuntSession:
         self.turns.append(TurnLog(action=action, tokens=tuple(tokens),
                                   survivors_before=before,
                                   survivors_after=len(self._session.survivors),
-                                  item_code=item_code, bench_slot=bench_slot))
+                                  item_code=item_code, bench_slot=bench_slot,
+                                  replacement=replacement))
         if self.phase is Phase.SOLVING:
             self.solve()
         return self.snapshot()
@@ -545,8 +618,9 @@ class HuntSession:
             return "caught"
         if all(st.captured_in_wrong_ball for st in states):
             return "wrong_ball"
-        if all(st.ours.fainted for st in states):
-            return "fainted"
+        # The WIPE, not a faint: a faint with a replacement left is a turn, not an ending.
+        if all(st.party_wiped for st in states):
+            return "wiped"
         return ""
 
     def items_spent(self) -> dict[str, int]:
@@ -560,6 +634,10 @@ class HuntSession:
         for turn in self.turns:
             if turn.item_code:
                 spent[turn.item_code] = spent.get(turn.item_code, 0) + 1
+            elif turn.action is Action.REVIVE:
+                # A Revive carries no item code -- it is its own action, with a party slot
+                # instead -- but it is still something the run spent money on.
+                spent["rev"] = spent.get("rev", 0) + 1
         return spent
 
     def explain(self, tokens) -> list[str]:
@@ -578,7 +656,7 @@ class HuntSession:
             tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
             target=state.target.name, target_moves=tuple(state.target.moves),
             capture_ball=self.capture_ball or "capture ball",
-            item_name=_item_name)
+            item_name=_item_name, party_name=_party_namer(state))
 
     def explain_history(self) -> list[list[str]]:
         """Every reported turn explained, one list of sentences per turn.
@@ -596,7 +674,8 @@ class HuntSession:
             out.append(tok.explain_turn(
                 turn.tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
                 target=state.target.name, target_moves=tuple(state.target.moves),
-                capture_ball=self.capture_ball or "capture ball", item_name=_item_name))
+                capture_ball=self.capture_ball or "capture ball", item_name=_item_name,
+                party_name=_party_namer(state)))
             session.observe(turn.action, turn.tokens, **turn.extra)
         return out
 
@@ -653,7 +732,14 @@ class HuntSession:
             "phase_label": self.phase.label,
             "captured": all(st.captured for st in states),
             "captured_in_wrong_ball": all(st.captured_in_wrong_ball for st in states),
-            "we_fainted": all(st.ours.fainted for st in states),
+            # The run-ending kind: our Pokemon is down and there is nobody to replace it. A faint
+            # with a replacement left is a reported TURN, not an ending, so this stayed false
+            # through it -- which is the whole point of the distinction.
+            "we_fainted": all(st.party_wiped for st in states),
+            "party_wiped": all(st.party_wiped for st in states),
+            # ...and this one says somebody went down *this* turn, replacement or not, so the
+            # page can say so without claiming the run is over.
+            "active_fainted": all(st.ours.fainted for st in states),
             "over": all(st.over for st in states),
             # Whether a plain Poke Ball is exactly as catchable as the capture ball here, which
             # is what decides how harshly to word a standard-ball throw. Replaces the old
@@ -726,11 +812,20 @@ class HuntSession:
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
                        "move_info": move_info(state.target, state.ours)},
+            # `slot` is the BENCH index, which is what every call back into the session takes;
+            # `party_slot` is the stable number the player sees in-game and the one the S/X/R
+            # tokens name. Both, because they are not the same once anybody has switched.
             "bench": [{"slot": i, "name": b.name,
+                       "party_slot": b.party_slot or i + 2,
                        "hp": b.hp, "max_hp": b.max_hp,
+                       "fainted": b.fainted,
                        "status": b.status.value,
                        "moves": list(b.moves)}
                       for i, b in enumerate(state.bench)],
+            "ours_party_slot": state.ours.party_slot or 1,
+            # Whether "fainted before moving" is a reportable outcome at all.
+            "target_can_move_first": self.target_can_move_first(),
+            "revive_price": items.REVIVE_PRICE,
             "items": [{"code": i.code, "name": i.name, "price": i.price,
                        "heals": i.heals, "cures_status": i.cures_status,
                        "heal": i.heal}

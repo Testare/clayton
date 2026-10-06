@@ -449,9 +449,14 @@ class Facade:
         if not hunt.party:
             raise ValueError("this hunt has no party configured")
 
-        def battler_for(pokemon, held_item=""):
+        def battler_for(pokemon, held_item="", party_slot=0):
             moves = tuple(pokemon.moveset)
             return Battler(
+                # The STABLE slot in the hunt's party, which is what the S/X/R tokens name and
+                # what the player reads off the game's party screen. Taken from the position in
+                # `hunt.party` rather than from the bench, so a party member the profile has
+                # since lost leaves a gap instead of shifting everyone after it.
+                party_slot=party_slot,
                 name=pokemon.name, level=pokemon.level or 1,
                 types=(tuple(species_data(pokemon.species)["types"])
                        if pokemon.species else ("Normal",)),
@@ -466,8 +471,9 @@ class Facade:
                    for slot in hunt.party]
         if members[0][0] is None:
             raise ValueError("the hunt's lead Pokemon is no longer on the profile")
-        ours = battler_for(*members[0])
-        bench = tuple(battler_for(m, item) for m, item in members[1:] if m is not None)
+        ours = battler_for(*members[0], party_slot=1)
+        bench = tuple(battler_for(m, item, party_slot=i + 2)
+                      for i, (m, item) in enumerate(members[1:]) if m is not None)
 
         from claytonlib.battle_compass.targets import moveset
         from claytonlib.moves import resolve_move
@@ -765,11 +771,14 @@ class Facade:
 
     def hunt_session_observe(self, session_id: str, action: str, tokens: list,
                              item_code: str | None = None,
-                             bench_slot: int | None = None) -> dict:
+                             bench_slot: int | None = None,
+                             replacement: int | None = None) -> dict:
         """Report one played turn. `tokens` may be a list or one already-rendered string.
 
         `item_code` and `bench_slot` complete the action rather than describing its outcome: the
-        same ITEM heals different amounts and the same SWITCH brings in a different Pokemon.
+        same ITEM heals different amounts, the same SWITCH brings in a different Pokemon, and a
+        REVIVE names who it was used on. `replacement` is the other kind -- part of the OUTCOME,
+        namely which party member came in after our Pokemon fainted.
         """
         from claytonlib.battle_compass.state import Action
         session = self._hunt_sessions.get(session_id)
@@ -778,7 +787,8 @@ class Facade:
         return session.observe(
             Action(action), [str(t) for t in tokens],
             item_code=item_code or None,
-            bench_slot=None if bench_slot in (None, "") else int(bench_slot))
+            bench_slot=None if bench_slot in (None, "") else int(bench_slot),
+            replacement=None if replacement in (None, "") else int(replacement))
 
     def hunt_session_undo(self, session_id: str) -> dict:
         """Rewind one reported turn (a misreport). A misplay is reported, not undone."""
@@ -797,7 +807,8 @@ class Facade:
 
     def hunt_session_predict(self, session_id: str, action: str,
                              item_code: str | None = None,
-                             bench_slot: int | None = None) -> dict:
+                             bench_slot: int | None = None,
+                             replacement: int | None = None) -> dict:
         """What each surviving candidate would emit for `action`, without committing to it."""
         from claytonlib.battle_compass.state import Action
         session = self._hunt_sessions.get(session_id)
@@ -806,6 +817,8 @@ class Facade:
             extra["item_code"] = item_code
         if bench_slot not in (None, ""):
             extra["bench_slot"] = int(bench_slot)
+        if replacement not in (None, ""):
+            extra["replacement"] = int(replacement)
         return {f"{seed:#010x}": pred
                 for seed, pred in session.predict(Action(action), **extra).items()}
 

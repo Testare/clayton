@@ -4643,7 +4643,13 @@ const HR_SHAKE_MESSAGES = [
   "Gah! It was so close, too!",
 ];
 
-function hrTurnReset(){ _hrTurn = { action: null, ours: null, target: null, hp: "" }; }
+function hrTurnReset(){
+  _hrTurn = { action: null, ours: null, target: null, hp: "",
+              // Did our Pokemon go down this turn, and who replaced it (a stable PARTY SLOT,
+              // not a bench index -- see hrHealthyBench). Separate from `ours`, because a
+              // faint is not something we chose to do.
+              fainted: undefined, replacement: undefined };
+}
 
 const HR_PREVENTED = [
   ["par", "fully paralyzed"], ["slp", "asleep"], ["frz", "frozen"],
@@ -4663,6 +4669,9 @@ function hrActive(){
 // leads; between two moves it is the priority bracket, then effective Speed (paralysis quartered).
 function hrWeActFirst(){
   const s = _huntSnap, t = _hrTurn;
+  // Reporting that we were fainted before moving IS the statement that the target went first --
+  // that is how we got fainted. Mirrors sim._we_move_first, which says the same thing.
+  if (t.action === "X") return false;
   if (!t.action || !t.action.startsWith("M")) return true;
   const ours = hrOurMoveInfo();
   const theirSlot = t.target && !t.target.prevented ? t.target.slot : null;
@@ -4679,6 +4688,123 @@ function hrOurMoveInfo(){
   return slot === null ? null : _huntSnap.ours.move_info[slot];
 }
 
+// The move the target used this turn, or null if it was prevented / not answered yet.
+function hrTargetMoveInfo(){
+  const t = _hrTurn;
+  if (!t.target || t.target.prevented) return null;
+  if (t.target.slot === null || t.target.slot === undefined) return null;
+  return _huntSnap.target.move_info[t.target.slot] || null;
+}
+
+function hrLanded(answer){ return !!answer && (answer.result === "h" || answer.result === "!"); }
+
+// --- flinching -------------------------------------------------------------
+//
+// A flinch is the one secondary effect that is not announced by the move that causes it: the
+// game says "<victim> flinched!" on the VICTIM's turn, if the victim still has one. So a
+// flinching move that moves SECOND leaves no trace at all -- there is nothing for the player to
+// have seen, and asking them produced an answer they were guessing which then filtered the
+// candidate set. See sim.flinch_visible.
+//
+// Which also means the `~` never needs its own question. It is present exactly when the victim
+// reported "flinched" and absent otherwise, so it is DEDUCED from the victim's own answer.
+
+// Could the target have flinched US this turn? Only if it went first and landed a flinching move
+// -- not merely if one sits in its moveset, which is all the snapshot's option list can know.
+function hrFlinchPossibleOnUs(){
+  if (hrWeActFirst()) return false;
+  const info = hrTargetMoveInfo();
+  return !!info && info.flinch_secondary && hrLanded(_hrTurn.target);
+}
+
+// ...and the mirror: our own flinching move, landed, with us moving first.
+function hrFlinchPossibleOnTarget(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!hrWeActFirst() || !info || !info.flinch_secondary) return false;
+  return hrLanded(t.ours);
+}
+
+// The `~` marker for one side's move. The player's own answer for an ordinary secondary; for a
+// flinch, the victim's answer, since that is where a flinch is visible at all.
+function hrSecondaryMark(side){
+  const t = _hrTurn;
+  const info = side === "ours" ? hrOurMoveInfo() : hrTargetMoveInfo();
+  if (!info || !info.has_secondary) return "";
+  // A move that faints the victim rolls its secondary and shows nothing -- no "was burned!", no
+  // stat-drop message. The roll is spent; the marker is not reported.
+  if (side === "target" && hrFainted()) return "";
+  if (info.flinch_secondary){
+    const victim = side === "ours" ? t.target : t.ours;
+    return victim && victim.prevented === "fln" ? "~" : "";
+  }
+  const mine = side === "ours" ? t.ours : t.target;
+  return mine && mine.secondary ? "~" : "";
+}
+
+// --- fainting ---------------------------------------------------------------
+//
+// Rain Dance plus Hydro Pump means Lugia can faint a Pokemon at full HP, and a Lv70 Ho-Oh can
+// faint a scarfed Magneton on the way to paralysing it -- so a faint has to be a reportable turn
+// rather than the end of the run. The turn then ends with X<party slot> (who came in) or XX (a
+// wipe, as terminal as a capture), and carries no HP token: zero is implied, and after the
+// replacement is out an HP number would describe a different Pokemon.
+
+// Whether this turn did anything that could have taken us down. Not "did it", which only the
+// player knows -- just whether the question is worth asking at all.
+function hrCanFaint(){
+  const t = _hrTurn;
+  if (t.action === "X") return true;                       // that IS the report
+  if (t.ours && t.ours.prevented === "cfz") return true;   // a confusion self-hit
+  return hrLanded(t.target);
+}
+
+// Did we go down? Reporting "fainted before moving" settles it; otherwise it is an answer.
+function hrFainted(){
+  const t = _hrTurn;
+  return t.action === "X" ? true : t.fainted === true;
+}
+
+// Who could be sent out, as {name, party_slot, hp, max_hp}. A switch resolves before any move,
+// so a turn that switches AND then faints has already changed who is out: the Pokemon we
+// switched TO is the one that went down, and the one it replaced is back on the bench and
+// available. Hence party slots rather than bench indices throughout -- an index computed from
+// the pre-turn snapshot would name the wrong Pokemon on exactly that turn.
+function hrHealthyBench(){
+  const s = _huntSnap, t = _hrTurn;
+  const bench = (s.bench || []).filter(b => !b.fainted);
+  if (t.action !== "S" || !t.ours || t.ours.bench === undefined) return bench;
+  const outgoing = {name: s.ours.name, party_slot: s.ours_party_slot,
+                    hp: s.ours.hp, max_hp: s.ours.max_hp};
+  return bench.filter(b => b.slot !== t.ours.bench)
+              .concat(outgoing.hp > 0 ? [outgoing] : []);
+}
+
+// The X token, once there is one. `null` while the answer is still outstanding, so the preview
+// shows a partial turn rather than a wrong one.
+function hrFaintToken(){
+  const t = _hrTurn;
+  if (!hrFainted()) return "";
+  const healthy = hrHealthyBench();
+  if (!healthy.length) return "XX";                        // nothing left; the run ends here
+  const chosen = healthy.find(b => b.party_slot === t.replacement);
+  return chosen ? "X" + chosen.party_slot : null;
+}
+
+// The status OUR move just inflicted, as its marker, or null. It lands before the target's half
+// of the turn, so it changes what the target can possibly have done -- and the snapshot's option
+// lists are read off the turn's OPENING state, which is why this has to be added here.
+//
+// The headline case: Spore connects, and "is asleep" is then the ONLY thing the target can have
+// done. It was missing from the options entirely.
+function hrStatusWeJustApplied(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!info || !info.applies_status) return null;
+  if (!hrWeActFirst()) return null;             // its turn is already over; the status is too late
+  if (!t.ours || t.ours.prevented) return null; // we never got the move off
+  if (info.guaranteed_fail) return null;        // it went ahead and did nothing
+  return t.ours.result === "" ? info.applies_status : null;   // "-" is a miss
+}
+
 // The token string the answers so far describe. Also what gets submitted, so what the player
 // sees confirmed is exactly what is applied.
 // The tokens the answers so far describe, in CHRONOLOGICAL order -- which is the grammar's only
@@ -4689,19 +4815,25 @@ function hrTokens(){
   if (!t.action) return "";
   const ourParts = [], targetParts = [];
   const parts = ourParts;                      // the bag-action branch writes here
-  if (t.action.startsWith("M")){
+  if (t.action === "X"){
+    // Fainted before moving: our half of the turn produced nothing at all. The move we had
+    // selected never executed, so there is no slot to name and no PP was spent.
+  } else if (t.action.startsWith("M")){
     if (t.ours && t.ours.prevented) parts.push("M" + t.ours.prevented);
     else if (t.ours && t.ours.snapped)
       parts.push("Mscfz" + t.action[1] + (t.ours.result || ""));
-    else parts.push(t.action + ((t.ours && t.ours.result) || "")
-                             + (t.ours && t.ours.secondary ? "~" : ""));
+    else parts.push(t.action + ((t.ours && t.ours.result) || "") + hrSecondaryMark("ours"));
   } else {
     if (t.action === "I" || t.action === "Ic"){
       if (!t.ours?.item) return "";                 // which item is part of the action
       parts.push("I" + t.ours.item);
-    } else if (t.action === "S"){
-      if (t.ours?.bench === undefined) return "";   // as is which Pokemon came in
-      parts.push("S" + (t.ours.bench + 2));         // party slot: the active one was 1
+    } else if (t.action === "S" || t.action === "R"){
+      if (t.ours?.bench === undefined) return "";   // as is which Pokemon it involved
+      const member = (_huntSnap.bench || []).find(b => b.slot === t.ours.bench);
+      if (!member) return "";
+      // The STABLE party slot, not the bench position -- HGSS never reorders a party, so
+      // switching out and back reads S3 then S1.
+      parts.push((t.action === "S" ? "S" : "R") + member.party_slot);
     } else if (t.action === "C" || t.action === "P"){
       // The two ball prefixes are NOT symmetric, and this mirrors tokens.ball_token rather
       // than guessing: a capture in the CAPTURE ball is the bare "C" -- the win needs no
@@ -4719,7 +4851,7 @@ function hrTokens(){
     if (t.target.prevented) targetParts.push("E" + t.target.prevented);
     else if (t.target.slot !== null && t.target.slot !== undefined)
       targetParts.push("E" + (t.target.slot + 1) + (t.target.result || "")
-                           + (t.target.secondary ? "~" : ""));
+                           + hrSecondaryMark("target"));
   }
   const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
                                  : targetParts.concat(ourParts);
@@ -4728,6 +4860,11 @@ function hrTokens(){
   // produced a token the simulator would never render.
   if (hrNeedsHp() && t.hp !== "" && t.hp !== null)
     ordered.push("HP" + String(t.hp).padStart(3, "0"));
+  if (hrFainted()){
+    const faint = hrFaintToken();
+    if (faint === null) return ordered.join("");    // still waiting on who came in
+    ordered.push(faint);
+  }
   return ordered.join("");
 }
 
@@ -4737,12 +4874,15 @@ function hrTurnComplete(){
   const t = _hrTurn, s = _huntSnap;
   if (!t.action) return false;
   if (t.action === "I" || t.action === "Ic") { if (!t.ours?.item) return false; }
-  else if (t.action === "S") { if (t.ours?.bench === undefined) return false; }
+  else if (t.action === "S" || t.action === "R") { if (t.ours?.bench === undefined) return false; }
   else if (t.action === "C" || t.action === "P") { if (!t.ours?.result) return false; }
+  else if (t.action === "X") { /* our half produced nothing; only the target's did */ }
   else {
     if (!t.ours) return false;
     const info = hrOurMoveInfo();
-    if (info.has_secondary && (t.ours.result === "h" || t.ours.result === "!")
+    // A flinch secondary is never asked -- it is read off the victim's answer instead -- so it
+    // must not hold the turn open waiting for one.
+    if (info.has_secondary && !info.flinch_secondary && hrLanded(t.ours)
         && t.ours.secondary === undefined) return false;
   }
   const caught = (t.action === "C" || t.action === "P") && t.ours?.result === "c";
@@ -4750,11 +4890,14 @@ function hrTurnComplete(){
     if (!t.target) return false;
     if (!t.target.prevented){
       const info = s.target.move_info[t.target.slot];
-      if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")
+      if (info.has_secondary && !info.flinch_secondary && hrLanded(t.target)
           && t.target.secondary === undefined) return false;
     }
   }
   if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
+  // The faint question, when the turn could have caused one: unanswered is not "no".
+  if (hrCanFaint() && t.action !== "X" && t.fainted === undefined) return false;
+  if (hrFainted() && hrFaintToken() === null) return false;   // who came in is still missing
   return true;
 }
 
@@ -4766,6 +4909,10 @@ function hrTurnComplete(){
 // a changed answer cannot survive into the report.
 function hrNeedsHp(){
   const t = _hrTurn, s = _huntSnap;
+  // A faint replaces the HP token rather than joining it: zero is implied by the X, and the
+  // Pokemon the number would describe has already left the field. `tokens.validate_turn`
+  // rejects a turn carrying both, so this is the gate that keeps the page from building one.
+  if (hrFainted()) return false;
   if (t.ours && t.ours.prevented === "cfz") return true;
   if ((t.action === "I" || t.action === "Ic") && t.ours && t.ours.item){
     const entry = (s.items || []).find(i => i.code === t.ours.item);
@@ -4782,10 +4929,20 @@ function hrSet(path, value){
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
   else if (path === "hp"){ t.hp = value; }
+  else if (path === "fainted"){
+    t.fainted = value;
+    if (!value) t.replacement = undefined;   // no faint, nobody came in
+  }
+  else if (path === "replacement"){ t.replacement = value; }
   // Dropping a value the turn no longer needs: changing the target's move from Gust to Rain
   // Dance leaves an HP number that is not part of the turn any more, and showing it reads as the
   // report being wrong rather than the answer having changed.
   if (path !== "hp" && !hrNeedsHp()) t.hp = "";
+  // Same rule for the faint: change the target's move to one that cannot touch us and the faint
+  // answer is no longer part of the turn either.
+  if (path !== "fainted" && path !== "replacement" && !hrCanFaint() && t.action !== "X"){
+    t.fainted = undefined; t.replacement = undefined;
+  }
   renderHuntRun();
 }
 
@@ -4847,10 +5004,14 @@ function hrOurOutcomeBlock(){
   if (info.can_miss)
     opts.push(hrChip("Missed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
   // Only what state allows: an unparalyzed Pokemon cannot be fully paralyzed, and it cannot
-  // flinch unless the other side has a flinching move and moved first.
-  (s.prevention.ours || []).forEach(o =>
+  // flinch unless the other side has a flinching move and moved first. The snapshot's list is
+  // built from the turn's opening state and so can only check the MOVESET; "flinched" is then
+  // narrowed here to a target that actually went first and landed such a move this turn.
+  (s.prevention.ours || []).forEach(o => {
+    if (o.code === "fln" && !hrFlinchPossibleOnUs()) return;
     opts.push(hrChip(o.label, `hrSet('ours',{prevented:'${o.code}'})`,
-                     t.ours?.prevented === o.code)));
+                     t.ours?.prevented === o.code));
+  });
   (s.resolution.ours || []).forEach(o =>
     opts.push(hrChip(o.label,
       `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`,
@@ -4866,9 +5027,26 @@ function hrOurOutcomeBlock(){
   return hrChips(`What happened to ${info.name}?`, opts);
 }
 
+// Whether the secondary question is still WAITING on an answer. Separate from the block above,
+// which also renders informational notes that must not stall the interview.
+function hrOurSecondaryPending(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  return !!info && info.has_secondary && !info.flinch_secondary && hrLanded(t.ours)
+         && t.ours.secondary === undefined;
+}
+
 function hrOurSecondaryBlock(){
   const t = _hrTurn, info = hrOurMoveInfo();
-  if (!info.has_secondary || !(t.ours?.result === "h" || t.ours?.result === "!")) return null;
+  if (!info.has_secondary || !hrLanded(t.ours)) return null;
+  // A flinch is reported on the VICTIM's turn or not at all, so this question would be asking
+  // the player about something the game never showed them.
+  if (info.flinch_secondary)
+    return hrFlinchPossibleOnTarget()
+      ? `<div class="hr-q"><div class="hr-q-label muted hr-small">Whether ${esc(info.name)}
+           made ${esc(_huntSnap.target.name)} flinch shows on ITS turn — report it there.</div>
+         </div>`
+      : `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(info.name)} moved
+           second, so a flinch would never have shown. Nothing to report.</div></div>`;
   return hrChips(`Did ${info.name}'s extra effect happen?`, [
     hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
            t.ours.secondary === false),
@@ -4880,13 +5058,37 @@ function hrOurSecondaryBlock(){
 // Which move the target used, and how it went.
 function hrTargetBlocks(){
   const s = _huntSnap, t = _hrTurn, out = [];
+
+  // A sleep move of ours that just connected settles the target's whole turn: sleep lasts a
+  // minimum of two turns, so a Pokemon put to sleep before its own turn CANNOT act on it. That
+  // is one option, not a question -- and it was not even on the list, because the snapshot's
+  // options describe the state the turn opened in, when the target was still awake.
+  if (hrStatusWeJustApplied() === "slp"){
+    if (!t.target || t.target.prevented !== "slp") t.target = {prevented: "slp"};
+    out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
+        fell asleep before its turn, so it could not move — nothing to report.</div></div>`);
+    return {blocks: out, done: true};
+  }
+
   const opts = s.target.move_info.filter(m => m.known).map(m =>
     hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
            t.target && t.target.slot === m.slot && !t.target.prevented,
            `${m.pp} PP left`));
-  (s.prevention.target || []).forEach(o =>
+  const offered = new Set();
+  (s.prevention.target || []).forEach(o => {
+    if (o.code === "fln" && !hrFlinchPossibleOnTarget()) return;
+    offered.add(o.code);
     opts.push(hrChip(o.label, `hrSet('target',{prevented:'${o.code}'})`,
-                     t.target?.prevented === o.code)));
+                     t.target?.prevented === o.code));
+  });
+  // Paralysis we just inflicted is live on the same turn for the same reason sleep is -- but
+  // unlike sleep it only MIGHT stop the move, so it joins the options rather than replacing them.
+  if (hrStatusWeJustApplied() === "par" && !offered.has("par"))
+    opts.push(hrChip("was fully paralyzed", `hrSet('target',{prevented:'par'})`,
+                     t.target?.prevented === "par"));
+  if (hrFlinchPossibleOnTarget() && !offered.has("fln"))
+    opts.push(hrChip("flinched", `hrSet('target',{prevented:'fln'})`,
+                     t.target?.prevented === "fln"));
   out.push(hrChips(`What did ${s.target.name} do?`, opts));
   if (!t.target) return {blocks: out, done: false};
 
@@ -4918,7 +5120,19 @@ function hrTargetBlocks(){
           t.target = {slot: t.target.slot, result: info.damaging ? "h" : ""};
         })) out.push(hrChips(`What happened to ${info.name}?`, opts2));
 
-    if (info.has_secondary && (t.target.result === "h" || t.target.result === "!")){
+    // A flinch is the exception: it is announced on the victim's turn, so a flinching move that
+    // went SECOND showed the player nothing at all. Asking anyway -- which is what this did for
+    // every Zen Headbutt Latias used after us -- invites a guess and then filters the candidate
+    // set on it. Where the flinch COULD show, it is reported as our own turn's outcome instead,
+    // and `hrSecondaryMark` reads the `~` back off that.
+    if (info.flinch_secondary && hrLanded(t.target)){
+      out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(info.name)}
+          ${hrFlinchPossibleOnUs()
+            ? `may have made ${esc(hrActive().name)} flinch — report that as
+               ${esc(hrActive().name)}'s own turn.`
+            : `moved second, so a flinch would never have shown. Nothing to report.`}
+        </div></div>`);
+    } else if (info.has_secondary && hrLanded(t.target)){
       out.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
         hrChip("No", `hrSet('target',${base},result:'${t.target.result}',secondary:false})`,
                t.target.secondary === false),
@@ -4955,6 +5169,17 @@ function hrInterview(){
     actionChips.push(hrChip("Switched", "hrSet('action','S')", t.action === "S"));
   else if (s.phase === 1)
     actionChips.push(hrChipOff("Switched", "Nobody else on the hunt's party to switch to."));
+  // Only while somebody is actually down to revive -- and unlike every other item, it names who.
+  if (s.legal_actions.includes("R"))
+    actionChips.push(hrChip("Used a Revive", "hrSet('action','R')", t.action === "R",
+                            `₽${s.revive_price} — back on half HP`));
+  // "I never got my move off." Offered only when the target could move before us, by Speed or by
+  // priority: if we always move first, this cannot have happened and reporting it would produce
+  // a turn no candidate predicts.
+  if (s.legal_actions.includes("X"))
+    actionChips.push(hrChip(`${s.ours.name} fainted before moving`, "hrSet('action','X')",
+                            t.action === "X",
+                            "The move you picked never executed, so it cost no PP."));
   blocks.push(hrChips(`What did ${s.ours.name} do?`, actionChips));
   if (!t.action) return blocks.join("");
 
@@ -4966,13 +5191,26 @@ function hrInterview(){
         : i.cures_status ? "Cures status" : `₽${i.price}`))));
     if (!t.ours?.item) return blocks.join("");
   } else if (t.action === "S"){
-    if (!s.bench.length){
+    const able = (s.bench || []).filter(b => !b.fainted);
+    if (!able.length){
       blocks.push(`<div class="notice warn">Nobody to switch to.</div>`);
       return blocks.join("");
     }
-    blocks.push(hrChips("Who came in?", s.bench.map(b => hrChip(
+    blocks.push(hrChips("Who came in?", able.map(b => hrChip(
       b.name, `hrSet('ours',{bench:${b.slot}})`, t.ours?.bench === b.slot,
-      `${b.hp}/${b.max_hp} HP`))));
+      `party slot ${b.party_slot} · ${b.hp}/${b.max_hp} HP`))));
+    if (t.ours?.bench === undefined) return blocks.join("");
+  } else if (t.action === "R"){
+    // A Revive is used on somebody who is NOT out, so only the fainted are offered.
+    const down = (s.bench || []).filter(b => b.fainted);
+    if (!down.length){
+      blocks.push(`<div class="notice warn">Nobody has fainted, so a Revive would do
+        nothing.</div>`);
+      return blocks.join("");
+    }
+    blocks.push(hrChips("Revived who?", down.map(b => hrChip(
+      b.name, `hrSet('ours',{bench:${b.slot}})`, t.ours?.bench === b.slot,
+      `party slot ${b.party_slot} · back on ${Math.max(1, Math.floor(b.max_hp / 2))} HP`))));
     if (t.ours?.bench === undefined) return blocks.join("");
   } else if (t.action === "C" || t.action === "P"){
     // Nobody counts wobbles -- they read the line that follows. So the MESSAGE is the label and
@@ -4995,12 +5233,14 @@ function hrInterview(){
     // 3. Ask in the order things happened. A bag action or switch resolves before any move, so
     // it is always first; between two moves it is priority, then effective Speed (sec 12.1).
     // Getting this wrong produced tokens like "M1E1" for a turn the target actually opened.
-    if (hrWeActFirst()){
+    // Being fainted before moving is the statement that the target went first, so our own half
+    // of the turn is skipped entirely -- there is no move outcome to report.
+    if (hrWeActFirst() && t.action !== "X"){
       if (t.action.startsWith("M")){
         const own = hrOurOutcomeBlock();
         if (own){ blocks.push(own); if (!t.ours) return blocks.join(""); }
         const sec = hrOurSecondaryBlock();
-        if (sec){ blocks.push(sec); if (t.ours.secondary === undefined) return blocks.join(""); }
+        if (sec){ blocks.push(sec); if (hrOurSecondaryPending()) return blocks.join(""); }
       }
       const tgt = hrTargetBlocks();
       blocks.push(...tgt.blocks);
@@ -5009,10 +5249,35 @@ function hrInterview(){
       const tgt = hrTargetBlocks();
       blocks.push(...tgt.blocks);
       if (!tgt.done) return blocks.join("");
-      const own = hrOurOutcomeBlock();
-      if (own){ blocks.push(own); if (!t.ours) return blocks.join(""); }
-      const sec = hrOurSecondaryBlock();
-      if (sec){ blocks.push(sec); if (t.ours.secondary === undefined) return blocks.join(""); }
+      if (t.action !== "X"){
+        const own = hrOurOutcomeBlock();
+        if (own){ blocks.push(own); if (!t.ours) return blocks.join(""); }
+        const sec = hrOurSecondaryBlock();
+        if (sec){ blocks.push(sec); if (hrOurSecondaryPending()) return blocks.join(""); }
+      }
+    }
+  }
+
+  // 3b. Did we go down? Asked before HP, because a faint REPLACES the HP token rather than
+  // joining it. Skipped when the action itself already said so.
+  if (!caught && hrCanFaint() && t.action !== "X"){
+    const who = hrActive();
+    blocks.push(hrChips(`Did ${who.name} faint?`, [
+      hrChip("No", "hrSet('fainted',false)", t.fainted === false),
+      hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
+    ]));
+    if (t.fainted === undefined) return blocks.join("");
+  }
+  if (!caught && hrFainted()){
+    const healthy = hrHealthyBench();
+    if (!healthy.length){
+      blocks.push(`<div class="notice warn">Nothing left to send out — this ends the run.</div>`);
+    } else {
+      // By PARTY SLOT, which is what the simulator takes and what cannot go stale mid-turn.
+      blocks.push(hrChips("Who did you send out?", healthy.map(b => hrChip(
+        b.name, `hrSet('replacement',${b.party_slot})`, t.replacement === b.party_slot,
+        `party slot ${b.party_slot} · ${b.hp}/${b.max_hp} HP`))));
+      if (hrFaintToken() === null) return blocks.join("");
     }
   }
 
@@ -5178,9 +5443,14 @@ function huntRunObserve(){
   if (!tokens) return toast("Answer the questions above first.");
   const t = _hrTurn, action = t.action;
   const itemCode = (action === "I" || action === "Ic") ? (t.ours?.item || null) : null;
-  const bench = action === "S" ? t.ours?.bench : null;
+  // The same field for a switch and for a Revive: both name a party member, and the Revive is
+  // the one item in the bag used on somebody who is NOT out.
+  const bench = (action === "S" || action === "R") ? t.ours?.bench : null;
+  // Which Pokemon came in after a faint is part of the OUTCOME rather than the action, so it
+  // travels separately -- a turn can be both "I used False Swipe" and "and then I went down".
   huntRunDo("hunt_session_observe", action, [tokens], itemCode,
-            bench === undefined ? null : bench);
+            bench === undefined ? null : bench,
+            t.replacement === undefined ? null : t.replacement);
 }
 
 function huntForceSolving(){
@@ -5234,7 +5504,7 @@ async function openSaveHuntRunModal(){
     record = await api("hunt_session_run_record", _huntRun);
   } catch (e) { toast(String(e.message || e)); return; }
   const outcomeWord = {caught: "caught", wrong_ball: "caught in the WRONG ball",
-                       fainted: "fainted"}[record.outcome] || "unfinished";
+                       wiped: "wiped out"}[record.outcome] || "unfinished";
   const spread = (_hsa && _hsa.spreadConfirmed)
     ? `${_hsa.nature} ${_hsa.ivs}` : "the hunt's configured spread";
   openModal(`<h3>Save run</h3>
@@ -5531,9 +5801,11 @@ function renderHuntRun(){
        <div class="hr-small">A plain Poké Ball landed, so the target is caught but not in the
          ${esc(s.capture_ball || "capture ball")} — the run is lost (sec 2.3).</div>
        ${saveBar}</div>`
-    : s.we_fainted
-    ? `<div class="notice danger"><b>${esc(s.ours.name)} fainted.</b>
-       <div class="hr-small">The battle is over.</div>${saveBar}</div>`
+    : s.party_wiped
+    ? `<div class="notice danger"><b>${esc(s.ours.name)} fainted, with nothing left to send
+         out.</b>
+       <div class="hr-small">The battle is over. A faint on its own is not — if a party member
+         is still standing, it is a reported turn and the run carries on.</div>${saveBar}</div>`
     : "";
 
   mount(`<div class="head"><h2>Battle Compass</h2>

@@ -127,7 +127,12 @@ class TestTurnUpperBound(unittest.TestCase):
                              pp=(5, 35, 20, 30), hp=1, status=Status.PARALYSIS)
             state = BattleState(ours=ours, target=target, rng=rng.getrandbits(32), phase=2)
             for action in Action:
-                if action is Action.SWITCH:
+                # Both need a party member named, and this fixture has no bench at all.
+                if action in (Action.SWITCH, Action.REVIVE):
+                    continue
+                # Being fainted before moving is not a turn this state can have: nothing has
+                # damaged us, so the simulator would render a turn the report contradicts.
+                if action is Action.FAINTED:
                     continue
                 # ITEM needs its code stated; the simulator no longer guesses one.
                 extra = {"item_code": "p"} if action is Action.ITEM else {}

@@ -393,14 +393,19 @@ class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
     #: Item codes are enumerated rather than [a-z]+ so a code the page cannot offer fails here.
     OURS = (r"(?:M[1-4][h!\-]?~?|M(?:par|slp|frz|cfz|fln)|Mscfz[1-4][h!\-]?~?"
             r"|I(?:" + "|".join(i.code for i in items.ITEMS) + r")"
-            r"|S[1-6]|C[0-3]?|Pc?[0-3]?)")
+            r"|S[1-6]|R[1-6]|C[0-3]?|Pc?[0-3]?)")
     TARGET = r"(?:E[1-4][h!\-]?~?|E(?:par|slp|frz|fln))"
+    #: A faint closes the turn instead of an HP token: who came in, or XX for a wipe. Not
+    #: optional-but-also-HP -- the two are mutually exclusive by `tokens.validate_turn`.
+    FAINT = r"(?:X[1-6]|XX)"
     TURN = None  # built in setUpClass
 
     @classmethod
     def setUpClass(cls):
         import re
-        cls.TURN = re.compile(rf"^{cls.OURS}(?:{cls.TARGET})?(?:HP\d{{3}})?$")
+        # Our half is optional, because being fainted before moving removes it entirely.
+        cls.TURN = re.compile(
+            rf"^(?:{cls.OURS})?(?:{cls.TARGET})?(?:HP\d{{3}}|{cls.FAINT})?$")
 
     def _renderings(self):
         """Every turn shape reachable from the fixture, switches and items included."""
@@ -419,7 +424,7 @@ class TestTheInterviewCanExpressEveryTurn(unittest.TestCase):
                                    bench=(_bench(),))
                     for action in Action:
                         kwargs = {}
-                        if action is Action.SWITCH:
+                        if action in (Action.SWITCH, Action.REVIVE):
                             kwargs["bench_slot"] = 0
                         if action in (Action.ITEM, Action.ITEM_CURE):
                             kwargs["item_code"] = rng.choice(codes)

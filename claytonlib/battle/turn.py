@@ -12,6 +12,9 @@ The skeleton every advance count hangs off, confirmed on the emulator [verified]
  4   end-of-turn advances
 ===  ======================================================================
 
+A faint shortens the tail of that skeleton rather than ending the turn -- see the three
+``END_OF_TURN_ADVANCES_FAINTED_*`` figures below.
+
 Three things fall out of it that the solver depends on:
 
 * **A ball's shake rolls are just that turn's action rolls.** They follow the four BeforeTurn
@@ -39,6 +42,28 @@ BEFORE_TURN_ADVANCES = 4
 BETWEEN_TURN_ADVANCES = 2
 POST_SUCCESSFUL_MOVE_ADVANCES = 2
 END_OF_TURN_ADVANCES = 4
+
+# --- when a MOVE faints our Pokemon mid-turn ------------------------------------------------
+#
+# The turn does not stop; it shortens, and by how much depends on whether we had already moved
+# [verified in-game, notes/ss_rng/fainting.md]. The attacker keeps every roll it was going to
+# spend, including its secondary-effect roll -- only the OUTCOME of that roll goes unseen.
+#
+# Fainted before we moved, we spend none of our own rolls (no accuracy, crit, damage or secondary
+# roll, and no post-successful-move advances) AND the between-turn advances are dropped as well.
+# Fainted after we moved, everything up to and including the attacker's move stands.
+#
+# In both cases the end-of-turn block shrinks, which is the part that would otherwise go unnoticed
+# -- it is spent on every ordinary turn, so a wrong count here desynchronises every turn after a
+# faint rather than the faint turn itself.
+END_OF_TURN_ADVANCES_FAINTED_BEFORE_MOVING = 3
+END_OF_TURN_ADVANCES_FAINTED_AFTER_MOVING = 2
+# Fainting to an end-of-turn effect (a burn or poison tick) changes nothing: the usual 4 are
+# spent. Named rather than left implicit because it is a real measured case, and because the
+# three figures only make sense next to each other.
+END_OF_TURN_ADVANCES_FAINTED_BY_RESIDUAL = END_OF_TURN_ADVANCES
+# Sending the replacement out costs nothing, like every other switch.
+SEND_OUT_ADVANCES = 0
 
 # A bag action -- item, ball (beyond its own shake rolls), or switch -- costs nothing itself.
 BAG_ACTION_ADVANCES = 0

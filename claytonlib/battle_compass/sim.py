@@ -65,6 +65,33 @@ def can_flinch(battler) -> bool:
                for slot in range(len(battler.moves)))
 
 
+def flinch_visible(victim: "Battler", *, victim_still_to_move: bool) -> bool:
+    """Whether a flinch inflicted on `victim` is observable at all.
+
+    A flinch lasts only the turn it is inflicted and announces itself only when the victim
+    *tries* to move -- so unlike every other secondary effect, a procced flinch can leave no
+    trace whatsoever. Three ways it does:
+
+    * **The flincher moved second.** The victim has already taken its turn, so the flinch flag is
+      set on a Pokemon that will never check it, and the game says nothing. This is the case this
+      function was written for: a Zen Headbutt that goes second cannot be reported, so the
+      interview must not ask and the ``~`` token must not appear in the path.
+    * **The flinch came with a KO.** A fainted victim never reaches its turn.
+    * **The victim is asleep and staying asleep.** Sleep is checked before flinch (the verified
+      order is sleep -> freeze -> flinch -> confusion -> paralysis), so "is fast asleep" is the
+      message shown and the flinch is masked. Paralysis is *not* on this list, and deliberately:
+      it is checked after flinch, so a flinched-and-paralyzed victim reports the flinch.
+
+    The proc roll is spent either way -- it belongs to the flincher's own move, through
+    ``effect_chance`` -- so suppressing the token costs the turn no advances. It costs
+    *information*: an invisible flinch is one the candidate set cannot be filtered on. That is
+    the correct trade, because the alternative is filtering on an answer the player is guessing.
+    """
+    if not victim_still_to_move or victim.fainted:
+        return False
+    return not (victim.status is Status.SLEEP and victim.sleep_turns > 1)
+
+
 #: Crit modifiers by stage; a crit lands when ``roll % modifier == 0``.
 CRIT_MODIFIERS = (16, 8, 4, 3, 2)
 #: Gen 4 damage variance, transcribed from ApplyDamageRange (src/battle/overlay_12_0224E4FC.c):
@@ -125,7 +152,7 @@ def move_roll_cost(move: Move) -> int:
         rolls += 2
     if move.effect_chance > 0:
         rolls += 1
-    if _status_for(move) is Status.SLEEP:
+    if status_applied_by(move) is Status.SLEEP:
         rolls += 1
     return rolls
 
@@ -192,7 +219,7 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
 
     None of these renders as a miss: the simulator emits the bare slot token.
     """
-    status = _status_for(move)
+    status = status_applied_by(move)
     if status is not None and defender.status is not Status.NONE:
         return True
     if move.effect == EFFECT_REFRESH:
@@ -238,8 +265,13 @@ RAIN_TURNS = 5
 MIST_TURNS = 5
 
 
-def _status_for(move: Move) -> Status | None:
-    """The non-volatile status this move inflicts, if any."""
+def status_applied_by(move: Move) -> Status | None:
+    """The non-volatile status this move inflicts, if any.
+
+    Public because the interview needs it too: a status our move lands takes effect BEFORE the
+    target's half of the same turn, and the snapshot's prevention options are read off the turn's
+    opening state, so the page has to add "is asleep" itself once Spore connects.
+    """
     return {1: Status.SLEEP, 67: Status.PARALYSIS}.get(move.effect)
 
 
@@ -274,7 +306,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # simulator from data/battle_logs/test1.jsonl at turn 3.
         if will_fail(move, defender, field, actor=attacker):
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
-        status = _status_for(move)
+        status = status_applied_by(move)
         sleep_turns = 0
         if status is Status.SLEEP:
             # Applying sleep costs one more roll for its hidden duration. The cost of this move
@@ -345,6 +377,63 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
 
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
                             damage=dealt, secondary=secondary)
+
+
+def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
+                    victim_still_to_move: bool) -> tuple[str, ...]:
+    """`outcome`'s tokens with an unobservable secondary marker removed.
+
+    Two cases, both verified rather than reasoned:
+
+    * **The move fainted the victim.** The secondary roll is still spent, but its outcome is
+      never shown -- no "was burned!", no stat-drop message -- so it must not be tokenized
+      [notes/ss_rng/fainting.md]. Note the case this does NOT cover: a victim that survives the
+      move and then faints to the burn the move inflicted *did* see the burn, so that turn keeps
+      its ``~`` (``E3h~X2``). Residual damage is not modelled yet, so the simulator cannot
+      produce that form at all; when it can, the distinction is already in the right place,
+      because this reads the victim's HP after the move and not at the end of the turn.
+    * **A flinch whose victim never reaches its turn**, which is most of them -- see
+      `flinch_visible`.
+
+    Only the marker goes; the roll that produced it was already spent inside ``execute_move``, so
+    the stream is untouched. The cost is information: a suppressed marker is one the candidate
+    set cannot be filtered on. That is the correct trade, because the alternative is filtering on
+    something the player never saw.
+
+    A secondary that applies to the ATTACKER (a self-boost like Ancient Power's) would be visible
+    even on a KO. No configured moveset has one, and when one lands it belongs here as an
+    exception rather than anywhere else.
+    """
+    if not outcome.secondary:
+        return outcome.tokens
+    hidden = victim.fainted or (
+        move.effect in FLINCH_EFFECTS
+        and not flinch_visible(victim, victim_still_to_move=victim_still_to_move))
+    if not hidden:
+        return outcome.tokens
+    return tuple(part for part in outcome.tokens if part != tok.SECONDARY)
+
+
+def party_number(battler: Battler, bench_slot: int) -> int:
+    """The 1-based party slot an ``S``/``X``/``R`` token should name.
+
+    `battler.party_slot` whenever a party was actually built, which the app always does. The
+    fallback is the old positional guess -- the active Pokemon was slot 1, so bench index *i* was
+    slot *i* + 2 -- and it exists only for a Battler constructed directly, as the simulator's own
+    tests do. The guess is what the stable slot replaces: it is right until the first switch and
+    wrong afterwards, because the bench it counts along has moved.
+    """
+    return battler.party_slot or bench_slot + 2
+
+
+def party_order(bench: tuple[Battler, ...]) -> tuple[Battler, ...]:
+    """`bench` in party order, so a bench index means the same thing all run.
+
+    HGSS never reorders a party, so neither may this. The outgoing Pokemon used to be appended to
+    the end of the bench, which made every index after the first switch describe somebody else.
+    Sorting is stable, so a bench with no party slots assigned keeps the order it came in with.
+    """
+    return tuple(sorted(bench, key=lambda b: b.party_slot))
 
 
 def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
@@ -483,6 +572,12 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
     cannot arise: paralysis guarantees a Speed gap. `speed_warnings` in ``battle.readiness`` is
     what checks that before a hunt starts.
     """
+    if action is Action.FAINTED:
+        # Reporting that we were fainted before moving IS the statement that the target moved
+        # first -- that is how we got fainted. Said explicitly so the two can never disagree:
+        # otherwise a faster Pokemon of ours would be simulated as acting (and doing nothing)
+        # first, and the turn would spend the wrong end-of-turn advances.
+        return False
     ours = state.ours.move(action.move_slot) if action.move_slot is not None else None
     theirs = state.target.move(target_slot) if target_slot is not None else None
     our_priority = ours.priority if ours is not None else 0
@@ -494,7 +589,8 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
 
 def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                   item_code: str | None = None,
-                  bench_slot: int | None = None) -> BattleState:
+                  bench_slot: int | None = None,
+                  replacement: int | None = None) -> BattleState:
     """One turn, advancing `state` and appending its rendered tokens to ``state.log``.
 
     Structure per ``claytonlib.battle.turn`` (verified): the wild move-selection roll, four
@@ -504,6 +600,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     Two ordering choices follow ``metronome_compass.simulate_turn`` rather than direct
     measurement, and are the R7 residual: the selection roll opening the turn, and a paralysis
     check costing one roll before the move it prevents.
+
+    `bench_slot` is which party member a ``SWITCH`` brought in, or which one a ``REVIVE`` was
+    used on, as an **index into `state.bench`**. `replacement` is which one came in if we FAINT
+    this turn, as a **party slot** -- a different question and deliberately a different kind of
+    number, because a faint is not an action we chose and it resolves at the END of the turn,
+    after a switch may already have rearranged the bench. See `_send_out`.
     """
     new = state.copy()
     rng = new.rng
@@ -543,6 +645,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
 
     def act_ours() -> bool:
         nonlocal rng, hp_before
+        if action is Action.FAINTED or new.ours.fainted:
+            # No rolls at all: not the move's own, not the two post-successful-move advances,
+            # and not even a status check [verified, notes/ss_rng/fainting.md]. The move the
+            # player selected never executed, so it costs no PP and emits no token -- which is
+            # why `Action.FAINTED` need not say which move it was.
+            return False
         if action is Action.CAPTURE_BALL or action is Action.STANDARD_BALL:
             multiplier = (config.capture_ball_multiplier
                           if action is Action.CAPTURE_BALL else BALL_POKE)
@@ -570,7 +678,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                     f"a switch needs which party member came in: bench_slot={bench_slot!r} with "
                     f"{len(new.bench)} on the bench")
             incoming = new.bench[bench_slot]
-            new.bench = tuple(b for i, b in enumerate(new.bench) if i != bench_slot) + (new.ours,)
+            # Kept in PARTY order, not rotated. Appending the outgoing Pokemon to the end made
+            # every bench index after the first switch point at somebody else, so switching out
+            # and back emitted the same token twice instead of S3 then S1.
+            new.bench = party_order(
+                tuple(b for i, b in enumerate(new.bench) if i != bench_slot) + (new.ours,))
             new.ours = incoming
             # The HP token reports a CHANGE to one Pokemon, so the baseline has to follow whoever
             # is out at the end of the turn. Left as the outgoing Pokemon's HP it compared two
@@ -578,8 +690,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Safe here because a switch always resolves before any move, so nothing has hit the
             # incoming Pokemon yet.
             hp_before = incoming.hp
-            # Party slot is 1-based and counts the active Pokemon, which was slot 1.
-            parts.append(tok.switch_token(bench_slot + 2))
+            parts.append(tok.switch_token(party_number(incoming, bench_slot)))
+            return False
+        if action is Action.REVIVE:
+            # Used on somebody who is NOT out, which is why it carries a slot and why it cannot
+            # be an entry in the item table. Costs no advances, like every other bag action.
+            if bench_slot is None or not 0 <= bench_slot < len(new.bench):
+                raise ValueError(
+                    f"a Revive needs which party member it was used on: bench_slot="
+                    f"{bench_slot!r} with {len(new.bench)} on the bench")
+            revived = new.bench[bench_slot]
+            if not revived.fainted:
+                raise ValueError(
+                    f"{revived.name} has not fainted, so a Revive would do nothing")
+            back = revived.with_hp(items.revive_amount(revived.max_hp))
+            new.bench = tuple(back if i == bench_slot else b
+                              for i, b in enumerate(new.bench))
+            parts.append(tok.revive_token(party_number(revived, bench_slot)))
             return False
         if action.is_bag_action:
             # Items cost no advances of their own (verified) -- but they are not inert. A potion
@@ -635,7 +762,6 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             rng, move, new.ours, new.target, actor="M", slot=slot, field=new,
             attack_stage=new.our_attack_stage)
         new.rng_offset += outcome.rolls
-        parts.extend(outcome.tokens)
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
         apply_field(outcome)
         if outcome.damage:
@@ -646,6 +772,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                                                 sleep_turns=outcome.sleep_turns)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
             flinched["E"] = True
+        # Emitted AFTER the state changes above, because whether the flinch is reportable depends
+        # on them: a KO or a sleep that holds hides it. See `flinch_visible`.
+        parts.extend(_visible_tokens(outcome, move, victim=new.target,
+                                     victim_still_to_move=ours_first))
         return outcome.successful
 
     def act_target() -> bool:
@@ -671,7 +801,6 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         rng, outcome = execute_move(
             rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new)
         new.rng_offset += outcome.rolls
-        parts.extend(outcome.tokens)
         new.target = new.target.spend_pp(target_slot, 1)
         apply_field(outcome)
         if outcome.damage:
@@ -680,14 +809,30 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.our_attack_stage = max(-6, new.our_attack_stage - 1)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
             flinched["M"] = True
+        parts.extend(_visible_tokens(outcome, move, victim=new.ours,
+                                     victim_still_to_move=not ours_first))
         return outcome.successful
+
+    def battle_halted() -> bool:
+        """Whether the battle itself has stopped, as opposed to our Pokemon going down.
+
+        Deliberately not ``new.over``: our Pokemon fainting shortens the rest of the turn but
+        does not end it, and the replacement comes in once the turn finishes. A capture (either
+        ball) or the target fainting really does stop everything there.
+        """
+        return new.captured or new.captured_in_wrong_ball or new.target.fainted
 
     first, second = (act_ours, act_target) if ours_first else (act_target, act_ours)
     if first():
         for _ in range(turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES):
             rng = advance_rng(rng)
         new.rng_offset += turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES
-    if not new.over:
+
+    # A faint *before* we moved takes our whole half of the turn with it -- the between-turn
+    # advances included [verified, notes/ss_rng/fainting.md]. Which is only possible when the
+    # target moved first, since otherwise we had already acted.
+    fainted_before_moving = new.ours.fainted and not ours_first
+    if not battle_halted() and not fainted_before_moving:
         for _ in range(turn_costs.BETWEEN_TURN_ADVANCES):
             rng = advance_rng(rng)
         new.rng_offset += turn_costs.BETWEEN_TURN_ADVANCES
@@ -695,22 +840,66 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             for _ in range(turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES):
                 rng = advance_rng(rng)
             new.rng_offset += turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES
-        for _ in range(turn_costs.END_OF_TURN_ADVANCES):
+
+    if not battle_halted():
+        # The end-of-turn block shrinks when a MOVE faints us: 4 -> 3 before we moved, 4 -> 2
+        # after. Getting this wrong would not show up on the faint turn, which the X token
+        # explains on its own -- it would desynchronise every turn after it.
+        if not new.ours.fainted:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES
+        elif fainted_before_moving:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_BEFORE_MOVING
+        else:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_AFTER_MOVING
+        for _ in range(end_of_turn):
             rng = advance_rng(rng)
-        new.rng_offset += turn_costs.END_OF_TURN_ADVANCES
+        new.rng_offset += end_of_turn
 
     # Durations tick at end of turn: rain set this turn shows "Rain continues to fall" on the
     # same turn and stops four turns later [verified: test1.jsonl].
-    if not new.over:
+    if not battle_halted():
         new.rain_turns = max(0, new.rain_turns - 1)
         new.mist_turns = max(0, new.mist_turns - 1)
 
-    if new.ours.hp != hp_before:
+    # HP, then the faint. A faint turn carries no HP token at all: zero is implied by the X, and
+    # once the replacement is out the number would describe a different Pokemon.
+    if new.ours.fainted:
+        new.faints += 1
+        parts.append(_send_out(new, replacement))
+    elif new.ours.hp != hp_before:
         parts.append(tok.hp_token(new.ours.hp))
     new.rng = rng
     new.turn += 1
     new.log.append(tuple(parts))
     return new
+
+
+def _send_out(state: BattleState, replacement: int | None) -> str:
+    """Replace our fainted Pokemon, returning the ``X`` token for it. Costs no advances.
+
+    `replacement` is a **party slot**, not a bench index -- unlike `bench_slot`, which names a
+    position among whoever is currently benched. The difference matters on the one turn where it
+    can: a switch resolves before any move, so a turn that switches *and then* faints has already
+    rearranged the bench by the time this runs, and an index the page computed beforehand would
+    name the wrong Pokemon. A party slot cannot go stale.
+
+    It is a *reported* fact rather than something the simulator can decide -- which party member
+    the player sent out is their choice. Optional all the same, because a prediction sweep
+    (`identify.Session.rank_actions`) asks every candidate what every action would do and most of
+    those candidates do not faint at all; defaulting to the first one still standing keeps that
+    sweep working. A real report always passes it, so the default never decides a token the
+    player can see.
+    """
+    healthy = state.healthy_bench
+    if not healthy:
+        return tok.WIPED                     # the party is wiped; nothing follows this
+    index = next((i for i in healthy
+                  if party_number(state.bench[i], i) == replacement), healthy[0])
+    incoming = state.bench[index]
+    state.bench = party_order(
+        tuple(b for i, b in enumerate(state.bench) if i != index) + (state.ours,))
+    state.ours = incoming
+    return tok.faint_token(party_number(incoming, index))
 
 
 def simulate(state: BattleState, actions: list[Action], config: HuntConfig) -> BattleState:

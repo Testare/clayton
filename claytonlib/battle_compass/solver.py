@@ -242,14 +242,14 @@ def reachable_statuses(state: BattleState, config: "SolverConfig") -> set[Status
     moves can inflict once it is unstatused. Nothing else -- the target cannot status itself, and
     no item of ours does.
     """
-    from claytonlib.battle_compass.sim import _status_for
+    from claytonlib.battle_compass.sim import status_applied_by
 
     out = {state.target.status, Status.NONE}
     for slot in config.allowed_moves:
         move = state.ours.move(slot)
         if move is None or state.ours.pp_left(slot) <= 0:
             continue
-        inflicted = _status_for(move)
+        inflicted = status_applied_by(move)
         if inflicted is not None:
             out.add(inflicted)
     return out
@@ -449,8 +449,12 @@ def solve(state: BattleState, hunt: HuntConfig,
             nxt = simulate_turn(current, action, hunt, item_code=item)
             if nxt.captured_in_wrong_ball:
                 continue          # never a path; the run would be lost
-            if nxt.ours.fainted:
-                continue          # sustainability is a hard constraint, not a warning
+            # Sustainability is a hard constraint, not a warning (sec 6.2). Keyed on the faint
+            # COUNT rather than on `ours.fainted`: a faint now switches the replacement in before
+            # the turn returns, so the Pokemon on the field is healthy again and the old check
+            # stopped firing the moment fainting became survivable.
+            if nxt.faints > current.faints:
+                continue
             counter += 1
             step = Step(action=action, tokens=tuple(nxt.log[-1]),
                         distance=step_distance, item=item)

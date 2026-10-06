@@ -460,7 +460,7 @@ class Run:
     # back-reference rather than ownership -- a hunt can be attempted many times, and deleting
     # one should not take its history with it.
     hunt_id: str = ""
-    #: "caught" | "wrong_ball" | "fainted" | "abandoned". The thing a diagnostic record is for:
+    #: "caught" | "wrong_ball" | "wiped" | "abandoned". The thing a diagnostic record is for:
     #: a run that ended is only interesting alongside HOW it ended.
     outcome: str = ""
     turns: int | None = None

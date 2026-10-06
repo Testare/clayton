@@ -75,12 +75,15 @@ class Observation:
 
     `item_code` and `bench_slot` are part of the action, not of the outcome: the same ITEM action
     heals different amounts and the same SWITCH brings in different Pokemon, so replaying without
-    them would reproduce a different turn.
+    them would reproduce a different turn. `replacement` is the same kind of fact about an
+    outcome rather than an action -- which party member came in after a faint -- and replay needs
+    it for the same reason.
     """
     action: Action
     tokens: tuple[str, ...]
     item_code: str | None = None
     bench_slot: int | None = None
+    replacement: int | None = None
 
     @property
     def rendered(self) -> str:
@@ -187,7 +190,8 @@ class Session:
         self.states = {s: advanced[s] for s in matched}
         self.history.append(Observation(action=action, tokens=tuple(tokens),
                                         item_code=extra.get("item_code"),
-                                        bench_slot=extra.get("bench_slot")))
+                                        bench_slot=extra.get("bench_slot"),
+                                        replacement=extra.get("replacement")))
         result = Narrowing(survivors=self.survivors, eliminated=before - len(matched),
                            predictions={s: predictions[s] for s in matched},
                            rejected={s: p for s, p in predictions.items() if s not in matched})

@@ -198,6 +198,16 @@ class TestHuntReadiness(HuntFacadeCase):
         labels = {c["ours"] for c in readiness["speed"]["checks"]}
         self.assertIn("Smeargle (paralyzed)", labels)
 
+    def test_every_party_member_is_speed_checked_not_only_the_lead(self):
+        """A tie spends extra rolls the simulator does not model, so a bench member that ties
+        the target breaks the run the moment it is sent out -- which, now that a faint switches
+        a replacement in, happens without anyone choosing it."""
+        readiness = self.api.hunt_readiness(self._hunt()["id"])
+        labels = {c["ours"] for c in readiness["speed"]["checks"]}
+        self.assertIn("Magneton", labels)
+        self.assertIn("Smeargle", labels)
+        self.assertIn("Magneton (paralyzed)", labels)
+
     def test_an_unknown_target_species_is_reported_not_raised(self):
         hunt = self._hunt(target={"species": "missingno", "level": 40, "nature": "Bold",
                                   "ivs": dict(PERFECT_IVS)})

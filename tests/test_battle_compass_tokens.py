@@ -88,12 +88,23 @@ class TestTokenising(unittest.TestCase):
         with self.assertRaises(ValueError):
             tok.tokenise("hhh")
 
-    def test_action_prefixes_are_prefix_free(self):
-        """What lets HP be two characters: H alone is deliberately not an action."""
-        for a in tok.ACTION_PREFIXES:
-            for b in tok.ACTION_PREFIXES:
-                if a != b:
-                    self.assertFalse(b.startswith(a), f"{b} starts with {a}")
+    def test_a_longer_prefix_is_always_tried_first(self):
+        """The scanner takes the FIRST prefix that matches, so order is the real invariant.
+
+        Mostly the set is prefix-free -- "H" alone is deliberately not an action, which is what
+        lets "HP" be two characters. "XX" is the exception: a wipe has to be tried before a
+        single "X" or it would tokenise as two separate faints.
+        """
+        order = list(tok.ACTION_PREFIXES)
+        for a in order:
+            for b in order:
+                if a != b and b.startswith(a):
+                    self.assertLess(order.index(b), order.index(a),
+                                    f"{b} extends {a} and must be tried before it")
+
+    def test_a_wipe_is_one_token_not_two(self):
+        self.assertEqual(tok.tokenise("XX"), ["XX"])
+        self.assertEqual(tok.tokenise("E1hXX"), ["E1h", "XX"])
 
 
 class TestValidation(unittest.TestCase):

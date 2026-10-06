@@ -551,9 +551,9 @@ class TestTheSaveRunUi(unittest.TestCase):
         self.assertIn('onclick="openSaveHuntRunModal()">Save run', self.html)
 
     def test_it_is_offered_on_every_ending_not_only_a_win(self):
-        """A wrong-ball or fainted run is the more informative record."""
+        """A wrong-ball or wiped-out run is the more informative record."""
         self.assertIn("const saveBar =", self.html)
-        self.assertIn("${saveBar}</div>`\n    : s.we_fainted", self.html)
+        self.assertIn("${saveBar}</div>`\n    : s.party_wiped", self.html)
 
     def test_a_run_in_progress_can_be_saved_too(self):
         self.assertIn('${s.over || !s.turns.length ? "" :', self.html)

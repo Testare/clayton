@@ -10,7 +10,7 @@ from claytonlib.battle.stats import abilities, derive_species_stats, has_pressur
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.sim import (
     EFFECT_REFRESH, EFFECT_WATER_SPORT, FLINCH_EFFECTS, HuntConfig, REFRESH_CURES,
-    simulate_turn, will_fail,
+    flinch_visible, simulate_turn, status_applied_by, will_fail,
 )
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.battle_compass.targets import encounter_level, moveset, supported
@@ -229,6 +229,104 @@ class TestFlinchIsApplied(unittest.TestCase):
     def test_a_flinched_turn_is_grammatical(self):
         for r in self._sweep(our_speed=20):
             self.assertEqual(tok.validate_turn(tok.tokenise(r)), [], r)
+
+
+class TestAFlinchThatGoesSecondIsInvisible(unittest.TestCase):
+    """A flinch is announced on the VICTIM's turn, not the flincher's -- so a flinching move
+    that moves second shows the player nothing at all.
+
+    Reported from a real Latias run: the interview kept asking whether Zen Headbutt's extra
+    effect had procced on turns where Latias moved after Smeargle, which is a question with no
+    answer -- and the `~` it produced then filtered the candidate set on a guess. Every other
+    secondary effect announces itself as it procs; this is the one that does not.
+
+    The proc ROLL is unaffected either way: it belongs to Zen Headbutt, through `effect_chance`,
+    so suppressing the marker costs the turn no advances.
+    """
+
+    def _sweep(self, our_speed, n=4000):
+        ours, target = _ours(speed=our_speed), _latias()
+        out = []
+        for seed in range(0xEC1504DC, 0xEC1504DC + n):
+            state = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            out.append((seed, tok.render_turn(tok.normalise(nxt.log[-1])),
+                        nxt.rng_offset))
+        return out
+
+    def test_zen_headbutt_going_second_never_reports_a_secondary(self):
+        """Smeargle at 160 outspeeds every Lv40 Latias spread, so Zen Headbutt always goes
+        second here -- and in the real matchup it always will."""
+        for seed, rendered, _ in self._sweep(our_speed=160):
+            if "E4" in rendered:
+                self.assertNotIn("~", rendered, f"{seed:#x}: {rendered}")
+
+    def test_going_first_it_still_does(self):
+        """The suppression has to be about turn ORDER, not about the move. At speed 20 Latias
+        leads, so a procced flinch is visible and must still render."""
+        rendered = [r for _, r, _ in self._sweep(our_speed=20)]
+        self.assertTrue(any("E4" in r and "~" in r for r in rendered),
+                        "no visible flinch was simulated at all")
+
+    def test_the_marker_appears_exactly_when_the_victim_flinched(self):
+        """Which is what lets the interview DEDUCE it rather than ask: `~` on a flinching move
+        is present if and only if the victim reported the flinch."""
+        for seed, rendered, _ in self._sweep(our_speed=20):
+            if "E4" not in rendered:
+                continue
+            self.assertEqual("~" in rendered, "Mfln" in rendered, f"{seed:#x}: {rendered}")
+
+    def test_suppressing_the_marker_spends_the_same_rolls(self):
+        """The roll is Zen Headbutt's own. If hiding the token moved the stream, every candidate
+        would desync from the turn after -- which would be far worse than the question it fixes.
+        """
+        ours, target = _ours(speed=160), _latias()
+        for seed in range(0xEC1504DC, 0xEC1504DC + 4000):
+            state = BattleState(ours=ours, target=target, rng=seed, phase=2)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            rendered = tok.render_turn(tok.normalise(nxt.log[-1]))
+            if "E4h" not in rendered and "E4!" not in rendered:
+                continue
+            # 1 selection + 4 BeforeTurn + our False Swipe (crit, damage, accuracy) + 2
+            # post-success + 2 between + Zen Headbutt (crit, damage, accuracy, PROC) + 2
+            # post-success + 4 end-of-turn.
+            self.assertEqual(nxt.rng_offset, 1 + 4 + 3 + 2 + 2 + 4 + 2 + 4, rendered)
+            return
+        self.fail("no seed in the sweep had Latias land Zen Headbutt")
+
+    def test_a_turn_with_the_marker_suppressed_is_grammatical(self):
+        for _, rendered, _ in self._sweep(our_speed=160):
+            self.assertEqual(tok.validate_turn(tok.tokenise(rendered)), [], rendered)
+
+
+class TestFlinchVisibilityRule(unittest.TestCase):
+    """`flinch_visible` on its own, including the two cases a speed sweep cannot reach."""
+
+    def test_a_victim_still_to_move_sees_it(self):
+        self.assertTrue(flinch_visible(_ours(), victim_still_to_move=True))
+
+    def test_a_victim_that_already_moved_does_not(self):
+        self.assertFalse(flinch_visible(_ours(), victim_still_to_move=False))
+
+    def test_a_fainted_victim_does_not(self):
+        """It never reaches its turn, so the flinch flag is read by nobody."""
+        self.assertFalse(flinch_visible(_ours().with_hp(0), victim_still_to_move=True))
+
+    def test_sleep_that_holds_masks_it(self):
+        """Sleep is checked BEFORE flinch, so "is fast asleep" is the message shown."""
+        asleep = _ours().with_status(Status.SLEEP, sleep_turns=3)
+        self.assertFalse(flinch_visible(asleep, victim_still_to_move=True))
+
+    def test_sleep_on_its_last_turn_does_not(self):
+        """The victim wakes and acts on a count of 1 -- so it reaches the flinch check."""
+        waking = _ours().with_status(Status.SLEEP, sleep_turns=1)
+        self.assertTrue(flinch_visible(waking, victim_still_to_move=True))
+
+    def test_paralysis_does_not_mask_it(self):
+        """Deliberately not on the list: the verified order is flinch BEFORE paralysis, so a
+        flinched-and-paralyzed victim reports the flinch."""
+        self.assertTrue(flinch_visible(_ours().with_status(Status.PARALYSIS),
+                                       victim_still_to_move=True))
 
 
 class TestSleepIsModelled(unittest.TestCase):

@@ -45,6 +45,22 @@ ITEMS: tuple[Item, ...] = (
     Item("gs",  "Guard Spec.",   700),
 )
 
+#: A Revive is deliberately NOT in `ITEMS`. Everything in that table is used on whoever is out
+#: and is priced by the solver as a filler action; a Revive is used on a party member who is
+#: *not* out, has its own ``R<slot>`` token, and the solver never plans one -- so putting it in
+#: the table would offer it as a heal for the active Pokemon. The price is here because the run
+#: record still totals what a run cost.
+REVIVE_PRICE = 1500
+#: A Revive restores half of max HP, rounded DOWN on an odd maximum. Not a Max Revive: a run
+#: never needs one, and the two differ in exactly this number.
+REVIVE_DIVISOR = 2
+
+
+def revive_amount(max_hp: int) -> int:
+    """The HP a Revive brings a fainted party member back on."""
+    return max(1, max_hp // REVIVE_DIVISOR)
+
+
 BY_CODE: dict[str, Item] = {item.code: item for item in ITEMS}
 #: Prices only, for the solver's distance function.
 PRICES: dict[str, int] = {item.code: item.price for item in ITEMS}
