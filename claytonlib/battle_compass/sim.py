@@ -65,29 +65,36 @@ def can_flinch(battler) -> bool:
                for slot in range(len(battler.moves)))
 
 
-def flinch_visible(victim: "Battler", *, victim_still_to_move: bool) -> bool:
+def flinch_visible(victim: "Battler", *, victim_selected_a_move: bool,
+                   victim_moves_second: bool) -> bool:
     """Whether a flinch inflicted on `victim` is observable at all.
 
     A flinch lasts only the turn it is inflicted and announces itself only when the victim
-    *tries* to move -- so unlike every other secondary effect, a procced flinch can leave no
-    trace whatsoever. Three ways it does:
+    *tries to use a move* -- so unlike every other secondary effect, a procced flinch can leave
+    no trace whatsoever. **The one case where it shows is a victim that selected a move and is
+    moving second.** Everything else hides it:
 
-    * **The flincher moved second.** The victim has already taken its turn, so the flinch flag is
-      set on a Pokemon that will never check it, and the game says nothing. This is the case this
-      function was written for: a Zen Headbutt that goes second cannot be reported, so the
-      interview must not ask and the ``~`` token must not appear in the path.
-    * **The flinch came with a KO.** A fainted victim never reaches its turn.
-    * **The victim is asleep and staying asleep.** Sleep is checked before flinch (the verified
-      order is sleep -> freeze -> flinch -> confusion -> paralysis), so "is fast asleep" is the
-      message shown and the flinch is masked. Paralysis is *not* on this list, and deliberately:
-      it is checked after flinch, so a flinched-and-paralyzed victim reports the flinch.
+    * **The victim did not select a move at all.** A bag action -- an item, either ball, a switch,
+      a Revive -- resolves BEFORE any move, so the victim has already had its turn and there is
+      nothing left for the flinch to stop. Same for a victim that was fainted before moving.
+      These are stated as their own condition rather than left to fall out of turn order, which
+      is how they were covered before: bag actions force the user to act first, so the
+      already-acted case was correct only as a side effect of that coupling.
+    * **The victim moves first**, by Speed or by priority bracket -- it has acted by the time the
+      flinch lands.
+    * **The flinch came with a KO.** A fainted victim never reaches its move.
+    * **The victim is asleep and staying asleep.** Derived rather than measured: sleep is checked
+      before flinch (the verified order is sleep -> freeze -> flinch -> confusion -> paralysis),
+      so "is fast asleep" is the message shown and the flinch is masked. Paralysis is *not* on
+      this list, and deliberately: it is checked after flinch, so a flinched-and-paralyzed victim
+      reports the flinch.
 
     The proc roll is spent either way -- it belongs to the flincher's own move, through
     ``effect_chance`` -- so suppressing the token costs the turn no advances. It costs
     *information*: an invisible flinch is one the candidate set cannot be filtered on. That is
     the correct trade, because the alternative is filtering on an answer the player is guessing.
     """
-    if not victim_still_to_move or victim.fainted:
+    if not victim_selected_a_move or not victim_moves_second or victim.fainted:
         return False
     return not (victim.status is Status.SLEEP and victim.sleep_turns > 1)
 
@@ -380,7 +387,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
 
 
 def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
-                    victim_still_to_move: bool) -> tuple[str, ...]:
+                    victim_selected_a_move: bool,
+                    victim_moves_second: bool) -> tuple[str, ...]:
     """`outcome`'s tokens with an unobservable secondary marker removed.
 
     Two cases, both verified rather than reasoned:
@@ -408,7 +416,8 @@ def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
         return outcome.tokens
     hidden = victim.fainted or (
         move.effect in FLINCH_EFFECTS
-        and not flinch_visible(victim, victim_still_to_move=victim_still_to_move))
+        and not flinch_visible(victim, victim_selected_a_move=victim_selected_a_move,
+                               victim_moves_second=victim_moves_second))
     if not hidden:
         return outcome.tokens
     return tuple(part for part in outcome.tokens if part != tok.SECONDARY)
@@ -774,8 +783,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             flinched["E"] = True
         # Emitted AFTER the state changes above, because whether the flinch is reportable depends
         # on them: a KO or a sleep that holds hides it. See `flinch_visible`.
-        parts.extend(_visible_tokens(outcome, move, victim=new.target,
-                                     victim_still_to_move=ours_first))
+        #
+        # A wild Pokemon always picks a move -- it has no bag -- so the only question for the
+        # target as victim is whether it still has that move to take. `target_slot is None` is
+        # the exception: with no PP anywhere it would Struggle, which is unmodelled, and
+        # `act_target` returns without moving at all.
+        parts.extend(_visible_tokens(
+            outcome, move, victim=new.target,
+            victim_selected_a_move=target_slot is not None,
+            victim_moves_second=ours_first))
         return outcome.successful
 
     def act_target() -> bool:
@@ -809,8 +825,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.our_attack_stage = max(-6, new.our_attack_stage - 1)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
             flinched["M"] = True
-        parts.extend(_visible_tokens(outcome, move, victim=new.ours,
-                                     victim_still_to_move=not ours_first))
+        # Our side is the one with a bag, so both halves of the rule do work here. A flinch on
+        # us shows only if we SELECTED A MOVE and are moving second: an item, either ball, a
+        # switch or a Revive resolves before any move, so we have already had our turn and there
+        # is no move left to flinch -- and `Action.FAINTED` says outright that we never got one
+        # off. `move_slot` is None for every one of those.
+        parts.extend(_visible_tokens(
+            outcome, move, victim=new.ours,
+            victim_selected_a_move=action.move_slot is not None,
+            victim_moves_second=not ours_first))
         return outcome.successful
 
     def battle_halted() -> bool:

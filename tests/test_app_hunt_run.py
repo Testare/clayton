@@ -1416,6 +1416,23 @@ class TestAnInvisibleFlinchIsNotAsked(unittest.TestCase):
         body = body[:body.index("\n}") + 2]
         self.assertIn("!info.flinch_secondary", body)
 
+    def test_a_bag_action_rules_the_flinch_out_on_its_own(self):
+        """Reported: a switch turn still showed the `~`. An item, either ball, a switch or a
+        Revive resolves BEFORE any move, so we have already had our turn and there is no move
+        left to flinch -- and that is the reason, not the turn order those actions also force.
+        Checked separately so it cannot regress if the two ever come apart."""
+        body = self.html[self.html.index("function hrFlinchPossibleOnUs(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn('!t.action.startsWith("M")', body)
+
+    def test_the_marker_and_the_question_share_one_predicate(self):
+        """So the page cannot emit a `~` for a flinch it never offered."""
+        body = self.html[self.html.index("function hrSecondaryMark(side){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("hrFlinchPossibleOnTarget()", body)
+        self.assertIn("hrFlinchPossibleOnUs()", body)
+        self.assertIn("if (!possible) return \"\";", body)
+
     def test_the_flinch_option_needs_a_flinching_move_that_actually_landed(self):
         """`prevention_options` can only check the MOVESET, so "flinched" was on offer whenever
         the target held Zen Headbutt at all -- including turns it used something else."""

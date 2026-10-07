@@ -1777,6 +1777,37 @@ lowercased for readability:
 Moves with richer outcomes (Tri Attack's status choice, Acupressure's stat pick) reuse their
 existing per-move tokens directly — a real benefit of building on the Metronome work.
 
+#### 13.6.1 `~` is not always emitted, and a flinch is why
+
+Every secondary effect but one announces itself as it procs, so its `~` is a fact the player can
+report. A **flinch** does not: the game says "*&lt;victim&gt; flinched!*" on the **victim's** turn,
+if the victim still has one. So the marker is emitted in exactly one situation —
+
+> **the Pokémon being flinched had selected a move and is moving second.**
+
+Everything else hides it, and the player should never be asked:
+
+* **we took a bag action** — an item, either ball, a switch, a Revive. Those resolve *before* any
+  move, so our turn is already over and there is no move left for the flinch to stop. This is a
+  reason of its own, not a consequence of turn order: those actions also make us move first, and
+  conflating the two is what let a switch turn still show a `~`;
+* **we were fainted before moving** (`X`) — we never got a move off at all;
+* **we moved first**, by Speed or by priority bracket;
+* **the flinch came with a KO** — a fainted victim never reaches its move (and §13.3.1's rule
+  already hides every secondary on a KO);
+* **the victim is asleep and staying asleep** — *derived, not measured*: sleep is checked before
+  flinch, so "is fast asleep" is the message shown instead. Paralysis is deliberately **not** on
+  this list — it is checked *after* flinch, so a flinched-and-paralyzed victim reports the flinch.
+
+The proc **roll** is spent in every one of these cases: it belongs to the flincher's own move,
+through `effect_chance`. Only the marker goes, so the stream is untouched. What it costs is
+*information* — a suppressed marker is one the candidate set cannot be filtered on — and that is
+the right trade, because the alternative is filtering on an answer the player guessed.
+
+One consequence worth stating: the `~` on a flinching move therefore needs **no question of its
+own**. It is present if and only if the victim reported `fln`, so the interview deduces it from
+the victim's own turn.
+
 ### 13.7 Our Pokémon getting a status condition
 
 The plan had not accounted for this. It does not arise against Suicune, which inflicts nothing,

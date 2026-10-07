@@ -4709,15 +4709,25 @@ function hrLanded(answer){ return !!answer && (answer.result === "h" || answer.r
 // Which also means the `~` never needs its own question. It is present exactly when the victim
 // reported "flinched" and absent otherwise, so it is DEDUCED from the victim's own answer.
 
-// Could the target have flinched US this turn? Only if it went first and landed a flinching move
-// -- not merely if one sits in its moveset, which is all the snapshot's option list can know.
+// Could the target have flinched US this turn? Only if WE SELECTED A MOVE and are moving second,
+// and the target landed a flinching move -- not merely if one sits in its moveset, which is all
+// the snapshot's option list can know.
+//
+// The "selected a move" half is checked on its own rather than left to `hrWeActFirst`. That
+// function reports true for every bag action, so the case was covered by coincidence: items,
+// balls, switches and Revives resolve before any move, which both makes us act first AND leaves
+// us with no move to flinch. Only the second of those is the actual reason.
 function hrFlinchPossibleOnUs(){
-  if (hrWeActFirst()) return false;
+  const t = _hrTurn;
+  if (!t.action || !t.action.startsWith("M")) return false;   // no move selected, nothing to stop
+  if (hrWeActFirst()) return false;                           // we already took our turn
   const info = hrTargetMoveInfo();
-  return !!info && info.flinch_secondary && hrLanded(_hrTurn.target);
+  return !!info && info.flinch_secondary && hrLanded(t.target);
 }
 
-// ...and the mirror: our own flinching move, landed, with us moving first.
+// ...and the mirror: our own flinching move, landed, with us moving first. The target is a wild
+// Pokemon with no bag, so it always has a move pending -- the "selected a move" half is free on
+// this side.
 function hrFlinchPossibleOnTarget(){
   const t = _hrTurn, info = hrOurMoveInfo();
   if (!hrWeActFirst() || !info || !info.flinch_secondary) return false;
@@ -4734,6 +4744,10 @@ function hrSecondaryMark(side){
   // stat-drop message. The roll is spent; the marker is not reported.
   if (side === "target" && hrFainted()) return "";
   if (info.flinch_secondary){
+    // Gated on the same predicate that decides whether to OFFER the flinch, so the marker and
+    // the question cannot disagree: no offer, no marker, whatever is sitting in the answer.
+    const possible = side === "ours" ? hrFlinchPossibleOnTarget() : hrFlinchPossibleOnUs();
+    if (!possible) return "";
     const victim = side === "ours" ? t.target : t.ours;
     return victim && victim.prevented === "fln" ? "~" : "";
   }

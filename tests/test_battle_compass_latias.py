@@ -299,34 +299,123 @@ class TestAFlinchThatGoesSecondIsInvisible(unittest.TestCase):
             self.assertEqual(tok.validate_turn(tok.tokenise(rendered)), [], rendered)
 
 
+class TestOnlyASelectedMoveCanBeFlinched(unittest.TestCase):
+    """The rule stated in full: Zen Headbutt's `~` shows only if the Pokemon being flinched had
+    **selected a move** and is **moving second**.
+
+    Everything else hides it, and a bag action hides it for a reason independent of Speed: items,
+    balls, switches and Revives resolve BEFORE any move, so our turn is already over and there is
+    no move left for the flinch to stop. Reported after the switch case still showed a `~`, which
+    is why each kind gets its own row here rather than trusting one of them to stand for the rest.
+    """
+
+    def _sweep(self, action, our_speed, n=4000, **kw):
+        ours = _ours(speed=our_speed)
+        bench = (_ours(speed=70, name="Magneton"),)
+        target = _latias()
+        emitted = 0
+        landed = 0
+        for seed in range(0xEC1504DC, 0xEC1504DC + n):
+            state = BattleState(ours=ours, target=target, rng=seed, bench=bench, phase=2)
+            rendered = tok.render_turn(
+                tok.normalise(simulate_turn(state, action, HUNT, **kw).log[-1]))
+            if "E4" not in rendered:
+                continue
+            landed += 1
+            emitted += "~" in rendered
+        self.assertGreater(landed, 0, "Zen Headbutt was never used in the sweep")
+        return emitted
+
+    def test_a_switch_hides_it(self):
+        """The reported case. We are slower, so Latias moves after the switch resolves -- but we
+        have no move pending, so there is nothing to flinch."""
+        self.assertEqual(self._sweep(Action.SWITCH, our_speed=20, bench_slot=0), 0)
+
+    def test_an_item_hides_it(self):
+        self.assertEqual(self._sweep(Action.ITEM, our_speed=20, item_code="p"), 0)
+
+    def test_a_status_cure_hides_it(self):
+        self.assertEqual(self._sweep(Action.ITEM_CURE, our_speed=20), 0)
+
+    def test_the_capture_ball_hides_it(self):
+        self.assertEqual(self._sweep(Action.CAPTURE_BALL, our_speed=20), 0)
+
+    def test_a_standard_ball_hides_it(self):
+        self.assertEqual(self._sweep(Action.STANDARD_BALL, our_speed=20), 0)
+
+    def test_being_fainted_before_moving_hides_it(self):
+        """We never got a move off, which is what the report says outright."""
+        self.assertEqual(self._sweep(Action.FAINTED, our_speed=20, replacement=2), 0)
+
+    def test_moving_first_hides_it(self):
+        self.assertEqual(self._sweep(Action.MOVE_1, our_speed=160), 0)
+
+    def test_a_move_going_second_is_the_one_case_that_shows_it(self):
+        """And it must still be reachable, or every row above passes for the wrong reason."""
+        self.assertGreater(self._sweep(Action.MOVE_1, our_speed=20), 0)
+
+    def test_a_revive_hides_it(self):
+        ours = _ours(speed=20)
+        downed = _ours(speed=70, name="Magneton", hp=0)
+        target = _latias()
+        landed = emitted = 0
+        for seed in range(0xEC1504DC, 0xEC1504DC + 4000):
+            state = BattleState(ours=ours, target=target, rng=seed, bench=(downed,), phase=2)
+            rendered = tok.render_turn(tok.normalise(
+                simulate_turn(state, Action.REVIVE, HUNT, bench_slot=0).log[-1]))
+            if "E4" not in rendered:
+                continue
+            landed += 1
+            emitted += "~" in rendered
+        self.assertGreater(landed, 0, "Zen Headbutt was never used in the sweep")
+        self.assertEqual(emitted, 0)
+
+
 class TestFlinchVisibilityRule(unittest.TestCase):
-    """`flinch_visible` on its own, including the two cases a speed sweep cannot reach."""
+    """`flinch_visible` on its own, including the cases a speed sweep cannot reach.
 
-    def test_a_victim_still_to_move_sees_it(self):
-        self.assertTrue(flinch_visible(_ours(), victim_still_to_move=True))
+    The rule as the player stated it: a flinch shows if and only if the Pokemon being flinched
+    **had selected a move and is moving second**.
+    """
 
-    def test_a_victim_that_already_moved_does_not(self):
-        self.assertFalse(flinch_visible(_ours(), victim_still_to_move=False))
+    def _visible(self, victim, **kw):
+        fields = dict(victim_selected_a_move=True, victim_moves_second=True)
+        fields.update(kw)
+        return flinch_visible(victim, **fields)
+
+    def test_a_move_selected_and_moving_second_sees_it(self):
+        self.assertTrue(self._visible(_ours()))
+
+    def test_moving_first_does_not(self):
+        self.assertFalse(self._visible(_ours(), victim_moves_second=False))
+
+    def test_selecting_no_move_does_not(self):
+        """A bag action -- an item, either ball, a switch, a Revive -- resolves before any move,
+        so the victim has already had its turn and there is no move left to stop. Separate from
+        turn order on purpose: these actions also force the user to move first, and relying on
+        that made the rule correct only by coincidence."""
+        self.assertFalse(self._visible(_ours(), victim_selected_a_move=False))
+
+    def test_neither_half_rescues_the_other(self):
+        self.assertFalse(self._visible(_ours(), victim_selected_a_move=False,
+                                       victim_moves_second=False))
 
     def test_a_fainted_victim_does_not(self):
-        """It never reaches its turn, so the flinch flag is read by nobody."""
-        self.assertFalse(flinch_visible(_ours().with_hp(0), victim_still_to_move=True))
+        """It never reaches its move, so the flinch flag is read by nobody."""
+        self.assertFalse(self._visible(_ours().with_hp(0)))
 
     def test_sleep_that_holds_masks_it(self):
         """Sleep is checked BEFORE flinch, so "is fast asleep" is the message shown."""
-        asleep = _ours().with_status(Status.SLEEP, sleep_turns=3)
-        self.assertFalse(flinch_visible(asleep, victim_still_to_move=True))
+        self.assertFalse(self._visible(_ours().with_status(Status.SLEEP, sleep_turns=3)))
 
     def test_sleep_on_its_last_turn_does_not(self):
         """The victim wakes and acts on a count of 1 -- so it reaches the flinch check."""
-        waking = _ours().with_status(Status.SLEEP, sleep_turns=1)
-        self.assertTrue(flinch_visible(waking, victim_still_to_move=True))
+        self.assertTrue(self._visible(_ours().with_status(Status.SLEEP, sleep_turns=1)))
 
     def test_paralysis_does_not_mask_it(self):
         """Deliberately not on the list: the verified order is flinch BEFORE paralysis, so a
         flinched-and-paralyzed victim reports the flinch."""
-        self.assertTrue(flinch_visible(_ours().with_status(Status.PARALYSIS),
-                                       victim_still_to_move=True))
+        self.assertTrue(self._visible(_ours().with_status(Status.PARALYSIS)))
 
 
 class TestSleepIsModelled(unittest.TestCase):
