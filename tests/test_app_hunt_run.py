@@ -1503,11 +1503,31 @@ class TestTheInterviewCanReportAFaint(unittest.TestCase):
         body = body[:body.index("\n}") + 2]
         self.assertIn('"X" + chosen.party_slot', body)
 
-    def test_an_unanswered_faint_question_is_not_a_no(self):
+    def test_the_faint_question_defaults_to_no(self):
+        """Reversed on request: a faint is the rare case, so making "no" the answer that needs no
+        click saves one on almost every turn. The question is still SHOWN, with No selected, so
+        the turn that did end in a faint is still obvious to correct."""
+        body = self.html[self.html.index("function hrTurnReset(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("fainted: false", body)
+        self.assertNotIn("fainted: undefined", body)
+
+    def test_it_is_still_asked_rather_than_assumed_silently(self):
+        self.assertIn("Did ${who.name} faint?", self.html)
+        self.assertIn('"assumed no"', self.html)
+
+    def test_so_nothing_waits_on_it_but_the_replacement_still_does(self):
         body = self.html[self.html.index("function hrTurnComplete(){"):]
         body = body[:body.index("\n  return true;\n}") + 17]
-        self.assertIn("t.fainted === undefined) return false", body)
+        self.assertNotIn("t.fainted === undefined) return false", body)
         self.assertIn("hrFaintToken() === null) return false", body)
+
+    def test_clearing_the_question_restores_the_default_not_the_blank(self):
+        """`hrSet` drops the answer when the turn can no longer have caused a faint. Dropping it
+        to `undefined` would make the turn unreportable again."""
+        body = self.html[self.html.index("function hrSet(path, value){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("t.fainted = false; t.replacement = undefined;", body)
 
     def test_fainted_before_moving_is_an_action_gated_on_turn_order(self):
         """Offered only when the target could lead -- by Speed, by its own priority move, or by
@@ -1607,3 +1627,65 @@ class TestPartySlotsReachThePage(unittest.TestCase):
         body = html[html.index("function hrTokens(){"):]
         self.assertIn("member.party_slot", body)
         self.assertNotIn('parts.push("S" + (t.ours.bench + 2))', body)
+
+
+class TestTheItemHpIsInferred(unittest.TestCase):
+    """When an item is the only thing that touched our HP, the new value is arithmetic rather
+    than an observation: a Potion on 73 of 120 lands on 93. Prefilling it saves typing a number
+    the page already has, on the action a run spends most of its turns on.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+        self.body = self.html[self.html.index("function hrInferredHp(){"):]
+        self.body = self.body[:self.body.index("\n}") + 2]
+
+    def test_it_adds_the_items_heal_and_caps_at_full(self):
+        self.assertIn("Math.min(who.max_hp, who.hp + entry.heal)", self.body)
+        self.assertIn("entry.heal === null ? who.max_hp", self.body)
+
+    def test_a_non_healing_item_infers_nothing(self):
+        """A Full Heal or an X item changes no HP at all, so there is nothing to prefill -- and
+        `hrNeedsHp` does not even ask."""
+        self.assertIn("!entry.heals) return null", self.body)
+
+    def test_an_incoming_hit_makes_it_an_observation_again(self):
+        """Two things moved our HP and we only know one of them, so the player has to read it."""
+        self.assertIn("hrLanded(t.target)) return null", self.body)
+
+    def test_a_confusion_self_hit_does_too(self):
+        self.assertIn('t.ours.prevented === "cfz") return null', self.body)
+
+    def test_it_refuses_when_candidates_disagree_about_our_hp(self):
+        """They predict different damage rolls and different crits, so there is no single
+        starting value to add to -- `hp_range.certain` is how the snapshot says so."""
+        self.assertIn("!who.hp_range.certain) return null", self.body)
+
+    def test_a_typed_value_is_never_overwritten(self):
+        """The player typing takes ownership. Without this, answering a later question would
+        stamp the arithmetic back over a number they had corrected by hand."""
+        body = self.html[self.html.index("function hrHpInput(el){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("_hrTurn.hpInferred = false", body)
+
+    def test_an_inferred_value_is_withdrawn_when_it_stops_holding(self):
+        """Pick a Potion, then answer that the target hit us as well: the arithmetic no longer
+        applies, and leaving 93 standing would report a number nobody established. Same hazard
+        the stale-HP rule already guards, which is why it is the same mechanism."""
+        body = self.html[self.html.index("function hrSet(path, value){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("if (t.hpInferred){", body)
+        self.assertIn('t.hp = guess === null ? "" : String(guess);', body)
+
+    def test_the_prefilled_value_says_it_is_a_guess(self):
+        self.assertIn("Worked out from", self.html)
+        self.assertIn("Change it if the game", self.html)
+
+    def test_the_arithmetic_matches_the_python_it_mirrors(self):
+        """`items.heal_amount` caps at the missing amount for the same reason, so the two must
+        agree -- the simulator predicts with one and the interview reports with the other."""
+        from claytonlib.battle_compass import items
+
+        self.assertEqual(items.heal_amount("p", 73, 120), 20)      # 73 -> 93
+        self.assertEqual(items.heal_amount("p", 110, 120), 10)     # capped: 110 -> 120
+        self.assertEqual(items.heal_amount("mp", 73, 120), 47)     # to full

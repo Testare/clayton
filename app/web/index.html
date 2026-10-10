@@ -4117,17 +4117,27 @@ function huntPickSeedA(seed){
 function huntChangeSeedA(){ _hsa.editing = true; renderHuntSetup(); }
 function huntKeepSeedA(){ _hsa.editing = false; renderHuntSetup(); }
 
+// Who this hunt is for, by name. Every sentence on this page used to say "Suicune", which was
+// true of the first target and a lie on every one after it -- and a confusing lie, because the
+// page is where you check that the hunt is configured for what you are actually standing in
+// front of. Falls back to "target" rather than to a species, so a half-configured hunt reads
+// awkwardly rather than wrongly.
+function hsaTarget(){
+  return (_huntSetup && _huntSetup.target && _huntSetup.target.name) || "target";
+}
+
 function renderHuntSeedA(){
   if (_hsa.seedA && !_hsa.editing){
     const key = huntSeedAIsKeySeed();
     return `<h3>Seed A — identified</h3>
       <div class="info-line done">${_seedASummary(_hsa.seedA)}</div>
       <div class="hr-small ${key ? "muted" : ""}" style="margin:6px 0">${key
-        ? `This is the key seed, so the target is the Suicune this hunt was planned around —
-           its configured nature and IVs still apply and there is nothing more to enter.`
-        : `<b>Not the key seed.</b> The Suicune this seed generated has a different nature and
-           IV spread from the one the hunt was planned around, and every damage figure depends
-           on it — so it has to be entered below.`}</div>
+        ? `This is the key seed, so the target is the ${esc(hsaTarget())} this hunt was planned
+           around — its configured nature and IVs still apply and there is nothing more to
+           enter.`
+        : `<b>Not the key seed.</b> The ${esc(hsaTarget())} this seed generated has a different
+           nature and IV spread from the one the hunt was planned around, and every damage figure
+           depends on it — so it has to be entered below.`}</div>
       <button class="btn small" onclick="huntChangeSeedA()">Change Seed A</button>`;
   }
   const hasCand = !!_hsa.candidates;
@@ -4255,15 +4265,15 @@ function renderHuntFrameGuide(){
   if (_hsa.pinnedFrame == null){
     const target = huntKeySeedTargetFrame();
     const why = target != null
-      ? `Seed A is the key seed, so the Suicune you planned for is waiting at advance frame
-         <b>${target}</b>. Pin where you are now and the route there follows.`
+      ? `Seed A is the key seed, so the ${esc(hsaTarget())} you planned for is waiting at advance
+         frame <b>${target}</b>. Pin where you are now and the route there follows.`
       : onKeySeed
       ? `Seed A is the key seed, but this hunt has no planned advance frame configured, so there
-         is nothing to route to. Pin where you are and the frame itself tells you which Suicune
-         an A-press would generate.`
+         is nothing to route to. Pin where you are and the frame itself tells you which
+         ${esc(hsaTarget())} an A-press would generate.`
       : `Seed A is not the key seed, so there is no planned frame to aim for — but the frame you
-         are on decides which Suicune an A-press generates, so pin it and you know which nature
-         and IVs to look up.`;
+         are on decides which ${esc(hsaTarget())} an A-press generates, so pin it and you know
+         which nature and IVs to look up.`;
     const cand = !_hsa.frameCandidates ? ""
       : _hsa.frameCandidates.length === 0
         ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check
@@ -4298,8 +4308,8 @@ function renderHuntFrameGuide(){
            — set one in Configure if you want the guide. This frame is what an A-press would
            generate from.`
         : `Seed A is not the key seed, so no target frame applies — this frame is what an A-press
-           would generate from. Look up the Suicune at frame <b>${_hsa.pinnedFrame}</b> on this
-           seed and enter its nature and IVs below.`}</div>
+           would generate from. Look up the ${esc(hsaTarget())} at frame
+           <b>${_hsa.pinnedFrame}</b> on this seed and enter its nature and IVs below.`}</div>
       <button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>`;
   }
 
@@ -4318,7 +4328,7 @@ function renderHuntFrameGuide(){
     <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
     <div class="info-line done">${g.chatot_flips > 0
       ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) →
-      frame ${g.encounter_frame}, then press A on Suicune.</div>
+      frame ${g.encounter_frame}, then press A on ${esc(hsaTarget())}.</div>
     <div class="status">Guide: <code>${esc(g.guide)}</code> (press A at the "!")
       ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm
         sequence</span>` : ""}
@@ -4389,7 +4399,7 @@ function renderHuntSpread(){
   const cfg = _huntSetup.configured_spread || {};
   return `<h3>The target's nature and IVs</h3>
     <div class="hr-small muted" style="margin-bottom:10px">Seed A is not the key seed, so this
-      Suicune is not the one the hunt was planned around — the hunt is configured for
+      ${esc(hsaTarget())} is not the one the hunt was planned around — the hunt is configured for
       <b>${esc(cfg.nature || "—")} ${esc(cfg.text || "—")}</b>, which is <i>not</i> what you are
       facing. Work out what this seed actually generated and enter it; the fields start empty on
       purpose, because the simulation derives every stat from them and a plausible-looking wrong
@@ -4424,7 +4434,8 @@ function huntRenderStartButton(){
 function huntStartBlockedReason(){
   if (_huntSetup?.hard_errors?.length) return "This hunt is not configured yet.";
   if (!_hsa?.seedA) return "Identify Seed A first.";
-  if (!_hsa.spreadConfirmed) return "Seed A is not the key seed — enter this Suicune's nature and IVs.";
+  if (!_hsa.spreadConfirmed)
+    return `Seed A is not the key seed — enter this ${hsaTarget()}'s nature and IVs.`;
   return "";
 }
 
@@ -4648,7 +4659,16 @@ function hrTurnReset(){
               // Did our Pokemon go down this turn, and who replaced it (a stable PARTY SLOT,
               // not a bench index -- see hrHealthyBench). Separate from `ours`, because a
               // faint is not something we chose to do.
-              fainted: undefined, replacement: undefined };
+              //
+              // Defaults to FALSE rather than unanswered. A faint is the rare case, so making
+              // it the one answer that needs no click costs a click on almost every turn; the
+              // question is still shown, with "No" already selected, so a turn that did end in
+              // one is still obvious to correct.
+              fainted: false, replacement: undefined,
+              // Whether `hp` is OUR arithmetic rather than the player's observation -- see
+              // hrInferredHp. An inferred value is ours to withdraw when the turn changes under
+              // it; a typed one never is.
+              hpInferred: false };
 }
 
 const HR_PREVENTED = [
@@ -4772,10 +4792,35 @@ function hrCanFaint(){
   return hrLanded(t.target);
 }
 
-// Did we go down? Reporting "fainted before moving" settles it; otherwise it is an answer.
+// Did we go down? Reporting "fainted before moving" settles it; otherwise it is an answer,
+// defaulting to no.
 function hrFainted(){
   const t = _hrTurn;
   return t.action === "X" ? true : t.fainted === true;
+}
+
+// The HP an item implies, when the item is the ONLY thing that touched our HP this turn.
+//
+// That makes the new value arithmetic rather than an observation: a Potion on 73 of 120 lands on
+// 93, and one on 110 lands on 120 because over-healing is capped. Prefilling it saves typing a
+// number the page already knows, on the action a run uses most.
+//
+// Returns null wherever the arithmetic does not hold, and each of those is a real case:
+function hrInferredHp(){
+  const s = _huntSnap, t = _hrTurn;
+  if (t.action !== "I" && t.action !== "Ic") return null;
+  if (!t.ours || !t.ours.item) return null;
+  const entry = (s.items || []).find(i => i.code === t.ours.item);
+  if (!entry || !entry.heals) return null;              // a cure or an X item changes no HP
+  if (hrLanded(t.target)) return null;                  // the target hit us too; that is a read
+  if (t.ours.prevented === "cfz") return null;          // so is a confusion self-hit
+  const who = hrActive();
+  // Candidates genuinely disagree about our HP -- they predict different damage rolls and
+  // different crits -- and with no single starting value there is nothing to add to.
+  if (who.hp_range && !who.hp_range.certain) return null;
+  if (who.hp === null || who.hp === undefined) return null;
+  return entry.heal === null ? who.max_hp
+                             : Math.min(who.max_hp, who.hp + entry.heal);
 }
 
 // Who could be sent out, as {name, party_slot, hp, max_hp}. A switch resolves before any move,
@@ -4909,9 +4954,9 @@ function hrTurnComplete(){
     }
   }
   if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
-  // The faint question, when the turn could have caused one: unanswered is not "no".
-  if (hrCanFaint() && t.action !== "X" && t.fainted === undefined) return false;
-  if (hrFainted() && hrFaintToken() === null) return false;   // who came in is still missing
+  // The faint question answers itself -- it defaults to no -- so there is nothing to wait for
+  // here. Who came in, when the answer IS yes, there very much is.
+  if (hrFainted() && hrFaintToken() === null) return false;
   return true;
 }
 
@@ -4955,7 +5000,20 @@ function hrSet(path, value){
   // Same rule for the faint: change the target's move to one that cannot touch us and the faint
   // answer is no longer part of the turn either.
   if (path !== "fainted" && path !== "replacement" && !hrCanFaint() && t.action !== "X"){
-    t.fainted = undefined; t.replacement = undefined;
+    t.fainted = false; t.replacement = undefined;
+  }
+  // An HP value WE worked out is ours to keep current: if the turn's answers change so that the
+  // arithmetic no longer holds -- the target turns out to have hit us too -- it is withdrawn
+  // rather than left standing as though the player had typed it.
+  if (path !== "hp"){
+    const guess = hrInferredHp();
+    if (t.hpInferred){
+      t.hp = guess === null ? "" : String(guess);
+      if (guess === null) t.hpInferred = false;
+    } else if (hrNeedsHp() && (t.hp === "" || t.hp === null) && guess !== null){
+      t.hp = String(guess);
+      t.hpInferred = true;
+    }
   }
   renderHuntRun();
 }
@@ -5276,11 +5334,13 @@ function hrInterview(){
   // joining it. Skipped when the action itself already said so.
   if (!caught && hrCanFaint() && t.action !== "X"){
     const who = hrActive();
+    // "No" is already selected -- a faint is the rare case, and the question exists to be
+    // corrected rather than answered. So nothing returns early here: the turn is reportable
+    // without touching it.
     blocks.push(hrChips(`Did ${who.name} faint?`, [
       hrChip("No", "hrSet('fainted',false)", t.fainted === false),
       hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
-    ]));
-    if (t.fainted === undefined) return blocks.join("");
+    ], "assumed no"));
   }
   if (!caught && hrFainted()){
     const healthy = hrHealthyBench();
@@ -5303,7 +5363,10 @@ function hrInterview(){
       <input id="hrHp" type="text" inputmode="numeric" pattern="[0-9]*"
         value="${esc(String(t.hp))}" autocomplete="off"
         style="max-width:120px" oninput="hrHpInput(this)"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();huntRunObserve();}"></div>`);
+        onkeydown="if(event.key==='Enter'){event.preventDefault();huntRunObserve();}">
+      ${t.hpInferred ? `<div class="hr-small muted" style="margin-top:4px">Worked out from
+        the item — nothing else touched ${esc(who.name)}'s HP this turn. Change it if the game
+        says otherwise.</div>` : ""}</div>`);
   }
 
   const tokens = hrTokens();
@@ -5369,6 +5432,7 @@ function hrHpInput(el){
     try { el.setSelectionRange(caret, caret); } catch (e) { /* detached or unsupported */ }
   }
   _hrTurn.hp = digits;
+  _hrTurn.hpInferred = false;      // theirs now, so nothing may overwrite it
   hrRefreshPreview();
 }
 

@@ -15,7 +15,10 @@ from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.candidates import (
     CANDIDATES_PER_SECOND, estimate_size, generate,
 )
-from claytonlib.battle_compass.identify import SECOND_SIBLING_MEDIAN_TURNS, Phase, Session
+from claytonlib.battle_compass.identify import (
+    SECOND_SIBLING_BALL_MEDIAN_TURNS, SECOND_SIBLING_MEDIAN_TURNS,
+    SECOND_SIBLING_MISSABLE_MEDIAN_TURNS, Phase, Session,
+)
 from claytonlib.battle_compass.sim import HuntConfig, opening_rng, simulate_turn
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
@@ -250,15 +253,50 @@ class TestSecondAmbiguity(unittest.TestCase):
         self.assertTrue(ambiguity["second_only"])
         # Separable -- slowly. This was False, and the advice told the player to restart.
         self.assertTrue(ambiguity["separable_by_moves"])
-        self.assertEqual(ambiguity["expected_turns"], SECOND_SIBLING_MEDIAN_TURNS)
+        # The expected turn count is now the one that applies to THIS matchup. Nothing in the
+        # Suicune fixture can miss, so a move alone is the 19-turn case -- but a ball is always
+        # in the bag, and its shake check is a measured median of 2. Quoting 19 at a player who
+        # could throw one talked them out of the better option.
+        self.assertEqual(ambiguity["expected_turns"], SECOND_SIBLING_BALL_MEDIAN_TURNS)
 
     def test_the_advice_no_longer_claims_it_is_hopeless(self):
         window = _window(frame_window=60, second_window=2)
         session = _session(window)
         _play(session, _second_sibling_truth(window), turns=6)
         advice = session.ambiguity()["advice"]
-        self.assertIn("not impossible", advice)
         self.assertNotIn("will not help", advice)
+        # It names a remedy and what it costs, rather than only saying it is possible.
+        self.assertIn("ball throw", advice)
+        self.assertIn(str(SECOND_SIBLING_BALL_MEDIAN_TURNS), advice)
+
+    def test_the_advice_names_a_missable_move_when_there_is_one(self):
+        """The reported bug: it asserted "nothing can miss, so it comes down to Aurora Beam's
+        10% Attack drop" on every matchup. Against a moveset holding something missable that is
+        both wrong and discouraging -- a move that can miss separates a pair in a median of 1
+        turn against 19."""
+        from dataclasses import replace
+
+        window = _window(frame_window=60, second_window=2)
+        session = _session(window)
+        _play(session, _second_sibling_truth(window), turns=6)
+        # Give our side a 60%-accuracy move; Hypnosis is the one notes/seed_separation.md
+        # measured at a median of 1.
+        session.states = {
+            seed: replace(state, ours=replace(state.ours, moves=("Hypnosis",), pp=(20,)))
+            for seed, state in session.states.items()}
+        advice = session.ambiguity()["advice"]
+        self.assertIn("Hypnosis", advice)
+        self.assertIn("Play it", advice)
+        self.assertNotIn("Aurora Beam", advice)
+        self.assertEqual(session.ambiguity()["expected_turns"],
+                         SECOND_SIBLING_MISSABLE_MEDIAN_TURNS)
+
+    def test_the_advice_never_names_a_move_the_target_does_not_have(self):
+        """Aurora Beam is Suicune's. It was quoted at a Latias hunt, which does not have it."""
+        window = _window(frame_window=60, second_window=2)
+        session = _session(window)
+        _play(session, _second_sibling_truth(window), turns=6)
+        self.assertNotIn("Aurora Beam", session.ambiguity()["advice"])
 
     def test_most_single_turns_do_not_separate_them(self):
         """Which is why it takes ~19: any one turn usually looks identical."""

@@ -1,12 +1,19 @@
-## Feedback to apply/TODO
+## NEW Feedback
+* IMPORTANT: Solver had a solution, I followed the recommendation and clicked "Yes this happened", and now it says there is no solution.
+    * Seed A: 0xfa01036e
+    * Latias Nature: Timid
+    * Latias IVs: 18 151 16 26 1 4
+    * Seed B: 0xff011c03
+    * Path: M2hE4hHP110 M3Eslp M2hE2 M3Eslp M2hEslp M2hE1 P0E4hHP071 M3Eslp IhpE2HP153 M3Eslp P0Eslp P0Eslp C0Eslp M1E3hHP108
+    * The solver was run right before the last token of the above path.
 
-* IMPORTANT: When using spore, "Latias remains asleep" is not presented as an option for latias. In fact, unless Latias was already asleep, Latias is faster than me, or stat chanegs allows it to miss, this is the ONLY possibility.
-* IMPORTANT: Make sure it is understood that flinching is invisible on moves that move second - It should not ask me if the secondary effect of zen headbutt proc'd my pokemon when latias moved second, and the token should not be in the path.
-* IMPORTANT: We need to start accounting for pokemon fainting. I have a subheading below that describes my thoughts. Read it, ask questions/point out any concerns, and then implement it.
+## Feedback to apply/TODO
+* Assume pokemon has not fainted, and default the question to "no" when asking.
 * Need to be able to mark hunts as "complete"
+* When using an item, we can infer what the HP will probably be if the user has not taken damage that turn (If I use a potion and my hp was 73, and there's no reason for my character to take damage, we should default the hp prompt to 93 (or max hp if less than 93)
 * "Reset Run" on safari compass (Or any compass) should not clear roamer starting positions or reset the delay/second window to default.
 * Make sure the math for applying the damage boost from weather is applied in the right order
-* Some of the text in the battle compass says Suicune specifically, even when hunting Latias.
+* Some of the text in the battle compass says Suicune specifically, even when hunting Latias. Mentions of Aurora Beam also.
 * Deferred: Figure out how we'll handle roamers.
 
 

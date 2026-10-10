@@ -256,7 +256,9 @@ class TestThePageIsWiredUp(unittest.TestCase):
     def test_the_blocked_button_says_why(self):
         """A disabled button with no explanation reads as a broken page."""
         self.assertIn("function huntStartBlockedReason(", self.html)
-        self.assertIn("enter this Suicune's nature and IVs", self.html)
+        # The target is named from the hunt now, not hard-coded -- it was saying "Suicune" on
+        # a Latias hunt. So the assertion is on the sentence around the name.
+        self.assertIn("enter this ${hsaTarget()}'s nature and IVs", self.html)
 
     def test_the_spread_is_sent_only_when_it_applies(self):
         self.assertIn("function huntSpreadParams(", self.html)
@@ -357,13 +359,13 @@ class TestTheAdvanceFrameStep(unittest.TestCase):
 
     def test_a_non_key_seed_identifies_the_frame_and_stops_there(self):
         self.assertIn("Seed A is not the key seed, so no target frame", self.html)
-        self.assertIn("Look up the Suicune at frame", self.html)
+        self.assertIn("Look up the ${esc(hsaTarget())} at frame", self.html)
 
     def test_the_route_is_worded_for_an_a_press_not_sweet_scent(self):
         """The plan is the same arithmetic; the terminal action is not. plan_frame_route's own
         field names stay Safari-flavoured (elm_before_scent, scent_frame) and are left alone --
         only the wording here changes."""
-        self.assertIn("then press A on Suicune.", self.html)
+        self.assertIn("then press A on ${esc(hsaTarget())}.", self.html)
         self.assertIn('(press A at the "!")', self.html)
 
     def test_the_spread_panel_waits_for_the_frame(self):

@@ -556,13 +556,86 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
         if isinstance(result, Unreachable):
             self.assertNotIn("preconditions do not hold", result.reason)
 
+    def test_the_solver_replans_when_the_sleep_wears_off(self):
+        """Reported from a real run: the solver had a plan, the player followed its recommended
+        turn, and the next solve said there was no solution.
+
+        The turn was ``M1E3hHP108`` -- Latias using Mist Ball, so it had WOKEN. `solve` then hit
+        its entry precondition, which treated an unstatused target as a dead end and returned
+        before searching anything at all.
+
+        It is not a dead end. Sleep wearing off is the ordinary mid-run event, and the rest of
+        the solver already knew it: `reachable_statuses` includes NONE *because* sleep wears off,
+        `max_reachable_threshold` prices the Spore-then-throw path by name, and `_dominance_key`
+        separates states by `sleep_turns` so the search can plan through the wake-up. Only the
+        gate in front disagreed.
+        """
+        from claytonlib.battle_compass.solver import Solution, SolverConfig, solve
+
+        awake = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                            target=_latias().with_status(Status.NONE))
+        result = solve(awake, HUNT, SolverConfig(danger_floor=56))
+        self.assertNotIn("preconditions do not hold", getattr(result, "reason", ""))
+        self.assertIsInstance(result, Solution)
+
+    def test_waking_up_does_not_lose_a_plan_the_turn_before_had(self):
+        """The shape of the report: a solution before the turn, and one after it too."""
+        from claytonlib.battle_compass.solver import Solution, SolverConfig, solve
+
+        config = SolverConfig(danger_floor=56)
+        asleep = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                             target=_latias().with_status(Status.SLEEP, sleep_turns=3))
+        awake = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                            target=_latias().with_status(Status.NONE))
+        self.assertIsInstance(solve(asleep, HUNT, config), Solution)
+        self.assertIsInstance(solve(awake, HUNT, config), Solution)
+
+    def test_an_unstatused_target_we_cannot_re_sleep_is_still_refused(self):
+        """What the relaxation does NOT do. With no Spore left there is no way back to a holding
+        status, so the x1.5 bonus the plan is priced against is genuinely out of reach -- and
+        saying so is better than planning against a bonus that will not be there."""
+        from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
+
+        # Spore is slot 3 of the fixture moveset; empty every slot's PP but False Swipe's.
+        spent = _ours(pp=(40, 0, 0, 0))
+        state = BattleState(ours=spent, rng=0xEC1504DC, phase=2,
+                            target=_latias().with_status(Status.NONE))
+        result = solve(state, HUNT, SolverConfig(danger_floor=56))
+        self.assertIsInstance(result, Unreachable)
+        self.assertIn("nothing left in our moveset can paralyze, sleep or freeze it",
+                      result.reason)
+
+    def test_the_wrong_hp_is_still_refused(self):
+        """A misconfigured start rather than a recoverable state: we never damage the target
+        again, so a target above 1 HP is not something a path can fix."""
+        from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
+
+        state = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
+                            target=_latias(hp=40).with_status(Status.SLEEP, sleep_turns=3))
+        result = solve(state, HUNT, SolverConfig(danger_floor=56))
+        self.assertIsInstance(result, Unreachable)
+        self.assertIn("not 1", result.reason)
+
+    def test_the_holding_statuses_are_one_list(self):
+        """The solver asks which of them it could APPLY, so the set cannot live only inside the
+        property that asks which one the target HAS."""
+        from claytonlib.battle_compass.state import HOLDING_STATUSES
+
+        for status in HOLDING_STATUSES:
+            self.assertTrue(_latias(status=status).frozen_for_phase2, status)
+        for status in (Status.NONE, Status.BURN, Status.POISON):
+            self.assertNotIn(status, HOLDING_STATUSES)
+
     def test_the_solver_still_refuses_a_burned_target(self):
         from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
         state = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
                             target=_latias().with_status(Status.BURN))
         result = solve(state, HUNT, SolverConfig(danger_floor=56))
         self.assertIsInstance(result, Unreachable)
-        self.assertIn("preconditions do not hold", result.reason)
+        # Refused for the reason that actually applies, which the old blanket message did not
+        # give: burn cannot be displaced by a status move -- our Spore would simply fail -- and
+        # its tick kills a target sitting on 1 HP.
+        self.assertIn("neither wears off nor can be displaced", result.reason)
 
     def test_the_blocker_message_names_what_is_needed(self):
         from claytonlib.battle_compass.candidates import Candidate
@@ -730,3 +803,72 @@ class TestTheSolverPlansWithSleep(unittest.TestCase):
                 replay = simulate_turn(replay, step.action, self.HUNT,
                                        **({"item_code": step.item} if step.item else {}))
             self.assertTrue(replay.captured, f"{rng:#x}")
+
+
+class TestTheDeclaredHpIsGospel(unittest.TestCase):
+    """Reported: the player says the target is at 1 HP, the page asks "are you sure?", they say
+    yes -- and then the solver refuses because its preconditions are not met, about the very
+    number that was just declared twice.
+
+    The declaration is an observation of the real game. Our figure is a model output, and the
+    model is the thing more likely to be wrong: weather was missing from the damage term until
+    recently, so a rained-on Hydro Pump under-predicted and the simulated target sat high.
+    """
+
+    def _session(self, target_hp):
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
+        from claytonlib.battle_compass.hunt_session import HuntSession, worst_incoming_hit
+        from claytonlib.battle_compass.solver import SolverConfig
+
+        ours = _ours()
+        target = _latias(hp=target_hp).with_status(Status.SLEEP, sleep_turns=4)
+        window = CandidateWindow(
+            key_seed=0x1234, initial_time=dt.datetime(2026, 1, 1, 12, 0, 0), vector_ms=5000.0,
+            frame_centre=1000, second_centre=30, frame_window=0, second_window=0,
+            candidates=(Candidate(seed=0xEC1504DC, frame=1000, second=30),))
+        return HuntSession(
+            window, ours, target, HUNT,
+            solver_config=SolverConfig(danger_floor=worst_incoming_hit(ours, target)))
+
+    def test_declaring_it_sets_it(self):
+        session = self._session(target_hp=37)
+        self.assertEqual(session.snapshot()["target"]["hp"], 37)
+        session.enter_pinning()
+        self.assertEqual(session.snapshot()["target"]["hp"], 1)
+
+    def test_and_so_clears_the_blocker_it_used_to_raise(self):
+        session = self._session(target_hp=37)
+        self.assertTrue(any("HP" in b for b in session.solver_blockers()))
+        session.enter_pinning()
+        self.assertFalse([b for b in session.solver_blockers() if "HP" in b])
+
+    def test_a_target_already_at_one_is_untouched(self):
+        session = self._session(target_hp=1)
+        session.enter_pinning()
+        self.assertEqual(session.snapshot()["target"]["hp"], 1)
+
+    def test_forcing_phase_two_adopts_it_rather_than_only_skipping_the_complaint(self):
+        """The force path exists precisely for when the model disagrees with the game. Skipping
+        the blocker LIST and leaving the HP alone just moved the refusal into `solve`."""
+        session = self._session(target_hp=37)
+        snap = session.enter_solving(force=True)
+        self.assertEqual(snap["target"]["hp"], 1)
+        self.assertIsNone(snap["forced_reason"])
+        self.assertTrue(snap["solution"]["found"])
+
+    def test_the_status_is_not_declared_along_with_it(self):
+        """Only the HP. A status the player can see is reported as a TURN, through the token
+        stream, which is a better channel than a flag -- and the solver can now re-apply one."""
+        session = self._session(target_hp=37)
+        session.enter_pinning()
+        self.assertEqual(session.snapshot()["target"]["status"], "slp")
+
+    def test_it_survives_the_replay_an_undo_does(self):
+        """Undo rebuilds from the window and re-applies the recorded phase transitions, so the
+        declaration has to live in the transition rather than in a one-off mutation."""
+        session = self._session(target_hp=37)
+        session.enter_pinning()
+        session.undo()
+        self.assertEqual(session.snapshot()["target"]["hp"], 1)

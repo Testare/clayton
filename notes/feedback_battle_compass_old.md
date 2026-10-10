@@ -1,3 +1,8 @@
+# Feedback 2
+* IMPORTANT: When using spore, "Latias remains asleep" is not presented as an option for latias. In fact, unless Latias was already asleep, Latias is faster than me, or stat chanegs allows it to miss, this is the ONLY possibility.
+* IMPORTANT: Make sure it is understood that flinching is invisible on moves that move second - It should not ask me if the secondary effect of zen headbutt proc'd my pokemon when latias moved second, and the token should not be in the path.
+* IMPORTANT: We need to start accounting for pokemon fainting. I have a subheading below that describes my thoughts. Read it, ask questions/point out any concerns, and then implement it.
+
 # Feedback 1
 
 * When choosing how many shakes, we should output a message below matching the number of shakes (Such as 1 being "Aww! It appeared to be caught!"), since remembering the message is easier than remembering the pokeball shake count.

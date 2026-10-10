@@ -37,7 +37,9 @@ from claytonlib.battle import turn as turn_costs
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.sim import HuntConfig, advance, simulate_turn
-from claytonlib.battle_compass.state import Action, BattleState, Status
+from claytonlib.battle_compass.state import (
+    HOLDING_STATUSES, Action, BattleState, Status,
+)
 from claytonlib.safari import advance_rng
 
 #: sec 12.7. Both tunable; distance stays an integer.
@@ -235,16 +237,15 @@ def target_threshold(state: BattleState, config: HuntConfig,
     return shake_threshold(a)
 
 
-def reachable_statuses(state: BattleState, config: "SolverConfig") -> set[Status]:
-    """Every status the target could hold at some point in a path from `state`.
+def statuses_we_can_apply(state: BattleState, config: "SolverConfig") -> set[Status]:
+    """Non-volatile statuses our own permitted moves could still inflict, given the PP left.
 
-    Its current one; NONE, because sleep and freeze wear off; and anything our own permitted
-    moves can inflict once it is unstatused. Nothing else -- the target cannot status itself, and
-    no item of ours does.
+    Separate from `reachable_statuses`, which is a deliberate over-estimate for the window
+    prune. This one has to be exact, because `solve` decides whether to refuse on it.
     """
     from claytonlib.battle_compass.sim import status_applied_by
 
-    out = {state.target.status, Status.NONE}
+    out: set[Status] = set()
     for slot in config.allowed_moves:
         move = state.ours.move(slot)
         if move is None or state.ours.pp_left(slot) <= 0:
@@ -253,6 +254,16 @@ def reachable_statuses(state: BattleState, config: "SolverConfig") -> set[Status
         if inflicted is not None:
             out.add(inflicted)
     return out
+
+
+def reachable_statuses(state: BattleState, config: "SolverConfig") -> set[Status]:
+    """Every status the target could hold at some point in a path from `state`.
+
+    Its current one; NONE, because sleep and freeze wear off; and anything our own permitted
+    moves can inflict once it is unstatused. Nothing else -- the target cannot status itself, and
+    no item of ours does.
+    """
+    return {state.target.status, Status.NONE} | statuses_we_can_apply(state, config)
 
 
 def max_reachable_threshold(state: BattleState, hunt: HuntConfig,
@@ -370,12 +381,45 @@ def solve(state: BattleState, hunt: HuntConfig,
     greater accumulated distance makes the other pointless to explore.
     """
     config = config or SolverConfig()
-    if state.target.hp != 1 or not state.target.frozen_for_phase2:
+    if state.target.hp != 1:
         return Unreachable(
-            reason=(f"the solver's preconditions do not hold: the target is at "
-                    f"{state.target.hp} HP and {state.target.status.value}, not 1 HP and "
-                    f"held still by paralysis or sleep"),
+            reason=(f"the solver's precondition does not hold: the target is at "
+                    f"{state.target.hp} HP, not 1"),
             proven=False, states_explored=0)
+    # An unstatused target is not a dead end -- it is the ordinary consequence of a sleep wearing
+    # off, and the fix is a turn of the search rather than the end of the run.
+    #
+    # This used to refuse outright, and the refusal was the one thing in the solver that did not
+    # believe the rest of it: `reachable_statuses` already includes NONE *because* "sleep and
+    # freeze wear off", `max_reachable_threshold` already prices the Spore-then-throw path by
+    # name, and `_dominance_key` already separates states by `sleep_turns` so the search can plan
+    # through the wake-up. All of that worked; the gate in front of it did not, so a run that
+    # followed the solver's own recommendation into the turn the target woke on was told there
+    # was no solution.
+    #
+    # Note what this does NOT relax. A target the search cannot put back under a holding status
+    # is still refused, because then the x1.5 catch bonus is genuinely out of reach -- and so is
+    # one at the wrong HP, which is a misconfigured start rather than a recoverable state.
+    if not state.target.frozen_for_phase2:
+        # Only NONE is recoverable, and the distinction is the whole reason this is not simply
+        # `reachable_statuses`. That function is a deliberate OVER-estimate -- it is a necessary
+        # condition for the window prune, where including a status we cannot actually reach only
+        # costs a false positive. Here over-including is unsound: it would accept a burned
+        # target, and burn can neither wear off nor be displaced by a status move (non-volatile
+        # statuses are mutually exclusive, so our Spore simply fails), while ticking HP that at
+        # 1 HP kills the target outright.
+        if state.target.status is not Status.NONE:
+            return Unreachable(
+                reason=(f"the target is {state.target.status.value}, which neither wears off nor "
+                        f"can be displaced by a status move -- and it ticks HP every turn, so at "
+                        f"1 HP the target faints rather than being caught"),
+                proven=False, states_explored=0)
+        if not statuses_we_can_apply(state, config) & HOLDING_STATUSES:
+            return Unreachable(
+                reason=("the target woke up and nothing left in our moveset can paralyze, sleep "
+                        "or freeze it -- so the x1.5 catch bonus the plan is priced against is "
+                        "out of reach"),
+                proven=False, states_explored=0)
 
     deadline = struggle_deadline(state.target, config.turns_per_pp)
     max_turns = min(config.max_turns, deadline)

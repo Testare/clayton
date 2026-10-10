@@ -28,9 +28,22 @@ from claytonlib.battle_compass.sim import HuntConfig, opening_rng, simulate_turn
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 
 
-#: Measured median turns for two seeds one RTC second apart to predict different tokens, playing
-#: False Swipe every turn against the section 11 fixture (120 pairs: all separated, max 54).
+#: Measured median turns for two seeds one RTC second apart to predict different tokens when
+#: NOTHING in the matchup can miss -- playing False Swipe every turn against the section 11
+#: (Suicune) fixture: 120 pairs, all separated, max 54 (notes/seed_separation.md sec 1).
+#:
+#: Matchup-specific, which is why it is no longer quoted unconditionally. It is the figure for a
+#: pairing whose every accuracy is 100 or 0, where the only observable ``% 100`` left is a 10%
+#: secondary proc. Give the player a move that can actually miss and the same measurement is a
+#: median of 1.
 SECOND_SIBLING_MEDIAN_TURNS = 19
+#: Measured over the same 120 pairs, throwing the capture ball every turn: all separated, median
+#: 2, max 8 -- and 97% of first divergences are the shake count itself rather than luck elsewhere
+#: (notes/seed_separation.md sec 2a). The shake check is a magnitude comparison, so unlike a
+#: modulus it has nothing to be blind to.
+SECOND_SIBLING_BALL_MEDIAN_TURNS = 2
+#: Measured for a filler whose accuracy is 55 or 60 (Sing, Hypnosis): 120/120, median 1, max 6.
+SECOND_SIBLING_MISSABLE_MEDIAN_TURNS = 1
 
 #: Stand-in item for RANKING an unspecified "use an item" action. Legitimate because an item
 #: costs zero RNG advances, so every candidate consumes the same stream whichever is used and the
@@ -203,12 +216,47 @@ class Session:
     def enter_pinning(self) -> None:
         """Move to Phase 1.5. Player-declared, never inferred from a hit count.
 
-        A fixed False Swipe count is unreliable anyway: Aurora Beam's Attack drop lands on us and
-        reduces the damage, so some runs need more swipes than others (sec 11.6).
+        A fixed False Swipe count is unreliable anyway: the target's own Attack drop lands on us
+        and reduces the damage, so some runs need more swipes than others (sec 11.6).
+
+        **The declaration is taken as fact, and every candidate's target is set to 1 HP.** It is
+        an observation of the real game; our figure is a model output, and the model is the thing
+        more likely to be wrong -- an unmodelled damage modifier leaves the simulation above 1 HP
+        when the HP bar says otherwise. Weather was exactly that until recently: rain multiplies
+        Hydro Pump and the damage term did not know, so the simulated target sat high.
+
+        Not doing this had the tool arguing with the player and then refusing to work: the page
+        asked "are you sure?", the player said yes, and the solver turned round and reported that
+        its preconditions did not hold -- about the very number that had just been declared.
         """
         if self.phase is not Phase.SETUP:
             raise ValueError(f"already past setup ({self.phase.label})")
+        self.declare_target_at_one_hp()
         self.phase = Phase.PINNING
+
+    def declare_target_at_one_hp(self) -> None:
+        """Take the player's word for it across every surviving candidate.
+
+        Separate from `enter_pinning` because the forced Phase 2 transition needs it too: that
+        path exists precisely for when the model disagrees with the game, so it has to adopt the
+        declaration rather than merely skip the complaint about it.
+        """
+        self.states = {seed: self._declared_at_one_hp(state)
+                       for seed, state in self.states.items()}
+
+    @staticmethod
+    def _declared_at_one_hp(state: BattleState) -> BattleState:
+        """`state` with the target's HP set to the declared 1.
+
+        Only the HP. The status is still read off the simulation, because unlike HP it is not
+        something the player is asked to declare here -- and a status they can see is reported as
+        a turn, through the token stream, which is a better channel than a flag.
+        """
+        if state.target.hp == 1:
+            return state
+        nxt = state.copy()
+        nxt.target = nxt.target.with_hp(1)
+        return nxt
 
     def solver_blockers(self) -> list[str]:
         """Why Phase 2 cannot start yet. Empty means it can.
@@ -265,16 +313,26 @@ class Session:
           not divide 256.
         * A magnitude comparison -- the shake check ``roll < b`` -- differs too.
 
-        So second-siblings are separable, just slowly, and slowly for a reason specific to this
-        matchup: no move in the fixture can miss (every accuracy is 100 or 0), so the accuracy
-        roll's verdict is invisible, and the only observable ``% 100`` left is Aurora Beam's 10%
-        Attack-drop proc. That needs Aurora Beam chosen (one move of four) *and* the two rolls to
-        straddle the 10 threshold (~20% of rolls), which is about 5% of turns.
+        So second-siblings are separable, and HOW FAST depends on the matchup rather than on the
+        mechanism -- which is the part the advice used to get wrong. It asserted the Suicune
+        fixture's situation unconditionally: "nothing can miss, so it comes down to Aurora Beam's
+        10% Attack drop", with a measured median of 19 turns. Against Latias that is false twice
+        over -- Zen Headbutt is 90% accuracy, and Aurora Beam is not in its moveset at all -- and
+        falsely discouraging, because a move that can miss separates a pair in a median of **1**
+        turn rather than 19 (notes/seed_separation.md sec 1).
 
-        Measured over 120 second-apart pairs playing False Swipe every turn: **all 120 separated,
-        median 19 turns, max 54.** So ``second_window`` still defaults to 0 -- five times the
-        candidates and ~19 extra turns is a poor trade when the second is usually known from
-        ``rtc_offset_seconds`` -- but a set stuck on seconds is waiting for turns, not doomed.
+        The three measured regimes, all over the same 120 strict pairs:
+
+        * a filler that **can miss** (accuracy 55-60): 120/120, median **1**, max 6;
+        * a **capture-ball throw**: 120/120, median **2**, max 8 -- the shake check is a
+          magnitude comparison, so it has no modulus to be blind to (sec 2a);
+        * **nothing missable at all** (every accuracy 100 or 0): 120/120, median **19**, max 54,
+          leaning on a 10% secondary proc alone.
+
+        So the advice is assembled from what this pairing actually offers. ``second_window`` still
+        defaults to 0 -- five times the candidates is a poor trade when the second is usually
+        known from ``rtc_offset_seconds`` -- but a set stuck on seconds is waiting for turns, not
+        doomed, and usually far fewer turns than 19.
         """
         frames = {self.candidate_info[s].frame for s in self.states
                   if s in self.candidate_info}
@@ -290,19 +348,67 @@ class Session:
             # Second-siblings ARE separable -- see the docstring. Slowly, but separable, so this
             # is no longer False for them.
             "separable_by_moves": len(self.states) > 1,
-            "expected_turns": SECOND_SIBLING_MEDIAN_TURNS if second_only else None,
+            "expected_turns": self._second_sibling_turns() if second_only else None,
             "advice": (
                 "identified" if len(self.states) == 1 else
-                f"The frame is pinned; what remains differs only in the RTC second. That is "
-                f"slow to resolve, not impossible: the move choice and the crit and damage rolls "
-                f"are genuinely identical, but accuracy and proc rolls take % 100, which does "
-                f"see the difference. For this matchup nothing can miss, so it comes down to "
-                f"Aurora Beam's 10% Attack drop -- about one turn in twenty. Measured median "
-                f"{SECOND_SIBLING_MEDIAN_TURNS} turns to separate a pair. Keep playing, or "
-                f"restart with a narrower second window if you would rather not spend them."
-                if second_only else
+                self._second_sibling_advice() if second_only else
                 "Keep playing: the survivors still differ in ways moves can reveal."),
         }
+
+    def missable_moves(self) -> list[str]:
+        """Our moves whose accuracy roll can actually fail, by name.
+
+        The sharpest separator of RTC-second siblings there is, and the one the old advice
+        asserted did not exist. ``% 100`` sees the sibling difference; ``% 4`` and ``% 16`` do
+        not. So a move that can miss turns an invisible roll into an observation.
+
+        Ours only. The target's missable moves separate just as well, but the player cannot
+        choose them, and this exists to tell them what to DO.
+        """
+        from claytonlib.battle_compass.sim import accuracy_net_stage, can_miss
+
+        state = next(iter(self.states.values()), None)
+        if state is None:
+            return []
+        net = accuracy_net_stage(state.ours, state.target)
+        out = []
+        for slot in range(len(state.ours.moves)):
+            move = state.ours.move(slot)
+            if move is None or state.ours.pp_left(slot) <= 0:
+                continue
+            if can_miss(move, net):
+                out.append(move.name)
+        return out
+
+    def _second_sibling_turns(self) -> int:
+        """Which measured median applies to this matchup -- see `ambiguity`."""
+        if self.missable_moves():
+            return SECOND_SIBLING_MISSABLE_MEDIAN_TURNS
+        # A ball is always in the bag, so its figure is the fallback rather than the 19-turn one.
+        return SECOND_SIBLING_BALL_MEDIAN_TURNS
+
+    def _second_sibling_advice(self) -> str:
+        """What to play to separate seeds that differ only in the RTC second.
+
+        Built from the moveset in front of the player rather than from the fixture this was first
+        written against. The mechanism is the same either way; the remedy and the number of turns
+        it takes are not.
+        """
+        head = ("The frame is pinned; what remains differs only in the RTC second. The move "
+                "choice and the crit and damage rolls are genuinely identical between them, but "
+                "accuracy and proc rolls take % 100, which does see the difference -- and the "
+                "ball's shake check is a magnitude comparison, which sees it too.")
+        missable = self.missable_moves()
+        if missable:
+            return (f"{head} {missable[0]} can miss, so its accuracy roll is an observation: "
+                    f"that separates a pair in a measured median of "
+                    f"{SECOND_SIBLING_MISSABLE_MEDIAN_TURNS} turn. Play it.")
+        return (f"{head} Nothing of ours can miss, so the accuracy roll's verdict is invisible "
+                f"and a move alone leans on a secondary proc -- a measured median of "
+                f"{SECOND_SIBLING_MEDIAN_TURNS} turns. A ball throw is far better here: a "
+                f"measured median of {SECOND_SIBLING_BALL_MEDIAN_TURNS}, since the shake check "
+                f"has no modulus to be blind to. Throw one, or restart with a narrower second "
+                f"window if you would rather not spend the turns.")
 
     # -- information gain (Phase 1.5) -----------------------------------
 

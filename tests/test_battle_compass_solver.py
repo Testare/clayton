@@ -121,29 +121,46 @@ class TestCaptureWindows(unittest.TestCase):
 
 
 class TestPreconditions(unittest.TestCase):
-    """The solver asserts its preconditions rather than coping without them: a target at exactly
-    1 HP and held still -- paralyzed or asleep -- is what makes b a single constant
-    (sec 2.2)."""
+    """The solver asserts its preconditions rather than coping without them -- but only the ones
+    a path cannot fix. A target at exactly 1 HP is non-negotiable (we never damage it again);
+    being held still is what makes b a single constant (sec 2.2), and an unstatused target is
+    one Spore away from it, so that half is recoverable rather than fatal."""
 
     def test_a_target_above_one_hp_is_refused(self):
         result = solve(_state(hp=50), HUNT, _config())
         self.assertIsInstance(result, Unreachable)
         self.assertFalse(result.proven)
-        self.assertIn("1 HP", result.reason)
+        self.assertIn("not 1", result.reason)
 
-    def test_an_unstatused_target_is_refused(self):
+    def test_an_unstatused_target_is_re_slept_rather_than_refused(self):
+        """It is what every sleep wearing off mid-run looks like. Refusing there told a player
+        who had just followed the solver's own recommendation that no solution existed."""
         result = solve(_state(status=Status.NONE), HUNT, _config())
+        self.assertNotIsInstance(result, Unreachable)
+
+    def test_unless_nothing_can_put_it_back_under(self):
+        """Then the x1.5 bonus really is out of reach, and saying so beats planning against a
+        bonus that will not be there. The fixture's status move is Spore, in slot 4."""
+        state = _state(status=Status.NONE)
+        state.ours = replace(state.ours, pp=(40, 5, 20, 0))
+        result = solve(state, HUNT, _config())
         self.assertIsInstance(result, Unreachable)
-        self.assertIn("held still", result.reason)
+        self.assertIn("nothing left in our moveset", result.reason)
 
     def test_a_status_that_ticks_hp_is_refused_too(self):
         """Burn and poison carry the same x1.5 catch bonus as paralysis, so "has a status" is
         not the test -- they damage the target every turn, so it is not frozen and b is not a
-        constant (Battler.frozen_for_phase2)."""
+        constant (Battler.frozen_for_phase2).
+
+        And unlike NONE they are not recoverable: a non-volatile status cannot be displaced by
+        another, so our Spore would simply fail, and the tick kills a target on 1 HP. This is
+        the case that `statuses_we_can_apply` exists to separate from an unstatused one --
+        `reachable_statuses` is an over-estimate and would have let both through.
+        """
         for status in (Status.BURN, Status.POISON):
             result = solve(_state(status=status), HUNT, _config())
             self.assertIsInstance(result, Unreachable, status)
-            self.assertIn("held still", result.reason)
+            self.assertIn("neither wears off nor can be displaced", result.reason)
 
     def test_sleep_is_accepted(self):
         """Stronger than paralysis -- the target cannot act at all -- and the status of choice

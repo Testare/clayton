@@ -24,7 +24,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from claytonlib.battle.damage import Attacker, Defender, damage_range, unsupported_reason
+from claytonlib.battle.damage import (
+    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, damage_range, unsupported_reason,
+)
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
@@ -63,27 +65,49 @@ def _party_namer(state):
     return by_slot.get
 
 
+def reachable_weathers(target: Battler) -> tuple[str, ...]:
+    """The weathers this target can put up, including none.
+
+    Read off the moveset rather than off the current field, because `worst_incoming_hit` has to
+    answer "what is the worst this battle can do to us" before any of it has happened.
+    """
+    from claytonlib.battle_compass.sim import EFFECT_RAIN_DANCE
+
+    out = [WEATHER_NONE]
+    for slot in range(len(target.moves)):
+        move = target.move(slot)
+        if move is not None and move.effect == EFFECT_RAIN_DANCE:
+            out.append(WEATHER_RAIN)
+            break
+    return tuple(out)
+
+
 def worst_incoming_hit(ours: Battler, target: Battler) -> int:
     """The largest single hit the target can land: max roll, critical, over all its moves.
 
     The solver's `danger_floor` -- heal at or below this and no single hit can faint us, without
     needing to know which move is coming (sec 11.2). Critical, because a crit ignores any stat
     change that would reduce the damage, so a Sp. Def boost cannot be relied on.
+
+    And over every weather the target can SET, not just the current one. A floor computed in
+    clear weather is not a floor at all against a target holding Rain Dance: Lugia's Hydro Pump
+    gains half again under its own rain, so the solver would heal to a number it believed was
+    safe and get fainted anyway. The point of the figure is that no single hit can beat it.
     """
     worst = 0
+    attacker = Attacker(level=target.level, attack=target.stats["atk"],
+                        special_attack=target.stats["spa"], types=target.types,
+                        ability=target.ability, held_item=target.held_item)
+    defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
+                        types=ours.types)
+    weathers = reachable_weathers(target)
     for slot in range(len(target.moves)):
         move = target.move(slot)
         if move is None or unsupported_reason(move) is not None:
             continue
-        _, high = damage_range(
-            move,
-            Attacker(level=target.level, attack=target.stats["atk"],
-                     special_attack=target.stats["spa"], types=target.types,
-                     ability=target.ability, held_item=target.held_item),
-            Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
-                     types=ours.types),
-            critical=True)
-        worst = max(worst, high)
+        for weather in weathers:
+            _, high = damage_range(move, attacker, defender, critical=True, weather=weather)
+            worst = max(worst, high)
     return worst
 
 
@@ -556,6 +580,11 @@ class HuntSession:
         when its model is the thing at fault. The caller is expected to confirm first.
         """
         if force:
+            # Forcing means "trust the game over the model", so it has to actually do that. It
+            # used to only skip the blocker LIST, leaving the simulated HP untouched -- and then
+            # `solve` refused on its own precondition about that same number, which is the tool
+            # arguing with an answer the player had already given twice.
+            self._session.declare_target_at_one_hp()
             self._session.phase = Phase.SOLVING
         else:
             self._session.enter_solving()

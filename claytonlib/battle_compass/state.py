@@ -31,6 +31,12 @@ class Status(Enum):
     POISON = "psn"
 
 
+#: The statuses that hold the target still enough for Phase 2 -- see
+#: `Battler.frozen_for_phase2`, which is the explanation. Module-level so the solver can ask
+#: which of them it could still APPLY, not merely which one the target has.
+HOLDING_STATUSES = frozenset({Status.PARALYSIS, Status.SLEEP, Status.FREEZE})
+
+
 class Action(Enum):
     """What an actor does on a turn.
 
@@ -147,8 +153,14 @@ class Battler:
         * **Burn and poison** are refused: they give the same x1.5 catch bonus as paralysis and
           tick HP every turn, so the target is not frozen and `b` is not a constant.
         * **NONE** is refused because the catch bonus is the point of the precondition at all.
+
+        Refused is not the same as unrecoverable, and the two were conflated. Sleep wearing off
+        mid-run lands here with NONE, and `solver.solve` used to read that as "stop"; what it
+        means is "re-apply something", which is why :data:`HOLDING_STATUSES` is exposed -- the
+        solver asks whether it can put the target back into one rather than only whether it is
+        in one now.
         """
-        return self.status in (Status.PARALYSIS, Status.SLEEP, Status.FREEZE)
+        return self.status in HOLDING_STATUSES
 
     def move(self, slot: int) -> Move | None:
         """The Move in `slot`, or None if the slot is empty or unknown.

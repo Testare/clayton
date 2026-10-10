@@ -27,7 +27,8 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    Attacker, Defender, damage, unsupported_attacker_reason, unsupported_reason,
+    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, damage, unsupported_attacker_reason,
+    unsupported_reason,
 )
 from claytonlib.battle.readiness import PARALYSIS_SPEED_FACTOR
 from claytonlib.battle_compass import items, tokens as tok
@@ -282,6 +283,18 @@ def status_applied_by(move: Move) -> Status | None:
     return {1: Status.SLEEP, 67: Status.PARALYSIS}.get(move.effect)
 
 
+def weather_of(field) -> str:
+    """The field's weather, as `battle.damage` names it.
+
+    Rain is the only one any configured moveset can set -- Rain Dance is in both Suicune's and
+    Lugia's. Sun has no setter yet, so there is nothing to read it off; it stays a lookup here
+    rather than a branch so that adding one is a field on `BattleState` and nothing else.
+    """
+    if field is not None and getattr(field, "rain_turns", 0) > 0:
+        return WEATHER_RAIN
+    return WEATHER_NONE
+
+
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
                  attack_stage: int = 0, field=None) -> tuple[int, MoveOutcome]:
@@ -369,7 +382,12 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                      types=defender.types, defence_stage=defender.def_stage,
                      special_defence_stage=defender.spdef_stage),
             roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
-            critical=critical)
+            critical=critical,
+            # Rain Dance is in the target's own moveset, and under rain Hydro Pump gains half
+            # again. Leaving this out did not make the prediction imprecise -- it made every
+            # candidate wrong from the first rained-on hit, because the predicted HP is compared
+            # exactly.
+            weather=weather_of(field))
         # False Swipe cannot knock out: it leaves the target on 1 HP.
         if move.effect == 101:
             dealt = min(dealt, max(0, defender.hp - 1))

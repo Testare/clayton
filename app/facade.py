@@ -535,6 +535,15 @@ class Facade:
                          else ""),
             },
             "natures": list(nature_names()),
+            # Who the hunt is actually for. The page used to say "Suicune" in every sentence
+            # about the target, which was true of the v1 fixture and a lie on every hunt since.
+            # Name rather than species so the page needs no title-casing of its own, and both so
+            # it can still match against configuration.
+            "target": {
+                "species": h.target.species,
+                "name": h.target.species.title() if h.target.species else "",
+                "level": h.target.level,
+            },
         }
 
     @staticmethod
