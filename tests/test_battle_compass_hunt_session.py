@@ -1246,3 +1246,115 @@ class TestADoomedMoveThatCanStillMiss(unittest.TestCase):
                     break
         self.assertEqual(len(turns), 40, "every pair should separate well inside 15 turns")
         self.assertLessEqual(statistics.median(turns), 3)
+
+
+class TestThePlanIsCachedUntilItDiverges(unittest.TestCase):
+    """Phase 2 used to re-solve on every reported turn. Cheap, but the plan changed under the
+    player: the search collapses RNG offsets, so it is a heuristic over arrival order and two
+    solves from equivalent states can hand back different equally-priced paths.
+
+    Keeping the suffix is free rather than lucky -- the suffix of a shortest path is a shortest
+    path from where it continues -- and the exact token match is what licenses it: identical
+    tokens mean the state the plan continues from is the state we are in.
+    """
+
+    def _solving(self):
+        from claytonlib.battle_compass.solver import Solution          # noqa: F401 (assertions)
+
+        session = HuntSession(_window(1), _ours(), _target(hp=1, status=Status.PARALYSIS), HUNT)
+        session.enter_pinning()
+        session.enter_solving(force=True)
+        return session
+
+    def test_the_first_solve_is_the_only_one_on_a_followed_plan(self):
+        from claytonlib.battle_compass.solver import Solution
+
+        session = self._solving()
+        plan = session.solution
+        self.assertIsInstance(plan, Solution)
+        self.assertGreater(len(plan.steps), 1)
+        expected = [s.rendered for s in plan.steps]
+        replans = session.replans
+        for _ in range(len(expected) - 1):
+            step = session.solution.steps[0]
+            session.observe(step.action, step.tokens, item_code=step.item)
+        self.assertEqual(session.replans, replans, "the plan was recomputed mid-run")
+        # And what is left is the tail of the ORIGINAL plan, not a fresh answer that happens to
+        # cost the same.
+        self.assertEqual([s.rendered for s in session.solution.steps], expected[-1:])
+
+    def test_following_it_shortens_it_by_exactly_one_step(self):
+        session = self._solving()
+        before = session.solution.steps
+        step = before[0]
+        session.observe(step.action, step.tokens, item_code=step.item)
+        self.assertEqual(session.solution.steps, before[1:])
+
+    def test_the_distance_comes_down_with_it(self):
+        """Or the page would keep showing the cost of a turn already played."""
+        session = self._solving()
+        plan = session.solution
+        step = plan.steps[0]
+        session.observe(step.action, step.tokens, item_code=step.item)
+        self.assertEqual(session.solution.total_distance,
+                         plan.total_distance - step.distance)
+
+    def test_a_misplay_re_solves(self):
+        """A different action is the case sec 15.4.2 called a misplay: the game has advanced and
+        cannot be rewound, so the plan is genuinely gone."""
+        session = self._solving()
+        planned = session.solution.steps[0].action
+        other = next(a for a in session.legal_actions()
+                     if a.move_slot is not None and a is not planned)
+        replans = session.replans
+        rendered = session.predict(other)[session.identified]
+        session.observe(other, [rendered])
+        self.assertEqual(session.replans, replans + 1)
+        self.assertTrue(session.snapshot()["solution"]["replanned"])
+
+    def test_a_different_outcome_of_the_planned_action_re_solves(self):
+        """The action matching is not enough -- the TOKENS have to, because they are what says
+        the state is the one the plan continues from. A crit where a hit was planned lands us
+        somewhere else in the stream."""
+        session = self._solving()
+        step = session.solution.steps[0]
+        replans = session.replans
+        self.assertFalse(session._follow_plan(step.action, ("M1", "-"), None))
+        self.assertEqual(session.replans, replans, "_follow_plan must not solve by itself")
+
+    def test_a_different_item_re_solves(self):
+        """Same action, different purchase: the HP it heals differs, so the state does."""
+        session = self._solving()
+        step = session.solution.steps[0]
+        self.assertFalse(session._follow_plan(step.action, step.tokens, "mp"))
+
+    def test_an_exhausted_plan_re_solves(self):
+        session = self._solving()
+        session.solution = replace(session.solution, steps=[])
+        self.assertFalse(session._follow_plan(Action.MOVE_1, ("M1",), None))
+
+    def test_an_unreachable_result_is_never_followed(self):
+        from claytonlib.battle_compass.solver import Unreachable
+
+        session = self._solving()
+        session.solution = Unreachable(reason="x", proven=False, states_explored=0)
+        self.assertFalse(session._follow_plan(Action.MOVE_1, ("M1",), None))
+
+    def test_undo_drops_the_cache_rather_than_ticking_it(self):
+        """Undo is replay, so it moves the state backwards -- a plan ticked forward over that
+        would be describing a run that no longer exists."""
+        session = self._solving()
+        step = session.solution.steps[0]
+        session.observe(step.action, step.tokens, item_code=step.item)
+        replans = session.replans
+        session.undo()
+        self.assertEqual(session.replans, replans + 1, "undo must re-solve, not reuse")
+        self.assertEqual(session.solution.steps[0].rendered, step.rendered)
+
+    def test_the_snapshot_says_whether_the_plan_held(self):
+        session = self._solving()
+        self.assertTrue(session.snapshot()["solution"]["replanned"])   # the initial solve
+        step = session.solution.steps[0]
+        snap = session.observe(step.action, step.tokens, item_code=step.item)
+        self.assertFalse(snap["solution"]["replanned"])
+        self.assertEqual(snap["solution"]["replans"], 1)

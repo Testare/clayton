@@ -13,12 +13,23 @@ observations, and rewinding means rebuilding from the window and replaying one f
 ``BattleState`` is ever snapshotted or mutated backwards.  Exact by construction, and cheap: a
 few hundred candidates over a handful of turns.
 
-**Phase 2 re-solves every turn rather than following a precomputed path.**  Sec 15.4.2 asked for
-two undo operations -- rewind a misreport, but accept a *misplay* and re-solve, because the game
-has already advanced and cannot be rewound.  Re-solving unconditionally collapses those into one
-path: a misplay is simply the next turn's starting state.  It costs nothing worth counting, since
-a solve is ~0.2s, and it removes the failure mode where a stale path is followed past a
-divergence (sec 2.5).
+**Phase 2 follows a cached plan and re-solves only on divergence.**  Sec 15.4.2 asked for two
+undo operations -- rewind a misreport, but accept a *misplay* and re-solve, because the game has
+already advanced and cannot be rewound.  The plan cache collapses those into one path: a misplay
+diverges from the plan, which re-solves, and a misplay is then simply the next turn's starting
+state.
+
+It re-solved *unconditionally* at first, which was cheap (~0.2s) and still wrong twice over.  The
+search collapses RNG offsets, so it is a heuristic over arrival order and two solves from
+equivalent states can return different equally-priced paths -- the plan visibly changed under the
+player turn to turn.  And a transient refusal threw away a plan that was still good, which is how
+a woken target (clayton-agh.1) turned "here is your next move" into "there is no solution".
+
+Keeping the suffix costs nothing, and for a reason rather than by luck: Dijkstra returns a
+shortest path, and the suffix of a shortest path is a shortest path from the state it continues
+at.  The licence is the exact token match -- the reported turn being identical to the plan's own
+prediction is precisely the statement that we are in the state the plan continues from.  See
+`HuntSession._follow_plan`.
 """
 from __future__ import annotations
 
@@ -271,6 +282,12 @@ class HuntSession:
         self.solution: Solution | Unreachable | None = None
         #: Why a forced Phase 2 could not produce a path, if it could not.
         self.forced_reason: str | None = None
+        #: How many times the plan has been thrown away and recomputed, and whether the LAST
+        #: reported turn did it. Phase 2 follows a cached path and only re-solves on divergence
+        #: (:meth:`_follow_plan`), so a run that never diverges replans never -- and a count that
+        #: climbs is the player's signal that the game and the model keep disagreeing.
+        self.replans = 0
+        self.last_turn_replanned = False
         #: Each mid-run widening, so a run record says the window was not what it started as.
         self.widenings: list[dict] = []
         self._session = self._fresh()
@@ -299,6 +316,10 @@ class HuntSession:
         """Rebuild from the window and re-apply `turns`. The only way state moves backwards."""
         self._session = self._fresh()
         self.contradiction = None
+        # A cached plan belongs to the state it was computed from, and a replay has just moved
+        # that state. Dropping it here is what stops `_follow_plan` ticking forward a path that
+        # describes a run which no longer exists.
+        self.solution = None
         replayed: list[TurnLog] = []
         for index, turn in enumerate(turns):
             self._apply_transitions_at(index)
@@ -341,6 +362,10 @@ class HuntSession:
         before = len(self.survivors)
         self.window = window
         self._replay(self.turns)
+        if self.phase is Phase.SOLVING and self.identified is not None:
+            # `_replay` drops the plan, so without this a widening left the page with none at
+            # all. It never re-solved before either; the plan simply went stale unnoticed.
+            self.solve()
         self.widenings.append({
             "frame_window": window.frame_window,
             "second_window": window.second_window,
@@ -543,7 +568,10 @@ class HuntSession:
                                   item_code=item_code, bench_slot=bench_slot,
                                   replacement=replacement))
         if self.phase is Phase.SOLVING:
-            self.solve()
+            # Keep the plan when the turn went to plan; re-solve only on divergence. The path the
+            # player is reading off the screen then stops changing under them turn to turn.
+            if not self._follow_plan(action, tokens, item_code):
+                self.solve()
         return self.snapshot()
 
     def undo(self) -> dict:
@@ -599,12 +627,46 @@ class HuntSession:
         return self.snapshot()
 
     def solve(self) -> Solution | Unreachable:
-        """Re-solve from the current state. Called automatically every Phase 2 turn."""
+        """Re-solve from the current state, discarding any cached plan."""
         seed = self.identified
         if seed is None:
             raise ValueError("cannot solve until the seed is pinned")
+        self.replans += 1
+        self.last_turn_replanned = True
         self.solution = solve(self._session.state_of(seed), self.config, self.solver_config)
         return self.solution
+
+    def _follow_plan(self, action: Action, tokens, item_code: str | None) -> bool:
+        """Tick the cached plan forward if the reported turn is exactly the one it predicted.
+
+        **Why keeping it is not a shortcut.** Dijkstra returns a shortest path, and the suffix of
+        a shortest path is a shortest path from the state it continues at -- so when the reported
+        turn matches the plan's own prediction *token for token*, the remaining steps are still
+        the best answer and re-solving can only reproduce them. The match is what licenses it: the
+        tokens being identical is precisely the statement that the state the plan continues from
+        is the state we are now in.
+
+        **Why re-solving every turn was worse than redundant.** With `collapse_offsets` the
+        search is a heuristic over arrival order, so two solves from equivalent states can return
+        *different* equally-priced paths -- and the plan visibly changed under the player
+        mid-run, which is what prompted this. It also made a transient refusal (a woken target,
+        before clayton-agh.1) destroy a plan that was still perfectly good.
+
+        Anything else re-solves: a different action, a different item, a different token stream,
+        a faint (which the solver never plans), or a plan that has run out of steps.
+        """
+        plan = self.solution
+        if not isinstance(plan, Solution) or not plan.steps:
+            return False
+        step = plan.steps[0]
+        if step.action is not action or (step.item or None) != (item_code or None):
+            return False
+        if step.rendered != tok.render_turn(tok.normalise(list(tokens))):
+            return False
+        self.solution = replace(plan, steps=plan.steps[1:],
+                                total_distance=plan.total_distance - step.distance)
+        self.last_turn_replanned = False
+        return True
 
     # -- output ---------------------------------------------------------
 
@@ -889,6 +951,11 @@ class HuntSession:
             steps = self.solution.steps
             out["solution"] = {
                 "found": True,
+                # Whether the last reported turn kept this plan or threw it away. Phase 2
+                # follows a cached path and re-solves only on divergence, so "replanned" is the
+                # interesting event: it says the game and the model disagreed about that turn.
+                "replanned": self.last_turn_replanned,
+                "replans": self.replans,
                 # Zero steps is a real and good answer: the solver was asked for a path from a
                 # state that is ALREADY captured, so the path is empty. `steps[0]` was taken
                 # unconditionally, and the one turn a run exists to reach -- the capture landing

@@ -1689,3 +1689,34 @@ class TestTheItemHpIsInferred(unittest.TestCase):
         self.assertEqual(items.heal_amount("p", 73, 120), 20)      # 73 -> 93
         self.assertEqual(items.heal_amount("p", 110, 120), 10)     # capped: 110 -> 120
         self.assertEqual(items.heal_amount("mp", 73, 120), 47)     # to full
+
+
+class TestThePageSaysWhetherThePlanHeld(unittest.TestCase):
+    """The plan is cached now and only re-solved on divergence, so "it changed" is the event
+    worth surfacing -- a player reading two steps ahead needs to know when to stop trusting
+    what they read."""
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_newly_solved_path_says_so(self):
+        self.assertIn("newly solved", self.html)
+        self.assertIn("sol.replanned && sol.replans > 1", self.html)
+
+    def test_a_held_plan_says_it_can_be_read_ahead(self):
+        self.assertIn("Following the plan", self.html)
+
+    def test_the_old_claim_that_it_re_solves_every_turn_is_gone(self):
+        """It no longer does, and saying so invited exactly the "why did the path change?"
+        confusion this replaced."""
+        self.assertNotIn("Re-solved after every turn", self.html)
+
+    def test_the_snapshot_carries_both_fields_the_page_reads(self):
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        session = facade._hunt_sessions.get(started["session_id"])
+        session.enter_pinning()
+        snap = session.enter_solving(force=True)
+        if snap["solution"] and snap["solution"].get("found"):
+            self.assertIn("replanned", snap["solution"])
+            self.assertIn("replans", snap["solution"])

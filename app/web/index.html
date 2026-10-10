@@ -5808,8 +5808,13 @@ function renderHuntRun(){
       <div class="muted hr-small">Full path: <code>${esc(sol.rendered)}</code></div>
       ${Object.keys(sol.items).length ? `<div class="hr-small">Items needed:
         ${Object.entries(sol.items).map(([k, n]) => `${esc(k)} ×${n}`).join(", ")}</div>` : ""}
-      <div class="muted hr-small">Re-solved after every turn, so a misplay costs nothing — just
-        report what actually happened.</div></div>`;
+      ${sol.replanned && sol.replans > 1
+        ? `<div class="hr-small" style="margin-top:6px">Last turn went off plan, so this path is
+             <b>newly solved</b> — read it again rather than carrying on from the old one.</div>`
+        : `<div class="muted hr-small">Following the plan — it stays put while each turn matches,
+             so you can read ahead.</div>`}
+      <div class="muted hr-small">A misplay costs nothing: report what actually happened and the
+        path is re-solved from there.</div></div>`;
   } else if (s.phase === 3 && s.solution && s.solution.found){
     // Found with NO steps left: the path is complete. Reached by solving from a state that is
     // already captured, which is every winning turn, since the solver re-runs after each one.
