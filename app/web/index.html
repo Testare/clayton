@@ -1429,10 +1429,33 @@ async function nrSave(ev){
   return false;
 }
 
+// --- what a "Reset run" must NOT throw away --------------------------------
+//
+// The roamer starting positions and the search windows describe the SAVE FILE and the player's
+// timing, not the run that just ended. Both compasses persist them per expedition for exactly
+// that reason -- and both then blanked the roamer field on reset, so the next attempt opened
+// empty and the player retyped what the app already knew.
+//
+// The windows looked like they reset to the defaults for a subtler reason: the fields are only
+// read back into state when a Seed A search COMPLETES, so a value typed and not yet searched
+// with was never in state at all, and re-rendering showed the old one. Harvesting first fixes
+// both halves.
+function captureRoamerSearch(state, prefix){
+  const startrel = $(prefix + "-startrel");
+  if (startrel) state._startrel = startrel.value;
+  const seconds = $(prefix + "-secwin");
+  if (seconds && seconds.value !== "") state.secondsWindow = Number(seconds.value);
+  const delays = $(prefix + "-delaywin");
+  if (delays && delays.value !== "") state.delayWindow = Number(delays.value);
+  const parity = $(prefix + "-parity");
+  if (parity) state.matchParity = parity.checked;
+}
+
 function nrReset(){
+  captureRoamerSearch(nr, "nr");
   nr.seedA = null; nr.seedACandidates = null; nr.editingSeedA = false;
   nr.seedB = null; nr.seedBSession = null; nr.seedBLog = [];
-  nr._startrel = ""; renderNewRun();
+  renderNewRun();
 }
 
 // --- Metronome Compass: Review Data -----------------------------------------
@@ -3302,12 +3325,13 @@ async function sacMarkCompleteThenPrompt(){
 }
 
 function sacReset(){
+  captureRoamerSearch(sac, "sac");
   sac.seedA = null; sac.seedACandidates = null; sac.editingSeedA = false;
   sac.seedB = null; sac.seedBResult = null; sac.path = "";
   sac.seedBExpandFrames = 0; sac.seedBExpandSeconds = 0;
   sac.frameObservedElm = ""; sac.frameElmPrefill = ""; sac.frameCandidates = null;
   sac.pinnedFrame = null; sac.frameGuide = null; sac.inHouseSearch = null; sac.aimAdvance = "";
-  sac._startrel = ""; renderSafariCompassNewRun();
+  renderSafariCompassNewRun();
 }
 
 // --- Safari Compass: Review Data --------------------------------------------
@@ -5636,8 +5660,42 @@ async function huntSaveRun(ev){
     });
     closeModal();
     toast("Run saved.");
+    // A capture in the RIGHT ball on the key seed is the hunt finishing, so offer to close it
+    // out -- the same offer Safari Compass makes on an expedition (sacShowMarkCompletePrompt).
+    // The hunt home has carried a "Mark complete" button all along; nothing ever pointed at it
+    // from the one moment the player is certain they are done.
+    if (huntJustFinishedIt()) huntShowMarkCompletePrompt();
   } catch (e) { toast(String(e.message || e)); }
   return false;
+}
+
+// Caught it, in the capture ball, on the key seed, and the hunt is not already closed.
+//
+// `captured` rather than the path's last character: the snapshot flag is `all()` over the
+// surviving candidates, so it is only true when the set agrees the ball landed. And the key-seed
+// test matters because a capture on some other Seed A is a different Pokemon from the one the
+// hunt was planned around -- a fine catch, but not this hunt's.
+function huntJustFinishedIt(){
+  return !!(_huntSnap && _huntSnap.captured && huntSeedAIsKeySeed()
+            && _hunt && !_hunt.completed);
+}
+
+function huntShowMarkCompletePrompt(){
+  openModal(`<h3>Nice catch!</h3>
+    <p class="muted" style="margin:0 0 16px">Seed A matched the key seed and the
+      ${esc(_huntSnap.capture_ball || "capture ball")} landed — mark this hunt as complete?</p>
+    <div class="actions">
+      <button class="btn primary" type="button"
+        onclick="closeModal();huntMarkCompleteFromRun()">Mark as complete</button>
+      <button class="btn" type="button" onclick="closeModal()">Not yet</button>
+    </div>`);
+}
+
+async function huntMarkCompleteFromRun(){
+  try {
+    _hunt = await api("set_hunt_completed", _huntRunHunt, true);
+    toast("Marked as complete.");
+  } catch (e) { toast(String(e.message || e)); }
 }
 
 function huntRunAbandon(){
@@ -5878,7 +5936,12 @@ function renderHuntRun(){
     ? `<div class="notice ok-cta"><b>Caught it — in the
          ${esc(s.capture_ball || "capture ball")}.</b>
        <div class="hr-small">That is the run. ${s.turns.length}
-         turn${s.turns.length === 1 ? "" : "s"} reported.</div>${saveBar}</div>`
+         turn${s.turns.length === 1 ? "" : "s"} reported.</div>
+       ${huntJustFinishedIt() ? `<div class="hr-small" style="margin-top:6px">This was the key
+           seed, so that is the hunt itself finished.
+           <button class="btn small" onclick="huntMarkCompleteFromRun();renderHuntRun()"
+             style="margin-left:6px">Mark hunt complete</button></div>` : ""}
+       ${saveBar}</div>`
     : s.captured_in_wrong_ball
     ? `<div class="notice danger"><b>Caught in the wrong ball.</b>
        <div class="hr-small">A plain Poké Ball landed, so the target is caught but not in the
