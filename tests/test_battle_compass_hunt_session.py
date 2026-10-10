@@ -349,7 +349,11 @@ class TestSecondOnlyAmbiguityIsSurfaced(unittest.TestCase):
         self.assertTrue(amb["second_only"])
         self.assertTrue(amb["separable_by_moves"])
         self.assertIn("narrower second window", amb["advice"])
-        self.assertIn("not impossible", amb["advice"])
+        # The advice is built from the matchup now rather than asserting the fixture's. Nothing
+        # of ours can miss here, so it points at the ball throw -- a measured median of 2 against
+        # a move's 19 -- instead of quoting Aurora Beam at every target.
+        self.assertIn("ball throw", amb["advice"])
+        self.assertNotIn("Aurora Beam", amb["advice"])
 
     def test_such_a_set_narrows_rather_than_never(self):
         """The old assertion was that no number of turns would do it.
