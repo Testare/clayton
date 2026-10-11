@@ -128,15 +128,58 @@ Ranked by how many targets share the mechanic.
 | mechanic | needed by | why it is not already there |
 |---|---|---|
 | **Crit stage** | Aeroblast (both Lugia sets) | `execute_move` uses `CRIT_MODIFIERS[0]` unconditionally, so a high-crit move crits 1/16 instead of 1/8 — wrong outcome *and* wrong damage |
-| **Burn** | Fire Blast, Sacred Fire (both Ho-Oh sets) | status + 1/8 max HP per turn + halved physical Attack. The residual tick means **an HP token on every subsequent turn**, which `turn_requires_hp` must know about or every turn becomes ungrammatical |
+| **Burn** | Fire Blast, Sacred Fire (both Ho-Oh sets) | the status itself, plus a residual tick and halved physical Attack. **Smaller than it first looked** — see §4a |
 | **Sun** | Sunny Day (Ho-Oh Lv45) | a second field condition, plus a weather term in `damage.py`, which has none — sun is ×1.5 on Fire and would make Sacred Fire far worse |
 | **Safeguard** | both Lv70 sets | **blocks our Thunder Wave.** §2.2's precondition is a *permanently paralyzed* target, so a Safeguard up before we paralyze is a hard obstacle: paralyze first, or wait out its 5 turns |
-| **Punishment** | both Lv70 sets | power 1 in `moves.json` marks variable power, which `unsupported_reason` refuses. Real power is 60 + 20 × our positive stat boosts — so it **interacts with `choose_item`**, whose X Sp. Def tier would be feeding the attack that hits us |
-| **Ancient Power** | both Lv70 sets | 10% +1 to all of the *target's* stats. Mostly harmless against a frozen target, except Speed: §4.2's no-speed-tie guarantee is what keeps the roll count predictable, and a stack of boosts could reach a tie |
+| **Punishment** | both Lv70 sets | power 1 in `moves.json` marks variable power, which `unsupported_reason` refuses. Real power is 60 + 20 × our positive stat boosts, **capped at 200** — an earlier draft of this row said 120, but `BtlCmd_CalcPunishmentPower` caps at 200 and sums all *eight* stat-change entries, so accuracy and evasion count too. It **interacts with `choose_item`**, whose X Sp. Def tier feeds the attack that hits us |
+| **Ancient Power** | both Lv70 sets | 10% +1 to all of the *target's* stats. Mostly harmless against a frozen target, except Speed — and worse than "could reach a tie": stages are applied **before** paralysis quarters Speed, so **+6 cancels the quartering exactly** and a paralyzed target at +6 is back at its full figure. Intermediate stages matter on their own too, since a tie can land at +2 and at no other stage |
 | **Refresh** | **all four Lati@s sets** | the target **cures its own status**. This breaks the frozen-target model at its root — a target that can shed paralysis is not a Phase 2 target in the current design at all |
 | **Protect** | both Latios sets | priority +3, blocks our move outright. Does *not* block a ball, since a ball is not a move |
 | **Paralysis on us** | Dragon Breath (30%) | a paralyzed Smeargle may stop outspeeding, losing the speed-tie guarantee |
 | **Roamer fleeing** | the roaming twin | a roamer flees at end of turn unless trapped, so Mean Look becomes mandatory on turn 1 and a flee is a terminal outcome the state machine has no concept of |
+
+### 4a. Burn needs no token of its own, because the tick is not random
+
+An earlier draft of the row above claimed the residual tick forces **an HP token on every
+subsequent turn**, and that `turn_requires_hp` would have to learn about it "or every turn becomes
+ungrammatical". That was wrong, and wrong in a way worth writing down, because it made burn look
+like a grammar change rather than a status.
+
+The tick is a fixed fraction of max HP (believed 1/8; the figure lives in a battle script inside
+a NARC rather than in the decompiled source, so treat it as unconfirmed). **It consumes no RNG
+advances** — corroborated from the other direction by the fainting measurements, where dying to an
+end-of-turn effect leaves the advance counts unchanged (`notes/ss_rng/fainting.md`).
+
+So it is deterministic. And that is what settles it, because an `HP###` token earns its place by
+doing one of two jobs:
+
+1. **Information.** An observed HP change identifies which damage rolls could have produced it —
+   the richest signal in a turn, ~2.5 bits per hit (§3.1).
+2. **Desync detection.** Phase 2 follows a plan, and HP is how a divergence is caught (§2.5).
+
+A tick does neither. Its result is computable from the HP before it, so it reveals nothing about
+the stream, and asking the player to retype their HP every turn of a burn is pure friction.
+
+**And the check is not actually lost.** On any turn where something else also moved our HP, the
+single HP token reports the *total*, which includes the tick — so the model's tick prediction is
+still verified there. The only turns that go unchecked are the ones where nothing random happened
+to us, which are exactly the turns with nothing to check. A tick that *faints* us is reported too,
+by the `X` token: that is the `E3h~X2` form in §13.3.1, where the move burned us, we survived it,
+and the tick finished the job.
+
+So the rule stays "an HP token exactly when our HP changed" with one carve-out — **a change caused
+only by a deterministic residual emits no token** — and the simulator has to apply the same
+carve-out, or the two sides disagree about a turn neither got wrong.
+
+What burn actually needs, then:
+
+* `Status.BURN` applied by Sacred Fire's 50% secondary. The proc is announced, so the `~` is
+  reportable as usual.
+* the end-of-turn tick, changing HP and emitting no token of its own;
+* nothing for the halved physical Attack: it reduces damage we *deal*, which we never model —
+  the same reason Mist Ball's Sp. Atk drop is inert (`sim.MODELLED_TARGET_EFFECTS`).
+
+That is a status with a residual, not a grammar change.
 
 ### Safeguard, and winning the Thunder Wave race
 

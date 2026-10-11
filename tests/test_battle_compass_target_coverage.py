@@ -28,28 +28,43 @@ class TestTheCheckFindsWhatIsMissing(unittest.TestCase):
     def test_latias_is_clean(self):
         self.assertEqual(unsupported_moves("latias"), ((), None))
 
-    def test_latios_is_not(self):
-        """Found by writing the check: Latios was already a configured target and cannot be
-        simulated. Luster Purge's 50% Sp. DEF drop lands on us and raises every later special
-        hit -- unlike Mist Ball's Sp. Atk drop, which is inert because we never model damage we
-        DEAL -- and Protect blocks our move outright."""
+    def test_latios_is_blocked_only_on_protect_now(self):
+        """Writing this check is what found Latios mis-simulating at all: it was already a
+        configured target with both Protect and Luster Purge unmodelled.
+
+        Luster Purge is done -- its 50% drop is our Sp. DEF, which raises every later special
+        hit, so unlike Mist Ball's Sp. Atk drop it was never inert. Protect is not: it needs a
+        blocked-move token and an advance count that has to be measured rather than inferred
+        (clayton-957.26.2).
+        """
         problems, message = unsupported_moves("latios")
-        names = {name for name, _ in problems}
-        self.assertEqual(names, {"Protect", "Luster Purge"})
+        self.assertEqual({name for name, _ in problems}, {"Protect"})
         self.assertIn("cannot be simulated yet", message)
 
-    def test_ho_oh_names_all_four(self):
-        problems, _ = unsupported_moves("ho-oh")
-        self.assertEqual({name for name, _ in problems},
-                         {"Sacred Fire", "Punishment", "Ancient Power", "Safeguard"})
+    def test_ho_oh_is_clean_now(self):
+        """All four of its Lv70 moves were unmodelled when this check was written: Sacred Fire's
+        burn, Punishment's computed power, Ancient Power's self-boost, Safeguard."""
+        self.assertEqual(unsupported_moves("ho-oh"), ((), None))
 
-    def test_a_variable_power_move_is_caught_even_if_its_effect_were_known(self):
-        """Punishment is power 1, which marks variable power. `unsupported_reason` refuses it,
-        so the danger floor would otherwise skip the move entirely -- a floor that ignores an
-        attack is not a floor."""
+    def test_a_variable_power_move_passes_once_there_is_a_rule_for_it(self):
+        """Punishment is power 1, which marks "work it out from state" rather than "unknown
+        forever". `unsupported_reason` refuses it by default -- which kept it out of the danger
+        floor, and a floor that ignores one of the target's attacks is not a floor -- but the
+        check passes `power_known` for the effects that have a rule."""
+        from claytonlib.battle_compass.sim import VARIABLE_POWER_EFFECTS
+
         self.assertEqual(resolve_move("Punishment").power, 1)
-        problems, _ = unsupported_moves("ho-oh")
-        self.assertIn("Punishment", {name for name, _ in problems})
+        self.assertIn(resolve_move("Punishment").effect, VARIABLE_POWER_EFFECTS)
+        self.assertEqual(unsupported_moves("ho-oh"), ((), None))
+
+    def test_a_variable_power_move_with_no_rule_is_still_caught(self):
+        """So the `power_known` escape hatch cannot be mistaken for a blanket pass."""
+        from claytonlib.battle.damage import unsupported_reason
+
+        seismic = resolve_move("Seismic Toss")
+        self.assertEqual(seismic.power, 1)
+        self.assertIsNotNone(unsupported_reason(seismic))
+        self.assertIsNone(unsupported_reason(seismic, power_known=True))
 
     def test_a_status_move_dealing_no_damage_is_not_a_gap(self):
         """`unsupported_reason` says "is a status move and deals no damage" for Mist and Rain
@@ -109,10 +124,13 @@ class TestReadinessRefusesWhatCannotBeSimulated(unittest.TestCase):
     def test_a_clean_target_passes(self):
         self.assertEqual(self._target("suicune", 40).hard_errors(), [])
 
-    def test_ho_oh_is_refused_with_its_moves_named(self):
-        errors = " ".join(self._target("ho-oh", 70).hard_errors())
-        for move in ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard"):
-            self.assertIn(move, errors)
+    def test_ho_oh_passes_now_that_its_four_mechanics_are_in(self):
+        self.assertEqual(self._target("ho-oh", 70).hard_errors(), [])
+
+    def test_latios_is_still_refused_and_names_the_move(self):
+        """Protect is genuinely not modelled, so the refusal is correct rather than stale."""
+        errors = " ".join(self._target("latios", 40).hard_errors())
+        self.assertIn("Protect", errors)
 
     def test_the_wrong_version_level_is_reported(self):
         errors = " ".join(self._target("ho-oh", 45).hard_errors())

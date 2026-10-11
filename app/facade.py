@@ -489,6 +489,27 @@ class Facade:
             pp=tuple(resolve_move(name).pp for name in target_moves))
         return ours, target, bench
 
+    @staticmethod
+    def _target_speed_stages(target) -> tuple[int, ...]:
+        """Speed stages this target can reach, for the speed-tie checks.
+
+        Read off its moveset: only a move that raises its own Speed puts anything but 0 in
+        reach, and among the configured encounters that is Ancient Power. `(0,)` for everything
+        else, which keeps the check table short for targets that cannot boost.
+        """
+        from claytonlib.battle_compass.sim import EFFECT_ALL_STATS_UP
+        from claytonlib.battle_compass.targets import moveset, supported
+        from claytonlib.moves import resolve_move
+
+        key = (target.species or "").strip().lower().replace(" ", "-")
+        if key not in supported():
+            return (0,)
+        for name in moveset(key):
+            move = resolve_move(name)
+            if move is not None and move.effect == EFFECT_ALL_STATS_UP:
+                return tuple(range(7))
+        return (0,)
+
     def hunt_run_setup(self, hunt_id: str) -> dict:
         """What the run page needs to open, before any seed has been looked for.
 
@@ -900,7 +921,7 @@ class Facade:
         Only the first blocks; the other two are warnings the player may knowingly accept.
         """
         from claytonlib.battle.readiness import (
-            alphabet_report, speed_checks, speed_warnings,
+            alphabet_report, speed_after_item, speed_checks, speed_warnings,
         )
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.moves import resolve_move
@@ -929,7 +950,14 @@ class Facade:
             if moves:
                 movesets[pokemon.name] = moves
             if pokemon.speed is not None:
-                our_speeds[pokemon.name] = pokemon.speed
+                # The HELD ITEM applied, because the summary screen does not include it: a
+                # scarfed Magneton reads 124 and moves at 186, and this check is what tells the
+                # player whether a tie is possible. Labelled with the item, so the number not
+                # matching their screen is explained rather than mysterious.
+                effective = speed_after_item(pokemon.speed, slot.held_item)
+                label = (f"{pokemon.name} ({slot.held_item})"
+                         if effective != pokemon.speed else pokemon.name)
+                our_speeds[label] = effective
 
         if movesets or our_speeds:
             report = alphabet_report(movesets)
@@ -953,14 +981,24 @@ class Facade:
             else:
                 result["target_stats"] = stats
                 if our_speeds:
-                    checks = speed_checks(our_speeds, stats["spe"])
+                    # Every Speed stage the target can reach. Ancient Power's 10% raises all of
+                    # its stats, and stages are applied BEFORE paralysis quarters Speed -- so a
+                    # boosted paralyzed target can claw back the Speed gap the precondition
+                    # depends on, and at +6 it recovers it exactly.
+                    checks = speed_checks(our_speeds, stats["spe"],
+                                          target_speed_stages=self._target_speed_stages(h.target))
                     result["speed"] = {
                         "target_speed": stats["spe"],
                         "checks": [
                             {"ours": c.ours, "our_speed": c.our_speed,
                              "target_state": c.target_state, "target_speed": c.target_speed,
                              "margin": c.margin, "is_tie": c.is_tie,
-                             "is_fragile": c.is_fragile}
+                             "is_fragile": c.is_fragile,
+                             # So the page can show the unboosted rows and hide the rest unless
+                             # they are actually dangerous: seven stages x two statuses is a
+                             # table nobody reads.
+                             "target_speed_stage": c.target_speed_stage,
+                             "notable": c.notable}
                             for c in checks
                         ],
                         "warnings": speed_warnings(checks),

@@ -374,6 +374,10 @@ def _dominance_key(state: BattleState) -> tuple:
     """
     return (state.rng_offset, state.rain_turns > 0, state.mist_turns > 0,
             state.target_trapped, state.target_water_sport,
+            # Safeguard, for exactly the reason rain and mist are here: while it is up our
+            # status moves FAIL, and a failing move costs the turn two fewer advances -- so two
+            # states at one offset that disagree about it reach different offsets next turn.
+            state.safeguard_turns > 0,
             # Remaining sleep, for the same reason as the field conditions: one of two states
             # that disagree about it wakes sooner, and from that turn on spends different
             # advances. The status itself is in here too, since waking changes it.

@@ -43,8 +43,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import (
-    FLINCH_EFFECTS, HuntConfig, accuracy_net_stage, can_flinch, can_miss, effective_speed,
-    simulate_turn, status_applied_by, will_fail,
+    FLINCH_EFFECTS, HuntConfig, accuracy_net_stage, burn_tick, can_flinch, can_miss,
+    effective_speed, simulate_turn, status_applied_by, variable_base_power, will_fail,
 )
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler, Status
@@ -114,10 +114,21 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
     weathers = reachable_weathers(target)
     for slot in range(len(target.moves)):
         move = target.move(slot)
-        if move is None or unsupported_reason(move) is not None:
+        if move is None:
+            continue
+        # Punishment's power comes from OUR positive stages, so it has to be computed rather
+        # than read -- and skipping it, as "no fixed base power" used to make us do, left one of
+        # the target's attacks out of the floor entirely.
+        #
+        # Computed at the stages we hold NOW. An X Sp. Def later adds 20 power to it, and the
+        # floor is only taken once per session, so this under-reports for a run that buffs.
+        # Flagged on clayton-957.8 rather than papered over.
+        base_power = variable_base_power(move, ours)
+        if unsupported_reason(move, power_known=base_power is not None) is not None:
             continue
         for weather in weathers:
-            _, high = damage_range(move, attacker, defender, critical=True, weather=weather)
+            _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
+                                   base_power=base_power)
             worst = max(worst, high)
     return worst
 
@@ -880,6 +891,10 @@ class HuntSession:
                 "ours": resolution_options(state.ours),
                 "target": resolution_options(state.target),
             },
+            # What burn would take off at end of turn, so the page can explain a faint that
+            # nothing in the turn's own tokens accounts for. Zero when not burned.
+            "burn_tick": (burn_tick(state.ours)
+                          if state.ours.status is Status.BURN else 0),
             "ours": {"name": state.ours.name, "hp": state.ours.hp,
                      "max_hp": state.ours.max_hp,
                      "status": state.ours.status.value,

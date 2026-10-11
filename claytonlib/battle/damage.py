@@ -1,11 +1,16 @@
-"""Gen 4 damage, for damage the *opponent* deals to us.
+"""Gen 4 damage, in both directions.
 
-Deliberately one-directional.  Damage we deal is never modelled: we only ever see the
-opponent's HP bar, and Battle Compass never needs the number — the target's HP is a
-player-declared binary ("at 1 HP or not").  Damage we *take* is the opposite case, because we
-know both sides' exact stats and can therefore read the damage roll off an observed HP change.
-That makes it the richest identification signal available, worth ~2.5 bits per hit against
-~2.8 for everything else in a turn combined.  See notes/battle_compass.md sec 3.1 and sec 5.
+**Damage we take** is the richest identification signal available — we know both sides' exact
+stats, so an observed HP change reads back the damage roll, worth ~2.5 bits per hit against ~2.8
+for everything else in a turn combined (notes/battle_compass.md sec 3.1 and sec 5).
+
+**Damage we deal is modelled too**, and this file claimed for a long time that it was not. The
+claim came from sec 2.2's framing -- the target's HP is a player-declared binary, "at 1 HP or
+not" -- but the simulator does compute our damage and does subtract it from the target
+(`sim.act_ours`), and that is how the run knows whether enough False Swipes have landed to let
+the solver start (`identify.solver_blockers`). So anything that changes the damage WE deal
+changes when Phase 2 can begin: a burn halving our physical Attack means more False Swipes, and
+an Attack drop from the target means the same.
 
 Scope is narrow on purpose, and scales per opponent.  For Suicune the entire surface is Aurora
 Beam and Gust, and no damage modifiers apply at all: its own Rain Dance does not touch Ice or
@@ -22,7 +27,6 @@ moves must be validated against emulator ground truth before the filter is enabl
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from claytonlib.battle.types import effectiveness, type_multiplier
@@ -41,9 +45,34 @@ _STAGE_DEN = (8, 7, 6, 5, 4, 3, 2, 2, 2, 2, 2, 2, 2)
 
 
 def stage_multiplier(stage: int) -> float:
+    """The stage's multiplier as a float, for reporting a margin.
+
+    `apply_stage` is what the damage and speed paths use, because the ROM does the arithmetic in
+    integers and a float detour is only safe by luck. Kept for callers that want the ratio
+    itself -- `readiness`'s speed margins, which are advisory.
+    """
     if not -6 <= stage <= 6:
         raise ValueError(f"stat stage out of range: {stage}")
     return _STAGE_NUM[stage + 6] / _STAGE_DEN[stage + 6]
+
+
+def apply_stage(value: int, stage: int) -> int:
+    """`value` after a stat stage, the way the ROM does it: integer, numerator then denominator.
+
+    `sStatChangeTable` is written in tenths (``10/40`` at -6 through ``40/10`` at +6) and the ROM
+    multiplies then divides in integers. Our table holds the same ratios reduced, which floors
+    identically -- ``floor(15x/10) == floor(3x/2)`` -- so only the float detour was ever in
+    question.
+
+    It was not actually wrong: checked exhaustively over every stage and every stat value 1..800,
+    ``floor(value * (num/den))`` agrees with the integer form everywhere. But four of the
+    thirteen ratios (2/7, 1/3, 2/5, 2/3) have no exact binary representation, so the agreement
+    held because a double has mantissa to spare rather than because the arithmetic was right.
+    Doing it in integers makes it exact by construction instead.
+    """
+    if not -6 <= stage <= 6:
+        raise ValueError(f"stat stage out of range: {stage}")
+    return value * _STAGE_NUM[stage + 6] // _STAGE_DEN[stage + 6]
 
 
 #: Type-enhancing held items -> the type they boost, from the ROM's `sTypeEnhancingItems`
@@ -123,13 +152,17 @@ class Defender:
     special_defence_stage: int = 0
 
 
-def unsupported_reason(move: Move) -> str | None:
+def unsupported_reason(move: Move, *, power_known: bool = False) -> str | None:
     """Why this move's damage cannot be modelled yet, or None if it can.
 
     Callers must treat a reason as "do not filter on damage", never as "assume zero".
+
+    `power_known` is for the variable-power moves. Power 1 in the table marks "work this out from
+    state" rather than "unknown forever" -- Punishment is 60 + 20 per positive stage of its target
+    -- so a caller that can supply the figure is not blocked by the absence of a fixed one.
     """
     if move.category == CATEGORY_PHYSICAL or move.category == CATEGORY_SPECIAL:
-        if move.power <= 1:
+        if move.power <= 1 and not power_known:
             # power 1 marks fixed-damage and variable-power moves (Seismic Toss, Psywave,
             # Low Kick, Flail...), each of which needs its own rule.
             return f"{move.name} has no fixed base power"
@@ -137,7 +170,7 @@ def unsupported_reason(move: Move) -> str | None:
     return f"{move.name} is a status move and deals no damage"
 
 
-def effective_power(move: Move, attacker: Attacker) -> int:
+def effective_power(move: Move, attacker: Attacker, *, base: int | None = None) -> int:
     """Base power after the attacker's ability and held item.
 
     Order and arithmetic transcribed from the ROM (src/battle/overlay_12_0224E4FC.c): Technician
@@ -146,7 +179,7 @@ def effective_power(move: Move, attacker: Attacker) -> int:
     Technician user holding Silk Scarf, False Swipe goes 40 -> 60 -> 72, where applying the item
     first would give 40 -> 48 -> 72 by luck here but differ elsewhere.
     """
-    power = move.power
+    power = move.power if base is None else base
     ability = attacker.ability.strip().lower()
     if ability == "technician" and power <= TECHNICIAN_POWER_CAP:
         power = power * 15 // 10
@@ -194,7 +227,7 @@ def _apply_weather(value: int, move: Move, weather: str) -> int:
 
 def damage(move: Move, attacker: Attacker, defender: Defender, *,
            roll: int = 100, critical: bool = False,
-           weather: str = WEATHER_NONE) -> int:
+           weather: str = WEATHER_NONE, base_power: int | None = None) -> int:
     """Damage for one hit, in HP.
 
     `roll` is the 85..100 damage roll.  Flooring happens at each step exactly as the game does;
@@ -205,7 +238,7 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     into a move that can faint a Pokemon at full HP -- which is the whole reason fainting needed
     modelling at all.
     """
-    reason = unsupported_reason(move)
+    reason = unsupported_reason(move, power_known=base_power is not None)
     if reason:
         raise ValueError(reason)
     if roll not in DAMAGE_ROLLS:
@@ -221,14 +254,14 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     # A crit ignores any stage that would REDUCE its damage -- the defender's raised defences and
     # the attacker's lowered offences -- while keeping those that would raise it.
     if not (critical and defence_stage > 0):
-        defence = max(1, math.floor(defence * stage_multiplier(defence_stage)))
+        defence = max(1, apply_stage(defence, defence_stage))
     if not (critical and attack_stage < 0):
-        attack = max(1, math.floor(attack * stage_multiplier(attack_stage)))
+        attack = max(1, apply_stage(attack, attack_stage))
 
     # The ROM's level term is INTEGER division -- `((level * 2 / 5) + 2)` in C -- so it differs
     # from a float form at any level where 2*level is not a multiple of 5 (63, 67, 71, 78...).
     level_term = (attacker.level * 2) // 5 + 2
-    power = effective_power(move, attacker)
+    power = effective_power(move, attacker, base=base_power)
 
     # CalcMoveDamage, transcribed from src/battle/overlay_12_0224E4FC.c. Integer division at each
     # step, in this order -- `atk * power * levelterm`, then `/ def`, then `/ 50`:
@@ -301,14 +334,15 @@ def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
 
 
 def damage_spread(move: Move, attacker: Attacker, defender: Defender, *,
-                  critical: bool = False, weather: str = WEATHER_NONE) -> dict[int, int]:
+                  critical: bool = False, weather: str = WEATHER_NONE,
+                  base_power: int | None = None) -> dict[int, int]:
     """`roll` -> damage, for all sixteen rolls.
 
     This is what makes the sec 3.1 filter work: an observed HP change identifies the set of
     rolls consistent with it, and therefore constrains the RNG state.
     """
     return {roll: damage(move, attacker, defender, roll=roll, critical=critical,
-                         weather=weather)
+                         weather=weather, base_power=base_power)
             for roll in DAMAGE_ROLLS}
 
 
@@ -324,8 +358,9 @@ def rolls_for_damage(observed: int, move: Move, attacker: Attacker, defender: De
 
 
 def damage_range(move: Move, attacker: Attacker, defender: Defender, *,
-                 critical: bool = False, weather: str = WEATHER_NONE) -> tuple[int, int]:
+                 critical: bool = False, weather: str = WEATHER_NONE,
+                 base_power: int | None = None) -> tuple[int, int]:
     """(minimum, maximum) over the sixteen rolls."""
     values = damage_spread(move, attacker, defender, critical=critical,
-                           weather=weather).values()
+                           weather=weather, base_power=base_power).values()
     return min(values), max(values)

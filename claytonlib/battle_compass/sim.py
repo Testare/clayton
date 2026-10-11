@@ -27,12 +27,10 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, damage, unsupported_attacker_reason,
-    unsupported_reason,
+    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_stage, damage,
+    unsupported_attacker_reason, unsupported_reason,
 )
-from claytonlib.battle.readiness import (
-    CHOICE_SPEED_ITEMS, PARALYSIS_SPEED_DIVISOR, SPEED_HALVING_ITEMS,
-)
+from claytonlib.battle.readiness import PARALYSIS_SPEED_DIVISOR, speed_after_item
 from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
@@ -76,13 +74,19 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # Gust's effect is "double power against a Flying target"; against a grounded Pokemon in a
     # single battle it is plain damage, and it is in the emulator-verified Suicune fixture.
     149: "double power vs airborne, which never applies here",
+    4: "may burn: the status, its deterministic tick, and its halved physical Attack",
     31: "may flinch -- applied, and suppressed when unobservable (`flinch_visible`)",
     46: "Mist: field condition, and it blocks our stat drops",
-    68: "lowers our Attack -- tracked in `our_attack_stage`",
-    71: "lowers our Sp. Atk, which nothing we predict reads: we never model damage we DEAL",
+    68: "lowers our Attack, which raises how many False Swipes the target needs",
+    71: "lowers our Sp. Atk, which lowers the special damage WE deal",
+    72: "lowers our Sp. Def, which raises every later special hit we take",
+    124: "Safeguard: blocks our status moves for five turns, and a second one fails",
+    125: "may burn -- as effect 4",
     136: "Rain Dance: field condition, and the weather term in `battle.damage`",
+    140: "Ancient Power: raises every one of the target's stats, Speed included",
     193: "Refresh: fails against an unstatused user",
     210: "Water Sport: a per-battler volatile flag, so a second one fails",
+    245: "Punishment: power computed from our positive stages (`punishment_power`)",
 }
 
 
@@ -164,6 +168,7 @@ class MoveOutcome:
     sets_mist: bool = False
     traps: bool = False
     sets_water_sport: bool = False
+    sets_safeguard: bool = False
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
@@ -256,6 +261,12 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     status = status_applied_by(move)
     if status is not None and defender.status is not Status.NONE:
         return True
+    # Safeguard blocks a new non-volatile status outright, which makes it a hard obstacle rather
+    # than a nuisance: sec 2.2's precondition is a target held still, so a Safeguard up before we
+    # land Thunder Wave or Spore has to be waited out. It does NOT block a ball -- a ball is not
+    # a move -- which is what keeps the target catchable through it.
+    if status is not None and field is not None and getattr(field, "safeguard_turns", 0) > 0:
+        return True
     if move.effect == EFFECT_REFRESH:
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
@@ -270,6 +281,8 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         return True
     if move.effect == EFFECT_WATER_SPORT and field.target_water_sport:
         return True
+    if move.effect == EFFECT_SAFEGUARD and getattr(field, "safeguard_turns", 0) > 0:
+        return True
     return False
 
 
@@ -281,6 +294,19 @@ EFFECT_RAIN_DANCE = 136
 EFFECT_MIST = 46
 EFFECT_MEAN_LOOK = 106
 EFFECT_LOWER_EVASION = 24
+#: Aurora Beam's Attack drop and Mist Ball's Sp. Atk drop. Separate, because the stats are: one
+#: figure used to stand for both, so an Attack drop lowered Sp. Atk as well.
+EFFECT_LOWER_ATTACK = 68
+EFFECT_LOWER_SPATK = 71
+#: Luster Purge drops Sp. DEF, which is not the same thing at all: our Sp. Def is what the
+#: target's special attacks are divided by, so a drop raises every later special hit. Mist Ball's
+#: Sp. Atk drop is the one that only touches damage we deal.
+EFFECT_LOWER_SPDEF = 72
+#: Burn halves the holder's physical Attack [Gen 4]. Applied to the stat before the stage, which
+#: is where `CalcMoveDamage` reads it.
+BURN_ATTACK_DIVISOR = 2
+#: Burn's end-of-turn tick: max HP / 8, rounded down, and never less than 1.
+BURN_TICK_DIVISOR = 8
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -297,6 +323,78 @@ REFRESH_CURES = frozenset({Status.BURN, Status.PARALYSIS, Status.POISON})
 #: rain set on turn 1 stops on turn 5 and mist set on turn 4 wears off on turn 8].
 RAIN_TURNS = 5
 MIST_TURNS = 5
+
+
+#: Move effects whose SECONDARY burns the move's target: 4 (Fire Blast) and 125 (Sacred Fire).
+#: The status itself, not the chance -- `move.effect_chance` carries that.
+BURN_EFFECTS = frozenset({4, 125})
+#: Ancient Power: 10% to raise EVERY stat of the attacker by one stage.
+EFFECT_ALL_STATS_UP = 140
+#: Safeguard: protects its own side from new non-volatile statuses for five turns.
+EFFECT_SAFEGUARD = 124
+SAFEGUARD_TURNS = 5
+
+
+#: Punishment. Power is state-dependent: 60 plus 20 per positive stat stage ON ITS TARGET,
+#: capped at 200 [verified: `BtlCmd_CalcPunishmentPower`, src/battle/battle_command.c]. The cap is
+#: 200 and not the 120 an earlier note claimed.
+EFFECT_PUNISHMENT = 245
+PUNISHMENT_BASE_POWER = 60
+PUNISHMENT_PER_STAGE = 20
+PUNISHMENT_MAX_POWER = 200
+
+
+def punishment_power(defender: Battler) -> int:
+    """Punishment's base power against `defender`.
+
+    The ROM sums every one of the target's eight stat-change entries that sits above neutral, so
+    accuracy and evasion count alongside the five battle stats.
+
+    **It is fed by our own buffs**, which is the interaction worth remembering: `choose_item`
+    reaches for X Sp. Def as cheap filler, and every stage of that is +20 power on the move
+    hitting us. A defensive item that makes the incoming attack stronger is not obviously a bad
+    trade -- X Sp. Def still cuts the special damage it feeds -- but it is a trade, not a free
+    action.
+    """
+    stages = (defender.atk_stage, defender.def_stage, defender.spatk_stage,
+              defender.spdef_stage, defender.speed_stage, defender.accuracy_stage,
+              defender.evasion_stage)
+    boosts = sum(stage for stage in stages if stage > 0)
+    return min(PUNISHMENT_MAX_POWER,
+               PUNISHMENT_BASE_POWER + PUNISHMENT_PER_STAGE * boosts)
+
+
+#: Effects whose base power is computed from state rather than read from the table. Named as a
+#: set so the static coverage check can tell "power 1 means work it out" from "power 1 means we
+#: have no rule for this".
+VARIABLE_POWER_EFFECTS = frozenset({EFFECT_PUNISHMENT})
+
+
+def variable_base_power(move: Move, defender: Battler) -> int | None:
+    """Base power for a move whose table entry is a placeholder, or None for a fixed-power move.
+
+    Power 1 in moves.json means "work this out from state", and treating it as unmodellable is
+    what kept Punishment out of the damage model -- and out of the danger floor, which is worse:
+    a floor that ignores one of the target's attacks is not a floor.
+    """
+    if move.effect == EFFECT_PUNISHMENT:
+        return punishment_power(defender)
+    return None
+
+
+def burn_tick(battler: Battler) -> int:
+    """Burn's end-of-turn damage: max HP / 8, rounded down, never less than 1.
+
+    **Deterministic, and that is the whole reason it needs no token of its own.** It consumes no
+    RNG advances -- corroborated by the fainting measurements, where dying to an end-of-turn
+    effect leaves the turn's advance count unchanged -- so it carries no information about the
+    stream and its result is computable from the HP before it. An `HP###` token earns its place
+    by reading back a damage roll or by catching a Phase 2 desync, and a tick does neither.
+
+    The check is not lost: on any turn where something random ALSO moved our HP, the single HP
+    token reports the total, tick included. See notes/battle_compass_next_targets.md sec 4a.
+    """
+    return max(1, battler.max_hp // BURN_TICK_DIVISOR)
 
 
 def status_applied_by(move: Move) -> Status | None:
@@ -323,7 +421,7 @@ def weather_of(field) -> str:
 
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
-                 attack_stage: int = 0, field=None) -> tuple[int, MoveOutcome]:
+                 field=None) -> tuple[int, MoveOutcome]:
     """Execute one move against the RNG, returning (new rng, outcome).
 
     Named ``execute_move`` rather than ``resolve_move`` so it cannot be confused with — or
@@ -373,6 +471,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_mist=move.effect == EFFECT_MIST,
             traps=move.effect == EFFECT_MEAN_LOOK,
             sets_water_sport=move.effect == EFFECT_WATER_SPORT,
+            sets_safeguard=move.effect == EFFECT_SAFEGUARD,
             blocked_by_mist=blocked)
 
     # Damaging.
@@ -391,22 +490,33 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     parts.append(tok.CRIT if critical else tok.HIT)
 
     dealt = 0
+    # Atk and SpA stages read off the attacker SEPARATELY. One figure used to be passed as both,
+    # so an Aurora Beam Attack drop was silently applied to Sp. Atk too -- and it is also the
+    # attacker's own Battler now rather than a parameter, which is what lets the TARGET's own
+    # boosts (Ancient Power) reach the damage it deals us.
+    #
+    # Burn halves the holder's physical Attack, and that matters in both directions: it is also
+    # how many more False Swipes a burned Smeargle needs before the target reaches 1 HP.
+    attack_stage = attacker.atk_stage
+    attack = attacker.stats["atk"]
+    if attacker.status is Status.BURN:
+        attack = max(1, attack // BURN_ATTACK_DIVISOR)
     attacker_side = Attacker(
-        level=attacker.level, attack=attacker.stats["atk"],
+        level=attacker.level, attack=attack,
         special_attack=attacker.stats["spa"], types=attacker.types,
-        attack_stage=attack_stage, special_attack_stage=attack_stage,
+        attack_stage=attack_stage, special_attack_stage=attacker.spatk_stage,
         ability=attacker.ability, held_item=attacker.held_item)
-    if unsupported_reason(move) is None and unsupported_attacker_reason(attacker_side) is None:
+    base_power = variable_base_power(move, defender)
+    if (unsupported_reason(move, power_known=base_power is not None) is None
+            and unsupported_attacker_reason(attacker_side) is None):
         physical = move.category != 1
         dealt = damage(
             move,
-            Attacker(level=attacker.level, attack=attacker.stats["atk"],
-                     special_attack=attacker.stats["spa"], types=attacker.types,
-                     attack_stage=attack_stage, special_attack_stage=attack_stage,
-                     ability=attacker.ability, held_item=attacker.held_item),
+            attacker_side,
             Defender(defence=defender.stats["def"], special_defence=defender.stats["spd"],
                      types=defender.types, defence_stage=defender.def_stage,
                      special_defence_stage=defender.spdef_stage),
+            base_power=base_power,
             roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
             critical=critical,
             # Rain Dance is in the target's own moveset, and under rain Hydro Pump gains half
@@ -465,6 +575,22 @@ def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
     if not hidden:
         return outcome.tokens
     return tuple(part for part in outcome.tokens if part != tok.SECONDARY)
+
+
+def _all_stats_up(battler: Battler) -> Battler:
+    """Ancient Power's 10%: every stat up one stage, capped at +6.
+
+    Mostly harmless against a target held still -- except Speed. Stages are applied BEFORE
+    paralysis quarters Speed (`effective_speed`), so they claw it back: +6 restores the full
+    figure exactly and the speed-tie guarantee sec 4.2 buys with paralysis is gone.
+    """
+    return replace(
+        battler,
+        atk_stage=min(6, battler.atk_stage + 1),
+        def_stage=min(6, battler.def_stage + 1),
+        spatk_stage=min(6, battler.spatk_stage + 1),
+        spdef_stage=min(6, battler.spdef_stage + 1),
+        speed_stage=min(6, battler.speed_stage + 1))
 
 
 def party_number(battler: Battler, bench_slot: int) -> int:
@@ -606,16 +732,22 @@ def opening_rng(seed: int, config: HuntConfig) -> int:
 
 
 def effective_speed(battler: Battler) -> int:
-    """Speed as the turn-order comparison sees it: held item, then paralysis.
+    """Speed as the turn-order comparison sees it: stat stage, held item, then paralysis.
 
     Paralysis quartering Speed is the whole reason it is the sanctioned tie-avoidance: it takes
     Suicune to ~21, so anything outspeeds it and no speed-tie roll occurs anywhere in the search
     (sec 4.2).
 
-    **The held item comes first, and that is not cosmetic.** Transcribed from the speed
-    comparison in src/battle/overlay_12_0224E4FC.c, which halves for a Macho Brace or Iron Ball,
-    then applies the Choice Scarf's ``* 15 / 10``, and only then quarters for paralysis. Each
-    step truncates, so `spe * 15 / 10 / 4` and `spe / 4 * 15 / 10` are different numbers.
+    **The order is not cosmetic.** Transcribed from the speed comparison in
+    src/battle/overlay_12_0224E4FC.c: the stat stage first, then the weather abilities, then a
+    Macho Brace or Iron Ball halving, then the Choice Scarf's ``* 15 / 10``, then Quick Powder,
+    and only then paralysis's ``/ 4``. Each step truncates, so `spe * 15 / 10 / 4` and
+    `spe / 4 * 15 / 10` are different numbers.
+
+    The stage going first is what makes Ancient Power dangerous rather than merely annoying:
+    stages multiply and paralysis divides, so **+6 cancels the quartering exactly** -- a paralyzed
+    target at +6 Speed is back to its full figure, and the no-speed-tie guarantee that sec 4.2
+    buys with paralysis is gone.
 
     This read `stats["spe"]` and nothing else, which made a Choice Scarf invisible -- and a
     scarfed Lv70 Magneton is 186 against Ho-Oh's 152, so the model had us moving SECOND on the
@@ -627,12 +759,8 @@ def effective_speed(battler: Battler) -> int:
     as a Speed modifier would be wrong in both directions -- and it would be actively harmful
     here, since Battle Compass wants to move FIRST.
     """
-    speed = battler.stats["spe"]
-    item = battler.held_item.strip().lower()
-    if item in SPEED_HALVING_ITEMS:
-        speed //= 2
-    if item in CHOICE_SPEED_ITEMS:
-        speed = speed * 15 // 10
+    speed = speed_after_item(apply_stage(battler.stats["spe"], battler.speed_stage),
+                             battler.held_item)
     if battler.status is Status.PARALYSIS:
         speed //= PARALYSIS_SPEED_DIVISOR
     return speed
@@ -710,6 +838,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target_trapped = True
         if outcome.sets_water_sport:
             new.target_water_sport = True
+        if outcome.sets_safeguard:
+            new.safeguard_turns = SAFEGUARD_TURNS
 
     #: Set when the actor that moved FIRST procced a flinch, so the second actor loses its move.
     #: A dict rather than two nonlocals because both sides are symmetric and only one can ever be
@@ -844,8 +974,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 parts.append(tok.prevented_token("M", "par"))
                 return False
         rng, outcome = execute_move(
-            rng, move, new.ours, new.target, actor="M", slot=slot, field=new,
-            attack_stage=new.our_attack_stage)
+            rng, move, new.ours, new.target, actor="M", slot=slot, field=new)
         new.rng_offset += outcome.rolls
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
         # A Choice item locks its holder into the first move it uses, and stays locked until the
@@ -860,6 +989,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # The rolled duration was being thrown away, so a slept target never woke.
             new.target = new.target.with_status(outcome.applied_status,
                                                 sleep_turns=outcome.sleep_turns)
+        if outcome.secondary and move.effect in BURN_EFFECTS:
+            new.target = new.target.with_status(Status.BURN)
+        if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
+            new.target = _all_stats_up(new.target)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
             flinched["E"] = True
         # Emitted AFTER the state changes above, because whether the flinch is reportable depends
@@ -902,8 +1035,25 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         apply_field(outcome)
         if outcome.damage:
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
-        if outcome.secondary and move.effect == 68:
-            new.our_attack_stage = max(-6, new.our_attack_stage - 1)
+        if outcome.secondary and move.effect == EFFECT_LOWER_ATTACK:
+            # Aurora Beam: our ATTACK only. Held on the Battler now, so it reaches the damage
+            # calculation the same way every other stage does.
+            new.ours = replace(new.ours, atk_stage=max(-6, new.ours.atk_stage - 1))
+        if outcome.secondary and move.effect == EFFECT_LOWER_SPATK:
+            # Mist Ball drops Sp. Atk, which is not inert: our special damage is what some
+            # parties use to bring the target down.
+            new.ours = replace(new.ours, spatk_stage=max(-6, new.ours.spatk_stage - 1))
+        if outcome.secondary and move.effect == EFFECT_LOWER_SPDEF:
+            # Luster Purge drops our Sp. DEF, raising every later special hit we take. Latios
+            # was already a configured target with this unmodelled, so the model under-predicted
+            # incoming damage from the first proc (clayton-957.26.1).
+            new.ours = replace(new.ours, spdef_stage=max(-6, new.ours.spdef_stage - 1))
+        if outcome.secondary and move.effect in BURN_EFFECTS:
+            new.ours = new.ours.with_status(Status.BURN)
+        if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
+            # Ancient Power boosts the ATTACKER, so the target's own stats -- including the Speed
+            # that the no-speed-tie guarantee depends on.
+            new.target = _all_stats_up(new.target)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
             flinched["M"] = True
         # Our side is the one with a bag, so both halves of the rule do work here. A flinch on
@@ -964,13 +1114,25 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     if not battle_halted():
         new.rain_turns = max(0, new.rain_turns - 1)
         new.mist_turns = max(0, new.mist_turns - 1)
+        new.safeguard_turns = max(0, new.safeguard_turns - 1)
+
+    # Burn's residual, which is a RESIDUAL in the sense that matters here: deterministic, free of
+    # RNG, and therefore not reported. `hp_before` is deliberately NOT moved by it, so the HP
+    # token still describes only what the turn did randomly -- and on a turn where something
+    # random also landed, the one token reports the total including the tick.
+    residual = 0
+    if not battle_halted() and not new.ours.fainted and new.ours.status is Status.BURN:
+        residual = burn_tick(new.ours)
+        new.ours = new.ours.with_hp(new.ours.hp - residual)
 
     # HP, then the faint. A faint turn carries no HP token at all: zero is implied by the X, and
     # once the replacement is out the number would describe a different Pokemon.
     if new.ours.fainted:
         new.faints += 1
         parts.append(_send_out(new, replacement))
-    elif new.ours.hp != hp_before:
+    elif new.ours.hp != hp_before - residual:
+        # Compared against the post-residual figure, so a turn whose ONLY change was the tick
+        # emits nothing while a turn that also took a hit still reports the real number.
         parts.append(tok.hp_token(new.ours.hp))
     new.rng = rng
     new.turn += 1

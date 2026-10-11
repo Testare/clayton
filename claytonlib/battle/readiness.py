@@ -59,6 +59,23 @@ SPEED_HALVING_ITEMS = frozenset({
 #: somewhere: `metronome_compass` mandates a Lagging Tail, and reading it as a Speed modifier
 #: would be wrong in both directions.
 MOVES_LAST_ITEMS = frozenset({"lagging tail", "full incense"})
+
+
+def speed_after_item(speed: int, held_item: str) -> int:
+    """`speed` after a Speed-modifying held item, in the ROM's order: halve, then the Choice x1.5.
+
+    The one implementation, shared by `battle_compass.sim.effective_speed` (which adds the stat
+    stage before and paralysis after) and by the readiness check. They have to agree: the
+    readiness check is what tells the player a tie is possible, and it was reading the Speed
+    straight off the summary screen -- which does not include a Choice Scarf's boost. So it
+    cleared a scarfed Lv70 Magneton at 124 when the figure that decides turn order is 186.
+    """
+    item = held_item.strip().lower()
+    if item in SPEED_HALVING_ITEMS:
+        speed //= 2
+    if item in CHOICE_SPEED_ITEMS:
+        speed = speed * 15 // 10
+    return speed
 # A margin this small or smaller is one or two stat points from flipping or tying.
 FRAGILE_SPEED_MARGIN = 2
 
@@ -136,6 +153,10 @@ class SpeedCheck:
     our_speed: int
     target_state: str
     target_speed: int
+    #: The target's Speed stage this row assumes. Carried so a caller can show the unboosted
+    #: rows and hide the rest unless they are actually dangerous -- seven stages times two
+    #: statuses is a table nobody reads.
+    target_speed_stage: int = 0
 
     @property
     def margin(self) -> int:
@@ -149,27 +170,64 @@ class SpeedCheck:
     def is_fragile(self) -> bool:
         return not self.is_tie and abs(self.margin) <= FRAGILE_SPEED_MARGIN
 
+    @property
+    def notable(self) -> bool:
+        """Worth showing: the unboosted rows, plus any boosted one that ties or nearly does."""
+        return self.target_speed_stage == 0 or self.is_tie or self.is_fragile
+
+
+def target_speed_states(target_speed: int, *,
+                        speed_stages: tuple[int, ...] = (0,)) -> dict[str, int]:
+    """``label -> Speed`` for every state the target can be in, in the ROM's own order.
+
+    **Stage first, then paralysis**, with integer truncation at each step -- the order in the
+    speed comparison (src/battle/overlay_12_0224E4FC.c). It is what makes a Speed boost dangerous
+    rather than merely annoying: stages multiply where paralysis divides, so **+6 cancels the
+    quartering exactly** and a paralyzed target at +6 is back to its full figure. That is the
+    no-speed-tie guarantee of sec 4.2 evaporating, and Ancient Power is in both Lv70 sets.
+
+    Intermediate stages matter too, and not only as a path to +6: a tie can land at +2 and at no
+    other stage, so every reachable one is enumerated rather than just the extremes.
+    """
+    from claytonlib.battle.damage import apply_stage
+
+    out: dict[str, int] = {}
+    for stage in sorted(set(speed_stages)):
+        boosted = apply_stage(target_speed, stage)
+        suffix = "" if stage == 0 else f" at +{stage} Spe"
+        out[f"unaffected{suffix}"] = boosted
+        out[f"paralyzed{suffix}"] = boosted // PARALYSIS_SPEED_DIVISOR
+    return out
+
 
 def speed_checks(our_speeds: dict[str, int], target_speed: int, *,
-                 include_our_paralysis: bool = True) -> list[SpeedCheck]:
+                 include_our_paralysis: bool = True,
+                 target_speed_stages: tuple[int, ...] = (0,)) -> list[SpeedCheck]:
     """Every (our Pokemon x target state) speed comparison worth asserting on.
 
     Our own paralysis is included because it quarters our Speed, which can flip an order that
     looked safe — a case sec 11.4 only noticed after the fact.
+
+    `target_speed_stages` is every Speed stage the target can reach. Pass ``(0,)`` for a target
+    that cannot boost, and ``range(7)`` for one holding Ancient Power -- its 10% raises *every*
+    stat, and the Speed half of that is what can claw back the paralysis we rely on.
     """
-    target_states = {
-        "unaffected": target_speed,
-        "paralyzed": int(target_speed * PARALYSIS_SPEED_FACTOR),
-    }
+    stage_of = {}
+    for stage in sorted(set(target_speed_stages)):
+        suffix = "" if stage == 0 else f" at +{stage} Spe"
+        stage_of[f"unaffected{suffix}"] = stage
+        stage_of[f"paralyzed{suffix}"] = stage
+    target_states = target_speed_states(target_speed, speed_stages=target_speed_stages)
     checks: list[SpeedCheck] = []
     for name, speed in our_speeds.items():
         our_states = {name: speed}
         if include_our_paralysis:
-            our_states[f"{name} (paralyzed)"] = int(speed * PARALYSIS_SPEED_FACTOR)
+            our_states[f"{name} (paralyzed)"] = speed // PARALYSIS_SPEED_DIVISOR
         for our_label, our_speed in our_states.items():
             for state, their_speed in target_states.items():
                 checks.append(SpeedCheck(ours=our_label, our_speed=our_speed,
-                                         target_state=state, target_speed=their_speed))
+                                         target_state=state, target_speed=their_speed,
+                                         target_speed_stage=stage_of[state]))
     return checks
 
 
@@ -181,11 +239,23 @@ def speed_warnings(checks: list[SpeedCheck]) -> list[str]:
             messages.append(
                 f"{check.ours} ties the target's Speed when it is {check.target_state} "
                 f"(both {check.our_speed}). A tie spends extra RNG rolls that are not "
-                f"simulated, so the run would desynchronise — change a Speed stat.")
+                f"simulated, so the run would desynchronise — change a Speed stat."
+                + _boost_note(check))
     for check in checks:
         if check.is_fragile:
             messages.append(
                 f"{check.ours} is within {abs(check.margin)} of the target's Speed when it is "
                 f"{check.target_state} ({check.our_speed} vs {check.target_speed}). One stat "
-                f"point either way would tie or reverse the order.")
+                f"point either way would tie or reverse the order."
+                + _boost_note(check))
     return messages
+
+
+def _boost_note(check: SpeedCheck) -> str:
+    """Where a boosted row came from, so it does not read as an arbitrary hypothetical."""
+    if check.target_speed_stage == 0:
+        return ""
+    extra = (" At +6 the boost cancels the quartering exactly, putting it back at full Speed."
+             if check.target_speed_stage == 6 else "")
+    return (f" This assumes the target has reached +{check.target_speed_stage} Speed, which its "
+            f"Ancient Power can do one stage at a time (10% per use).{extra}")

@@ -102,9 +102,23 @@ class Battler:
     #: required here -- defaulting on ``hp == 0`` silently healed a fainted Pokemon to full.
     hp: int | None = None
     status: Status = Status.NONE
-    #: Def/SpD stages, which affect damage.
+    #: Def/SpD stages, which affect damage taken.
     def_stage: int = 0
     spdef_stage: int = 0
+    #: Atk/SpA stages, which affect damage DEALT -- by either side. Ours matter because the
+    #: simulator really does model our damage: it is how the run knows whether enough False
+    #: Swipes have landed for the solver to start. The target's matter because Ancient Power
+    #: raises all of its stats at once.
+    #:
+    #: Separate fields because the moves are: Aurora Beam lowers Attack only, Mist Ball lowers
+    #: Sp. Atk only. `execute_move` used to pass one figure as BOTH, so an Aurora Beam drop was
+    #: silently applied to Sp. Atk as well.
+    atk_stage: int = 0
+    spatk_stage: int = 0
+    #: Speed stage. Raised on the target by Ancient Power, and it is the one boost that threatens
+    #: the no-speed-tie guarantee: stages are applied BEFORE paralysis quarters Speed, so +6
+    #: cancels the quartering exactly and puts the target back at full Speed.
+    speed_stage: int = 0
     #: Accuracy and evasion stages, which decide whether a move CAN miss. Nothing in Suicune's
     #: moveset touches either, but a 100%-accuracy move becomes missable the moment our accuracy
     #: is dropped or its evasion is raised -- so they are tracked rather than assumed neutral.
@@ -265,12 +279,21 @@ class BattleState:
     turn: int = 0
     #: Set once the target is at 1 HP and paralyzed; the solver asserts it (sec 2 / sec 15.3).
     phase: int = 1
-    #: -6..+6 on our side, from the target's Aurora Beam. Affects damage we DEAL, which we do
-    #: not model -- tracked only so the token stream can report the drop.
-    our_attack_stage: int = 0
+    #: Reports our Attack stage. A PROPERTY now, delegating to `ours.atk_stage`: the stage has
+    #: to live on the Battler, because that is what `execute_move` reads and what survives a
+    #: switch, and two copies of it would drift. Read-only for the same reason.
+    #:
+    #: Its old comment said the drop affects "damage we DEAL, which we do not model". We do model
+    #: it -- that is how the run knows when enough False Swipes have landed -- so this was never
+    #: merely cosmetic.
     target_trapped: bool = False
     mist_turns: int = 0
     rain_turns: int = 0
+    #: Safeguard on the TARGET's side, which is the only side that raises it. While it is up our
+    #: status moves fail, so it is a hard block on the Phase 2 precondition rather than a nuisance
+    #: (notes/battle_compass_next_targets.md): paralyze before it goes up, or wait out the five
+    #: turns. A counter rather than a bool because it expires, unlike Water Sport.
+    safeguard_turns: int = 0
     #: Water Sport, set by the TARGET. A per-battler volatile flag in the ROM rather than a turn
     #: counter, so once up it stays up for the rest of a wild battle -- the user never switches
     #: out. A bool, not a counter, for that reason. Our own side using Water Sport is unmodelled
@@ -290,6 +313,10 @@ class BattleState:
     #: Set when a standard ball captures: the run is lost, not won (sec 2.3).
     captured_in_wrong_ball: bool = False
     log: list = field(default_factory=list)
+
+    @property
+    def our_attack_stage(self) -> int:
+        return self.ours.atk_stage
 
     @property
     def healthy_bench(self) -> tuple[int, ...]:
@@ -329,8 +356,9 @@ class BattleState:
         return BattleState(
             ours=self.ours, target=self.target, rng=self.rng, bench=self.bench,
             turn=self.turn, phase=self.phase,
-            our_attack_stage=self.our_attack_stage, target_trapped=self.target_trapped,
+            target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
+            safeguard_turns=self.safeguard_turns,
             target_water_sport=self.target_water_sport, faints=self.faints,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,

@@ -4810,9 +4810,14 @@ function hrSecondaryMark(side){
 // Whether this turn did anything that could have taken us down. Not "did it", which only the
 // player knows -- just whether the question is worth asking at all.
 function hrCanFaint(){
-  const t = _hrTurn;
+  const t = _hrTurn, s = _huntSnap;
   if (t.action === "X") return true;                       // that IS the report
   if (t.ours && t.ours.prevented === "cfz") return true;   // a confusion self-hit
+  // Burn ticks at the end of EVERY turn while it is up, so it can finish us on a turn where
+  // nothing else touched us at all -- the `E3h~X2` case, where the move burned us, we survived
+  // it, and the tick did the rest. The tick emits no HP token of its own (it is deterministic),
+  // so without this the faint would have no question attached to it.
+  if (s.burn_tick > 0) return true;
   return hrLanded(t.target);
 }
 
@@ -5370,7 +5375,9 @@ function hrInterview(){
     blocks.push(hrChips(`Did ${who.name} faint?`, [
       hrChip("No", "hrSet('fainted',false)", t.fainted === false),
       hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
-    ], "assumed no"));
+    ], s.burn_tick > 0
+         ? `assumed no — burn takes ${s.burn_tick} at end of turn`
+         : "assumed no"));
   }
   if (!caught && hrFainted()){
     const healthy = hrHealthyBench();

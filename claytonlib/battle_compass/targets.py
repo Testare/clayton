@@ -66,7 +66,9 @@ def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
     to reuse a modelled effect passes without anyone editing a list.
     """
     from claytonlib.battle.damage import unsupported_reason
-    from claytonlib.battle_compass.sim import MODELLED_TARGET_EFFECTS
+    from claytonlib.battle_compass.sim import (
+        MODELLED_TARGET_EFFECTS, VARIABLE_POWER_EFFECTS,
+    )
     from claytonlib.moves import resolve_move
 
     problems: list[tuple[str, str]] = []
@@ -78,7 +80,10 @@ def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
         if move.effect not in MODELLED_TARGET_EFFECTS:
             problems.append((name, f"effect {move.effect} is not modelled"))
             continue
-        reason = unsupported_reason(move)
+        # `power_known` for a move whose power is computed from state: Punishment's power 1 in
+        # the table means "work it out", not "we have no rule".
+        reason = unsupported_reason(
+            move, power_known=move.effect in VARIABLE_POWER_EFFECTS)
         # A status move "deals no damage" is the expected answer, not a gap.
         if reason is not None and "status move" not in reason:
             problems.append((name, reason))
