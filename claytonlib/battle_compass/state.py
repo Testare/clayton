@@ -125,6 +125,17 @@ class Battler:
     #: directly as the simulator's own tests do; `sim.party_number` then falls back to the old
     #: positional guess. Last in the field order so positional construction keeps working.
     party_slot: int = 0
+    #: Which move slot a Choice item has locked this Pokemon into, or None.
+    #:
+    #: The ROM records the move itself (``moveNoChoice``) the first time a holder of a
+    #: Choice Band / Scarf / Specs attacks, and refuses every other move until it leaves the
+    #: field. Kept as a SLOT here because that is what the M1-M4 tokens and `usable_slots` speak
+    #: in. Cleared on switching out, which is how the lock ends.
+    #:
+    #: It matters to Battle Compass through the solver rather than through damage: a dedicated
+    #: scarfed paralyzer is locked into Thunder Wave the moment it uses it, and a plan that plays
+    #: one of its other three moves is a plan the game will not accept.
+    choice_locked_slot: int | None = None
 
     def __post_init__(self):
         if self.hp is None:
@@ -173,12 +184,24 @@ class Battler:
             return None
         return resolve_move(self.moves[slot])
 
+    @property
+    def holds_choice_item(self) -> bool:
+        """Whether this Pokemon's held item locks it into one move once it attacks."""
+        from claytonlib.battle.readiness import CHOICE_ITEMS
+
+        return self.held_item.strip().lower() in CHOICE_ITEMS
+
     def usable_slots(self) -> tuple[int, ...]:
-        """Slots with a known move and PP remaining.
+        """Slots with a known move and PP remaining -- and, under a Choice item, only the one.
 
         This is the list the wild move-selection roll indexes into: ``RANDOM % len(usable)``
-        picks a position in it, so the modulus shrinks as PP runs out (sec 5.2 R4).
+        picks a position in it, so the modulus shrinks as PP runs out (sec 5.2 R4). No wild
+        target holds an item, so the Choice branch below never narrows that roll; it narrows what
+        OUR side may be offered and what the solver may plan.
         """
+        if self.choice_locked_slot is not None:
+            slot = self.choice_locked_slot
+            return (slot,) if self.move(slot) is not None and self.pp_left(slot) > 0 else ()
         return tuple(i for i in range(len(self.moves))
                      if self.move(i) is not None and self.pp_left(i) > 0)
 

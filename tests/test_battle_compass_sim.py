@@ -119,6 +119,9 @@ class TestRngPlumbing(unittest.TestCase):
         self.assertTrue(slots <= {1, 2, 3})
 
 
+# Every item turn below uses X Sp. Def rather than a potion: these fixtures are at full HP,
+# where the game refuses a heal (`items.unusable_reason`). An item's ADVANCE cost is zero either
+# way, which is all these assert.
 class TestTurnAccounting(unittest.TestCase):
     """Every turn's roll count must equal battle.turn's verified skeleton."""
 
@@ -144,18 +147,18 @@ class TestTurnAccounting(unittest.TestCase):
         The explicit `item_code` is required now. It used to default to a Potion inside the
         simulator, which is how the solver came to price a Hyper Potion and simulate a Potion.
         """
-        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="p")
+        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="xsd")
         self.assertGreaterEqual(item.rng_offset, self.FIXED)
 
     def test_an_item_turn_is_cheaper_than_a_move_turn(self):
-        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="p").rng_offset
+        item = simulate_turn(_state(), Action.ITEM, CONFIG, item_code="xsd").rng_offset
         move = simulate_turn(_state(), Action.MOVE_1, CONFIG).rng_offset
         self.assertLess(item, move)
 
     def test_our_action_choice_changes_the_offset(self):
         """The whole basis of steering: different actions cost different numbers of rolls."""
         offsets = {a: simulate_turn(_state(), a, CONFIG,
-                                   **({"item_code": "p"} if a is Action.ITEM else {})).rng_offset
+                                   **({"item_code": "xsd"} if a is Action.ITEM else {})).rng_offset
                    for a in (Action.ITEM, Action.MOVE_2, Action.MOVE_4, Action.MOVE_1)}
         self.assertGreater(len(set(offsets.values())), 1)
 

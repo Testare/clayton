@@ -297,13 +297,26 @@ def choose_item(state: BattleState, config: SolverConfig) -> tuple[str, int] | N
     slightly too eagerly rather than too late.
     """
     hp, max_hp = state.ours.hp, state.ours.max_hp
-    if hp <= config.danger_floor:
+
+    def usable(code: str) -> bool:
+        """Whether the game would let us select it -- a Potion at full HP, it would not.
+
+        Checked here as well as in the simulator because this is what PICKS the item, and the
+        simulator now raises on an unusable one. The two meet in the case where the danger floor
+        exceeds our max HP: we are then "in danger" at full health, and the old unconditional
+        Hyper Potion would have been planned, simulated, and refused mid-search.
+        """
+        return items.unusable_reason(
+            code, hp=hp, max_hp=max_hp,
+            statused=state.ours.status is not Status.NONE) is None
+
+    if hp <= config.danger_floor and usable("hp"):
         # Nothing mitigates a critical hit, so a full heal is the only answer here (sec 12.3).
         return "hp", ITEM_PRICES["hp"]
     if state.ours.spdef_stage < 6:
         # X Sp. Def cuts chip damage but not crits, so it defers heals without moving the floor.
         return "xsd", ITEM_PRICES["xsd"]
-    if hp < max_hp:
+    if usable("p"):
         return "p", ITEM_PRICES["p"]
     for code in ("xd", "gs"):
         return code, ITEM_PRICES[code]
@@ -333,9 +346,12 @@ def _legal_actions(state: BattleState, config: SolverConfig,
         # Only an item can prevent the faint, so the branching factor collapses to one.
         return out
 
+    # `usable_slots` rather than the raw slot list, because it is what honours a Choice lock: a
+    # scarfed paralyzer is locked into Thunder Wave the moment it uses it, and planning one of
+    # its other three moves is planning a turn the game will refuse.
+    usable = state.ours.usable_slots()
     for slot in config.allowed_moves:
-        move = state.ours.move(slot)
-        if move is None or state.ours.pp_left(slot) <= 0:
+        if slot not in usable:
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:

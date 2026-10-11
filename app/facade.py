@@ -941,7 +941,10 @@ class Facade:
             }
 
         # The target's stats are derived, not entered — its IVs come from RNG manipulation.
-        if not h.target.hard_errors():
+        # Gated on the SPREAD rather than on every target error: an unsupported encounter still
+        # has base stats worth showing, and a species that is not a configured target is
+        # reported as its own hard error rather than by withholding this.
+        if not h.target.spread_errors():
             try:
                 stats = derive_species_stats(
                     h.target.species, h.target.level, h.target.nature, ivs=dict(h.target.ivs))

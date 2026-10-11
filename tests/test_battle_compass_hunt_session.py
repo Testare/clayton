@@ -630,7 +630,9 @@ class TestTokenOrderIsChronological(unittest.TestCase):
         ours, target = self._pair(60)
         state = BattleState(ours=ours, target=target, rng=SEED, phase=1)
         from claytonlib.battle_compass.sim import simulate_turn
-        for action, kwargs in ((Action.ITEM, {"item_code": "p"}),
+        # X Sp. Def rather than a Potion: these fixtures are at full HP, where the game refuses
+        # a heal. The action's PLACE in the turn is what is under test, not which item it was.
+        for action, kwargs in ((Action.ITEM, {"item_code": "xsd"}),
                                (Action.CAPTURE_BALL, {})):
             nxt = simulate_turn(replace(state, phase=2), action, HUNT, **kwargs)
             rendered = tok.render_turn(tok.normalise(nxt.log[-1]))

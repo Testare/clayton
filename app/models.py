@@ -603,6 +603,17 @@ class HuntTarget:
     ivs: dict = field(default_factory=dict)
 
     def hard_errors(self) -> list[str]:
+        """Everything wrong with this target: its spread, and the encounter itself."""
+        return self.spread_errors() + self._encounter_errors()
+
+    def spread_errors(self) -> list[str]:
+        """Only what makes the SPREAD unusable -- a missing species, level, nature or IV.
+
+        Split out from `hard_errors` because the two have different consumers. Deriving stats
+        needs the spread and nothing else, so `hunt_readiness` gates the derived stats on this:
+        an unconfigured species still has base stats worth showing, and suppressing them because
+        the *encounter* is unsupported hides information that was perfectly good.
+        """
         errors: list[str] = []
         if not self.species:
             errors.append("target needs a species")
@@ -617,6 +628,42 @@ class HuntTarget:
                         if isinstance(self.ivs.get(k), int) and not 0 <= self.ivs[k] <= 31]
         if out_of_range:
             errors.append("target IVs out of range: " + ", ".join(out_of_range))
+        return errors
+
+    def _encounter_errors(self) -> list[str]:
+        """Whether this species can be simulated at all, and at the level entered.
+
+        Both are hard rather than advisory, and for the same reason: `execute_move` treats an
+        effect it does not recognise as inert instead of refusing it, so a target with an
+        unmodelled move is not approximately simulated -- it is confidently wrong on every turn
+        that move fires, which eliminates the true seed. Better to refuse the run than to spend
+        an hour of real play on predictions that cannot match.
+
+        The level check exists because two of these encounters are version-split: Ho-Oh is Lv45
+        in HeartGold and Lv70 in SoulSilver, with a different moveset each, and only one of the
+        two is on file. A player on the other version would otherwise be simulated against four
+        moves their Pokemon does not have.
+        """
+        from claytonlib.battle_compass.targets import (
+            VERSION_SPLIT_LEVELS, encounter_level, supported, unsupported_moves,
+        )
+
+        if not self.species:
+            return []
+        key = self.species.strip().lower().replace(" ", "-")
+        if key not in supported():
+            return [f"{self.species} is not a configured Battle Compass target "
+                    f"(have: {', '.join(supported())})"]
+        errors: list[str] = []
+        known = encounter_level(key)
+        if self.level is not None and self.level != known:
+            note = VERSION_SPLIT_LEVELS.get(key)
+            errors.append(
+                f"the {self.species} on file is the Lv{known} encounter, not Lv{self.level}"
+                + (f" -- Lv{note[0]} is {note[1]}, and it is not configured" if note else ""))
+        _, problem = unsupported_moves(key)
+        if problem:
+            errors.append(problem)
         return errors
 
     def to_dict(self) -> dict:

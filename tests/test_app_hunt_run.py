@@ -604,8 +604,10 @@ class TestSwitchingThroughTheFacade(unittest.TestCase):
         started = facade.hunt_session_start(hunt_id)
         sid, snap = started["session_id"], started["snapshot"]
         truth = snap["candidates"][0]["seed"]
-        predicted = facade.hunt_session_predict(sid, "I", item_code="sp")[truth]
-        self.assertTrue(predicted.startswith("Isp"), predicted)
+        # An X item rather than a potion: the run starts at full HP, where the game refuses a
+        # heal outright. Which code it is does not matter to what this asserts.
+        predicted = facade.hunt_session_predict(sid, "I", item_code="xsd")[truth]
+        self.assertTrue(predicted.startswith("Ixsd"), predicted)
 
     def test_the_page_sends_both_choices(self):
         html = INDEX.read_text()
@@ -1720,3 +1722,108 @@ class TestThePageSaysWhetherThePlanHeld(unittest.TestCase):
         if snap["solution"] and snap["solution"].get("found"):
             self.assertIn("replanned", snap["solution"])
             self.assertIn("replans", snap["solution"])
+
+
+class TestAnItemTheGameRefusesIsNotOffered(unittest.TestCase):
+    """You cannot use a Potion at full HP -- `CanUseItemOnPokemon` needs
+    ``hp != 0 && hp < maxHP`` (src/use_item_on_mon.c).
+
+    That is what makes the turn unreportable rather than merely odd: at full HP `heal_amount`
+    caps the restore at zero, so the simulator renders no HP token -- correctly -- while
+    `turn_requires_hp` demands one for any healing item, and validation then failed with "the
+    target hit us", naming a cause that had not happened. Since the game refuses the action, the
+    fix is to stop offering it rather than to make the impossible reportable.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_a_potion_at_full_hp_is_refused(self):
+        from claytonlib.battle_compass import items
+
+        self.assertIsNotNone(items.unusable_reason("p", hp=153, max_hp=153, statused=False))
+        self.assertIsNone(items.unusable_reason("p", hp=100, max_hp=153, statused=False))
+
+    def test_a_cure_with_nothing_to_cure_is_refused(self):
+        from claytonlib.battle_compass import items
+
+        self.assertIsNotNone(items.unusable_reason("fh", hp=153, max_hp=153, statused=False))
+        self.assertIsNone(items.unusable_reason("fh", hp=153, max_hp=153, statused=True))
+
+    def test_a_full_restore_at_full_hp_still_works_on_a_status(self):
+        """The case that needs both halves, exactly as the ROM's status checks run before its HP
+        check."""
+        from claytonlib.battle_compass import items
+
+        self.assertIsNone(items.unusable_reason("fr", hp=153, max_hp=153, statused=True))
+        self.assertIsNotNone(items.unusable_reason("fr", hp=153, max_hp=153, statused=False))
+
+    def test_an_x_item_is_always_selectable(self):
+        from claytonlib.battle_compass import items
+
+        self.assertIsNone(items.unusable_reason("xsd", hp=153, max_hp=153, statused=False))
+
+    def test_the_simulator_raises_rather_than_rendering_it(self):
+        from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
+        from claytonlib.battle_compass.state import Action, Battler, BattleState
+
+        ours = Battler(name="Smeargle", level=58, types=("Normal",),
+                       stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79,
+                              "spe": 160},
+                       moves=("False Swipe",), pp=(40,))
+        target = Battler(name="Suicune", level=40, types=("Water",),
+                         stats={"hp": 1, "atk": 75, "def": 115, "spa": 90, "spd": 115,
+                                "spe": 85},
+                         moves=("Mist",), pp=(30,), hp=1)
+        state = BattleState(ours=ours, target=target, rng=0x1234, phase=2)
+        with self.assertRaises(ValueError):
+            simulate_turn(state, Action.ITEM, HuntConfig(target_catch_rate=3), item_code="p")
+
+    def test_the_snapshot_says_which_items_are_refused(self):
+        facade, hunt_id = _ready_hunt()
+        started = facade.hunt_session_start(hunt_id)
+        by_code = {i["code"]: i for i in started["snapshot"]["items"]}
+        # The run starts at full HP and unstatused, so every heal and every cure is refused.
+        self.assertIsNotNone(by_code["p"]["unusable"])
+        self.assertIsNotNone(by_code["fh"]["unusable"])
+        self.assertIsNone(by_code["xsd"]["unusable"])
+
+    def test_the_page_offers_only_the_usable_ones_and_explains_the_rest(self):
+        # Anchored on the question itself: the branch condition appears in `hrTokens` too, and
+        # slicing from there reads the wrong function entirely.
+        body = self.html[self.html.index('blocks.push(hrChips("Which item?"') - 400:]
+        body = body[:body.index("} else if")]
+        self.assertIn("filter(i => !i.unusable)", body)
+        self.assertIn("hrChipOff(i.name, i.unusable)", body)
+
+    def test_an_item_action_is_not_even_offered_when_nothing_is_usable(self):
+        """Belt as well as braces: `legal_actions` drops the action when every item is refused,
+        and a status cure whenever there is no status."""
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        # Full HP and unstatused: X items are still selectable, so ITEM stays; Ic does not.
+        self.assertIn("I", snap["legal_actions"])
+        self.assertNotIn("Ic", snap["legal_actions"])
+
+    def test_the_solver_never_picks_one_it_would_be_refused(self):
+        """The two meet when the danger floor exceeds our max HP -- every turn is then "in
+        danger" at full health, and the old unconditional Hyper Potion would have been planned,
+        simulated and refused mid-search."""
+        from claytonlib.battle_compass import items
+        from claytonlib.battle_compass.solver import SolverConfig, choose_item
+        from claytonlib.battle_compass.state import Battler, BattleState
+
+        ours = Battler(name="Magneton", level=70, types=("Electric", "Steel"),
+                       stats={"hp": 171, "atk": 80, "def": 159, "spa": 80, "spd": 80,
+                              "spe": 124},
+                       moves=("Thunder Wave",), pp=(20,))
+        target = Battler(name="Ho-Oh", level=70, types=("Fire", "Flying"),
+                         stats={"hp": 1, "atk": 208, "def": 152, "spa": 180, "spd": 242,
+                                "spe": 152},
+                         moves=("Sacred Fire",), pp=(5,), hp=1)
+        state = BattleState(ours=ours, target=target, rng=0x1234, phase=2)
+        # A floor far above max HP, which is the measured Ho-Oh case.
+        picked = choose_item(state, SolverConfig(danger_floor=480))
+        self.assertIsNotNone(picked)
+        self.assertIsNone(items.unusable_reason(
+            picked[0], hp=ours.hp, max_hp=ours.max_hp, statused=False))

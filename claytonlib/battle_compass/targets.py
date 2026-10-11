@@ -31,7 +31,64 @@ STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # cures nothing and simply fails (notes/battle_compass_next_targets.md sec 4b).
     "latias": (40, ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt")),
     "latios": (40, ("Protect", "Refresh", "Luster Purge", "Zen Headbutt")),
+    # HGSS Bell Tower. The level is VERSION-SPLIT, and this row is **SoulSilver's**:
+    # `GetGameVersion` then `Compare VAR_SPECIAL_RESULT, 7` / `GoToIfNe` picks Lv45, and the
+    # fall-through picks Lv70 (scr_seq_0021_D17R0110.s:63-73). HeartGold's Lv45 Ho-Oh is a
+    # DIFFERENT set -- Extrasensory / Sunny Day / Fire Blast / Sacred Fire -- so a HeartGold hunt
+    # must not use this row. `encounter_level` is what catches that: the configured level is
+    # cross-checked against it, so entering 45 here is reported rather than silently simulated
+    # with the wrong four moves.
+    #
+    # Derived from wotbl.narc the same way as the Lati twins: `InitBoxMonMoveset` keeps the last
+    # four learnable moves in LEARN order, which is the slot order E1-E4 depends on.
+    "ho-oh": (70, ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard")),
 }
+
+#: The other side of each version-split encounter, for the cross-check's error message. Not in
+#: `STATIC_ENCOUNTERS` because nothing can simulate it yet either -- it is here so a player on
+#: the wrong version is told what they are actually facing rather than just refused.
+VERSION_SPLIT_LEVELS: dict[str, tuple[int, str]] = {
+    "ho-oh": (45, "HeartGold's Lv45 Ho-Oh, which has a different moveset"),
+}
+
+
+def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
+    """``((move name, why), ...)`` for every move in this encounter's set the simulator cannot
+    model, plus the same as one sentence.
+
+    The check that stops "configured" from meaning "silently mis-simulated". `execute_move` has
+    no notion of an unknown effect: an unrecognised status move is treated as having worked and
+    changed nothing, and an unrecognised damaging move as plain damage. So a missing secondary is
+    inert rather than refused -- and for the target's moves that is unsound, not imprecise,
+    because an unnoticed modifier eliminates the true seed (``battle.damage``'s own warning).
+
+    Deliberately keyed on the EFFECT id rather than the move name, so a new target that happens
+    to reuse a modelled effect passes without anyone editing a list.
+    """
+    from claytonlib.battle.damage import unsupported_reason
+    from claytonlib.battle_compass.sim import MODELLED_TARGET_EFFECTS
+    from claytonlib.moves import resolve_move
+
+    problems: list[tuple[str, str]] = []
+    for name in moveset(species):
+        move = resolve_move(name)
+        if move is None:
+            problems.append((name, "is not in the move table at all"))
+            continue
+        if move.effect not in MODELLED_TARGET_EFFECTS:
+            problems.append((name, f"effect {move.effect} is not modelled"))
+            continue
+        reason = unsupported_reason(move)
+        # A status move "deals no damage" is the expected answer, not a gap.
+        if reason is not None and "status move" not in reason:
+            problems.append((name, reason))
+    if not problems:
+        return (), None
+    listed = "; ".join(f"{name} ({why})" for name, why in problems)
+    return tuple(problems), (
+        f"{species} cannot be simulated yet -- {listed}. The simulator treats an unmodelled "
+        f"effect as inert rather than refusing it, so running this would mis-predict every turn "
+        f"it fires on and eliminate the true seed.")
 
 
 def moveset(species: str) -> tuple[str, ...]:

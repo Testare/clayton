@@ -376,8 +376,14 @@ class TestTheHyperPotionWasSimulatedAsAPotion(unittest.TestCase):
         self.assertIn("item_code", str(caught.exception))
 
     def test_a_status_cure_may_still_default(self):
-        """ITEM_CURE has one sensible reading, unlike "a potion"."""
-        state = simulate_turn(self._hurt_state(), Action.ITEM_CURE, HUNT)
+        """ITEM_CURE has one sensible reading, unlike "a potion".
+
+        Needs an actual status: the game will not let you select a Full Heal with nothing to
+        cure, so the simulator refuses it too.
+        """
+        hurt = self._hurt_state()
+        hurt.ours = hurt.ours.with_status(Status.PARALYSIS)
+        state = simulate_turn(hurt, Action.ITEM_CURE, HUNT)
         self.assertIn("Ifh", "".join(state.log[-1]))
 
     def test_ranking_supplies_its_own_stand_in_explicitly(self):
@@ -425,9 +431,12 @@ class TestSavingTheRun(unittest.TestCase):
         """The difference between advice and play is exactly what a diagnostic record is for."""
         session = _pinned_session()
         self.assertEqual(session.items_spent(), {})
-        predicted = session.predict(Action.ITEM, item_code="sp")[CAPTURING_SEED]
-        session.observe(Action.ITEM, (predicted,), item_code="sp")
-        self.assertEqual(session.items_spent(), {"sp": 1})
+        # X Defend rather than a Super Potion: this session is at full HP, where the game refuses
+        # a heal. Which item it is is incidental -- the point is that the bill comes from the
+        # turns REPORTED rather than from whatever the solver advised.
+        predicted = session.predict(Action.ITEM, item_code="xd")[CAPTURING_SEED]
+        session.observe(Action.ITEM, (predicted,), item_code="xd")
+        self.assertEqual(session.items_spent(), {"xd": 1})
 
     def test_the_record_carries_the_window_it_was_found_in(self):
         record = _pinned_session().run_record()

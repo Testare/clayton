@@ -91,6 +91,38 @@ def heal_amount(code: str, current_hp: int, max_hp: int) -> int:
     return min(entry.heal, missing)
 
 
+def unusable_reason(code: str, *, hp: int, max_hp: int, statused: bool) -> str | None:
+    """Why this item cannot be used right now, or None if it can.
+
+    Transcribed from `CanUseItemOnPokemon` (src/use_item_on_mon.c): the status cures return
+    usable only when the Pokemon actually HAS the matching status, and an HP restorer needs
+    ``hp != 0 && hp < maxHP``. **You cannot use a Potion at full HP** -- the game simply will not
+    let you select it.
+
+    That is not a nicety, it is what makes the turn reportable. At full HP `heal_amount` caps the
+    restore at zero, so the simulator renders the turn with no HP token -- correctly, since HP
+    did not change -- while `tokens.turn_requires_hp` demands one for any healing item. The turn
+    then failed validation with "the target hit us", naming a cause that had not happened. Since
+    the real game refuses the action outright, refusing it here removes the contradiction rather
+    than papering over it.
+
+    A Full Restore is the case that needs both halves: at full HP it is still usable if there is
+    a status to cure, exactly as the ROM's status checks run before its HP check.
+    """
+    entry = item(code)
+    can_heal = entry.heals and 0 < hp < max_hp
+    can_cure = entry.cures_status and statused
+    if can_heal or can_cure:
+        return None
+    if entry.heals and entry.cures_status:
+        return (f"{entry.name} would do nothing: already on full HP and not statused")
+    if entry.heals:
+        return f"{entry.name} cannot be used at full HP"
+    if entry.cures_status:
+        return f"{entry.name} cannot be used with no status to cure"
+    return None            # an X item or Guard Spec. is always selectable in battle
+
+
 def smallest_heal_covering(missing: int) -> Item | None:
     """The cheapest potion that fully restores `missing` HP, or the largest if none does.
 

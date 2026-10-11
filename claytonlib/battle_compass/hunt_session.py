@@ -405,8 +405,17 @@ class HuntSession:
         fainted before moving is not a thing that can have happened.
         """
         state = next(iter(self._session.states.values()))
+        statused = state.ours.status is not Status.NONE
         actions = [_MOVE_ACTIONS[slot] for slot in state.ours.usable_slots()]
-        actions.extend([Action.ITEM, Action.ITEM_CURE])
+        # An item action is only legal while SOME item is selectable, and a status cure only
+        # while there is a status to cure. The game refuses a Potion at full HP and a Full Heal
+        # on a healthy Pokemon, so offering either is offering a turn that cannot happen.
+        if any(items.unusable_reason(i.code, hp=state.ours.hp, max_hp=state.ours.max_hp,
+                                     statused=statused) is None
+               for i in items.ITEMS):
+            actions.append(Action.ITEM)
+        if statused:
+            actions.append(Action.ITEM_CURE)
         actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
         if self.phase is Phase.SETUP and state.healthy_bench:
             actions.append(Action.SWITCH)
@@ -917,9 +926,15 @@ class HuntSession:
             # Whether "fainted before moving" is a reportable outcome at all.
             "target_can_move_first": self.target_can_move_first(),
             "revive_price": items.REVIVE_PRICE,
+            # `unusable` is why the game would refuse this item right now, or null. The page
+            # offers only the usable ones: a Potion at full HP cannot be selected in-game, and a
+            # turn reporting one renders without an HP token while the grammar demands one.
             "items": [{"code": i.code, "name": i.name, "price": i.price,
                        "heals": i.heals, "cures_status": i.cures_status,
-                       "heal": i.heal}
+                       "heal": i.heal,
+                       "unusable": items.unusable_reason(
+                           i.code, hp=state.ours.hp, max_hp=state.ours.max_hp,
+                           statused=state.ours.status is not Status.NONE)}
                       for i in items.ITEMS],
             "capture_ball": self.capture_ball,
             "danger_floor": self.danger_floor,

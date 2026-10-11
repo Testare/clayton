@@ -47,9 +47,13 @@ SECOND_SIBLING_MISSABLE_MEDIAN_TURNS = 1
 
 #: Stand-in item for RANKING an unspecified "use an item" action. Legitimate because an item
 #: costs zero RNG advances, so every candidate consumes the same stream whichever is used and the
-#: partition this ranking measures is identical. It is a Potion only because something had to be
-#: named; nothing should read it as a recommendation.
-RANKING_ITEM = "p"
+#: partition this ranking measures is identical. Nothing should read it as a recommendation.
+#:
+#: Guard Spec. rather than a Potion, and for two reasons that both matter now. It is **always
+#: selectable** -- the game refuses a Potion at full HP, which is where a run starts, so ranking
+#: with one raised rather than ranked. And it changes no state at all, where an X item would move
+#: a stat stage inside the what-if.
+RANKING_ITEM = "gs"
 
 
 class Phase(IntEnum):

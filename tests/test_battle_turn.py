@@ -134,8 +134,15 @@ class TestTurnUpperBound(unittest.TestCase):
                 # damaged us, so the simulator would render a turn the report contradicts.
                 if action is Action.FAINTED:
                     continue
+                # Nor is a status cure: this Smeargle has no status, and the game will not let
+                # you select a Full Heal with nothing to cure. Its advance cost is zero, the
+                # same as ITEM's below, so the bound is still exercised.
+                if action is Action.ITEM_CURE:
+                    continue
                 # ITEM needs its code stated; the simulator no longer guesses one.
-                extra = {"item_code": "p"} if action is Action.ITEM else {}
+                # X Sp. Def: the fixture is at full HP, where a heal is refused. Zero advances
+                # either way, which is what the bound is about.
+                extra = {"item_code": "xsd"} if action is Action.ITEM else {}
                 spent = (simulate_turn(state, action, hunt, **extra).rng_offset
                          - state.rng_offset)
                 worst = max(worst, spent)

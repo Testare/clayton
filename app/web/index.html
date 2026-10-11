@@ -5281,10 +5281,16 @@ function hrInterview(){
 
   // 2. Which item / who came in — part of the ACTION, not its outcome.
   if (t.action === "I" || t.action === "Ic"){
-    blocks.push(hrChips("Which item?", s.items.map(i => hrChip(
+    // Only what the game would let you select. A Potion at full HP cannot be used in-game, and
+    // reporting one produced a turn with no HP token that the grammar then rejected -- so the
+    // fix is to stop offering it rather than to make the impossible reportable.
+    const usable = (s.items || []).filter(i => !i.unusable);
+    const refused = (s.items || []).filter(i => i.unusable);
+    blocks.push(hrChips("Which item?", usable.map(i => hrChip(
       i.name, `hrSet('ours',{item:'${i.code}'})`, t.ours?.item === i.code,
       i.heal === null ? "Restores all HP" : i.heals ? `Restores ${i.heal} HP`
-        : i.cures_status ? "Cures status" : `₽${i.price}`))));
+        : i.cures_status ? "Cures status" : `₽${i.price}`))
+      .concat(refused.map(i => hrChipOff(i.name, i.unusable)))));
     if (!t.ours?.item) return blocks.join("");
   } else if (t.action === "S"){
     const able = (s.bench || []).filter(b => !b.fainted);

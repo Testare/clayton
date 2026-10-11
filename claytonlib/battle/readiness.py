@@ -27,8 +27,38 @@ from claytonlib.moves import CATEGORY_STATUS, Move
 
 # sec 1.1, measured by simulation over real LCRNG streams.
 REACHABILITY_BY_DISTINCT_COSTS: dict[int, int] = {0: 0, 1: 36, 2: 95, 3: 99}
-# Gen 4 paralysis quarters Speed.  Believed, not yet confirmed against the emulator (R8).
+# Gen 4 paralysis quarters Speed [verified: `speed1 /= 4` in the speed comparison,
+# src/battle/overlay_12_0224E4FC.c].  Kept as a float for the callers that report a margin;
+# `battle_compass.sim.effective_speed` divides by `PARALYSIS_SPEED_DIVISOR` instead, because the
+# ROM truncates at that step and the order it truncates in matters once a held item is involved.
 PARALYSIS_SPEED_FACTOR = 0.25
+PARALYSIS_SPEED_DIVISOR = 4
+
+# --- speed-modifying held items --------------------------------------------------------------
+#
+# Transcribed from the speed comparison in src/battle/overlay_12_0224E4FC.c, and the ORDER is the
+# point. It goes: stat stages, then the weather abilities, then the halving items, then the Choice
+# Scarf, then Quick Powder, and only THEN paralysis. Every step truncates, so a scarfed and
+# paralyzed Pokemon is `spe * 15 / 10 / 4` and not `spe / 4 * 15 / 10` -- the two disagree, and
+# turn order is what the disagreement decides.
+#
+# The summary screen does not show any of this, so it has to be MODELLED rather than entered: a
+# player reads 124 off a scarfed Magneton that is really moving at 186.
+CHOICE_SPEED_ITEMS = frozenset({"choice scarf"})
+#: Every Choice item, for the move LOCK rather than for Speed. All three lock
+#: (`HOLD_EFFECT_CHOICE_ATK` / `_SPEED` / `_SPATK` in the ROM's check); only the Scarf is a Speed
+#: modifier, which is why these are two sets rather than one.
+CHOICE_ITEMS = frozenset({"choice scarf", "choice band", "choice specs"})
+#: `sSpeedHalvingItemEffects`: Macho Brace, Iron Ball and the six Power items.
+SPEED_HALVING_ITEMS = frozenset({
+    "macho brace", "iron ball", "power weight", "power bracer", "power belt",
+    "power anklet", "power lens", "power band",
+})
+#: Lagging Tail and Full Incense do not touch Speed at all -- they set a lowered-priority flag, so
+#: the holder moves last within its bracket. Named here so the distinction is written down
+#: somewhere: `metronome_compass` mandates a Lagging Tail, and reading it as a Speed modifier
+#: would be wrong in both directions.
+MOVES_LAST_ITEMS = frozenset({"lagging tail", "full incense"})
 # A margin this small or smaller is one or two stat points from flipping or tying.
 FRAGILE_SPEED_MARGIN = 2
 

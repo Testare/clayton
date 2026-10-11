@@ -309,8 +309,8 @@ class TestOnlyASelectedMoveCanBeFlinched(unittest.TestCase):
     is why each kind gets its own row here rather than trusting one of them to stand for the rest.
     """
 
-    def _sweep(self, action, our_speed, n=4000, **kw):
-        ours = _ours(speed=our_speed)
+    def _sweep(self, action, our_speed, n=4000, ours_status=Status.NONE, **kw):
+        ours = _ours(speed=our_speed, status=ours_status)
         bench = (_ours(speed=70, name="Magneton"),)
         target = _latias()
         emitted = 0
@@ -332,10 +332,15 @@ class TestOnlyASelectedMoveCanBeFlinched(unittest.TestCase):
         self.assertEqual(self._sweep(Action.SWITCH, our_speed=20, bench_slot=0), 0)
 
     def test_an_item_hides_it(self):
-        self.assertEqual(self._sweep(Action.ITEM, our_speed=20, item_code="p"), 0)
+        # X Sp. Def rather than a potion: the sweep's Smeargle is at full HP, where the game
+        # refuses a heal. What is under test is that a BAG ACTION hides the flinch, and every
+        # bag action resolves before any move.
+        self.assertEqual(self._sweep(Action.ITEM, our_speed=20, item_code="xsd"), 0)
 
     def test_a_status_cure_hides_it(self):
-        self.assertEqual(self._sweep(Action.ITEM_CURE, our_speed=20), 0)
+        """Needs a status to cure, or the game would not offer it."""
+        self.assertEqual(
+            self._sweep(Action.ITEM_CURE, our_speed=20, ours_status=Status.PARALYSIS), 0)
 
     def test_the_capture_ball_hides_it(self):
         self.assertEqual(self._sweep(Action.CAPTURE_BALL, our_speed=20), 0)

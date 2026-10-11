@@ -30,7 +30,9 @@ from claytonlib.battle.damage import (
     WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, damage, unsupported_attacker_reason,
     unsupported_reason,
 )
-from claytonlib.battle.readiness import PARALYSIS_SPEED_FACTOR
+from claytonlib.battle.readiness import (
+    CHOICE_SPEED_ITEMS, PARALYSIS_SPEED_DIVISOR, SPEED_HALVING_ITEMS,
+)
 from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
@@ -58,6 +60,30 @@ SLEEP_DURATION_SPAN = 4
 #: targets arises solely against Latios -- its Dragon Breath can leave us paralyzed on an
 #: earlier turn than its Zen Headbutt flinches us.
 FLINCH_EFFECTS = frozenset({31, 150, 158})
+
+
+#: Move effect ids whose behaviour is **fully accounted for when the TARGET uses the move**.
+#:
+#: This list exists because `execute_move` fails SILENTLY on anything else. An unknown status
+#: move is treated as "it worked and changed nothing", and an unknown damaging move as plain
+#: damage -- so an unmodelled secondary is not refused, it is quietly inert. For incoming damage
+#: that is unsound rather than imprecise: it eliminates the true seed.
+#:
+#: `targets.unsupported_moves` turns this into a configuration-time refusal, so a target can
+#: never be "configured" and silently mis-simulated at the same time.
+MODELLED_TARGET_EFFECTS: dict[int, str] = {
+    0: "no effect beyond damage",
+    # Gust's effect is "double power against a Flying target"; against a grounded Pokemon in a
+    # single battle it is plain damage, and it is in the emulator-verified Suicune fixture.
+    149: "double power vs airborne, which never applies here",
+    31: "may flinch -- applied, and suppressed when unobservable (`flinch_visible`)",
+    46: "Mist: field condition, and it blocks our stat drops",
+    68: "lowers our Attack -- tracked in `our_attack_stage`",
+    71: "lowers our Sp. Atk, which nothing we predict reads: we never model damage we DEAL",
+    136: "Rain Dance: field condition, and the weather term in `battle.damage`",
+    193: "Refresh: fails against an unstatused user",
+    210: "Water Sport: a per-battler volatile flag, so a second one fails",
+}
 
 
 def can_flinch(battler) -> bool:
@@ -580,15 +606,35 @@ def opening_rng(seed: int, config: HuntConfig) -> int:
 
 
 def effective_speed(battler: Battler) -> int:
-    """Speed after paralysis. Gen 4 quarters it, which is the whole reason paralysis is the
-    sanctioned tie-avoidance: it takes Suicune to ~21, so anything outspeeds it and no speed-tie
-    roll occurs anywhere in the search (sec 4.2).
+    """Speed as the turn-order comparison sees it: held item, then paralysis.
 
-    Lagging Tail would be actively harmful here -- it guarantees we move *last*.
+    Paralysis quartering Speed is the whole reason it is the sanctioned tie-avoidance: it takes
+    Suicune to ~21, so anything outspeeds it and no speed-tie roll occurs anywhere in the search
+    (sec 4.2).
+
+    **The held item comes first, and that is not cosmetic.** Transcribed from the speed
+    comparison in src/battle/overlay_12_0224E4FC.c, which halves for a Macho Brace or Iron Ball,
+    then applies the Choice Scarf's ``* 15 / 10``, and only then quarters for paralysis. Each
+    step truncates, so `spe * 15 / 10 / 4` and `spe / 4 * 15 / 10` are different numbers.
+
+    This read `stats["spe"]` and nothing else, which made a Choice Scarf invisible -- and a
+    scarfed Lv70 Magneton is 186 against Ho-Oh's 152, so the model had us moving SECOND on the
+    one turn the whole plan hangs on. Turn order decides whose rolls come first, so that is not a
+    slightly-wrong prediction; it is a different stream from the first turn onward.
+
+    Lagging Tail is deliberately NOT here: it sets a lowered-priority flag rather than changing
+    Speed, so the holder moves last within its bracket (`readiness.MOVES_LAST_ITEMS`). Reading it
+    as a Speed modifier would be wrong in both directions -- and it would be actively harmful
+    here, since Battle Compass wants to move FIRST.
     """
     speed = battler.stats["spe"]
+    item = battler.held_item.strip().lower()
+    if item in SPEED_HALVING_ITEMS:
+        speed //= 2
+    if item in CHOICE_SPEED_ITEMS:
+        speed = speed * 15 // 10
     if battler.status is Status.PARALYSIS:
-        speed = int(speed * PARALYSIS_SPEED_FACTOR)
+        speed //= PARALYSIS_SPEED_DIVISOR
     return speed
 
 
@@ -708,8 +754,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Kept in PARTY order, not rotated. Appending the outgoing Pokemon to the end made
             # every bench index after the first switch point at somebody else, so switching out
             # and back emitted the same token twice instead of S3 then S1.
+            # Leaving the field ends a Choice lock, which is the only way it ends. Cleared on
+            # the way out so the Pokemon can be sent back in later with all four moves.
             new.bench = party_order(
-                tuple(b for i, b in enumerate(new.bench) if i != bench_slot) + (new.ours,))
+                tuple(b for i, b in enumerate(new.bench) if i != bench_slot)
+                + (replace(new.ours, choice_locked_slot=None),))
             new.ours = incoming
             # The HP token reports a CHANGE to one Pokemon, so the baseline has to follow whoever
             # is out at the end of the turn. Left as the outgoing Pokemon's HP it compared two
@@ -749,6 +798,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                     "heal 20 and 200. Pass the code the player actually used.")
             code = item_code or "fh"
             entry = items.item(code)
+            # The game refuses a heal at full HP and a cure with nothing to cure, so a turn
+            # reporting one is not a turn that happened. Raised rather than rendered, because the
+            # rendering was unvalidatable: no HP changed, so no HP token, which
+            # `tokens.turn_requires_hp` then rejected.
+            refusal = items.unusable_reason(
+                code, hp=new.ours.hp, max_hp=new.ours.max_hp,
+                statused=new.ours.status is not Status.NONE)
+            if refusal:
+                raise ValueError(refusal)
             if entry.heals and new.ours.hp is not None:
                 healed = items.heal_amount(code, new.ours.hp, new.ours.max_hp)
                 if healed:
@@ -790,6 +848,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             attack_stage=new.our_attack_stage)
         new.rng_offset += outcome.rolls
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
+        # A Choice item locks its holder into the first move it uses, and stays locked until the
+        # Pokemon leaves the field. Set here rather than on the attempt, because the ROM records
+        # it alongside the move actually going off.
+        if new.ours.holds_choice_item and new.ours.choice_locked_slot is None:
+            new.ours = replace(new.ours, choice_locked_slot=slot)
         apply_field(outcome)
         if outcome.damage:
             new.target = new.target.with_hp(new.target.hp - outcome.damage)
@@ -938,7 +1001,8 @@ def _send_out(state: BattleState, replacement: int | None) -> str:
                   if party_number(state.bench[i], i) == replacement), healthy[0])
     incoming = state.bench[index]
     state.bench = party_order(
-        tuple(b for i, b in enumerate(state.bench) if i != index) + (state.ours,))
+        tuple(b for i, b in enumerate(state.bench) if i != index)
+        + (replace(state.ours, choice_locked_slot=None),))
     state.ours = incoming
     return tok.faint_token(party_number(incoming, index))
 

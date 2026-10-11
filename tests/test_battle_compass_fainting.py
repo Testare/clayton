@@ -309,7 +309,9 @@ class TestReviving(unittest.TestCase):
         bench = [_mon("Mamoswine", hp=0, speed=80, slot=2)]
         ours = _mon("Magneton", hp=700, speed=300, slot=1, max_hp=700)
         revived = simulate_turn(_state(ours, bench), Action.REVIVE, HUNT, bench_slot=0)
-        itemed = simulate_turn(_state(ours, bench), Action.ITEM, HUNT, item_code="p")
+        # X Sp. Def rather than a potion: this fixture is at full HP, where the game refuses a
+        # heal. What is compared is the ADVANCE COST, which is zero for either.
+        itemed = simulate_turn(_state(ours, bench), Action.ITEM, HUNT, item_code="xsd")
         self.assertEqual(revived.rng_offset, itemed.rng_offset)
 
     def test_reviving_someone_who_has_not_fainted_is_a_caller_bug(self):

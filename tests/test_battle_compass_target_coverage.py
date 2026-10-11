@@ -1,0 +1,140 @@
+"""A target cannot be "configured" and silently mis-simulated at the same time.
+
+`execute_move` has no notion of an unknown effect: an unrecognised status move is treated as
+having worked and changed nothing, and an unrecognised damaging move as plain damage. So a
+missing secondary is **inert rather than refused** -- and for the target's moves that is unsound
+rather than imprecise, because an unnoticed modifier eliminates the true seed.
+
+Adding Ho-Oh to `STATIC_ENCOUNTERS` is what made this urgent: all four of its Lv70 moves have
+unmodelled effects, so without a check it would have looked ready and been confidently wrong on
+every turn one of them fired.
+"""
+import unittest
+
+from claytonlib.battle_compass.sim import MODELLED_TARGET_EFFECTS
+from claytonlib.battle_compass.targets import (
+    STATIC_ENCOUNTERS, VERSION_SPLIT_LEVELS, encounter_level, moveset, supported,
+    unsupported_moves,
+)
+from claytonlib.moves import resolve_move
+
+
+class TestTheCheckFindsWhatIsMissing(unittest.TestCase):
+    def test_suicune_is_clean(self):
+        """The emulator-verified fixture. If this ever reports a gap, the registry is wrong
+        rather than the target."""
+        self.assertEqual(unsupported_moves("suicune"), ((), None))
+
+    def test_latias_is_clean(self):
+        self.assertEqual(unsupported_moves("latias"), ((), None))
+
+    def test_latios_is_not(self):
+        """Found by writing the check: Latios was already a configured target and cannot be
+        simulated. Luster Purge's 50% Sp. DEF drop lands on us and raises every later special
+        hit -- unlike Mist Ball's Sp. Atk drop, which is inert because we never model damage we
+        DEAL -- and Protect blocks our move outright."""
+        problems, message = unsupported_moves("latios")
+        names = {name for name, _ in problems}
+        self.assertEqual(names, {"Protect", "Luster Purge"})
+        self.assertIn("cannot be simulated yet", message)
+
+    def test_ho_oh_names_all_four(self):
+        problems, _ = unsupported_moves("ho-oh")
+        self.assertEqual({name for name, _ in problems},
+                         {"Sacred Fire", "Punishment", "Ancient Power", "Safeguard"})
+
+    def test_a_variable_power_move_is_caught_even_if_its_effect_were_known(self):
+        """Punishment is power 1, which marks variable power. `unsupported_reason` refuses it,
+        so the danger floor would otherwise skip the move entirely -- a floor that ignores an
+        attack is not a floor."""
+        self.assertEqual(resolve_move("Punishment").power, 1)
+        problems, _ = unsupported_moves("ho-oh")
+        self.assertIn("Punishment", {name for name, _ in problems})
+
+    def test_a_status_move_dealing_no_damage_is_not_a_gap(self):
+        """`unsupported_reason` says "is a status move and deals no damage" for Mist and Rain
+        Dance, which is the expected answer rather than a problem."""
+        self.assertEqual(unsupported_moves("suicune"), ((), None))
+        self.assertIn(resolve_move("Mist").effect, MODELLED_TARGET_EFFECTS)
+
+    def test_it_is_keyed_on_the_effect_not_the_move_name(self):
+        """So a new target reusing a modelled effect passes with no list to edit."""
+        self.assertIn(resolve_move("Extrasensory").effect, MODELLED_TARGET_EFFECTS)
+        self.assertEqual(resolve_move("Extrasensory").effect,
+                         resolve_move("Zen Headbutt").effect)
+
+    def test_an_unknown_species_raises_rather_than_passing(self):
+        with self.assertRaises(KeyError):
+            unsupported_moves("missingno")
+
+
+class TestHoOhIsConfigured(unittest.TestCase):
+    def test_it_is_the_soulsilver_level_and_set(self):
+        """`GetGameVersion` then `Compare VAR_SPECIAL_RESULT, 7` / `GoToIfNe` picks Lv45 and the
+        fall-through picks Lv70 (scr_seq_0021_D17R0110.s:63-73)."""
+        self.assertEqual(encounter_level("ho-oh"), 70)
+        self.assertEqual(moveset("ho-oh"),
+                         ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard"))
+
+    def test_the_other_version_is_recorded_rather_than_forgotten(self):
+        """Ho-Oh is Lv45 in HeartGold with a different moveset. Only one row is on file, so the
+        level cross-check is what stops a HeartGold hunt being simulated against four moves its
+        Pokemon does not have."""
+        self.assertIn("ho-oh", VERSION_SPLIT_LEVELS)
+        level, note = VERSION_SPLIT_LEVELS["ho-oh"]
+        self.assertEqual(level, 45)
+        self.assertIn("different moveset", note)
+
+    def test_every_configured_target_has_a_level_and_four_moves(self):
+        for name, (level, moves) in STATIC_ENCOUNTERS.items():
+            self.assertTrue(1 <= level <= 100, name)
+            self.assertEqual(len(moves), 4, name)
+            for move in moves:
+                self.assertIsNotNone(resolve_move(move), f"{name}: {move}")
+
+    def test_it_is_in_the_supported_list(self):
+        self.assertIn("ho-oh", supported())
+
+
+class TestReadinessRefusesWhatCannotBeSimulated(unittest.TestCase):
+    """Hard rather than advisory: running it would mis-predict every turn the move fires on, so
+    refusing beats spending an hour of real play on predictions that cannot match."""
+
+    def _target(self, species, level):
+        from app.models import HuntTarget
+
+        return HuntTarget(species=species, level=level, nature="Bold",
+                          ivs={k: 31 for k in ("hp", "atk", "def", "spa", "spd", "spe")})
+
+    def test_a_clean_target_passes(self):
+        self.assertEqual(self._target("suicune", 40).hard_errors(), [])
+
+    def test_ho_oh_is_refused_with_its_moves_named(self):
+        errors = " ".join(self._target("ho-oh", 70).hard_errors())
+        for move in ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard"):
+            self.assertIn(move, errors)
+
+    def test_the_wrong_version_level_is_reported(self):
+        errors = " ".join(self._target("ho-oh", 45).hard_errors())
+        self.assertIn("Lv70 encounter, not Lv45", errors)
+        self.assertIn("HeartGold", errors)
+
+    def test_an_unconfigured_species_is_reported_as_such(self):
+        errors = " ".join(self._target("mewtwo", 70).hard_errors())
+        self.assertIn("not a configured Battle Compass target", errors)
+
+    def test_the_spread_errors_stay_separate_from_the_encounter_ones(self):
+        """`hunt_readiness` gates the derived stats on the SPREAD, so an unsupported encounter
+        does not withhold base stats that were perfectly good."""
+        target = self._target("mewtwo", 70)
+        self.assertEqual(target.spread_errors(), [])
+        self.assertTrue(target._encounter_errors())
+
+    def test_an_incomplete_spread_is_still_a_spread_error(self):
+        from app.models import HuntTarget
+
+        self.assertTrue(HuntTarget(species="suicune").spread_errors())
+
+
+if __name__ == "__main__":
+    unittest.main()

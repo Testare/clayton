@@ -238,9 +238,13 @@ class TestAHealingItemRequiresHp(unittest.TestCase):
 
         hunt = HuntConfig(target_catch_rate=3)
         moves = moveset("suicune")
+        # Hurt AND statused, which is the one state where every item in the table is selectable:
+        # the heals need hp < max and the cures need a status, and the game refuses either
+        # otherwise (`items.unusable_reason`). Without both, this loop would hit a refusal rather
+        # than a disagreement.
         ours = Battler(name="Smeargle", level=58, types=("Normal",),
                        stats={"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
-                       moves=("False Swipe",), pp=(40,), hp=100)
+                       moves=("False Swipe",), pp=(40,), hp=100, status=Status.PARALYSIS)
         target = Battler(name="Suicune", level=40, types=tuple(species("suicune")["types"]),
                          stats=derive_species_stats("suicune", 40, "Bold"), moves=moves,
                          pp=tuple(resolve_move(m).pp for m in moves),
