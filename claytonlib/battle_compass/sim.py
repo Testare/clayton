@@ -27,7 +27,7 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_stage, damage,
+    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_stage, apply_stage, damage,
     unsupported_attacker_reason, unsupported_reason,
 )
 from claytonlib.battle.readiness import PARALYSIS_SPEED_DIVISOR, speed_after_item
@@ -287,13 +287,16 @@ def _effective_accuracy(move: Move, net_stage: int = 0) -> int:
     0 means the move bypasses the check entirely. `net_stage` is the attacker's accuracy stage
     minus the defender's evasion stage -- NOT evasion alone, since an accuracy drop on the
     attacker makes a 100%-accuracy move missable just as a raised evasion does.
+
+    This computed the stage as a fraction (``accuracy * 3 // (3 - net)`` below zero) and was
+    wrong at **-5 and -4**, because the ROM reads a table whose entries are not the fraction
+    there -- see `battle.damage.apply_accuracy_stage`, which is now the only place that knows it.
+    Not an imprecision: a flipped verdict renders the wrong token and eliminates the true seed
+    (clayton-957.27).
     """
     if move.accuracy == 0:
         return 0
-    net = max(-6, min(6, net_stage))
-    if net >= 0:
-        return move.accuracy * (3 + net) // 3
-    return move.accuracy * 3 // (3 - net)
+    return apply_accuracy_stage(move.accuracy, net_stage)
 
 
 def can_miss(move: Move, net_stage: int = 0) -> bool:

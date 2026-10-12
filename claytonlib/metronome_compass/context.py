@@ -3,6 +3,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, TYPE_CHECKING
 
+from claytonlib.battle.damage import (
+    GRAVITY_ACCURACY_DEN, GRAVITY_ACCURACY_NUM, HUSTLE_ACCURACY_PERCENT, apply_accuracy_stage,
+)
 from claytonlib.safari import advance_rng
 from .path import (
     PathToken, Turn, Path,
@@ -171,10 +174,11 @@ class BattleContext(ABC):
     def effective_accuracy(self, base: int, physical: bool = False) -> int:
         """Apply accuracy/evasion stat stages, gravity and the user's ability to a base accuracy.
 
-        base=0 is the always-hit sentinel and is returned unchanged. Uses the
-        Gen-IV accuracy stage table (net = user accuracy stage − target evasion
-        stage, clamped to ±6) and the 5/3 gravity multiplier. Integer floor math
-        matches the game's fixed-point behaviour.
+        base=0 is the always-hit sentinel and is returned unchanged. The stage itself comes from
+        `battle.damage.apply_accuracy_stage`, which transcribes the ROM's `sHitChanceTable`;
+        this function had computed it as a fraction and was wrong at net -5 and -4, where the
+        table is not the fraction (clayton-957.27). Integer floor math throughout, matching the
+        game's fixed-point behaviour.
 
         `physical` says whether the move being rolled is physical, which is what Hustle's
         x0.8 accuracy cut applies to. Callers pass `move.is_physical`; it is threaded
@@ -182,10 +186,13 @@ class BattleContext(ABC):
         rolling the accuracy is the site that names the move — there is no way to roll one
         move's accuracy while Hustle consults another's category.
 
-        The ability is applied after the stage/gravity maths, matching the game's order of
-        move accuracy -> stages -> ability modifiers. In this battle the user's accuracy and
-        Magikarp's evasion are almost always 0 and gravity is rare, so ordering seldom bites;
-        the exact rounding wants ground-truth confirmation all the same (clayton-2ae.7).
+        **Order, read off the ROM rather than assumed** (`BattleSystem_CheckMoveHit`,
+        src/battle/battle_controller_player.c:2490-2546): the stage table, then weather and
+        ability terms, then Compound Eyes, then **Hustle**, then Tangled Feet, then the held-item
+        terms, then the Micle Berry, and **gravity last**. Gravity used to be applied before
+        Hustle here. Each step truncates, so the position is observable -- it seldom bites in
+        this battle, where the user's accuracy and Magikarp's evasion are almost always 0 and
+        gravity is rare, but "seldom" was the only thing hiding it (clayton-2ae.7).
 
         Lock-On/Mind Reader is NOT handled here: it doesn't change the accuracy
         value, it forces the *result* while still consuming the roll. See
@@ -196,15 +203,14 @@ class BattleContext(ABC):
         state = self.battle_state.get('state')
         if state is None:
             return base
-        net = max(-6, min(6, state.user_accuracy_stage - state.target_evasion_stage))
-        if net >= 0:
-            acc = base * (3 + net) // 3
-        else:
-            acc = base * 3 // (3 - net)
-        if state.gravity_turns > 0:
-            acc = acc * 5 // 3
+        acc = apply_accuracy_stage(
+            base, state.user_accuracy_stage - state.target_evasion_stage)
+        # Hustle before gravity, which is the ROM's order and was reversed here. Each step
+        # truncates, so the position is observable (clayton-957.27).
         if physical and getattr(state, 'user_ability', None) == 'Hustle':
-            acc = acc * 8 // 10
+            acc = acc * HUSTLE_ACCURACY_PERCENT // 100
+        if state.gravity_turns > 0:
+            acc = acc * GRAVITY_ACCURACY_NUM // GRAVITY_ACCURACY_DEN
         return acc
 
     def hit_crit_or_miss(self, accuracy: int, crit_stage: int = 0,

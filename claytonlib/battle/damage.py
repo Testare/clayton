@@ -75,6 +75,78 @@ def apply_stage(value: int, stage: int) -> int:
     return value * _STAGE_NUM[stage + 6] // _STAGE_DEN[stage + 6]
 
 
+#: Accuracy-stage multipliers, indexed by ``clamp(6 + net, 0, 12)`` where ``net`` is the
+#: attacker's accuracy stage minus the defender's evasion stage.
+#:
+#: **This is a TABLE, not the fraction, and that is the whole point of transcribing it.** The
+#: accuracy stages do not share the stat-stage ratios above: the ROM reads
+#: ``sHitChanceTable[13][2]`` (src/battle/battle_controller_player.c:2399-2413) and applies it as
+#: ``hitChance = hitChance * n / d`` (:2490-2491), and two entries are not what the fraction
+#: would give -- 3/7 is 42.86 but the table says **43**, and 3/8 is 37.5 but the table says
+#: **36**. So the two stages either side of -5 are both wrong if computed, in opposite
+#: directions.
+#:
+#: That was a live soundness bug, not a rounding nicety (clayton-957.27). A flipped accuracy
+#: verdict predicts a hit where the game printed a miss, the turn contradicts, and the true seed
+#: is eliminated -- and the Lugia plan's Flash x6 passes through -4 and -5 on consecutive turns
+#: with the target attacking on each. Measured disagreement against the computed form: 1 roll in
+#: 100 at -4 and at -5 for a 100-accuracy move, **2 in 100 at -5 for an 80-accuracy move**.
+#:
+#: The pairs are written the way the C writes them -- ``(1, 1)``, ``(2, 1)``, ``(133, 50)`` --
+#: rather than normalised onto a common denominator, the same convention `_WEATHER_MULTIPLIERS`
+#: follows, so a reader can diff this against the ROM line by line. The +2 and +5 rows are where
+#: that matters least and is kept anyway: they differ from the fraction by one (157 vs 158, 252
+#: vs 253) but cannot change a verdict, because anything at or above 100 always hits.
+_ACCURACY_STAGE_TABLE: tuple[tuple[int, int], ...] = (
+    (33, 100),      # -6
+    (36, 100),      # -5
+    (43, 100),      # -4
+    (50, 100),      # -3
+    (60, 100),      # -2
+    (75, 100),      # -1
+    (1, 1),         #  0
+    (133, 100),     # +1
+    (166, 100),     # +2
+    (2, 1),         # +3
+    (233, 100),     # +4
+    (133, 50),      # +5
+    (3, 1),         # +6
+)
+
+
+def apply_accuracy_stage(accuracy: int, net_stage: int) -> int:
+    """`accuracy` after the combined accuracy/evasion stage, from the ROM's own table.
+
+    `net_stage` is the attacker's accuracy stage minus the defender's evasion stage -- not evasion
+    alone, since an accuracy drop on the attacker makes a 100%-accuracy move missable just as a
+    raised evasion does. The ROM builds the same figure and clamps it the same way::
+
+        attackerAccuracy = statChanges[STAT_ACC] - 6;
+        targetEvasion    = 6 - statChanges[STAT_EVASION];
+        var = 6 + targetEvasion + attackerAccuracy;   // clamped to 0..12
+
+    Out-of-range stages are clamped rather than rejected, because the ROM clamps: Simple doubles
+    a stage before this point and can push `var` past either end.
+
+    The one place in the project that knows this table. `battle_compass.sim._effective_accuracy`
+    and `metronome_compass.BattleContext.effective_accuracy` both delegate here -- they had
+    independently computed the fraction, so they were independently wrong at the same two stages.
+    """
+    num, den = _ACCURACY_STAGE_TABLE[max(0, min(12, 6 + net_stage))]
+    return accuracy * num // den
+
+
+#: Gravity multiplies the final hit chance by ``10 / 6``, and it is applied **last** -- after the
+#: stage table, after every weather and ability term, after both held-item terms and after the
+#: Micle Berry (battle_controller_player.c:2544-2546). Every step truncates, so the position is
+#: observable and not just tidiness. Written as the C writes it; it reduces exactly to 5/3.
+GRAVITY_ACCURACY_NUM, GRAVITY_ACCURACY_DEN = 10, 6
+
+#: Hustle cuts the accuracy of PHYSICAL moves to 80%, applied after the stage table and before
+#: the held-item terms (battle_controller_player.c:2511-2513).
+HUSTLE_ACCURACY_PERCENT = 80
+
+
 #: Type-enhancing held items -> the type they boost, from the ROM's `sTypeEnhancingItems`
 #: (src/battle/overlay_12_0224E4FC.c). All the Gen 4 classics; plates and incenses behave the
 #: same way and can be added here as needed.
