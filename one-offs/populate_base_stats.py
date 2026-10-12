@@ -65,6 +65,12 @@ KNOWN_POST_GEN4_CHANGES: dict[str, str] = {
 }
 
 # Species whose ABILITIES differ from what PokeAPI reports, which is a shorter list than it
+# An entry marked ``"source": "rom"`` was transcribed from the decompilation's own
+# personal.json rather than fetched, so the verification these tables ask for has already been
+# done and --check does not re-raise it. Granbull is why the marker exists: it became Fairy in
+# Gen 6, so a re-fetch would silently replace correct Gen 4 types with wrong ones. Pass --force
+# on such a species only if you mean to overwrite ROM data with PokeAPI data.
+#
 # looks only because DEFAULT_SPECIES is short.  Abilities were revised far more often than base
 # stats were -- Gen 7 and Gen 9 both reshuffled several -- so this refuses rather than guesses.
 # The values currently in base_stats.json were taken from the ROM's own personal.json, which is
@@ -181,7 +187,7 @@ def check(entries: dict[str, dict]) -> int:
             problems.append(f"{key}: {len(entry.get('types', []))} types")
         if "Fairy" in entry.get("types", []):
             problems.append(f"{key}: Fairy does not exist in Gen 4")
-        if key in KNOWN_POST_GEN4_CHANGES:
+        if key in KNOWN_POST_GEN4_CHANGES and entry.get("source") != "rom":
             problems.append(f"{key}: {KNOWN_POST_GEN4_CHANGES[key]} — verify against HGSS")
     for problem in problems:
         print(f"  ! {problem}")

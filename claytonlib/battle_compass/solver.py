@@ -346,6 +346,23 @@ def danger_floor_for(state: BattleState, config: SolverConfig) -> int:
     return max(config.danger_floor, worst_incoming_hit(state.ours, state.target, field=state))
 
 
+def ends_the_run(move) -> bool:
+    """Whether using `move` would end the wild battle with the target uncaught.
+
+    Teleport and Roar, and both are a level-up move on a party member the Ho-Oh plan requires
+    rather than a hypothetical: Natu learns Teleport at L9 and is the Synchronize lead, Granbull
+    learns Roar at L27 on the way to the Lv35 it needs. See `sim.RUN_ENDING_EFFECTS`.
+
+    Worse than `can_faint_target`, which this sits beside: a KO costs the Pokemon and a flee costs
+    the encounter. `unsupported_our_moves` already reports both as unmodelled, but a report is
+    advice and this is a refusal -- the solver must not be able to plan one even if the player
+    leaves it in the moveset.
+    """
+    from claytonlib.battle_compass.sim import RUN_ENDING_EFFECTS
+
+    return move is not None and move.effect in RUN_ENDING_EFFECTS
+
+
 def can_faint_target(move, ours, target, *, field=None) -> bool:
     """Whether `move` could knock the target out -- on any roll, crit included.
 
@@ -448,7 +465,10 @@ def _legal_actions(state: BattleState, config: SolverConfig,
     for slot in config.allowed_moves:
         if slot not in usable:
             continue
-        if can_faint_target(state.ours.move(slot), state.ours, state.target, field=state):
+        move = state.ours.move(slot)
+        if can_faint_target(move, state.ours, state.target, field=state):
+            continue
+        if ends_the_run(move):
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:

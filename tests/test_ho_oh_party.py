@@ -477,3 +477,178 @@ class TestScreens(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- the two support slots: Natu (the Synchronize lead) and Chatot ------------------------------
+
+def natu(*, level=12, hp=38, moves=("Peck", "Leer"), pp=(35, 30), ability="Synchronize"):
+    mon = Battler(name="Natu", level=level, types=("Psychic", "Flying"),
+                  stats={"hp": 38, "atk": 23, "def": 21, "spa": 28, "spd": 21, "spe": 28},
+                  moves=moves, pp=pp, ability=ability, party_slot=1)
+    return mon.with_hp(hp)
+
+
+def chatot(*, level=20, hp=62, moves=("Growl", "Sing"), pp=(40, 15), ability="Keen Eye"):
+    mon = Battler(name="Chatot", level=level, types=("Normal", "Flying"),
+                  stats={"hp": 62, "atk": 34, "def": 26, "spa": 44, "spd": 25, "spe": 44},
+                  moves=moves, pp=pp, ability=ability, party_slot=6)
+    return mon.with_hp(hp)
+
+
+class TestTheSupportSlotsAreConfigurable(unittest.TestCase):
+    """Both would have made a hunt RAISE, not merely lose a warning.
+
+    `facade._battlers_for` resolves our own party's TYPES through
+    `battle.stats.species(pokemon.species)["types"]` -- our stats are entered off the summary
+    screen but our types are not -- and that call raises KeyError for a species absent from
+    `base_stats.json`. Natu and Chatot were both absent, so configuring either into the party
+    broke starting the run.
+    """
+
+    def test_the_whole_party_resolves(self):
+        from claytonlib.battle.stats import species
+
+        for name in ("natu", "chatot", "magneton", "ampharos", "granbull", "smeargle",
+                     "gyarados"):
+            info = species(name)
+            self.assertTrue(1 <= len(info["types"]) <= 2, name)
+            self.assertNotIn("Fairy", info["types"], f"{name}: Fairy does not exist in Gen 4")
+
+    def test_granbull_is_normal_not_fairy(self):
+        """The reason these came from the ROM rather than PokeAPI: Granbull became Fairy in Gen 6,
+        so a fetched entry would be wrong in a way that silently changes every damage figure."""
+        from claytonlib.battle.stats import species
+
+        self.assertEqual(species("granbull")["types"], ["Normal"])
+        self.assertEqual(species("natu")["types"], ["Psychic", "Flying"])
+        self.assertEqual(species("chatot")["types"], ["Normal", "Flying"])
+
+    def test_their_abilities_are_inert_against_this_target(self):
+        """Neither support slot needs ability modelling, and that is worth asserting rather than
+        assuming -- it is the only reason they can be dropped into the party for free.
+
+        Natu is Synchronize, which bounces a status back to the attacker: `TrySyncronizeStatus`
+        makes no RNG call, and the only status Ho-Oh can inflict is burn, to which a Fire-type is
+        immune. Early Bird halves sleep, and nothing here sleeps us. Chatot is Keen Eye (blocks
+        accuracy drops, which Ho-Oh has none of) or Tangled Feet (evasion while confused, and
+        nothing in the moveset confuses).
+        """
+        from claytonlib.battle_compass.sim import ABILITY_INTIMIDATE, ABILITY_STATIC
+
+        for mon in (natu(), chatot(), natu(ability="Early Bird"),
+                    chatot(ability="Tangled Feet")):
+            ability = mon.ability.strip().lower()
+            self.assertNotIn(ability, {ABILITY_INTIMIDATE, ABILITY_STATIC})
+
+    def test_a_moveless_bench_member_is_structural(self):
+        """Chatot is there to reach the frame, to be revived from, and as a free-switch token --
+        so it may carry no moves the solver can use at all."""
+        empty = chatot(moves=(), pp=())
+        self.assertEqual(empty.usable_slots(), ())
+        self.assertIsNone(empty.move(0))
+
+    def test_a_faint_replacement_enters_without_being_hit(self):
+        """Why the Chatot/Natu shuffle gets Magneton in safely.
+
+        `_send_out` runs at the very END of the turn, after both sides have acted, so the
+        replacement skips that turn's attack entirely. Magneton dies to any Sacred Fire from full
+        HP (240 against 171), so this is the difference between a guaranteed Thunder Wave and a
+        coin flip on Ho-Oh's move choice.
+        """
+        from claytonlib.battle_compass.sim import _send_out
+
+        magneton = Battler(
+            name="Magneton", level=70, types=("Electric", "Steel"),
+            stats={"hp": 171, "atk": 92, "def": 159, "spa": 194, "spd": 110, "spe": 124},
+            moves=("Thunder Wave", "Screech"), pp=(20, 40), held_item="Choice Scarf",
+            party_slot=2)
+        state = state_with(chatot(hp=1), hooh(), bench=(magneton,), phase=1)
+        state.ours = state.ours.with_hp(0)
+        _send_out(state, replacement=2)
+        self.assertEqual(state.ours.name, "Magneton")
+        self.assertEqual(state.ours.hp, state.ours.max_hp, "it came in untouched")
+
+
+class TestChatotsGrowlAndSing(unittest.TestCase):
+    def test_growl_is_already_covered_and_lowers_attack(self):
+        self.assertEqual(primary_stat_drop(resolve_move("Growl")), ("atk_stage", 1))
+        state = state_with(chatot(), hooh(status=Status.PARALYSIS), phase=1)
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+        self.assertEqual(nxt.target.atk_stage, -1)
+
+    def test_growl_stacks_with_intimidate_and_charm_toward_the_same_floor(self):
+        mon = hooh()
+        for drop in (("atk_stage", 1), ("atk_stage", 2), ("atk_stage", 2), ("atk_stage", 1)):
+            mon = apply_stat_drop(mon, drop)
+        self.assertEqual(mon.atk_stage, -6)
+
+    def test_sing_applies_sleep_and_rolls_its_duration(self):
+        from claytonlib.battle_compass.sim import status_applied_by
+
+        self.assertIs(status_applied_by(resolve_move("Sing")), Status.SLEEP)
+        for seed in range(0x2000, 0x2000 + 600):
+            _, outcome = execute_move(seed, resolve_move("Sing"), chatot(), hooh(),
+                                      actor="M", slot=1)
+            if outcome.applied_status is Status.SLEEP:
+                self.assertTrue(2 <= outcome.sleep_turns <= 5)
+                return
+        self.fail("Sing never connected in 600 seeds")
+
+    def test_sing_against_a_paralyzed_ho_oh_fails_but_still_rolls_accuracy(self):
+        """Which is exactly what makes it useful: a free information probe.
+
+        A status move against an already-statused target always fails, and the ROM checks
+        accuracy BEFORE reporting the failure. So Sing spends its accuracy roll either way, and
+        at 55 accuracy that roll is the sharpest separator of RTC-second sibling seeds there is
+        (notes/seed_separation.md: ~49.5% disagreement, against 0% for a 100-accuracy move).
+        Ho-Oh's own moveset offers nothing comparable -- Sacred Fire is 95 but it picks that only
+        one turn in four, whereas Sing is a probe we choose.
+        """
+        paralyzed = hooh(status=Status.PARALYSIS)
+        self.assertTrue(will_fail(resolve_move("Sing"), paralyzed, None, actor=chatot()))
+        _, outcome = execute_move(0x1234, resolve_move("Sing"), chatot(), paralyzed,
+                                  actor="M", slot=1)
+        self.assertFalse(outcome.successful)
+        self.assertEqual(outcome.rolls, 1, "the accuracy roll is still spent")
+
+    def test_safeguard_blocks_sing_outright(self):
+        field = state_with(chatot(), hooh(), safeguard_turns=5)
+        self.assertTrue(will_fail(resolve_move("Sing"), hooh(), field, actor=chatot()))
+
+    def test_both_of_chatots_useful_moves_pass_the_coverage_check(self):
+        self.assertEqual(unsupported_our_moves(["Growl", "Sing"]), ())
+
+    def test_feather_dance_is_charm_by_another_name(self):
+        """Chatot learns it at L41, and it is the same effect id -- so a levelled Chatot could do
+        the Granbull job from a slot the party already spends."""
+        self.assertEqual(primary_stat_drop(resolve_move("Feather Dance")),
+                         primary_stat_drop(resolve_move("Charm")))
+
+
+class TestMovesThatWouldEndTheRun(unittest.TestCase):
+    """A KO costs the Pokemon; a flee costs the encounter. Both are level-up moves here."""
+
+    def test_teleport_and_roar_are_refused(self):
+        from claytonlib.battle_compass.solver import ends_the_run
+
+        for name in ("Teleport", "Roar", "Whirlwind"):
+            self.assertTrue(ends_the_run(resolve_move(name)), name)
+
+    def test_ordinary_moves_are_not(self):
+        from claytonlib.battle_compass.solver import ends_the_run
+
+        for name in ("Growl", "Sing", "False Swipe", "Flash", "Screech", "Charm", "Thunder Wave"):
+            self.assertFalse(ends_the_run(resolve_move(name)), name)
+
+    def test_the_solver_never_offers_natus_teleport(self):
+        state = state_with(natu(moves=("Teleport", "Leer"), pp=(20, 30)),
+                           hooh(hp=1, status=Status.PARALYSIS))
+        offered = {a for a, _, _ in _legal_actions(state, SolverConfig(), HUNT)
+                   if a.move_slot is not None}
+        self.assertEqual(offered, {Action.MOVE_2},
+                         "Leer only -- Teleport would flee and lose the encounter")
+
+    def test_they_are_reported_as_unmodelled_too(self):
+        """Belt and braces: the refusal stops the solver, the report tells the player."""
+        problems = dict(unsupported_our_moves(["Teleport", "Roar"]))
+        self.assertEqual(set(problems), {"Teleport", "Roar"})

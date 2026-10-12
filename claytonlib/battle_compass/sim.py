@@ -488,6 +488,22 @@ STAT_STAGE_CEILING = 6
 #: that stays legal once the target is at 1 -- see `solver.can_faint_target`.
 FALSE_SWIPE_EFFECT = 101
 
+#: Effects that END A WILD BATTLE, and so end the run with the target uncaught.
+#:
+#: The same class of hazard as a move that KOs the target (`solver.can_faint_target`) and a worse
+#: one, because it costs the encounter rather than the Pokemon: there is no reviving from it and no
+#: second attempt at this seed.
+#:
+#: * **153 Teleport** -- the USER flees. Natu learns it at L9, and Natu is the Synchronize lead,
+#:   so it is in the party by necessity rather than by choice.
+#: * **28 Roar / Whirlwind** -- the TARGET is forced out, which against a wild Pokemon ends the
+#:   battle. Granbull learns Roar at L27, on the way to the Lv35 it needs.
+#:
+#: Both are a level-up move on a party member the plan requires, so neither is hypothetical. The
+#: simulator does not model either outcome, which is the second reason to refuse them: an
+#: unmodelled battle-ending move would be simulated as a status move that did nothing.
+RUN_ENDING_EFFECTS = frozenset({153, 28})
+
 
 def primary_stat_drop(move: Move) -> tuple[str, int] | None:
     """``(stage field, stages)`` this status move drops on its target, or None."""

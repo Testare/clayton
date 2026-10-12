@@ -514,7 +514,36 @@ False Swipes** and more across a long solve. [derived]
 **Party, settled:** **Magneton / Ampharos / Granbull / Smeargle**, with **Gyarados** as the
 alternative or second Intimidate body and **Chatot** filling the remaining slots.
 
-* **Chatot never uses a move**, so its abilities are irrelevant — Keen Eye (blocks accuracy
+* **Natu leads, for Synchronize.** Verified that it applies to this encounter:
+  `ScrCmd_WildBattle` → `SetupAndStartWildBattle` → `FieldSystem_GenerateSingleWildPokemon`,
+  which takes `Party_GetMonByIndex(..., 0)` as the lead and passes it to `getWildMonNature`
+  (`src/field/encounter_check.c:734`). In battle it is inert: `TrySyncronizeStatus` makes no RNG
+  call, and the only status Ho-Oh can inflict is burn, which a Fire-type cannot receive. Early
+  Bird is inert too. **Synchronize is ability slot 1 but Early Bird is slot 2, and unlike
+  Intimidate it is invisible in battle** — so it must be read off the summary screen rather than
+  the encounter.
+* **The shuffle gets Magneton in free.** `_send_out` runs at the very end of the turn, after both
+  sides have acted, so a replacement skips that turn's attack entirely and then moves first at
+  186 against 152. Since Magneton dies to any Sacred Fire from full HP (240 against 171), letting
+  Natu or Chatot faint is the difference between a guaranteed Thunder Wave and a coin flip on
+  Ho-Oh's move choice. **The cost is that every shuffle turn is a free turn for an unparalyzed
+  Ho-Oh at full accuracy** — and Safeguard is one move in four and blocks Thunder Wave for five
+  turns, which Magneton cannot survive. With the seed known that is steerable, but it is the one
+  thing to plan rather than improvise.
+* **Chatot carries Growl and Sing**, both already modelled. Growl (effect 18) is −1 Atk, stacking
+  with Intimidate and Charm toward the same −6. **Sing is the more valuable of the two**: at
+  accuracy 55 it is the sharpest sibling separator available (`notes/seed_separation.md` prices a
+  55-accuracy check at ~49.5% disagreement against 0% for a 100-accuracy one), and against an
+  already-paralyzed Ho-Oh it **fails yet still spends its accuracy roll** — a free information
+  probe, every turn, on a move we choose. Ho-Oh's own set offers nothing comparable, since Sacred
+  Fire's 95 comes up only one turn in four. Chatot also learns **Feather Dance at L41**, which is
+  Charm's effect id exactly — a levelled Chatot could do Granbull's whole job from a slot the
+  party already spends.
+* **Two of its level-up moves would end the run**, and both are on required party members:
+  Natu's Teleport (L9) flees, and Granbull's Roar (L27) forces the target out, which against a
+  wild Pokemon ends the battle. `solver.ends_the_run` refuses both — a KO costs the Pokemon, a
+  flee costs the encounter.
+* **Chatot never uses a move** by default, so its abilities are irrelevant — Keen Eye (blocks accuracy
   reduction) and Tangled Feet (evasion while confused) are both inert against this moveset anyway.
   It is there to reach the target advance frame, to be the body a Revive is used from, and as a
   **free-switch token**: a Pokemon that faints brings its replacement in at the end of the turn at
@@ -523,6 +552,15 @@ alternative or second Intimidate body and **Chatot** filling the remaining slots
   Struggle" structural rather than special-cased.
 * **Suicune is out** (sec 4.5), which also retires the unmodelled-own-Pressure concern: no member
   of this party has Pressure.
+* **All six species are in `base_stats.json` now, from the ROM.** Our stats are entered off the
+  summary screen but our *types* are not — `facade._battlers_for` resolves them through
+  `battle.stats.species()`, which RAISES for an unknown species, so Natu, Chatot, Granbull,
+  Gyarados, Ampharos and Togekiss each made starting a run fail outright. Taken from the
+  decompilation's `personal.json` rather than PokeAPI, and that is not a convenience:
+  `populate_base_stats.py`'s own `KNOWN_POST_GEN4_CHANGES` flags **Granbull** (became Fairy in
+  Gen 6) and **Ampharos** (base stats revised in Gen 6 — Defence 75 → 85), so a fetched entry
+  would have been quietly wrong for two of them. ROM-sourced entries carry `"source": "rom"` and
+  `--check` no longer re-raises the verification for them.
 * **Togekiss is out**, which retires Serene Grace. Both would come back if its moves were ever
   re-taught (sec 4.6).
 
