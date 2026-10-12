@@ -93,7 +93,125 @@ def reachable_weathers(target: Battler) -> tuple[str, ...]:
     return tuple(out)
 
 
-def worst_incoming_hit(ours: Battler, target: Battler) -> int:
+def reachable_attack_stages(target: Battler) -> tuple[int, ...]:
+    """Every Attack / Sp. Atk stage this target can reach, from its current one upward.
+
+    The stage half of the same argument `reachable_weathers` already makes. A floor computed at
+    the stages the target holds *now* is not a floor at all against a target holding Ancient
+    Power, whose 10% secondary raises **every** stat: against Ampharos Lv93 a Sacred Fire crit is
+    178-210 at +0 and 264-312 at +1, so a floor of 210 reports "safe" about a hit that kills.
+
+    `readiness.speed_checks` has taken a `target_speed_stages` tuple for this reason since
+    Ancient Power was modelled; this is the offensive side of it, and the two should agree about
+    which moveset can boost.
+
+    Downward stages are deliberately NOT enumerated: a crit discards the attacker's lowered
+    Attack, so an Intimidated target still crits at full power and the floor must not fall below
+    the current stage's crit. What Intimidate and Charm lower is the figure at the CURRENT stage,
+    which is read straight off the Battler.
+    """
+    from claytonlib.battle_compass.sim import EFFECT_ALL_STATS_UP, STAT_STAGE_CEILING
+
+    boosts = any((m := target.move(slot)) is not None and m.effect == EFFECT_ALL_STATS_UP
+                 for slot in range(len(target.moves)))
+    start = max(target.atk_stage, target.spatk_stage)
+    if not boosts:
+        return (start,)
+    return tuple(range(start, STAT_STAGE_CEILING + 1))
+
+
+#: `worst_incoming_hit` memo. Keyed on everything the figure depends on and nothing else, so two
+#: states that differ only in RNG offset or PP share an entry.
+#:
+#: It exists because the floor moved from "once per session" to "per state"
+#: (clayton-957.10.5) and `_legal_actions` asks for it at every node of a Dijkstra. Uncached that
+#: is a nested loop over moves x weathers x stages x 16 rolls per node, which took the test suite
+#: from ~50s to over two minutes on its own.
+_WORST_HIT_CACHE: dict[tuple, int] = {}
+
+
+def _worst_hit_key(ours: Battler, target: Battler, field) -> tuple:
+    return (
+        ours.stats["def"], ours.stats["spd"], ours.types,
+        target.level, target.stats["atk"], target.stats["spa"], target.types,
+        target.ability, target.held_item, target.moves,
+        target.atk_stage, target.spatk_stage,
+        getattr(field, "reflect_turns", 0) > 0,
+        getattr(field, "light_screen_turns", 0) > 0,
+    )
+
+
+def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]:
+    """Which party members cannot survive the target's worst hit, and under what conditions.
+
+    The honest version of what `clayton-957.10.1` asked for. The danger floor is a *gate*: below
+    it, the solver heals instead of playing. When the floor exceeds a Pokemon's max HP that gate
+    can never open and the run reads as "Unreachable" for reasons that have nothing to do with
+    capture windows -- so the answer is to say so BEFORE the encounter, in a sentence naming the
+    move, rather than to let the search fail opaquely.
+
+    Three tiers, because they call for different decisions:
+
+    * **nothing survives it even now** -- a Sacred Fire crit is 573 against Smeargle's 153, and no
+      amount of levelling closes that. This is a risk to accept knowingly, not a bug to fix.
+    * **nothing survives it once the target has boosted** -- Ampharos takes 210 at +0 and 312 at
+      +1, so one Ancient Power proc is the difference. Actionable: one more level closes it.
+    * **safe at every stage** -- no warning.
+
+    Advisory in all three cases. A Pokemon that cannot survive the worst hit is still the right
+    one to bring most turns, because the worst hit needs a 1/4 move choice and a 1/16 crit, and
+    `Flash` can cut the hit chance to a third on top of that.
+    """
+    out: list[str] = []
+    for mon in party:
+        if not mon.stats:
+            continue
+        now = worst_incoming_hit(mon, target)
+        boosted = worst_incoming_hit(mon, target, any_reachable_stage=True)
+        move = _worst_move_name(mon, target)
+        if now >= mon.max_hp:
+            out.append(
+                f"Nothing can keep {mon.name} alive through a critical {move}: it does up to "
+                f"{now} against {mon.max_hp} HP. The solver will treat every turn as dangerous "
+                f"and refuse to throw a ball unless you accept the risk explicitly.")
+        elif boosted >= mon.max_hp:
+            out.append(
+                f"{mon.name} survives a critical {move} now ({now} against {mon.max_hp} HP) but "
+                f"not once the target has boosted: {boosted} at the highest stage its Ancient "
+                f"Power can reach.")
+    return out
+
+
+def _worst_move_name(ours: Battler, target: Battler) -> str:
+    """Which of the target's moves produces `worst_incoming_hit`, for the warning text."""
+    from claytonlib.battle.damage import unsupported_reason
+    from claytonlib.battle_compass.sim import variable_base_power
+
+    best, name = -1, "hit"
+    defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
+                        types=ours.types)
+    for slot in range(len(target.moves)):
+        move = target.move(slot)
+        if move is None:
+            continue
+        base_power = variable_base_power(move, ours)
+        if unsupported_reason(move, power_known=base_power is not None) is not None:
+            continue
+        attacker = Attacker(level=target.level, attack=target.stats["atk"],
+                            special_attack=target.stats["spa"], types=target.types,
+                            attack_stage=target.atk_stage,
+                            special_attack_stage=target.spatk_stage,
+                            ability=target.ability, held_item=target.held_item)
+        for weather in reachable_weathers(target):
+            _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
+                                   base_power=base_power)
+            if high > best:
+                best, name = high, move.name
+    return name
+
+
+def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
+                       any_reachable_stage: bool = False) -> int:
     """The largest single hit the target can land: max roll, critical, over all its moves.
 
     The solver's `danger_floor` -- heal at or below this and no single hit can faint us, without
@@ -104,14 +222,47 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
     clear weather is not a floor at all against a target holding Rain Dance: Lugia's Hydro Pump
     gains half again under its own rain, so the solver would heal to a number it believed was
     safe and get fainted anyway. The point of the figure is that no single hit can beat it.
+
+    Weather and stat stages are treated differently, and the asymmetry is deliberate. Weather is
+    enumerated because the target can put it up *on the turn it attacks*, so there is no state in
+    which we could have observed it first. A stat boost is not like that: Ancient Power's proc is
+    reported, lands in the state, and the floor is recomputed from it next turn. So stages come
+    from the target as it is now, and `any_reachable_stage=True` -- which enumerates upward -- is
+    for the readiness ADVICE rather than for the gate. See the comment on `stages` below.
     """
+    key = _worst_hit_key(ours, target, field) + (any_reachable_stage,)
+    cached = _WORST_HIT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     worst = 0
-    attacker = Attacker(level=target.level, attack=target.stats["atk"],
-                        special_attack=target.stats["spa"], types=target.types,
-                        ability=target.ability, held_item=target.held_item)
     defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
                         types=ours.types)
     weathers = reachable_weathers(target)
+    # **The target's CURRENT stages by default, not every stage it could ever reach.**
+    #
+    # Enumerating upward to +6 is the honest answer to "what is the worst this battle can ever
+    # do", and it is the wrong question for a floor. Against Ampharos it returns 2274 -- a Sacred
+    # Fire crit at +6 Atk -- which exceeds every party member's max HP and so makes `in_danger`
+    # permanently true. That is clayton-957.10.1's collapse, made worse rather than fixed.
+    #
+    # What makes the current stage sufficient is the thing this change bought: the floor is now
+    # recomputed per state. If Ancient Power procs, the stage is in the state on the next turn and
+    # the floor moves with it -- so the model observes the boost instead of pre-paying for it. The
+    # solver re-solves when a turn diverges, which is exactly when that happens.
+    #
+    # The enumeration still matters, as ADVICE: `readiness_warnings` asks with
+    # `any_reachable_stage=True` to say "nothing in your party survives a Sacred Fire crit once
+    # Ancient Power has boosted" before the run, which is a sentence the player can act on and a
+    # gate they cannot.
+    stages = (reachable_attack_stages(target) if any_reachable_stage
+              else (max(target.atk_stage, target.spatk_stage),))
+    # Our screens halve the hit, so a floor that ignored them would keep us healing to a number
+    # far above what we need. They are skipped on a crit, which `damage` enforces -- so against
+    # the crit this loop is measuring, a screen changes nothing and passing it is harmless
+    # bookkeeping rather than an unsafe discount.
+    reflect = getattr(field, "reflect_turns", 0) > 0
+    light_screen = getattr(field, "light_screen_turns", 0) > 0
     for slot in range(len(target.moves)):
         move = target.move(slot)
         if move is None:
@@ -127,9 +278,17 @@ def worst_incoming_hit(ours: Battler, target: Battler) -> int:
         if unsupported_reason(move, power_known=base_power is not None) is not None:
             continue
         for weather in weathers:
-            _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
-                                   base_power=base_power)
-            worst = max(worst, high)
+            for stage in stages:
+                attacker = Attacker(
+                    level=target.level, attack=target.stats["atk"],
+                    special_attack=target.stats["spa"], types=target.types,
+                    attack_stage=stage, special_attack_stage=stage,
+                    ability=target.ability, held_item=target.held_item)
+                _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
+                                       base_power=base_power, reflect=reflect,
+                                       light_screen=light_screen)
+                worst = max(worst, high)
+    _WORST_HIT_CACHE[key] = worst
     return worst
 
 

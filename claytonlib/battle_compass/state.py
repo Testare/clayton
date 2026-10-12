@@ -300,6 +300,16 @@ class BattleState:
     #: and no configured moveset contains it; it is tracked at all because a SECOND Water Sport
     #: fails, and a failing move costs the turn two fewer advances.
     target_water_sport: bool = False
+    #: Reflect and Light Screen on OUR side, which is the only side that can raise them: no
+    #: configured target moveset contains either move. Counters because they expire, and because
+    #: a Light Clay makes the figure 8 rather than 5 (`battle.damage.screen_turns`).
+    #:
+    #: Unlike Mist and Safeguard these are **side** conditions in the ROM
+    #: (`ctx->fieldSideConditionFlags[side]`, src/battle/battle_command.c:2577), not battler ones,
+    #: so they survive our switches -- Magneton can set Reflect and Smeargle keeps it. They live
+    #: on the state rather than on `Battler` for exactly that reason.
+    reflect_turns: int = 0
+    light_screen_turns: int = 0
     #: How many of our Pokemon have gone down. Needed because a faint no longer leaves a trace
     #: in `ours`: the replacement switches in at the end of the turn, so ``ours.fainted`` is
     #: False again by the time anyone inspects the result. The solver prunes on this -- a path
@@ -359,7 +369,9 @@ class BattleState:
             target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
             safeguard_turns=self.safeguard_turns,
-            target_water_sport=self.target_water_sport, faints=self.faints,
+            target_water_sport=self.target_water_sport,
+            reflect_turns=self.reflect_turns, light_screen_turns=self.light_screen_turns,
+            faints=self.faints,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,
             log=list(self.log))

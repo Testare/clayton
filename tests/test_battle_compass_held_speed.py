@@ -167,15 +167,19 @@ class TestTheChoiceLock(unittest.TestCase):
     def test_the_solver_will_not_plan_past_the_lock(self):
         from claytonlib.battle_compass.solver import SolverConfig, _legal_actions
 
+        # Locked into Flash, not Tackle. The lock is what this test is about, but the target is
+        # at 1 HP -- the Phase 2 precondition -- and `can_faint_target` now (correctly) refuses
+        # every damaging move there, so a Tackle lock would be filtered for the OTHER reason and
+        # the assertion would pass without proving anything about the lock.
         state = BattleState(
             ours=_mon(300, item="Choice Scarf", moves=("Thunder Wave", "Tackle", "Flash"),
-                      pp=(20, 35, 20), locked=1),
+                      pp=(20, 35, 20), locked=2),
             target=_mon(20, moves=("Mist",), pp=(30,), name="Target", status=Status.PARALYSIS),
             rng=0x1234, phase=2)
         state.target = state.target.with_hp(1)
         moves = {a for a, _, _ in _legal_actions(state, SolverConfig(), HUNT)
                  if a.move_slot is not None}
-        self.assertEqual(moves, {Action.MOVE_2}, "the solver offered a move the game would refuse")
+        self.assertEqual(moves, {Action.MOVE_3}, "the solver offered a move the game would refuse")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ frame-rate migration that much of the codebase is mid-way through.
 ## Running Tests
 
 ```bash
-python -m unittest discover -s tests            # all tests (1024 tests, ~50s)
+python -m unittest discover -s tests            # all tests (~2440 tests, ~140s)
 python -m unittest tests.test_machete -v        # single test module
 python -m unittest tests.test_machete.TestMacheteOne.test_path_ends_with_C_when_found  # single test
 ```

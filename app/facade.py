@@ -917,13 +917,22 @@ class Facade:
           per-turn RNG cost makes a capture reachable for ~36% of seeds against ~99% for three,
           so this is advice worth giving before the encounter rather than after.
         * ``speed`` — ties desynchronise the simulation rather than merely costing turns.
+        * ``survivability`` — which party members cannot live through the target's worst hit, and
+          whether that is true now or only once it has boosted. This is what stops the danger
+          floor failing opaquely: a floor above a Pokemon's max HP makes every turn "in danger",
+          so the solver never throws a ball and reports Unreachable for a reason that has nothing
+          to do with capture windows (clayton-957.10.1).
+        * ``move_coverage`` — moves of OURS the simulator cannot model. The mirror of the check
+          `targets.unsupported_moves` has always done for the target. Advisory rather than
+          blocking, because unlike the target's moves we can simply not select ours.
 
-        Only the first blocks; the other two are warnings the player may knowingly accept.
+        Only the first blocks; the rest are warnings the player may knowingly accept.
         """
         from claytonlib.battle.readiness import (
             alphabet_report, speed_after_item, speed_checks, speed_warnings,
         )
         from claytonlib.battle.stats import derive_species_stats, species
+        from claytonlib.battle_compass.sim import unsupported_our_moves
         from claytonlib.moves import resolve_move
 
         h = self._load_hunt(hunt_id)
@@ -933,6 +942,8 @@ class Facade:
             "hard_errors": h.hard_errors(profile),
             "alphabet": None,
             "speed": None,
+            "survivability": [],
+            "move_coverage": [],
             "target_stats": None,
             # Which calibration model the centre-seed maths will use. Never a blocker: models
             # are profile-scoped and every profile is seeded with an active "Standard" one, so
@@ -949,6 +960,9 @@ class Facade:
             moves = [m for m in (resolve_move(name) for name in pokemon.moveset) if m]
             if moves:
                 movesets[pokemon.name] = moves
+            for name, why in unsupported_our_moves(pokemon.moveset):
+                result["move_coverage"].append(
+                    {"pokemon": pokemon.name, "move": name, "reason": why})
             if pokemon.speed is not None:
                 # The HELD ITEM applied, because the summary screen does not include it: a
                 # scarfed Magneton reads 124 and moves at 186, and this check is what tells the
@@ -1003,7 +1017,53 @@ class Facade:
                         ],
                         "warnings": speed_warnings(checks),
                     }
+                result["survivability"] = self._survivability_warnings(h, profile, stats)
         return result
+
+    def _survivability_warnings(self, hunt, profile, target_stats: dict) -> list[str]:
+        """`survivability_warnings` over the configured party, or [] if it cannot be built.
+
+        Separate from `hunt_readiness` because building `Battler`s is the one part of this that
+        can fail on an incomplete configuration, and a half-entered party should cost the screen
+        its warnings rather than its whole payload.
+        """
+        from claytonlib.battle.stats import species
+        from claytonlib.battle_compass.hunt_session import survivability_warnings
+        from claytonlib.battle_compass.state import Battler
+        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.moves import resolve_move
+
+        try:
+            target_moves = moveset(hunt.target.species)
+        except KeyError:
+            return []
+        try:
+            info = species(hunt.target.species)
+        except KeyError:
+            return []
+        abilities = info.get("abilities") or [""]
+        target = Battler(
+            name=hunt.target.species, level=hunt.target.level,
+            types=tuple(info["types"]), stats=dict(target_stats),
+            moves=target_moves,
+            pp=tuple((resolve_move(n).pp if resolve_move(n) else 0) for n in target_moves),
+            ability=abilities[0])
+        party = []
+        for slot in hunt.party:
+            pokemon = profile.get_party_pokemon(slot.pokemon_id)
+            if pokemon is None or not pokemon.stats:
+                continue
+            try:
+                party.append(Battler(
+                    name=pokemon.name, level=pokemon.level,
+                    types=tuple(species(pokemon.species)["types"]),
+                    stats=dict(pokemon.stats), moves=tuple(pokemon.moveset),
+                    held_item=slot.held_item))
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not party:
+            return []
+        return survivability_warnings(party, target)
 
     # -- expeditions ------------------------------------------------------
 

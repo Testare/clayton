@@ -18,8 +18,8 @@ Flying, Mist guards its own side, Aurora Beam's Attack drop affects damage we *d
 screens, and nothing in its kit touches our defensive stat stages.  That is what made weather
 easy to leave out for v1 and impossible to leave out past it: Lugia's Hydro Pump under its own
 Rain Dance is a 1.5x on the biggest hit in any configured moveset, and the move that made
-fainting worth modelling.  Screens, burn's halving and damage-absorbing abilities remain
-unimplemented rather than assumed absent — `unsupported_reason` says so, and the caller is
+fainting worth modelling.  Burn's halving and damage-absorbing abilities remain
+unimplemented here rather than assumed absent — `unsupported_reason` says so, and the caller is
 expected to refuse to filter rather than filter wrongly.
 
 An error here is **unsound, not imprecise**: it eliminates the true seed.  Every opponent's
@@ -94,6 +94,39 @@ TYPE_ITEM_MODIFIER_PERCENT = 20
 #: Technician raises base power by half when the power is 60 or less (ABILITY_TECHNICIAN, and the
 #: ROM checks the power *after* earlier power modifiers, not the raw base power).
 TECHNICIAN_POWER_CAP = 60
+
+# --- screens ---------------------------------------------------------------------------------
+#
+# Reflect halves PHYSICAL damage and Light Screen halves SPECIAL damage, and against a mixed
+# attacker that asymmetry decides which one is worth bringing: Ho-Oh's Sacred Fire and Punishment
+# are physical while only Ancient Power is special, so Reflect covers two of its three attacks and
+# Light Screen covers the weakest one (notes/ho_oh_party.md sec 1.1).
+#
+# **A critical hit bypasses both** [verified]. Both branches in `CalcMoveDamage` are gated on
+# ``crit == 1`` -- the no-crit multiplier:
+#
+#     if ((sideCondition & SIDE_CONDITION_REFLECT) && crit == 1 && ...) { dmg /= 2; }
+#     if ((sideCondition & SIDE_CONDITION_LIGHT_SCREEN) && crit == 1 && ...) { dmg /= 2; }
+#
+# So a screen changes the common case and leaves the danger floor exactly where it was. That is
+# the opposite of weather, whose Fire halving has no crit gate at all -- which makes rain the one
+# reducer that can lower a floor and a screen one that never can.
+#
+# Position: the ROM halves for burn, then for the screen, then applies weather, all before the
+# closing ``+ 2``. Every step truncates, so this is the one correct place for it.
+SCREEN_DIVISOR = 2
+#: Light Clay extends a screen from five turns to eight (`HOLD_EFFECT_EXTEND_SCREENS`). Lives here
+#: beside the halving because the two are the whole of what a screen is.
+SCREEN_TURNS = 5
+SCREEN_TURNS_LIGHT_CLAY = 8
+LIGHT_CLAY = "light clay"
+
+
+def screen_turns(held_item: str) -> int:
+    """How many turns a screen set by the holder of `held_item` lasts."""
+    return (SCREEN_TURNS_LIGHT_CLAY if held_item.strip().lower() == LIGHT_CLAY
+            else SCREEN_TURNS)
+
 
 # --- weather ---------------------------------------------------------------------------------
 #
@@ -227,7 +260,8 @@ def _apply_weather(value: int, move: Move, weather: str) -> int:
 
 def damage(move: Move, attacker: Attacker, defender: Defender, *,
            roll: int = 100, critical: bool = False,
-           weather: str = WEATHER_NONE, base_power: int | None = None) -> int:
+           weather: str = WEATHER_NONE, base_power: int | None = None,
+           reflect: bool = False, light_screen: bool = False) -> int:
     """Damage for one hit, in HP.
 
     `roll` is the 85..100 damage roll.  Flooring happens at each step exactly as the game does;
@@ -237,6 +271,10 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     size suggests: Rain Dance is in Suicune's and Lugia's movesets, and rain turns Hydro Pump
     into a move that can faint a Pokemon at full HP -- which is the whole reason fainting needed
     modelling at all.
+
+    `reflect` and `light_screen` are the DEFENDER's side conditions. Each halves its own category
+    and **both are ignored on a critical hit** -- see the screens section above. Callers pass them
+    unconditionally; the crit gate is applied here so no caller has to remember it.
     """
     reason = unsupported_reason(move, power_known=base_power is not None)
     if reason:
@@ -273,7 +311,13 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     # BETWEEN them -- see `_apply_weather`. Collapsing them, as this did while there was no
     # weather term to fit in, left nowhere correct to put it.
     value = attack * power * level_term // defence // 50
-    # Burn's halving and the screens would sit here, in that order, when they land.
+    # Burn's halving sits here too, when it lands -- `battle_compass.sim` currently applies it to
+    # the Attack stat before this call instead, which is where `CalcMoveDamage` reads it.
+    if not critical:
+        if physical and reflect:
+            value //= SCREEN_DIVISOR
+        elif not physical and light_screen:
+            value //= SCREEN_DIVISOR
     value = _apply_weather(value, move, weather)
     value += 2
 
@@ -335,32 +379,39 @@ def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
 
 def damage_spread(move: Move, attacker: Attacker, defender: Defender, *,
                   critical: bool = False, weather: str = WEATHER_NONE,
-                  base_power: int | None = None) -> dict[int, int]:
+                  base_power: int | None = None,
+                  reflect: bool = False, light_screen: bool = False) -> dict[int, int]:
     """`roll` -> damage, for all sixteen rolls.
 
     This is what makes the sec 3.1 filter work: an observed HP change identifies the set of
     rolls consistent with it, and therefore constrains the RNG state.
     """
     return {roll: damage(move, attacker, defender, roll=roll, critical=critical,
-                         weather=weather, base_power=base_power)
+                         weather=weather, base_power=base_power,
+                         reflect=reflect, light_screen=light_screen)
             for roll in DAMAGE_ROLLS}
 
 
 def rolls_for_damage(observed: int, move: Move, attacker: Attacker, defender: Defender, *,
-                     critical: bool = False, weather: str = WEATHER_NONE) -> tuple[int, ...]:
+                     critical: bool = False, weather: str = WEATHER_NONE,
+                     reflect: bool = False,
+                     light_screen: bool = False) -> tuple[int, ...]:
     """Which damage rolls could have produced `observed`.
 
     Empty means no roll can — the seed, the stats, or this model is wrong.  Callers must
     surface that rather than silently discarding candidates (sec 3.1).
     """
-    spread = damage_spread(move, attacker, defender, critical=critical, weather=weather)
+    spread = damage_spread(move, attacker, defender, critical=critical, weather=weather,
+                           reflect=reflect, light_screen=light_screen)
     return tuple(roll for roll, value in spread.items() if value == observed)
 
 
 def damage_range(move: Move, attacker: Attacker, defender: Defender, *,
                  critical: bool = False, weather: str = WEATHER_NONE,
-                 base_power: int | None = None) -> tuple[int, int]:
+                 base_power: int | None = None,
+                 reflect: bool = False, light_screen: bool = False) -> tuple[int, int]:
     """(minimum, maximum) over the sixteen rolls."""
     values = damage_spread(move, attacker, defender, critical=critical,
-                           weather=weather, base_power=base_power).values()
+                           weather=weather, base_power=base_power,
+                           reflect=reflect, light_screen=light_screen).values()
     return min(values), max(values)

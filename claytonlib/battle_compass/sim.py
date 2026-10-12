@@ -90,6 +90,72 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
 }
 
 
+#: Move effect ids whose behaviour is fully accounted for when **WE** use the move.
+#:
+#: The mirror of `MODELLED_TARGET_EFFECTS`, and it did not exist until clayton-957.10.2. The
+#: asymmetry was the bug: `targets.unsupported_moves` refuses a target whose moveset the simulator
+#: cannot model, while our own side had no check at all -- so Flash, Screech and Charm could be
+#: planned into a run and silently simulated as doing nothing.
+#:
+#: Our side is treated more leniently than the target's on purpose. An unmodelled move of the
+#: TARGET's is unavoidable: it picks its own moves, so the run is unsound the moment one fires.
+#: An unmodelled move of ours is avoidable -- we simply do not select it, and `allowed_moves`
+#: keeps the solver off it too. So this reports rather than refuses, and the caller decides.
+MODELLED_OUR_EFFECTS: dict[int, str] = {
+    0: "no effect beyond damage",
+    1: "Spore and friends: sleep, including the hidden duration roll",
+    4: "may burn: the status, its tick, and its halved physical Attack",
+    6: "may paralyze (Discharge, Thunderbolt)",
+    18: "lowers the target's Attack (Growl)",
+    19: "lowers the target's Defence (Tail Whip, Leer)",
+    20: "lowers the target's Speed (String Shot)",
+    23: "lowers the target's accuracy (Flash)",
+    24: "lowers the target's evasion (Sweet Scent), and Mist blocks it",
+    31: "may flinch, and suppressed when unobservable",
+    35: "Light Screen: halves special damage, and a second one fails",
+    58: "lowers the target's Attack by two (Charm)",
+    59: "lowers the target's Defence by two (Screech)",
+    60: "lowers the target's Speed by two (Scary Face)",
+    62: "lowers the target's Sp. Def by two (Fake Tears, Metal Sound)",
+    65: "Reflect: halves physical damage, and a second one fails",
+    67: "paralyzes (Thunder Wave)",
+    76: "may confuse (Signal Beam) -- the proc roll only; confusion ON THE TARGET is inert here",
+    101: "False Swipe: damage that cannot take the target below 1 HP",
+    106: "Mean Look: traps, and a second one fails",
+    125: "may burn -- as effect 4",
+    136: "Rain Dance: field condition and the weather term",
+    149: "double power vs airborne, which never applies in a single battle on the ground",
+}
+
+
+def unsupported_our_moves(moves) -> tuple[tuple[str, str], ...]:
+    """``((move name, why), ...)`` for each of OUR moves the simulator cannot fully model.
+
+    Advisory, unlike `targets.unsupported_moves` -- see `MODELLED_OUR_EFFECTS` for why the two
+    differ. Callers should surface these next to the readiness warnings and keep the slots out of
+    `SolverConfig.allowed_moves`.
+
+    `moves` is an iterable of names or of `Move`s, so a caller can pass a `Battler.moves` tuple or
+    the already-resolved list it happens to hold.
+    """
+    from claytonlib.moves import resolve_move
+
+    problems: list[tuple[str, str]] = []
+    for entry in moves:
+        if entry is None or entry == "":
+            continue
+        move = entry if isinstance(entry, Move) else resolve_move(entry)
+        if move is None:
+            problems.append((str(entry), "is not in the move table at all"))
+            continue
+        if move.effect not in MODELLED_OUR_EFFECTS:
+            problems.append((
+                move.name,
+                f"effect {move.effect} is not modelled, so the simulator would treat it as "
+                f"having worked and changed nothing"))
+    return tuple(problems)
+
+
 def can_flinch(battler) -> bool:
     """Whether any of `battler`'s known moves can make the other side flinch."""
     return any((m := battler.move(slot)) is not None and m.effect in FLINCH_EFFECTS
@@ -169,6 +235,17 @@ class MoveOutcome:
     traps: bool = False
     sets_water_sport: bool = False
     sets_safeguard: bool = False
+    #: ``(stage field, stages)`` this move drops on its target, or None. Applied by
+    #: `simulate_turn`, which owns the state -- and which knows which side the target is.
+    stat_drop: tuple[str, int] | None = None
+    #: A screen this move put up on the user's side, and for how many turns (Light Clay).
+    sets_reflect: bool = False
+    sets_light_screen: bool = False
+    screen_turns: int = 0
+    #: A status inflicted on the move's OWN USER by the defender's ability -- Static's paralysis.
+    #: Named for the attacker because that is who it lands on, which is the opposite of every
+    #: other field here.
+    attacker_status: Status | None = None
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
@@ -283,6 +360,14 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         return True
     if move.effect == EFFECT_SAFEGUARD and getattr(field, "safeguard_turns", 0) > 0:
         return True
+    # A screen re-used while it is already up fails (the fail branch at
+    # src/battle/battle_command.c:2577), which costs the turn its two post-successful-move
+    # advances. This half of the screen work bites even with the halving unimplemented, because
+    # Ampharos carries Light Screen in its moveset and a player can simply pick it twice.
+    if move.effect == EFFECT_REFLECT and getattr(field, "reflect_turns", 0) > 0:
+        return True
+    if move.effect == EFFECT_LIGHT_SCREEN and getattr(field, "light_screen_turns", 0) > 0:
+        return True
     return False
 
 
@@ -370,6 +455,108 @@ def punishment_power(defender: Battler) -> int:
 VARIABLE_POWER_EFFECTS = frozenset({EFFECT_PUNISHMENT})
 
 
+# --- primary stat drops, i.e. the ones a STATUS move exists to do ------------------------------
+#
+# These had no home at all until now, and the absence was silent rather than loud: `execute_move`
+# returned a successful outcome with no stat payload and `simulate_turn` applied nothing, so
+# Flash, Screech and Charm each read as "it worked and changed nothing" (clayton-957.10.2).
+#
+# Flash was the unsound one. `_effective_accuracy` already reads `attacker.accuracy_stage`, so the
+# stage simply never got set and every later hit/miss was computed at the wrong threshold -- the
+# accuracy roll spent correctly and the verdict wrong, which eliminates the true seed rather than
+# merely blurring it.
+#
+# Distinct from the three SECONDARY drops (effects 68, 71, 72), which ride on a damaging move and
+# are applied off `outcome.secondary`. These are the move's whole purpose, so they land whenever
+# it succeeds.
+#: effect id -> (`Battler` stage field, how many stages it drops)
+PRIMARY_STAT_DROPS: dict[int, tuple[str, int]] = {
+    18: ("atk_stage", 1),        # Growl
+    19: ("def_stage", 1),        # Tail Whip, Leer
+    20: ("speed_stage", 1),      # String Shot
+    23: ("accuracy_stage", 1),   # Flash, Sand Attack, Kinesis
+    24: ("evasion_stage", 1),    # Sweet Scent
+    58: ("atk_stage", 2),        # Charm, Feather Dance
+    59: ("def_stage", 2),        # Screech
+    60: ("speed_stage", 2),      # Scary Face
+    62: ("spdef_stage", 2),      # Fake Tears, Metal Sound
+}
+STAT_STAGE_FLOOR = -6
+STAT_STAGE_CEILING = 6
+
+#: False Swipe's effect: damage, but never below 1 HP. The reason it is the only damaging move
+#: that stays legal once the target is at 1 -- see `solver.can_faint_target`.
+FALSE_SWIPE_EFFECT = 101
+
+
+def primary_stat_drop(move: Move) -> tuple[str, int] | None:
+    """``(stage field, stages)`` this status move drops on its target, or None."""
+    return PRIMARY_STAT_DROPS.get(move.effect)
+
+
+def apply_stat_drop(battler: Battler, drop: tuple[str, int]) -> Battler:
+    """`battler` with `drop` applied, clamped at the -6 floor.
+
+    **Clamped rather than refused.** A drop against a stat already at -6 does nothing, and the
+    player reports that it does not change the turn's roll count either -- so unlike the field
+    conditions it is NOT a `will_fail` case, and Flash stays a usable filler action all the way
+    down. Worth a ground-truth capture if it ever becomes load-bearing; for now the clamp is the
+    whole of it.
+    """
+    field, stages = drop
+    current = getattr(battler, field)
+    return replace(battler, **{field: max(STAT_STAGE_FLOOR, current - stages)})
+
+
+# --- screens -----------------------------------------------------------------------------------
+#
+# OUR side's, and only ours: no configured target moveset contains either move, the same way
+# `mist_turns` is only ever the target's. If one ever does, these become per-side pairs rather
+# than single counters.
+EFFECT_LIGHT_SCREEN = 35
+EFFECT_REFLECT = 65
+SCREEN_EFFECTS = frozenset({EFFECT_LIGHT_SCREEN, EFFECT_REFLECT})
+
+
+# --- abilities that act without being asked ----------------------------------------------------
+#
+# Lowercased, because `Battler.ability` is entered by a player rather than read from the ROM.
+ABILITY_INTIMIDATE = "intimidate"
+ABILITY_STATIC = "static"
+#: Intimidate drops one stage of Attack. It spends NO advances -- `sendOutState` case 3
+#: (src/battle/overlay_12_0224E4FC.c:3253) sets BATTLE_SUBSCRIPT_INTIMIDATE with no
+#: `BattleSystem_Random` in the branch at all.
+INTIMIDATE_DROP = ("atk_stage", 1)
+#: Static's paralysis chance, as the ROM writes it: ``BattleSystem_Random() % 10 < 3``.
+STATIC_MODULUS = 10
+STATIC_THRESHOLD = 3
+
+
+def intimidates(battler: Battler) -> bool:
+    return battler.ability.strip().lower() == ABILITY_INTIMIDATE
+
+
+def _apply_intimidate(incoming: Battler, opponent: Battler) -> Battler:
+    """`opponent` after `incoming`'s Intimidate, if it has one. Costs no advances.
+
+    **It re-triggers on every send-out.** `intimidateFlag = 0` sits at
+    src/battle/overlay_12_0224E4FC.c:82, inside the battler-initialisation function that reads IVs
+    and the nickname off the mon -- so it runs per entry, not once per battle. The same Pokemon
+    switched out and back in fires again, stacking to -6. That is what makes an Intimidate body a
+    *shuttle* rather than a one-shot (notes/ho_oh_party.md sec 5.3).
+
+    It applies on the switch-in turn itself, because a switch resolves before any move -- which is
+    why the entry turn is the strictest survival bar for the Intimidate holder and not the easiest.
+
+    Nothing in any configured target blocks it: none has Clear Body or Hyper Cutter, none has Mist
+    up at the moment we send out, and Safeguard does not touch stat drops. A target that did would
+    need the same guard `apply_stat_drop`'s callers use.
+    """
+    if not intimidates(incoming) or opponent.fainted:
+        return opponent
+    return apply_stat_drop(opponent, INTIMIDATE_DROP)
+
+
 def variable_base_power(move: Move, defender: Battler) -> int | None:
     """Base power for a move whose table entry is a placeholder, or None for a fixed-power move.
 
@@ -419,6 +606,17 @@ def weather_of(field) -> str:
     return WEATHER_NONE
 
 
+def screen_turns_for(held_item: str) -> int:
+    """How long a screen this holder sets will last -- 5 turns, or 8 with a Light Clay.
+
+    Thin wrapper so `battle.damage` stays the one place that knows the figures, and so the item
+    name is matched in exactly one spot.
+    """
+    from claytonlib.battle.damage import screen_turns
+
+    return screen_turns(held_item)
+
+
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
                  field=None) -> tuple[int, MoveOutcome]:
@@ -459,19 +657,27 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             rng, duration_roll = advance(rng)
             used += 1
             sleep_turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
-        # Mist guards its own side's stats. The move still executed, so it stays SUCCESSFUL and
-        # still spends the post-move advances [verified: test1.jsonl turn 15 spent 8 skeleton
-        # rolls, not 6, on a Sweet Scent the game reported as "protected by Mist"].
-        blocked = (move.effect == EFFECT_LOWER_EVASION and field is not None
-                   and field.mist_turns > 0)
+        # Mist guards its own side's stats, against EVERY reduction and not just Sweet Scent's.
+        # The move still executed, so it stays SUCCESSFUL and still spends the post-move advances
+        # [verified: test1.jsonl turn 15 spent 8 skeleton rolls, not 6, on a Sweet Scent the game
+        # reported as "protected by Mist"]. `mist_turns` is the TARGET's Mist, so this guards a
+        # drop we aim at the target -- which is the only direction any configured moveset can
+        # produce.
+        drop = primary_stat_drop(move)
+        blocked = (drop is not None and field is not None and field.mist_turns > 0)
         return rng, MoveOutcome(
             rolls=used, tokens=tuple(parts), successful=True,
             applied_status=status, sleep_turns=sleep_turns,
+            stat_drop=None if blocked else drop,
             sets_rain=move.effect == EFFECT_RAIN_DANCE,
             sets_mist=move.effect == EFFECT_MIST,
             traps=move.effect == EFFECT_MEAN_LOOK,
             sets_water_sport=move.effect == EFFECT_WATER_SPORT,
             sets_safeguard=move.effect == EFFECT_SAFEGUARD,
+            sets_reflect=move.effect == EFFECT_REFLECT,
+            sets_light_screen=move.effect == EFFECT_LIGHT_SCREEN,
+            screen_turns=(screen_turns_for(attacker.held_item)
+                          if move.effect in SCREEN_EFFECTS else 0),
             blocked_by_mist=blocked)
 
     # Damaging.
@@ -523,9 +729,13 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             # again. Leaving this out did not make the prediction imprecise -- it made every
             # candidate wrong from the first rained-on hit, because the predicted HP is compared
             # exactly.
-            weather=weather_of(field))
+            weather=weather_of(field),
+            # OUR screens, so they apply only when the TARGET is the one attacking. Both are
+            # ignored on a crit, which `damage` handles itself.
+            reflect=actor == "E" and getattr(field, "reflect_turns", 0) > 0,
+            light_screen=actor == "E" and getattr(field, "light_screen_turns", 0) > 0)
         # False Swipe cannot knock out: it leaves the target on 1 HP.
-        if move.effect == 101:
+        if move.effect == FALSE_SWIPE_EFFECT:
             dealt = min(dealt, max(0, defender.hp - 1))
 
     secondary = False
@@ -536,8 +746,65 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         if secondary:
             parts.append(tok.SECONDARY)
 
+    # The defender's contact abilities. Static is the only one any configured party has, and it is
+    # Ampharos's sole ability, so it cannot be opted out of.
+    #
+    # **Its position relative to the secondary proc above is NOT verified.** The roll COUNT is
+    # safe either way -- one extra advance under the conditions `_contact_ability` lists -- but the
+    # ORDER decides which roll is which, and swapping two rolls changes every prediction
+    # downstream of them. Placed after the secondary because that is the order the battle scripts
+    # read in, and flagged here rather than left to look settled: per CLAUDE.md an advance count
+    # changes only with a ground-truth capture, and this one has not had one. It costs nothing
+    # today, because the planned run paralyzes Ho-Oh on turn 1 and a statused attacker spends no
+    # Static roll at all -- so no turn of the real plan contains both rolls.
+    rng, used, attacker_status = _contact_ability(
+        rng, used, move, attacker, defender, dealt=dealt)
+
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
-                            damage=dealt, secondary=secondary)
+                            damage=dealt, secondary=secondary,
+                            attacker_status=attacker_status)
+
+
+def _contact_ability(rng: int, used: int, move: Move, attacker: Battler, defender: Battler,
+                     *, dealt: int) -> tuple[int, int, Status | None]:
+    """The defender's on-hit ability. Returns (rng, rolls used, status inflicted on the attacker).
+
+    Only Static so far. `CheckAbilityEffectOnHit`
+    (src/battle/overlay_12_0224E4FC.c:3589) reads, in source order:
+
+    ```c
+    battleMons[attacker].hp && !battleMons[attacker].status && !(moveStatusFlag & MOVE_STATUS_FAIL)
+      && !(battleStatus & CHARGE_TURN) && !(battleStatus2 & UTURN)
+      && (selfTurnData[target].physicalDamage || specialDamage)
+      && (moveData[moveNoCur].unkB & 1)                     // contact
+      && (BattleSystem_Random(battleSystem) % 10 < 3)       // 30%, and LAST
+    ```
+
+    **The RNG call is the final term, so C short-circuits before it.** That is the whole point of
+    transcribing the order rather than the outcome: every condition in front of it is a condition
+    under which the roll is NOT SPENT, and a roll wrongly spent desynchronises every later turn.
+    Two consequences worth stating outright:
+
+    * **An already-statused attacker costs nothing.** So the planned turn-1 Thunder Wave makes
+      Ampharos's Static permanently dormant for the rest of the battle -- the roll stops existing
+      rather than merely stopping mattering.
+    * **Contact only**, read off `Move.makes_contact` rather than a move-name list. Among the
+      configured targets that is Punishment and nothing else.
+
+    The 30% paralysis is a *benefit* once modelled: an unplanned second route to the Phase 2
+    precondition.
+    """
+    if (defender.ability.strip().lower() != ABILITY_STATIC
+            or not move.makes_contact
+            or dealt <= 0
+            or attacker.fainted
+            or attacker.status is not Status.NONE):
+        return rng, used, None
+    rng, roll = advance(rng)
+    used += 1
+    if roll % STATIC_MODULUS < STATIC_THRESHOLD:
+        return rng, used, Status.PARALYSIS
+    return rng, used, None
 
 
 def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
@@ -840,6 +1107,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target_water_sport = True
         if outcome.sets_safeguard:
             new.safeguard_turns = SAFEGUARD_TURNS
+        # Screens are OUR side's, so a `sets_*` can only come from `act_ours`. The duration is
+        # carried on the outcome rather than read here, because it depends on the setter's held
+        # item (Light Clay) and the setter is whoever used the move.
+        if outcome.sets_reflect:
+            new.reflect_turns = outcome.screen_turns
+        if outcome.sets_light_screen:
+            new.light_screen_turns = outcome.screen_turns
 
     #: Set when the actor that moved FIRST procced a flinch, so the second actor loses its move.
     #: A dict rather than two nonlocals because both sides are symmetric and only one can ever be
@@ -890,6 +1164,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 tuple(b for i, b in enumerate(new.bench) if i != bench_slot)
                 + (replace(new.ours, choice_locked_slot=None),))
             new.ours = incoming
+            # Intimidate fires on the way in, before any move of this turn resolves, and costs no
+            # advances. Re-fires on every entry, so a shuttle can stack it (see
+            # `_apply_intimidate`).
+            new.target = _apply_intimidate(incoming, new.target)
             # The HP token reports a CHANGE to one Pokemon, so the baseline has to follow whoever
             # is out at the end of the turn. Left as the outgoing Pokemon's HP it compared two
             # different Pokemon and emitted a token for a switch that took no damage at all.
@@ -989,6 +1267,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # The rolled duration was being thrown away, so a slept target never woke.
             new.target = new.target.with_status(outcome.applied_status,
                                                 sleep_turns=outcome.sleep_turns)
+        if outcome.stat_drop is not None:
+            # Flash, Screech and Charm. **Permanent**, because a wild target never switches out
+            # and the ROM's stat reset runs only on the Pokemon being sent out -- which is what
+            # makes six Flashes worth more than any five-turn field condition.
+            new.target = apply_stat_drop(new.target, outcome.stat_drop)
+        if outcome.attacker_status is not None:
+            # The target's own ability paralyzed US on contact -- nothing has this yet, but the
+            # path is symmetric with `act_target` and costing nothing is the point.
+            new.ours = new.ours.with_status(outcome.attacker_status)
         if outcome.secondary and move.effect in BURN_EFFECTS:
             new.target = new.target.with_status(Status.BURN)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
@@ -1043,6 +1330,16 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Mist Ball drops Sp. Atk, which is not inert: our special damage is what some
             # parties use to bring the target down.
             new.ours = replace(new.ours, spatk_stage=max(-6, new.ours.spatk_stage - 1))
+        if outcome.stat_drop is not None:
+            # No configured target has a primary stat-drop move; wired anyway so that adding one
+            # is a row in `PRIMARY_STAT_DROPS` and nothing else. Our own Mist would guard this,
+            # and nothing in the party can set Mist.
+            new.ours = apply_stat_drop(new.ours, outcome.stat_drop)
+        if outcome.attacker_status is not None:
+            # Static. The target hit a Static holder of ours with a contact move and got
+            # paralyzed for it -- an unplanned route to the Phase 2 precondition, and the reason
+            # the roll has to be spent in the right places and nowhere else.
+            new.target = new.target.with_status(outcome.attacker_status)
         if outcome.secondary and move.effect == EFFECT_LOWER_SPDEF:
             # Luster Purge drops our Sp. DEF, raising every later special hit we take. Latios
             # was already a configured target with this unmodelled, so the model under-predicted
@@ -1115,6 +1412,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         new.rain_turns = max(0, new.rain_turns - 1)
         new.mist_turns = max(0, new.mist_turns - 1)
         new.safeguard_turns = max(0, new.safeguard_turns - 1)
+        new.reflect_turns = max(0, new.reflect_turns - 1)
+        new.light_screen_turns = max(0, new.light_screen_turns - 1)
 
     # Burn's residual, which is a RESIDUAL in the sense that matters here: deterministic, free of
     # RNG, and therefore not reported. `hp_before` is deliberately NOT moved by it, so the HP
@@ -1166,6 +1465,10 @@ def _send_out(state: BattleState, replacement: int | None) -> str:
         tuple(b for i, b in enumerate(state.bench) if i != index)
         + (replace(state.ours, choice_locked_slot=None),))
     state.ours = incoming
+    # A replacement Intimidates exactly as a voluntary switch-in does -- this is a send-out, and
+    # `intimidateFlag` is cleared per send-out. Free of advances, so it cannot disturb the
+    # end-of-turn counts this runs inside.
+    state.target = _apply_intimidate(incoming, state.target)
     return tok.faint_token(party_number(incoming, index))
 
 

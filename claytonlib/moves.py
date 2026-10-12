@@ -29,12 +29,12 @@ CATEGORY_PHYSICAL, CATEGORY_SPECIAL, CATEGORY_STATUS = 0, 1, 2
 class Move:
     """Move metadata loaded from moves.json."""
     __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy',
-                 'type_id', 'category', 'power', 'priority', 'pp')
+                 'type_id', 'category', 'power', 'priority', 'pp', 'flags')
 
     def __init__(self, number: int, name: str, metronome_usable: bool,
                  effect: int = 0, effect_chance: int = 0, accuracy: int = 0,
                  type_id: int = 0, category: int = CATEGORY_STATUS,
-                 power: int = 0, priority: int = 0, pp: int = 0):
+                 power: int = 0, priority: int = 0, pp: int = 0, flags: int = 0):
         self.number = number
         self.name = name
         self.metronome_usable = metronome_usable
@@ -50,6 +50,24 @@ class Move:
         self.power = power        # base power; 0 for status moves, 1 for fixed-damage moves
         self.priority = priority  # move-order bracket (Protect is +3, Roar -6)
         self.pp = pp              # base PP, before PP Ups/Maxes
+        # The ROM's move flag byte (`unkB` in the decomp, `unk_b` in moves.json). Only bit 0
+        # is read so far -- see `makes_contact`.
+        self.flags = flags
+
+    @property
+    def makes_contact(self) -> bool:
+        """Whether this move makes contact -- bit 0 of the ROM's move flag byte.
+
+        `CheckAbilityEffectOnHit` gates the contact abilities on
+        ``moveData[moveNoCur].unkB & 1`` (src/battle/overlay_12_0224E4FC.c), so this is the flag
+        that decides whether Static, Rough Skin, Flame Body and friends get to roll at all. Read
+        off the table rather than kept as a move-name list, because a list is wrong the first time
+        a new target brings a move nobody thought of.
+
+        Worth knowing which way round it falls for the configured targets: Punishment and False
+        Swipe make contact; Sacred Fire, Ancient Power, Air Slash and Discharge do not.
+        """
+        return bool(self.flags & 1)
 
     @property
     def is_physical(self) -> bool:
@@ -97,6 +115,7 @@ def _load_moves() -> list[Move]:
                 power=m["power"],
                 priority=m["priority"],
                 pp=m["pp"],
+                flags=m.get("unk_b", 0),
             )
             for m in data
         ]

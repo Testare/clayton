@@ -352,21 +352,72 @@ class TestTheHyperPotionWasSimulatedAsAPotion(unittest.TestCase):
         self.assertEqual(code, "hp")
         self.assertEqual(price, 1200)
 
-    def test_the_solved_step_heals_by_the_item_it_names(self):
-        solution = solve(self._hurt_state(), HUNT, SolverConfig(danger_floor=56))
+    def _item_step(self):
+        """The first ITEM step of a solution that actually contains one, with the state before it.
+
+        It used to be enough to take `steps[0]`, because `_legal_actions` collapsed to item-only
+        whenever HP was at or below the danger floor -- so a hurt Smeargle had no other move to
+        make. That collapse is gone (it was vetoing the whole alphabet over a hypothetical; see
+        `_legal_actions`), and the consequence here is that an 11/153 Smeargle now opens with
+        `M4Epar` instead: the stream says the target is fully paralyzed that turn, so there is
+        nothing to heal from and no reason to spend 1200 on a Hyper Potion.
+
+        That makes this class's subject -- the item PLUMBING, not the item's position -- need a
+        state where a heal is genuinely the best move. Worth noting what the old forcing hid: with
+        items as the only legal action this seed's capture is *Unreachable*, so the collapse was
+        not merely picking a dearer path, it was picking no path at all.
+        """
+        state = BattleState(ours=_ours(hp=20), target=_target(),
+                            rng=opening_rng(0x0C0E02CA, HUNT), phase=2)
+        solution = solve(state, HUNT, SolverConfig(danger_floor=56))
         self.assertIsInstance(solution, Solution)
-        step = solution.steps[0]
+        for step in solution.steps:
+            if step.action is Action.ITEM:
+                return state, solution, step
+            state = simulate_turn(state, step.action, HUNT, item_code=step.item)
+        self.fail("no solution step used an item, so the plumbing is untested")
+
+    def test_the_solved_step_heals_by_the_item_it_names(self):
+        """Priced and labelled `hp`, so it must be SIMULATED as `hp` -- the whole bug.
+
+        Compared against the Potion rather than against max HP, because the turn the solver picks
+        the item on also takes an incoming hit (`IhpE3hHP130`), so "restored to full" is not the
+        observable. The two codes differ by an order of magnitude in healing, which is what makes
+        the comparison a real test of the plumbing rather than of the arithmetic.
+        """
+        before, _, step = self._item_step()
         self.assertEqual(step.item, "hp")
-        state = simulate_turn(self._hurt_state(), step.action, HUNT, item_code=step.item)
-        self.assertEqual(state.ours.hp, state.ours.max_hp,
-                         "a Hyper Potion on an 11/153 Smeargle restores it to full")
+        hyper = simulate_turn(before, step.action, HUNT, item_code=step.item)
+        potion = simulate_turn(before, step.action, HUNT, item_code="p")
+        self.assertGreater(hyper.ours.hp, potion.ours.hp + 20,
+                           "a Hyper Potion heals 200 and a Potion 20; these must not agree")
+        self.assertEqual(hyper.ours.hp + 23, hyper.ours.max_hp,
+                         "healed to full, then hit for 23 in the same turn")
 
     def test_the_step_the_solver_recorded_emits_the_token_it_claims(self):
         """The consequence that would have desynchronised a real run: the plan said `Ip`."""
-        solution = solve(self._hurt_state(), HUNT, SolverConfig(danger_floor=56))
-        step = solution.steps[0]
+        _, _, step = self._item_step()
         self.assertIn("Ihp", "".join(step.tokens))
         self.assertNotIn("Ip", "".join(step.tokens).replace("Ihp", ""))
+
+    def test_the_danger_floor_no_longer_vetoes_the_whole_alphabet(self):
+        """The regression this class would otherwise quietly re-introduce.
+
+        At 11/153 with a floor of 56 the old code offered exactly one action. It must now offer
+        moves as well, and the search's own exact `nxt.faints > current.faints` test is what keeps
+        us alive -- the floor is a bound on what the target COULD do, while the simulator knows
+        what it WILL do.
+        """
+        from claytonlib.battle_compass.solver import _legal_actions
+
+        state = self._hurt_state()
+        offered = {a for a, _, _ in _legal_actions(state, SolverConfig(danger_floor=56), HUNT)}
+        self.assertIn(Action.ITEM, offered)
+        self.assertTrue({a for a in offered if a.move_slot is not None},
+                        "a hurt Smeargle must still be allowed to use False Swipe")
+        solution = solve(state, HUNT, SolverConfig(danger_floor=56))
+        self.assertIsInstance(solution, Solution,
+                             "item-only made this seed Unreachable; the alphabet makes it 150")
 
     def test_the_simulator_refuses_an_item_turn_with_no_item(self):
         """The fallback is gone. Potions differ by an order of magnitude, so there is no safe

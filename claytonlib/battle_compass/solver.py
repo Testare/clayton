@@ -310,7 +310,7 @@ def choose_item(state: BattleState, config: SolverConfig) -> tuple[str, int] | N
             code, hp=hp, max_hp=max_hp,
             statused=state.ours.status is not Status.NONE) is None
 
-    if hp <= config.danger_floor and usable("hp"):
+    if hp <= danger_floor_for(state, config) and usable("hp"):
         # Nothing mitigates a critical hit, so a full heal is the only answer here (sec 12.3).
         return "hp", ITEM_PRICES["hp"]
     if state.ours.spdef_stage < 6:
@@ -321,6 +321,82 @@ def choose_item(state: BattleState, config: SolverConfig) -> tuple[str, int] | N
     for code in ("xd", "gs"):
         return code, ITEM_PRICES[code]
     return None
+
+
+def danger_floor_for(state: BattleState, config: SolverConfig) -> int:
+    """The floor to heal at, computed from THIS state rather than once per session.
+
+    `HuntSession` takes `worst_incoming_hit` once at construction and hands it over as
+    `SolverConfig.danger_floor`. That was right while nothing could move it; it is wrong now in
+    both directions (clayton-957.10.5):
+
+    * **Upward.** Ancient Power raises every one of the target's stats 10% of the time, Attack
+      included, and a floor read before that proc understates the next hit.
+    * **Downward.** Intimidate and Charm take the target to -1 and then -5, which roughly halves
+      every physical hit -- and a floor frozen at entry keeps collapsing `_legal_actions` to
+      item-only at HP values that are comfortably safe. That collapse is the whole of
+      clayton-957.10.1's symptom.
+
+    So the figure is recomputed from the live stages. `config.danger_floor` survives as a lower
+    bound: a caller that deliberately set a floor (or a test that pins one) still gets at least
+    it, and the upward enumeration in `worst_incoming_hit` does the rest.
+    """
+    from claytonlib.battle_compass.hunt_session import worst_incoming_hit
+
+    return max(config.danger_floor, worst_incoming_hit(state.ours, state.target, field=state))
+
+
+def can_faint_target(move, ours, target, *, field=None) -> bool:
+    """Whether `move` could knock the target out -- on any roll, crit included.
+
+    The guard the solver never had (clayton-957.10.4). `_legal_actions` offered every slot in
+    `allowed_moves`, which defaults to all four, and **at 1 HP every damaging move is lethal** --
+    so the solver could propose, as filler, the move that ends the run. It went unnoticed through
+    v1 because Suicune's Phase 2 Pokemon was a Smeargle whose only attack is False Swipe.
+
+    What makes it concrete: Ho-Oh is Fire/Flying, so Electric is 2x, and an Ampharos with 336
+    Sp. Atk does 222-264 with Discharge against a 250 HP Ho-Oh -- a KO from FULL HP on the top
+    rolls, let alone at 1. Even Signal Beam's resisted 17-20 kills at 1 HP. There is no safe
+    damaging move against a target on 1 HP except one that *cannot* reduce it further.
+
+    Deliberately pessimistic in three ways, because a false positive costs one filler action and a
+    false negative costs the hunt:
+
+    * the **maximum** roll, not the minimum;
+    * **critical**, since a crit can KO where a normal hit would not;
+    * and an unmodellable move counts as dangerous rather than safe.
+
+    The exception is effect 101 -- False Swipe's floor at 1 HP, which the simulator already
+    applies. That is what keeps it available as unlimited Phase 2 filler.
+    """
+    from claytonlib.battle.damage import (
+        Attacker, Defender, damage_range, unsupported_attacker_reason, unsupported_reason,
+    )
+    from claytonlib.battle_compass.sim import (
+        FALSE_SWIPE_EFFECT, variable_base_power, weather_of,
+    )
+    from claytonlib.moves import CATEGORY_STATUS
+
+    if move is None or move.category == CATEGORY_STATUS:
+        return False
+    if move.effect == FALSE_SWIPE_EFFECT:
+        return False
+    attacker = Attacker(
+        level=ours.level, attack=ours.stats["atk"], special_attack=ours.stats["spa"],
+        types=ours.types, attack_stage=ours.atk_stage,
+        special_attack_stage=ours.spatk_stage, ability=ours.ability,
+        held_item=ours.held_item)
+    base_power = variable_base_power(move, target)
+    if (unsupported_reason(move, power_known=base_power is not None) is not None
+            or unsupported_attacker_reason(attacker) is not None):
+        return True           # cannot price it, so cannot promise it is safe
+    _, high = damage_range(
+        move, attacker,
+        Defender(defence=target.stats["def"], special_defence=target.stats["spd"],
+                 types=target.types, defence_stage=target.def_stage,
+                 special_defence_stage=target.spdef_stage),
+        base_power=base_power, critical=True, weather=weather_of(field))
+    return high >= target.hp
 
 
 def _legal_actions(state: BattleState, config: SolverConfig,
@@ -338,13 +414,32 @@ def _legal_actions(state: BattleState, config: SolverConfig,
     if simulate_turn(state, Action.CAPTURE_BALL, hunt).captured:
         return [(Action.CAPTURE_BALL, dist(0), None)]
 
-    in_danger = state.ours.hp <= config.danger_floor
     item = choose_item(state, config)
     if item is not None:
         out.append((Action.ITEM, dist(item[1]), item[0]))
-    if in_danger:
-        # Only an item can prevent the faint, so the branching factor collapses to one.
-        return out
+
+    # **There is no "in danger" collapse here any more, and there never should have been.**
+    #
+    # This used to read `if state.ours.hp <= danger_floor: return out` -- only an item, on the
+    # reasoning that nothing else can prevent the faint. Two things are wrong with that.
+    #
+    # It is redundant. `solve` already discards every successor with `nxt.faints >
+    # current.faints`, which is an EXACT per-action test against the known stream: in Phase 2 the
+    # seed is identified, so whether a given action faints us this turn is computed, not estimated.
+    # The floor is a bound on what the target *could* do; the simulator knows what it *will* do.
+    #
+    # And it is ruinous whenever the floor exceeds our max HP, which is the common case rather
+    # than a corner: a Sacred Fire crit is 573 against Smeargle's 153 and no amount of levelling
+    # closes that. `in_danger` was then permanently true, so the only action ever offered was an
+    # item, no ball was ever legal, and the run reported Unreachable for a reason that had nothing
+    # to do with capture windows (clayton-957.10.1). The guard was refusing to play at all over a
+    # risk of roughly 1.1% per turn -- a 1/4 move choice, a ~31% hit through six Flashes and a
+    # 1/16 crit -- and refusing it on every turn, including the turns where the stream says
+    # plainly that nothing hits us.
+    #
+    # So the floor keeps the one job it is actually good at: `choose_item` reads it to decide
+    # whether to reach for a full heal rather than cheap filler. What it no longer does is veto
+    # the rest of the alphabet on a hypothetical.
 
     # `usable_slots` rather than the raw slot list, because it is what honours a Choice lock: a
     # scarfed paralyzer is locked into Thunder Wave the moment it uses it, and planning one of
@@ -352,6 +447,8 @@ def _legal_actions(state: BattleState, config: SolverConfig,
     usable = state.ours.usable_slots()
     for slot in config.allowed_moves:
         if slot not in usable:
+            continue
+        if can_faint_target(state.ours.move(slot), state.ours, state.target, field=state):
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:
@@ -381,7 +478,16 @@ def _dominance_key(state: BattleState) -> tuple:
             # Remaining sleep, for the same reason as the field conditions: one of two states
             # that disagree about it wakes sooner, and from that turn on spends different
             # advances. The status itself is in here too, since waking changes it.
-            state.target.status, state.target.sleep_turns, state.target.pp)
+            state.target.status, state.target.sleep_turns, state.target.pp,
+            # Screens, for the same reason as the field conditions above: a second one FAILS, and
+            # a failing move costs the turn two fewer advances.
+            state.reflect_turns > 0, state.light_screen_turns > 0,
+            # The target's accuracy stage, because it decides whether the target's own move can
+            # miss -- and a miss spends fewer rolls than a hit, so two states that disagree about
+            # it reach different offsets next turn. Its Attack stage is NOT here: it changes how
+            # hard the target hits, which `_dominates` already weighs through our HP, not how many
+            # advances the turn costs.
+            state.target.accuracy_stage)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:
