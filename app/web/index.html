@@ -3916,10 +3916,16 @@ let _huntSetup = null, _huntWindow = null;
 // depends on which. The player works that spread out themselves and types it in.
 let _hsa = null;
 // Advice ranks every surviving candidate against every action -- seconds at a few thousand
-// candidates -- so the page renders without it and fetches it after. _huntAdviceFor records the
-// turn number the pending request was issued for: a reply for any other turn is stale and gets
-// dropped, which is how a request still in flight is abandoned when a turn is reported.
-let _huntAdvice = null, _huntAdviceFor = null, _huntAdviceLoading = false;
+// candidates -- so the page renders without it and fetches it after. A reply for any position
+// other than the one it was issued for is stale and gets dropped, which is how a request still
+// in flight is abandoned when a turn is reported; the BACKEND abandons the sweep itself on the
+// same event, rather than finishing it for a turn that has been played.
+let _huntAdvice = null, _huntAdviceLoading = false;
+// Bumped by huntAdviceInvalidate. Every request carries the generation it was issued for, and a
+// reply from an older one is dropped whole -- including its right to clear the loading flag.
+// The turn COUNT could not do that job alone: a phase change moves the position without adding a
+// turn, so the old reply passed the check and blanked the panel with a new sweep still running.
+let _huntAdviceGen = 0;
 // How many surviving candidates a plain Poke Ball would CATCH. That loses the run (wrong ball),
 // so it is a risk gauge: 0% means a throw is free information.
 let _huntBallRisk = null;
@@ -3930,7 +3936,7 @@ let _hrBusy = false;
 function huntAdviceInvalidate(){
   _huntAdvice = null;
   _huntBallRisk = null;
-  _huntAdviceFor = null;
+  _huntAdviceGen++;
   _huntAdviceLoading = false;
 }
 
@@ -3978,22 +3984,24 @@ function huntBallRisk(){
 async function huntAdviceLoad(){
   const snap = _huntSnap;
   if (!snap || !snap.advice_pending || _huntAdviceLoading) return;
-  const forTurn = snap.turns.length;
+  const gen = _huntAdviceGen;
   _huntAdviceLoading = true;
-  _huntAdviceFor = forTurn;
   huntRefreshAdvice();
   try {
     const result = await api("hunt_session_advice", _huntRun);
-    // Stale: a turn was reported while this was computing. Showing it would advise on a
-    // position that no longer exists.
-    if (!_huntSnap || _huntSnap.turns.length !== forTurn) return;
+    // Stale, in either of its two forms: the run moved on while this was computing, or the
+    // BACKEND noticed that first and abandoned the sweep part-way rather than ranking a position
+    // that has been played. Either way there is nothing to show and nothing wrong -- the load for
+    // the new position is already running.
+    if (gen !== _huntAdviceGen || result.aborted) return;
     _huntAdvice = result.advice;
     _huntBallRisk = result.standard_ball_risk;
   } catch (e) {
+    if (gen !== _huntAdviceGen) return;
     _huntAdvice = null;
     _huntBallRisk = null;
   } finally {
-    if (_huntAdviceFor === forTurn) _huntAdviceLoading = false;
+    if (gen === _huntAdviceGen) _huntAdviceLoading = false;
     huntRefreshAdvice();
   }
 }
@@ -4778,6 +4786,42 @@ function hrFlinchPossibleOnTarget(){
   return hrLanded(t.ours);
 }
 
+// --- Static ----------------------------------------------------------------------------------
+//
+// Our Static paralyzes whoever touches us, and it is the one event in a turn that NO move
+// announces: "Ho-Oh is paralyzed!" arrives with nothing attached. So unlike a secondary, which
+// the move's own question covers, this needs a question of its own -- and it is the most
+// valuable answer in the run, because paralysis is the Phase 2 precondition. Without it the 30%
+// roll was unreportable, two candidates differing only in it rendered the same turn, and the
+// tool carried a split belief about the target's status it could not resolve.
+
+// Could our Static have fired this turn? The ability is ours, the contact is theirs, and the
+// paralysis lands on THEM.
+//
+// Only this direction is asked. The mirror -- our contact move triggering a Static on the target
+// -- is modelled by the simulator (`act_ours` applies `attacker_status` to our side) but no
+// configured target has the ability, so a question for it would be untestable against any real
+// encounter. Add it here when one does.
+function hrStaticPossibleOnTarget(){
+  const s = _huntSnap, t = _hrTurn, info = hrTargetMoveInfo();
+  if ((hrActive().ability || "").trim().toLowerCase() !== "static") return false;
+  if (!info || !info.makes_contact || !hrLanded(t.target)) return false;
+  // Non-volatile statuses are mutually exclusive, so an already-statused attacker takes nothing
+  // -- and spends no roll either (sim._contact_ability). That includes a status WE landed
+  // earlier in the same turn, which is why this asks hrStatusWeJustApplied rather than only
+  // reading the snapshot's opening state.
+  if (s.target.status && s.target.status !== "none") return false;
+  if (hrStatusWeJustApplied()) return false;
+  return true;
+}
+
+// The `*` marker, read off that answer. Gated on the same predicate that decides whether to ASK,
+// so the marker and the question cannot disagree about a turn.
+function hrStaticMark(side){
+  if (side !== "target" || !hrStaticPossibleOnTarget()) return "";
+  return _hrTurn.target && _hrTurn.target.static ? "*" : "";
+}
+
 // The `~` marker for one side's move. The player's own answer for an ordinary secondary; for a
 // flinch, the victim's answer, since that is where a flinch is visible at all.
 function hrSecondaryMark(side){
@@ -4886,11 +4930,54 @@ function hrFaintToken(){
 // done. It was missing from the options entirely.
 function hrStatusWeJustApplied(){
   const t = _hrTurn, info = hrOurMoveInfo();
-  if (!info || !info.applies_status) return null;
+  if (!info) return null;
   if (!hrWeActFirst()) return null;             // its turn is already over; the status is too late
   if (!t.ours || t.ours.prevented) return null; // we never got the move off
-  if (info.guaranteed_fail) return null;        // it went ahead and did nothing
-  return t.ours.result === "" ? info.applies_status : null;   // "-" is a miss
+  if (info.applies_status){
+    if (info.guaranteed_fail) return null;      // it went ahead and did nothing
+    return t.ours.result === "" ? info.applies_status : null;   // "-" is a miss
+  }
+  // A status from a SECONDARY is the same thing one roll later: Discharge paralyzes when its 30%
+  // lands, and that is live before the target's half of the turn just as Thunder Wave's is. It
+  // waits on the secondary question, which the interview asks before it asks about the target.
+  if (info.secondary_status && hrLanded(t.ours) && t.ours.secondary === true)
+    return info.secondary_status;
+  return null;
+}
+
+// How many accuracy stages OUR move just dropped on the target, or 0. The same mid-turn liveness
+// as hrStatusWeJustApplied, and the same reason for existing: a Flash that resolves first makes
+// the target's 100%-accuracy Punishment missable ON THAT TURN, while the snapshot's `can_miss`
+// was read off the state the turn OPENED in, where it was unmissable. The simulator has always
+// modelled this -- `act_ours` drops the stage before `act_target` recomputes the net accuracy --
+// so a miss was predicted by the candidates and simply had no chip to report it (clayton-957.10.8).
+function hrAccuracyDropWeJustApplied(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!info || !info.stat_drop || info.stat_drop.stat !== "accuracy") return 0;
+  if (!hrWeActFirst()) return 0;
+  if (!t.ours || t.ours.prevented) return 0;
+  if (info.guaranteed_fail) return 0;
+  return t.ours.result === "" ? info.stat_drop.stages : 0;     // "-" is a miss
+}
+
+// Whether a move of the TARGET's can miss this turn: its own flag, plus an accuracy drop we
+// landed first. A move that bypasses the accuracy check entirely keeps an effective accuracy of
+// 0 at every stage -- Safeguard -- so no drop can invent a miss for it.
+function hrTargetCanMiss(info){
+  if (!info) return false;
+  if (info.can_miss) return true;
+  if (!info.effective_accuracy) return false;
+  return hrAccuracyDropWeJustApplied() > 0;
+}
+
+// The Yes chip for a secondary effect, naming what the player would actually have seen. This was
+// hardcoded as "<ours>'s stat fell", which is true of Suicune's Aurora Beam and wrong twice over
+// on Ho-Oh: Ancient Power raises HO-OH's five stats and Sacred Fire burns us. An effect with no
+// description falls back to a bare "Yes" -- vague beats a claim the game never made.
+function hrSecondaryYes(info, attackerName, victimName){
+  if (!info || !info.secondary_label) return "Yes";
+  const who = info.secondary_side === "attacker" ? attackerName : victimName;
+  return "Yes — " + info.secondary_label.replace("{who}", who);
 }
 
 // The token string the answers so far describe. Also what gets submitted, so what the player
@@ -4939,7 +5026,7 @@ function hrTokens(){
     if (t.target.prevented) targetParts.push("E" + t.target.prevented);
     else if (t.target.slot !== null && t.target.slot !== undefined)
       targetParts.push("E" + (t.target.slot + 1) + (t.target.result || "")
-                           + hrSecondaryMark("target"));
+                           + hrSecondaryMark("target") + hrStaticMark("target"));
   }
   const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
                                  : targetParts.concat(ourParts);
@@ -4980,6 +5067,9 @@ function hrTurnComplete(){
       const info = s.target.move_info[t.target.slot];
       if (info.has_secondary && !info.flinch_secondary && hrLanded(t.target)
           && t.target.secondary === undefined) return false;
+      // Static's question is the one the player is most likely to be looking at, so the turn
+      // must not report without it.
+      if (hrStaticPossibleOnTarget() && t.target.static === undefined) return false;
     }
   }
   if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
@@ -5151,7 +5241,9 @@ function hrOurSecondaryBlock(){
   return hrChips(`Did ${info.name}'s extra effect happen?`, [
     hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
            t.ours.secondary === false),
-    hrChip("Yes", `hrSet('ours',{result:'${t.ours.result}',secondary:true})`,
+    // WE are the attacker here, so the sides swap: Discharge's paralysis names the target.
+    hrChip(hrSecondaryYes(info, hrActive().name, _huntSnap.target.name),
+           `hrSet('ours',{result:'${t.ours.result}',secondary:true})`,
            t.ours.secondary === true),
   ], `${info.effect_chance}% chance`);
 }
@@ -5206,14 +5298,16 @@ function hrTargetBlocks(){
       // outcomes. Nothing in Suicune's moveset is both (Mist and Rain Dance bypass the
       // accuracy check), so this branch is dormant for the v1 fixture -- but it is the same
       // mechanic, and the two sides disagreeing about it is how a token stream goes unmatchable.
-      if (info.can_miss)
+      if (hrTargetCanMiss(info))
         opts2.push(hrChip("It failed", `hrSet('target',${base},result:''})`,
                           t.target.result === ""));
     } else {
       opts2.push(hrChip("It worked", `hrSet('target',${base},result:''})`,
                         t.target.result === ""));
     }
-    if (info.can_miss)
+    // hrTargetCanMiss, not info.can_miss: an accuracy drop we landed THIS turn makes a
+    // 100%-accuracy move missable on it, and the snapshot's flag describes the opening state.
+    if (hrTargetCanMiss(info))
       opts2.push(hrChip("Missed", `hrSet('target',${base},result:'-'})`,
                         t.target.result === "-"));
     // Rain Dance cannot miss and deals no damage, so there is nothing to ask.
@@ -5237,11 +5331,27 @@ function hrTargetBlocks(){
       out.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
         hrChip("No", `hrSet('target',${base},result:'${t.target.result}',secondary:false})`,
                t.target.secondary === false),
-        hrChip(`Yes — ${esc(hrActive().name)}'s stat fell`,
+        // The TARGET is the attacker here, so an attacker-side effect (Ancient Power) names it
+        // and a victim-side one (Sacred Fire's burn) names whoever of ours is out.
+        hrChip(hrSecondaryYes(info, s.target.name, hrActive().name),
                `hrSet('target',${base},result:'${t.target.result}',secondary:true})`,
                t.target.secondary === true),
       ], `${info.effect_chance}% chance`));
       if (t.target.secondary === undefined) return {blocks: out, done: false};
+    }
+    // ...and Static, which no move announces. Asked last because that is when it happened: the
+    // contact ability fires after the move's own secondary.
+    if (hrStaticPossibleOnTarget()){
+      out.push(hrChips(`Did ${hrActive().name}'s Static paralyze ${s.target.name}?`, [
+        hrChip("No", `hrSet('target',${base},result:'${t.target.result}',`
+                     + `secondary:${t.target.secondary},static:false})`,
+               t.target.static === false),
+        hrChip(`Yes — ${s.target.name} is paralyzed`,
+               `hrSet('target',${base},result:'${t.target.result}',`
+               + `secondary:${t.target.secondary},static:true})`,
+               t.target.static === true),
+      ], "30% on contact — and it is the status the whole run needs"));
+      if (t.target.static === undefined) return {blocks: out, done: false};
     }
   }
   return {blocks: out, done: true};

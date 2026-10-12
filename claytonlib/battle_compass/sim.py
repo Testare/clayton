@@ -392,6 +392,10 @@ EFFECT_LOWER_SPDEF = 72
 BURN_ATTACK_DIVISOR = 2
 #: Burn's end-of-turn tick: max HP / 8, rounded down, and never less than 1.
 BURN_TICK_DIVISOR = 8
+#: Leftovers' end-of-turn recovery: max HP / 16, by the same floor-but-never-zero rule as the
+#: burn tick -- both go through `DamageDivide` [src/battle/overlay_12_0224E4FC.c:3110].
+LEFTOVERS = "leftovers"
+LEFTOVERS_DIVISOR = 16
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -413,11 +417,76 @@ MIST_TURNS = 5
 #: Move effects whose SECONDARY burns the move's target: 4 (Fire Blast) and 125 (Sacred Fire).
 #: The status itself, not the chance -- `move.effect_chance` carries that.
 BURN_EFFECTS = frozenset({4, 125})
+#: Discharge, Thunderbolt, Body Slam, Dragon Breath: the secondary PARALYZES.
+#:
+#: Its own constant because the primary-effect table (`status_applied_by`) is about moves that
+#: paralyze by definition -- Thunder Wave -- while this one only does so when its proc roll lands.
+#: `MODELLED_OUR_EFFECTS` claimed this was modelled while nothing applied it: the roll was spent
+#: and the status dropped on the floor, which on the one move that matters most (Ampharos's
+#: Discharge, against a target whose paralysis IS the Phase 2 precondition) would have
+#: contradicted every candidate on the turn it procced (clayton-957.10.10).
+EFFECT_PARALYZE_HIT = 6
 #: Ancient Power: 10% to raise EVERY stat of the attacker by one stage.
 EFFECT_ALL_STATS_UP = 140
 #: Safeguard: protects its own side from new non-volatile statuses for five turns.
 EFFECT_SAFEGUARD = 124
 SAFEGUARD_TURNS = 5
+
+
+#: The non-volatile status a move's SECONDARY inflicts on its victim, by effect.
+#:
+#: Deliberately not a superset of what the game has. Freeze (effects 5 and 260) is left out
+#: because freeze is not MODELLED -- a frozen Pokemon skips turns on a thaw roll this simulator
+#: does not make -- and inflicting one here would produce a prediction nothing could match.
+#: Neither effect appears in `MODELLED_OUR_EFFECTS` or in any configured target's moveset, so the
+#: omission is guarded on both sides rather than merely hoped for.
+SECONDARY_STATUSES: dict[int, Status] = {
+    **{effect: Status.BURN for effect in BURN_EFFECTS},
+    EFFECT_PARALYZE_HIT: Status.PARALYSIS,
+}
+
+
+def secondary_status(move: Move) -> Status | None:
+    """The status this move's secondary effect would inflict, or None.
+
+    Public because the interview needs it for the same reason it needs `status_applied_by`: a
+    status that lands mid-turn changes what the other side can have done on the same turn, and
+    the snapshot's option lists are read off the turn's opening state.
+    """
+    return SECONDARY_STATUSES.get(move.effect)
+
+
+#: What a move's secondary effect looks like TO THE PLAYER: ``(side, clause)``, where side is
+#: ``"victim"`` or ``"attacker"`` and the clause carries ``{who}`` for that Pokemon's name.
+#:
+#: The interview has to name the thing it is asking about, and naming it wrongly is worse than
+#: being vague. The page used to hardcode "Yes -- <ours>'s stat fell", which was written against
+#: Suicune (Aurora Beam, Mist Ball and Luster Purge all really do drop our stats) and is wrong
+#: twice over on Ho-Oh: Ancient Power raises HO-OH's stats and Sacred Fire burns us. An unlisted
+#: effect gets no clause at all, and the page falls back to the generic wording -- vague, but
+#: never a claim about something the game did not say (clayton-957.10.9).
+SECONDARY_DESCRIPTIONS: dict[int, tuple[str, str]] = {
+    4: ("victim", "{who} was burned"),
+    125: ("victim", "{who} was burned"),
+    5: ("victim", "{who} was frozen"),
+    260: ("victim", "{who} was frozen"),
+    EFFECT_PARALYZE_HIT: ("victim", "{who} was paralyzed"),
+    76: ("victim", "{who} became confused"),
+    68: ("victim", "{who}'s Attack fell"),
+    71: ("victim", "{who}'s Sp. Atk fell"),
+    72: ("victim", "{who}'s Sp. Def fell"),
+    EFFECT_ALL_STATS_UP: ("attacker", "{who}'s stats all rose"),
+    **{effect: ("victim", "{who} flinched") for effect in FLINCH_EFFECTS},
+}
+
+
+def secondary_description(move: Move) -> tuple[str, str] | None:
+    """``(side, clause)`` describing this move's secondary, or None when it is not described.
+
+    None means "say something generic", not "there is no secondary" -- `move.effect_chance`
+    answers that.
+    """
+    return SECONDARY_DESCRIPTIONS.get(move.effect)
 
 
 #: Punishment. Power is state-dependent: 60 plus 20 per positive stat stage ON ITS TARGET,
@@ -600,6 +669,34 @@ def burn_tick(battler: Battler) -> int:
     return max(1, battler.max_hp // BURN_TICK_DIVISOR)
 
 
+def leftovers_tick(battler: Battler) -> int:
+    """Leftovers' end-of-turn recovery: ``max(1, max HP / 16)``, or 0 if it does not apply.
+
+    Transcribed from `CheckItemGradualHPRestore` [src/battle/overlay_12_0224E4FC.c:4136]:
+    `HOLD_EFFECT_HP_RESTORE_GRADUAL` restores ``DamageDivide(maxHp, 16)`` and **only while
+    ``hp < maxHp``** -- at full HP the item does nothing at all rather than healing zero.
+
+    Deterministic and RNG-free, exactly like `burn_tick`, so it carries no token of its own; the
+    HP token on a turn where something random also moved our HP reports the total.
+
+    **It lands BEFORE the burn tick**, which is not a detail: `UpdateMonConditionState`
+    [src/battle/battle_controller_player.c:1143] orders `UMC_STATE_LEFTOVERS_RECOVERY` ahead of
+    `UMC_STATE_BURN`. So a burned holder can never *end* a turn on full HP -- the recovery is
+    gated on being below maximum, so at full HP it is skipped and the tick takes 1/8 -- but every
+    turn after that nets 1/16 of max HP instead of 1/8, which roughly doubles how long it lasts.
+
+    Ours only, at the one call site. A wild target holds whatever its personal data gives it
+    (Ho-Oh's is a Sacred Ash, inert in battle) and none of them is Leftovers, so wiring the target
+    would be untested code; this stays side-agnostic so that doing it later is one line.
+    """
+    if battler.held_item.strip().lower() != LEFTOVERS:
+        return 0
+    if battler.hp >= battler.max_hp:
+        return 0
+    return max(1, battler.max_hp // LEFTOVERS_DIVISOR)
+
+
+
 def status_applied_by(move: Move) -> Status | None:
     """The non-volatile status this move inflicts, if any.
 
@@ -775,6 +872,14 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     # Static roll at all -- so no turn of the real plan contains both rolls.
     rng, used, attacker_status = _contact_ability(
         rng, used, move, attacker, defender, dealt=dealt)
+    if attacker_status is not None:
+        # It gets a token because nothing else in the turn announces it: the game says "Ho-Oh is
+        # paralyzed!" with no move attached, so without a marker of its own the roll is
+        # unreportable -- and two candidates differing only in it rendered identical turns, so
+        # both survived and the tool held a split belief about the one status the run is built on
+        # (clayton-957.10.13). Only emitted when the status LANDED: `_contact_ability` returns
+        # None for every case where it could not, so there is nothing to suppress afterwards.
+        parts.append(tok.STATIC)
 
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
                             damage=dealt, secondary=secondary,
@@ -825,10 +930,11 @@ def _contact_ability(rng: int, used: int, move: Move, attacker: Battler, defende
 
 def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
                     victim_selected_a_move: bool,
-                    victim_moves_second: bool) -> tuple[str, ...]:
+                    victim_moves_second: bool,
+                    secondary_landed: bool = True) -> tuple[str, ...]:
     """`outcome`'s tokens with an unobservable secondary marker removed.
 
-    Two cases, both verified rather than reasoned:
+    Three cases:
 
     * **The move fainted the victim.** The secondary roll is still spent, but its outcome is
       never shown -- no "was burned!", no stat-drop message -- so it must not be tokenized
@@ -839,6 +945,19 @@ def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
       because this reads the victim's HP after the move and not at the end of the turn.
     * **A flinch whose victim never reaches its turn**, which is most of them -- see
       `flinch_visible`.
+    * **A secondary STATUS that could not land** (`secondary_landed`). Non-volatile statuses are
+      mutually exclusive, so a Sacred Fire proc against an already-burned Ampharos sets nothing
+      and says nothing -- and the plan has Sacred Fire hitting a burned Ampharos for the rest of
+      its 8 PP, at a 50% proc rate. The simulator emitted ``E1h~`` for every one of those, so a
+      player correctly reporting "no message" eliminated every candidate that procced, the true
+      seed included. Same for a Discharge proc against an already-paralyzed Ho-Oh, which is the
+      state the whole run is built on reaching.
+
+      The *Safeguard* half of that is the one unverified corner: whether a Safeguard-blocked
+      secondary prints a protection message is decided in the battle scripts in `NARC_a_0_0_1`,
+      which is not in the decompilation (only four `SIDE_CONDITION_SAFEGUARD` references exist in
+      all of `src/`: set, self-fail, expire). Suppressed here on the same reasoning as the rest of
+      this function -- losing an observation costs information, inventing one costs the run.
 
     Only the marker goes; the roll that produced it was already spent inside ``execute_move``, so
     the stream is untouched. The cost is information: a suppressed marker is one the candidate
@@ -851,7 +970,7 @@ def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
     """
     if not outcome.secondary:
         return outcome.tokens
-    hidden = victim.fainted or (
+    hidden = victim.fainted or not secondary_landed or (
         move.effect in FLINCH_EFFECTS
         and not flinch_visible(victim, victim_selected_a_move=victim_selected_a_move,
                                victim_moves_second=victim_moves_second))
@@ -1292,8 +1411,17 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # The target's own ability paralyzed US on contact -- nothing has this yet, but the
             # path is symmetric with `act_target` and costing nothing is the point.
             new.ours = new.ours.with_status(outcome.attacker_status)
-        if outcome.secondary and move.effect in BURN_EFFECTS:
-            new.target = new.target.with_status(Status.BURN)
+        secondary_landed = True
+        if outcome.secondary and (sec := secondary_status(move)) is not None:
+            # A secondary status, and Safeguard blocks one exactly as it blocks a primary: the
+            # ROM's status scripts do not care which effect asked. An existing status blocks it
+            # too, and that is the commoner case here -- a 30% Discharge proc against an
+            # already-paralyzed Ho-Oh changes nothing, and shows nothing either, which is why the
+            # verdict is carried down to `_visible_tokens` rather than only applied.
+            secondary_landed = (new.safeguard_turns <= 0
+                                and new.target.status is Status.NONE)
+            if secondary_landed:
+                new.target = new.target.with_status(sec)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
             new.target = _all_stats_up(new.target)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
@@ -1308,7 +1436,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         parts.extend(_visible_tokens(
             outcome, move, victim=new.target,
             victim_selected_a_move=target_slot is not None,
-            victim_moves_second=ours_first))
+            victim_moves_second=ours_first,
+            secondary_landed=secondary_landed))
         return outcome.successful
 
     def act_target() -> bool:
@@ -1361,8 +1490,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # was already a configured target with this unmodelled, so the model under-predicted
             # incoming damage from the first proc (clayton-957.26.1).
             new.ours = replace(new.ours, spdef_stage=max(-6, new.ours.spdef_stage - 1))
-        if outcome.secondary and move.effect in BURN_EFFECTS:
-            new.ours = new.ours.with_status(Status.BURN)
+        secondary_landed = True
+        if outcome.secondary and (sec := secondary_status(move)) is not None:
+            # Sacred Fire's burn is the live case, and the one that made this worth getting right:
+            # once Ampharos is burned, every later proc is invisible. No Safeguard check on this
+            # side -- Safeguard is the TARGET's side condition (nothing in any party can set one),
+            # so a status aimed at us is never blocked by it.
+            secondary_landed = new.ours.status is Status.NONE
+            if secondary_landed:
+                new.ours = new.ours.with_status(sec)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
             # Ancient Power boosts the ATTACKER, so the target's own stats -- including the Speed
             # that the no-speed-tie guarantee depends on.
@@ -1377,7 +1513,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         parts.extend(_visible_tokens(
             outcome, move, victim=new.ours,
             victim_selected_a_move=action.move_slot is not None,
-            victim_moves_second=not ours_first))
+            victim_moves_second=not ours_first,
+            secondary_landed=secondary_landed))
         return outcome.successful
 
     def battle_halted() -> bool:
@@ -1435,10 +1572,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     # RNG, and therefore not reported. `hp_before` is deliberately NOT moved by it, so the HP
     # token still describes only what the turn did randomly -- and on a turn where something
     # random also landed, the one token reports the total including the tick.
+    #
+    # Leftovers' recovery is the other half of the same block, and it goes FIRST -- see
+    # `leftovers_tick` for the ROM's ordering. `residual` is the NET deterministic change with
+    # damage positive, so a healing turn simply makes it negative and the HP-token comparison
+    # below keeps working unchanged.
     residual = 0
-    if not battle_halted() and not new.ours.fainted and new.ours.status is Status.BURN:
-        residual = burn_tick(new.ours)
-        new.ours = new.ours.with_hp(new.ours.hp - residual)
+    if not battle_halted() and not new.ours.fainted:
+        # Measured rather than predicted: both figures are clamped by `with_hp`, so a recovery
+        # that tops us off restores LESS than max HP / 16 and a predicted total would then demand
+        # an HP token on a turn where nothing random happened at all.
+        hp_at_block = new.ours.hp
+        recovery = leftovers_tick(new.ours)
+        if recovery:
+            new.ours = new.ours.with_hp(new.ours.hp + recovery)
+        if new.ours.status is Status.BURN:
+            new.ours = new.ours.with_hp(new.ours.hp - burn_tick(new.ours))
+        residual = hp_at_block - new.ours.hp
 
     # HP, then the faint. A faint turn carries no HP token at all: zero is implied by the X, and
     # once the replacement is out the number would describe a different Pokemon.

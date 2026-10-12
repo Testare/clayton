@@ -41,11 +41,12 @@ from claytonlib.battle.damage import (
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
-from claytonlib.battle_compass.identify import Phase, Session
+from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
     FLINCH_EFFECTS, HuntConfig, _effective_accuracy, accuracy_net_stage, burn_tick, can_flinch,
     can_miss,
-    effective_speed, simulate_turn, status_applied_by, variable_base_power, will_fail,
+    effective_speed, primary_stat_drop, secondary_description, secondary_status, simulate_turn,
+    status_applied_by, variable_base_power, will_fail,
 )
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
 from claytonlib.battle_compass.state import Action, Battler, Status
@@ -363,6 +364,20 @@ def stat_stages(battler: Battler) -> dict[str, int]:
             for label, field in STAGE_FIELDS if getattr(battler, field) != 0}
 
 
+#: `STAGE_FIELDS` the other way round, so a `Battler` field name can be rendered with the label
+#: the page already uses for that stage.
+STAGE_LABELS: dict[str, str] = {field: label for label, field in STAGE_FIELDS}
+
+
+def _stat_drop_info(move) -> dict | None:
+    """A move's primary stat drop as ``{"stat": label, "stages": n}``, or None."""
+    drop = primary_stat_drop(move)
+    if drop is None:
+        return None
+    field, stages = drop
+    return {"stat": STAGE_LABELS.get(field, field), "stages": stages}
+
+
 def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
@@ -385,6 +400,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
+                        "secondary_status": None, "secondary_label": None,
+                        "secondary_side": None, "stat_drop": None, "makes_contact": False,
                         "effect_chance": 0, "priority": 0, "pp": 0})
             continue
         out.append({
@@ -415,6 +432,24 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # Spore connects, "is asleep" is the only thing the target can have done, and it was
             # not on offer because the snapshot's options are read off the turn's OPENING state.
             "applies_status": (st.value if (st := status_applied_by(move)) else None),
+            # The same thing for a status the SECONDARY inflicts, which is live mid-turn for the
+            # same reason: a Discharge proc paralyzes before the target's half of the turn, so
+            # "was fully paralyzed" becomes possible on a turn that opened with it unstatused.
+            "secondary_status": (sec.value if (sec := secondary_status(move)) else None),
+            # What the secondary looks like to the player, so the interview can name it. None
+            # means "not described" and the page says something generic -- see
+            # `sim.SECONDARY_DESCRIPTIONS` for why a wrong name is worse than a vague one.
+            "secondary_side": (desc[0] if (desc := secondary_description(move)) else None),
+            "secondary_label": (desc[1] if desc else None),
+            # Contact, which decides whether a Static holder's ability could have fired. The
+            # page needs it because Static's paralysis is announced by no move at all, so the
+            # interview has to ask for it or the roll goes unreported (clayton-957.10.13).
+            "makes_contact": move.makes_contact,
+            # The move's PRIMARY stat drop on its target, as the UI labels the stage. The page
+            # needs it because a drop we land resolves before the target's half of the turn:
+            # one Flash makes Punishment missable on the very turn the Flash is used, and the
+            # snapshot's `can_miss` is read off the turn's OPENING state (clayton-957.10.8).
+            "stat_drop": _stat_drop_info(move),
             #: Priority decides turn order before Speed does, so the page needs it to know
             #: which side's tokens come first.
             "priority": move.priority,
@@ -493,9 +528,18 @@ class HuntSession:
         self.last_turn_replanned = False
         #: Each mid-run widening, so a run record says the window was not what it started as.
         self.widenings: list[dict] = []
+        #: Bumped by anything that moves the run forward or sideways -- an accepted turn, an undo,
+        #: a rebase, a phase change. It exists for one purpose: a ranking sweep captures it at
+        #: entry and aborts the moment it no longer matches, because advice is about ONE position
+        #: and finishing it for a position that has been played is pure waste (see `advice`).
+        self.position = 0
         self._session = self._fresh()
 
     # -- construction / replay ------------------------------------------
+
+    def _moved(self) -> None:
+        """Record that the position changed, which aborts any ranking sweep still running."""
+        self.position += 1
 
     def _fresh(self) -> Session:
         session = Session(list(self.window.candidates), self.ours, self.target, self.config,
@@ -517,6 +561,7 @@ class HuntSession:
 
     def _replay(self, turns: list[TurnLog]) -> None:
         """Rebuild from the window and re-apply `turns`. The only way state moves backwards."""
+        self._moved()
         self._session = self._fresh()
         self.contradiction = None
         # A cached plan belongs to the state it was computed from, and a replay has just moved
@@ -704,8 +749,13 @@ class HuntSession:
         states = list(self._session.states.values())
         if not states:
             return None
+        keep_going = self._still_at(self.position)
         caught = 0
         for state in states:
+            # The same sweep cost as one ranked action, and computed for the same position, so it
+            # abandons itself on the same terms. See `advice`.
+            if not keep_going():
+                raise AdviceAborted("the position this risk figure described has been left behind")
             nxt = simulate_turn(state, Action.STANDARD_BALL, self.config)
             caught += bool(nxt.captured_in_wrong_ball)
         return {
@@ -721,6 +771,11 @@ class HuntSession:
 
         Empty once the seed is pinned -- there is nothing left to learn, and Phase 2 optimises
         distance instead.
+
+        **Raises `AdviceAborted`** if the run moves on while this is computing. It is the only
+        slow call in the tool -- every candidate simulated against every legal action -- and it
+        describes one position, so a turn reported underneath it makes the rest of the sweep
+        waste that competes with the report for the interpreter (clayton-957.10.11).
         """
         if self.identified is not None:
             return []
@@ -729,10 +784,28 @@ class HuntSession:
         # nobody can act on.
         choosable = [a for a in self.legal_actions()
                      if a not in (Action.REVIVE, Action.FAINTED)]
-        ranked = self._session.rank_actions(choosable)
-        return [{"action": a.value, "label": self.action_label(a),
-                 "expected_survivors": round(score, 2),
-                 "groups": len(self._session.partition(a))} for a, score in ranked]
+        keep_going = self._still_at(self.position)
+        total = len(self.survivors)
+        # ONE partition per action. This used to call `rank_actions` and then `partition` again
+        # for the group count, sweeping the whole candidate set twice for the same answer -- half
+        # of the wait the player was being asked to sit through.
+        rows = []
+        for action in self._session.rankable(choosable):
+            groups = self._session.partition(action, keep_going=keep_going)
+            expected = (sum(len(g) ** 2 for g in groups.values()) / total) if total else 0.0
+            rows.append({"action": action.value, "label": self.action_label(action),
+                         "expected_survivors": round(expected, 2),
+                         "groups": len(groups), "_sort": (expected, action.value)})
+        rows.sort(key=lambda row: row.pop("_sort"))
+        return rows
+
+    def _still_at(self, position: int):
+        """A predicate a long sweep can poll: has the run stayed where it was?
+
+        Returned as a closure rather than exposing `position` to the sweep so that there is
+        exactly one place that decides what "the same position" means.
+        """
+        return lambda: self.position == position
 
     # -- the loop -------------------------------------------------------
 
@@ -774,6 +847,10 @@ class HuntSession:
             return self.snapshot()
 
         self.contradiction = None
+        # The run has moved: abandon any ranking sweep still describing the turn just played.
+        # Deliberately NOT bumped on a contradiction above -- the position is unchanged there, and
+        # the advice on screen is still the advice for it.
+        self._moved()
         self.turns.append(TurnLog(action=action, tokens=tuple(tokens),
                                   survivors_before=before,
                                   survivors_after=len(self._session.survivors),
@@ -803,6 +880,7 @@ class HuntSession:
     # -- phases ---------------------------------------------------------
 
     def enter_pinning(self) -> dict:
+        self._moved()
         self._session.enter_pinning()
         self.transitions.append((len(self.turns), Phase.PINNING))
         return self.snapshot()
@@ -819,6 +897,7 @@ class HuntSession:
         player is looking at the game; refusing outright would make the tool unusable precisely
         when its model is the thing at fault. The caller is expected to confirm first.
         """
+        self._moved()
         if force:
             # Forcing means "trust the game over the model", so it has to actually do that. It
             # used to only skip the blocker LIST, leaving the simulated HP untouched -- and then
@@ -1130,6 +1209,12 @@ class HuntSession:
                        "hp": b.hp, "max_hp": b.max_hp,
                        "fainted": b.fainted,
                        "status": b.status.value,
+                       # The INCOMING Pokemon is the one a switch turn asks about, so its ability
+                       # has to be here: a switch resolves before any move, so the target's
+                       # contact move lands on the newcomer and it is the newcomer's Static that
+                       # could fire. Without this the question was silently skipped on exactly
+                       # the turn the plan brings Ampharos in on.
+                       "ability": b.ability,
                        "moves": list(b.moves)}
                       for i, b in enumerate(state.bench)],
             "ours_party_slot": state.ours.party_slot or 1,

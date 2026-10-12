@@ -697,3 +697,258 @@ class TestSafeguardDoesNotStopStaticInGenFour(unittest.TestCase):
         self.assertTrue(move_blocked, "a status MOVE is walled off")
         self.assertEqual(outcome.rolls, 4,
                          "and the Static roll is still spent -- the ability does not consult it")
+
+
+# --- clayton-957.10.12: Leftovers ---------------------------------------------------------------
+
+class TestLeftovers(unittest.TestCase):
+    """Magneton and Ampharos hold one, and nothing in the code knew the item existed.
+
+    +19/turn on Ampharos against a ~900-damage budget is not a rounding error: an unmodelled
+    recovery makes the predicted HP low by max HP / 16 *every turn*, and the predicted HP is
+    compared exactly, so the true seed is eliminated on the second turn of the run.
+    """
+
+    def test_the_figure_is_a_sixteenth_of_maximum(self):
+        from claytonlib.battle_compass.sim import leftovers_tick
+        self.assertEqual(leftovers_tick(ampharos(hp=300)), 19)       # 311 // 16
+
+    def test_it_is_skipped_at_full_hp(self):
+        """`CheckItemGradualHPRestore` gates on `hp < maxHp`: at full HP the item does nothing at
+        all, which is a different statement from healing zero."""
+        from claytonlib.battle_compass.sim import leftovers_tick
+        self.assertEqual(leftovers_tick(ampharos(hp=311)), 0)
+
+    def test_a_non_holder_recovers_nothing(self):
+        from claytonlib.battle_compass.sim import leftovers_tick
+        self.assertEqual(leftovers_tick(ampharos(hp=300, item="")), 0)
+        self.assertEqual(leftovers_tick(ampharos(hp=300, item="Light Clay")), 0)
+
+    def test_it_never_rounds_down_to_zero(self):
+        """`DamageDivide` floors but returns the sign rather than 0, so a 10 HP Pokemon still
+        gets 1 -- the same rule as the burn tick, from the same ROM function."""
+        from claytonlib.battle_compass.sim import leftovers_tick
+        tiny = Battler(name="Tiny", level=5, types=("Normal",),
+                       stats={"hp": 10, "atk": 10, "def": 10, "spa": 10, "spd": 10, "spe": 10},
+                       moves=("Tackle",), pp=(35,), held_item="Leftovers").with_hp(5)
+        self.assertEqual(leftovers_tick(tiny), 1)
+
+    def _turn(self, mon, *, rng=0x2468, status=Status.PARALYSIS):
+        state = state_with(mon, hooh(status=status), rng=rng, phase=1)
+        return simulate_turn(state, Action.MOVE_2, HUNT)              # Flash
+
+    def _quiet_turn(self, mon, *, rng=0x2468):
+        """A turn where NOTHING but the residual moves our HP: Ho-Oh is out of attacking PP, so
+        Safeguard is all it can pick. The absolute HP figures below are then the arithmetic
+        itself rather than the arithmetic plus a damage roll."""
+        quiet = hooh(status=Status.PARALYSIS, pp=(0, 0, 0, 25))
+        return simulate_turn(state_with(mon, quiet, rng=rng, phase=1), Action.MOVE_2, HUNT)
+
+    def test_a_turn_ends_nineteen_higher_than_without_the_item(self):
+        with_item = self._turn(ampharos(hp=200))
+        without = self._turn(ampharos(hp=200, item=""))
+        self.assertEqual(with_item.ours.hp - without.ours.hp, 19)
+
+    def test_it_costs_no_advances(self):
+        """Deterministic, like the burn tick -- so it must not move the stream by a single roll."""
+        with_item = self._turn(ampharos(hp=200))
+        without = self._turn(ampharos(hp=200, item=""))
+        self.assertEqual(with_item.rng_offset, without.rng_offset)
+        self.assertEqual(with_item.rng, without.rng)
+
+    def test_the_recovery_lands_before_the_burn_tick(self):
+        """`UpdateMonConditionState` orders LEFTOVERS_RECOVERY ahead of BURN, so a burned holder
+        nets max HP / 16 instead of max HP / 8: 200 + 19 - 38."""
+        burned = ampharos(hp=200).with_status(Status.BURN)
+        self.assertEqual(self._quiet_turn(burned).ours.hp, 181)
+
+    def test_a_burned_holder_cannot_end_a_turn_on_full_hp(self):
+        """The consequence of the ordering, and the one the player will see: at full HP the
+        recovery is skipped (hp < maxHp fails) and the tick lands anyway."""
+        burned = ampharos(hp=311).with_status(Status.BURN)
+        self.assertEqual(self._quiet_turn(burned).ours.hp, 311 - 38)
+
+    def test_but_it_roughly_doubles_how_long_a_burn_takes(self):
+        """-19/turn against -38, which is the reason to keep the item on a burned Pokemon."""
+        mon = ampharos(hp=200).with_status(Status.BURN)
+        bare = ampharos(hp=200, item="").with_status(Status.BURN)
+        self.assertEqual(200 - self._quiet_turn(mon).ours.hp, 19)
+        self.assertEqual(200 - self._quiet_turn(bare).ours.hp, 38)
+
+    def test_a_turn_moved_only_by_the_item_emits_no_hp_token(self):
+        """An HP token reads back a damage ROLL. A deterministic residual carries no information,
+        and demanding one for a turn the player saw nothing random on would be unreportable."""
+        from claytonlib.battle_compass import tokens as tok
+        # Ho-Oh out of attacking PP: it can only Safeguard, which touches nothing of ours.
+        quiet = hooh(status=Status.PARALYSIS, pp=(0, 0, 0, 25))
+        state = state_with(ampharos(hp=200), quiet, rng=0x2468, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_2, HUNT)
+        self.assertEqual(nxt.ours.hp, 219, "the recovery still happened")
+        self.assertNotIn("HP", tok.render_turn(tok.normalise(nxt.log[-1])))
+
+    def test_the_cap_is_the_missing_hp_not_the_figure(self):
+        """Over-healing would predict an impossible HP, and then demand a token for it."""
+        from claytonlib.battle_compass import tokens as tok
+        quiet = hooh(status=Status.PARALYSIS, pp=(0, 0, 0, 25))
+        state = state_with(ampharos(hp=306), quiet, rng=0x2468, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_2, HUNT)
+        self.assertEqual(nxt.ours.hp, 311, "capped at maximum, not 306 + 19")
+        self.assertNotIn("HP", tok.render_turn(tok.normalise(nxt.log[-1])))
+
+
+# --- clayton-957.10.10: a secondary that inflicts a status --------------------------------------
+
+class TestDischargeActuallyParalyzes(unittest.TestCase):
+    """`MODELLED_OUR_EFFECTS` listed effect 6 as modelled while nothing applied it.
+
+    The roll was spent, so every advance count was right and the gap was invisible -- and what it
+    dropped on the floor is the single most valuable thing that can happen in the run, since
+    paralysis IS the Phase 2 precondition.
+    """
+
+    def test_the_effect_maps_to_a_status(self):
+        from claytonlib.battle_compass.sim import secondary_status
+        self.assertIs(secondary_status(resolve_move("Discharge")), Status.PARALYSIS)
+        self.assertIs(secondary_status(resolve_move("Sacred Fire")), Status.BURN)
+        self.assertIsNone(secondary_status(resolve_move("Ancient Power")))
+        self.assertIsNone(secondary_status(resolve_move("Thunder Wave")),
+                          "that is a PRIMARY effect -- see status_applied_by")
+
+    def test_a_proc_paralyzes_the_target(self):
+        state = state_with(ampharos(), hooh(), rng=0x100F, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_3, HUNT)               # Discharge
+        self.assertIs(nxt.target.status, Status.PARALYSIS)
+
+    def test_freeze_is_deliberately_not_in_the_table(self):
+        """Freeze's turn-skipping is unmodelled, so inflicting one would predict a turn nothing
+        could match. Guarded on both sides: no configured moveset has one either."""
+        from claytonlib.battle_compass.sim import (
+            MODELLED_OUR_EFFECTS, SECONDARY_STATUSES, unsupported_our_moves,
+        )
+        self.assertNotIn(Status.FREEZE, set(SECONDARY_STATUSES.values()))
+        self.assertNotIn(5, MODELLED_OUR_EFFECTS)
+        self.assertTrue(unsupported_our_moves(["Ice Beam"]))
+
+    def test_safeguard_blocks_it(self):
+        state = state_with(ampharos(), hooh(), rng=0x100F, phase=1, safeguard_turns=5)
+        nxt = simulate_turn(state, Action.MOVE_3, HUNT)
+        self.assertIs(nxt.target.status, Status.NONE)
+
+    def test_sacred_fires_burn_still_lands_on_us(self):
+        """The same code path from the other direction -- a regression guard on the refactor that
+        replaced two hardcoded effect checks with one table."""
+        state = state_with(ampharos(), hooh(status=Status.PARALYSIS), rng=0x1012, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_2, HUNT)
+        self.assertIs(nxt.ours.status, Status.BURN)
+
+
+class TestAnInvisibleProcIsNotTokenized(unittest.TestCase):
+    """A secondary status that cannot land sets nothing AND says nothing.
+
+    This one was live rather than theoretical. Sacred Fire procs at 50%, and the plan has it
+    hitting an already-burned Ampharos for the rest of its 8 PP: the simulator claimed
+    "Ampharos was burned!" on every one of those, so a player correctly reporting silence
+    eliminated every candidate that procced -- the true seed included.
+    """
+
+    def _tokens(self, state, action):
+        from claytonlib.battle_compass import tokens as tok
+        nxt = simulate_turn(state, action, HUNT)
+        return tok.render_turn(tok.normalise(nxt.log[-1])), nxt
+
+    def test_a_burn_on_an_already_burned_pokemon_shows_nothing(self):
+        burned = ampharos().with_status(Status.BURN)
+        rendered, _ = self._tokens(
+            state_with(burned, hooh(status=Status.PARALYSIS), rng=0x1012, phase=1), Action.MOVE_2)
+        self.assertEqual(rendered, "M2E1hHP201")
+        self.assertNotIn("~", rendered)
+
+    def test_the_first_burn_still_does(self):
+        """The contrast that makes it a suppression rather than a removal."""
+        rendered, _ = self._tokens(
+            state_with(ampharos(), hooh(status=Status.PARALYSIS), rng=0x1012, phase=1),
+            Action.MOVE_2)
+        self.assertIn("E1h~", rendered)
+
+    def test_the_roll_is_still_spent(self):
+        """Only the MARKER goes. Suppressing the advance would desynchronise the stream."""
+        burned = ampharos().with_status(Status.BURN)
+        hidden, after_hidden = self._tokens(
+            state_with(burned, hooh(status=Status.PARALYSIS), rng=0x1012, phase=1), Action.MOVE_2)
+        shown, after_shown = self._tokens(
+            state_with(ampharos(), hooh(status=Status.PARALYSIS), rng=0x1012, phase=1),
+            Action.MOVE_2)
+        self.assertEqual(after_hidden.rng_offset, after_shown.rng_offset)
+        self.assertEqual(after_hidden.rng, after_shown.rng)
+        self.assertNotEqual(hidden, shown)
+
+    def test_a_discharge_proc_on_an_already_paralyzed_target_shows_nothing(self):
+        """The state the entire run is built on reaching, so this would have fired every turn."""
+        rendered, _ = self._tokens(
+            state_with(ampharos(), hooh(status=Status.PARALYSIS), rng=0x100F, phase=1),
+            Action.MOVE_3)
+        self.assertNotIn("~", rendered)
+
+    def test_a_safeguard_blocked_proc_shows_nothing(self):
+        """[believed, not verified] -- whether a Safeguard block prints a protection message is
+        decided in NARC_a_0_0_1, which is not in the decompilation. Suppressed on the same
+        reasoning as the rest: losing an observation costs information, inventing one costs the
+        run."""
+        rendered, nxt = self._tokens(
+            state_with(ampharos(), hooh(), rng=0x1007, phase=1, safeguard_turns=5), Action.MOVE_3)
+        self.assertIs(nxt.target.status, Status.NONE)
+        self.assertNotIn("~", rendered)
+
+    def test_ancient_powers_self_boost_is_untouched(self):
+        """It raises the ATTACKER, so it is visible whatever the victim's state -- and it must
+        keep its marker, since it is the proc that cancels an Intimidate."""
+        from claytonlib.battle_compass import tokens as tok
+        for seed in range(0x3000, 0x3000 + 4000):
+            state = state_with(ampharos(), hooh(status=Status.PARALYSIS), rng=seed, phase=1)
+            nxt = simulate_turn(state, Action.MOVE_2, HUNT)
+            rendered = tok.render_turn(tok.normalise(nxt.log[-1]))
+            if "E3" in rendered and nxt.target.atk_stage > 0:
+                self.assertIn("E3h~", rendered)
+                return
+        self.fail("no Ancient Power proc in 4,000 seeds")
+
+
+# --- clayton-957.10.9: naming the secondary ----------------------------------------------------
+
+class TestTheSecondaryIsDescribed(unittest.TestCase):
+    """The interview has to say what it is asking about, and the page said "<ours>'s stat fell"
+    for every secondary there is -- true of Suicune's Aurora Beam, wrong twice over on Ho-Oh."""
+
+    def test_ancient_power_names_the_attacker(self):
+        from claytonlib.battle_compass.sim import secondary_description
+        side, clause = secondary_description(resolve_move("Ancient Power"))
+        self.assertEqual(side, "attacker")
+        self.assertIn("{who}", clause)
+        self.assertIn("rose", clause)
+
+    def test_sacred_fire_names_the_victim_and_says_burned(self):
+        from claytonlib.battle_compass.sim import secondary_description
+        side, clause = secondary_description(resolve_move("Sacred Fire"))
+        self.assertEqual(side, "victim")
+        self.assertIn("burned", clause)
+
+    def test_the_suicune_wording_is_still_right_for_suicune(self):
+        from claytonlib.battle_compass.sim import secondary_description
+        self.assertEqual(secondary_description(resolve_move("Aurora Beam")),
+                         ("victim", "{who}'s Attack fell"))
+        self.assertEqual(secondary_description(resolve_move("Luster Purge")),
+                         ("victim", "{who}'s Sp. Def fell"))
+
+    def test_every_secondary_in_play_is_described(self):
+        from claytonlib.battle_compass.sim import secondary_description
+        for name in HOOH_MOVES + ("Discharge", "Signal Beam", "Air Slash", "Extrasensory",
+                                  "Hydro Pump", "Aurora Beam", "Mist Ball", "Luster Purge"):
+            move = resolve_move(name)
+            if move.effect_chance:
+                self.assertIsNotNone(secondary_description(move), name)
+
+    def test_an_undescribed_effect_is_None_rather_than_a_guess(self):
+        """None means "say something generic". The page falls back to a bare "Yes" -- vague beats
+        a claim about something the game never said."""
+        from claytonlib.battle_compass.sim import secondary_description
+        self.assertIsNone(secondary_description(resolve_move("Thunder Wave")))

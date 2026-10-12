@@ -39,6 +39,21 @@ HIT = "h"
 CRIT = "!"
 MISS = "-"
 SECONDARY = "~"
+#: The attacker was paralyzed by the DEFENDER's contact ability -- Static, which is Ampharos's
+#: only one. It follows the move's own detail (and its ``~``, matching the roll order), so a
+#: Punishment that hit and triggered it renders ``E2h*``.
+#:
+#: It needs a marker of its own because it is the one event in a turn that no move announces.
+#: "Ho-Oh is paralyzed! It may be unable to move!" arrives with nothing attached to it, so
+#: without this the 30% roll is unreportable -- and unreportable means unfilterable, on the
+#: single most valuable outcome in the run: paralysis IS the Phase 2 precondition. Two candidates
+#: differing only in that roll used to render identical turns and both survive, leaving the tool
+#: with a split belief about the target's status that it could not resolve.
+#:
+#: Distinct from ``~`` because both can occur on one token: a contact move with a secondary
+#: (Body Slam) that triggers Static renders ``E1h~*``, and conflating them would make a proc
+#: indistinguishable from an ability trigger.
+STATIC = "*"
 
 #: Uppercase action prefixes, longest-match, so LONGER ONES MUST COME FIRST. Prefix-free apart
 #: from that: "H" alone is deliberately not one, which is what lets "HP" be two characters, and
@@ -396,6 +411,8 @@ def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
         phrase = f"{actor} used {move}"
     if secondary:
         phrase += ", and its extra effect happened"
+    if STATIC in rest:
+        phrase += f", and {defender}'s Static paralyzed {actor}"
     return phrase
 
 
@@ -410,6 +427,12 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
 
     Returns a list so a caller can join it however it likes -- a tooltip wants one line, a
     confirmation box wants bullets.
+
+    `ours` names whoever is OUT, and that changes mid-turn: a switch resolves before any move, so
+    everything after an ``S`` token happened to the newcomer. Without rebinding it, the plan's own
+    opening turn read "Ho-Oh used Punishment and hit Chatot, and Chatot's Static paralyzed Ho-Oh"
+    -- naming the Pokemon that had already left, and crediting it with an ability it does not
+    have. Only possible where `party_name` can supply the name.
     """
     def member(slot: str) -> str:
         """A party slot as a name where one is known, and as the slot otherwise."""
@@ -421,23 +444,29 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
     from claytonlib.battle.catch import SHAKE_MESSAGES
 
     out: list[str] = []
+    active = ours
     for token in normalise(tokens):
         prefix, detail = token[0], token[1:]
         if token.startswith("HP"):
-            out.append(f"{ours} ended the turn on {int(token[2:])} HP")
+            out.append(f"{active} ended the turn on {int(token[2:])} HP")
         elif prefix == "M":
-            out.append(_explain_actor(detail, ours, ours_moves, defender=target))
+            out.append(_explain_actor(detail, active, ours_moves, defender=target))
         elif prefix == "E":
-            out.append(_explain_actor(detail, target, target_moves, defender=ours))
+            out.append(_explain_actor(detail, target, target_moves, defender=active))
         elif prefix == "I":
             name = item_name(detail) if callable(item_name) else detail
             out.append(f"You used {name}")
         elif prefix == "S":
             out.append(f"You switched to {member(detail)}" if detail else "You switched")
+            active = member(detail) if detail else active
         elif token == WIPED:
-            out.append(f"{ours} fainted, with nothing left to send out — the run is over")
+            out.append(f"{active} fainted, with nothing left to send out — the run is over")
         elif prefix == "X":
-            out.append(f"{ours} fainted, and you sent out {member(detail)}")
+            out.append(f"{active} fainted, and you sent out {member(detail)}")
+            # Everything after a faint describes the replacement, and the HP token is the case
+            # that matters: a faint turn carries none, but a later one in the same sentence list
+            # would otherwise be attributed to the Pokemon that just went down.
+            active = member(detail) if detail else active
         elif prefix == "R":
             out.append(f"You used a Revive on {member(detail)}")
         elif token == "C":

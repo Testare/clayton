@@ -791,13 +791,28 @@ class Facade:
         surviving candidate against every legal action, which is ~8s at 6,000 candidates. The
         page renders first and asks for this afterwards, so reporting a turn never waits on
         advice the player may not read.
+
+        And if a turn IS reported while it runs, the sweep aborts rather than finishing: it was
+        ranking a position that has been played, and until it stops it competes for the
+        interpreter with the report the player is waiting on.
         """
+        from claytonlib.battle_compass.identify import AdviceAborted
         session = self._hunt_sessions.get(session_id)
+        try:
+            advice = session.advice()
+            # Computed here rather than on the snapshot because it costs the same sweep over
+            # every candidate that the ranking does.
+            risk = session.standard_ball_risk()
+        except AdviceAborted:
+            # A turn was reported while this was computing, so it was ranking a position that no
+            # longer exists. Reported as an outcome rather than raised: the page has nothing to
+            # fix, it just asks again for the new position.
+            return {"session_id": session_id, "turns": len(session.turns),
+                    "survivors": len(session.survivors), "aborted": True,
+                    "advice": [], "standard_ball_risk": None}
         return {"session_id": session_id, "turns": len(session.turns),
-                "survivors": len(session.survivors), "advice": session.advice(),
-                # Computed here rather than on the snapshot because it costs the same sweep over
-                # every candidate that the ranking does.
-                "standard_ball_risk": session.standard_ball_risk()}
+                "survivors": len(session.survivors), "aborted": False,
+                "advice": advice, "standard_ball_risk": risk}
 
     def hunt_session_observe(self, session_id: str, action: str, tokens: list,
                              item_code: str | None = None,

@@ -56,6 +56,20 @@ SECOND_SIBLING_MISSABLE_MEDIAN_TURNS = 1
 RANKING_ITEM = "gs"
 
 
+class AdviceAborted(Exception):
+    """Raised out of a ranking sweep whose position has already been left behind.
+
+    Ranking is the only slow thing the tool does -- every surviving candidate simulated against
+    every legal action, ~8s at 6,000 candidates -- and it is advice about ONE position. Report a
+    turn while it runs and the rest of that sweep is waste: it is ranking actions for a turn that
+    has been played, and it holds the interpreter against the report the player is waiting on. So
+    the sweep is handed a `keep_going` predicate and raises this the moment it goes false.
+
+    Not an error. The caller's job is to answer "no advice yet" and let the page ask again for
+    the new position.
+    """
+
+
 class Phase(IntEnum):
     SETUP = 1          # Phase 1
     PINNING = 2        # Phase 1.5
@@ -169,14 +183,22 @@ class Session:
 
     # -- the loop -------------------------------------------------------
 
-    def predict(self, action: Action, **extra) -> dict[int, str]:
+    def predict(self, action: Action, *, keep_going=None, **extra) -> dict[int, str]:
         """What each survivor would emit if the player took `action` — without committing.
 
         This is the display for Phase 1.5: it shows what a given action would distinguish, so
         the player can pick the one that separates the set best (sec 15.3).
+
+        `keep_going`, when given, is checked once per candidate and raises `AdviceAborted` as
+        soon as it returns false. This is the loop every ranking sweep spends its time in, so one
+        check here bounds how long an abandoned sweep can keep running -- and the predicate is a
+        PARAMETER rather than session state so that a concurrent `predict` for something the
+        player is actually waiting on cannot be cancelled by somebody else's sweep.
         """
         out: dict[int, str] = {}
         for seed, state in self.states.items():
+            if keep_going is not None and not keep_going():
+                raise AdviceAborted("the position this ranking described has been left behind")
             advanced = simulate_turn(state, action, self.config, **extra)
             out[seed] = tok.render_turn(tok.normalise(advanced.log[-1]))
         return out
@@ -437,14 +459,15 @@ class Session:
             return {"item_code": RANKING_ITEM}
         return {}
 
-    def partition(self, action: Action) -> dict[str, tuple[int, ...]]:
+    def partition(self, action: Action, *, keep_going=None) -> dict[str, tuple[int, ...]]:
         """Survivors grouped by what `action` would make them predict."""
         groups: dict[str, list[int]] = {}
-        for seed, pred in self.predict(action, **self.ranking_extra(action)).items():
+        for seed, pred in self.predict(action, keep_going=keep_going,
+                                       **self.ranking_extra(action)).items():
             groups.setdefault(pred, []).append(seed)
         return {pred: tuple(seeds) for pred, seeds in groups.items()}
 
-    def expected_survivors(self, action: Action) -> float:
+    def expected_survivors(self, action: Action, *, keep_going=None) -> float:
         """Expected size of the surviving set after taking `action`.
 
         Under a uniform prior — which is the right prior here, since the candidate set is
@@ -454,9 +477,17 @@ class Session:
         total = len(self.states)
         if total == 0:
             return 0.0
-        return sum(len(g) ** 2 for g in self.partition(action).values()) / total
+        return sum(len(g) ** 2
+                   for g in self.partition(action, keep_going=keep_going).values()) / total
 
-    def rank_actions(self, actions: list[Action] | tuple[Action, ...]) -> list[tuple[Action, float]]:
+    def rankable(self, actions) -> list[Action]:
+        """`actions` minus the ones there is no point ranking: a switch with an empty bench."""
+        return [a for a in actions
+                if a is not Action.SWITCH
+                or any(st.bench for st in self.states.values())]
+
+    def rank_actions(self, actions: list[Action] | tuple[Action, ...],
+                     *, keep_going=None) -> list[tuple[Action, float]]:
         """`actions` ordered by how well each separates the set, best first.
 
         Balls are ranked alongside moves rather than filtered out by phase, and they rank well:
@@ -464,10 +495,10 @@ class Session:
         256 is blind to. Ranking is about INFORMATION only -- a standard ball's risk of ending
         the run is priced nowhere in this number, which is why `standard_ball_risk` is reported
         next to it rather than folded into it.
+
+        `keep_going` is passed straight down to `predict`; see `AdviceAborted`.
         """
-        allowed = [a for a in actions
-                   if a is not Action.SWITCH
-                   or any(st.bench for st in self.states.values())]
-        scored = [(a, self.expected_survivors(a)) for a in allowed]
+        scored = [(a, self.expected_survivors(a, keep_going=keep_going))
+                  for a in self.rankable(actions)]
         scored.sort(key=lambda pair: (pair[1], pair[0].value))
         return scored

@@ -176,6 +176,31 @@ Worst single hit is a **Sacred Fire crit at 210 of 311** — comfortable. The on
 The **Magnet is actively dangerous** — it exists only to make the move that kills the target kill
 it harder. Hold Leftovers (+19/turn against a 900 budget).
 
+#### Leftovers, and the one ordering detail that matters [verified]
+
+Not implemented at all until clayton-957.10.12 — the word appeared in these notes and in a test
+fixture's `item=` string, and nowhere in the code. With Magneton and Ampharos both holding one,
+the predicted HP would have been low by max HP / 16 **every turn**, and the predicted HP is
+compared exactly: the true seed dies on turn two of the run.
+
+| fact | figure | source |
+|---|---|---|
+| recovery | `max(1, maxHP / 16)` = **19** on a 311 HP Ampharos | `CheckItemGradualHPRestore`, `src/battle/overlay_12_0224E4FC.c:4136` |
+| only while below maximum | at full HP the item does **nothing**, which is not the same as healing zero | the same function's `hp < maxHp` gate |
+| floors, never to zero | a 10 HP Pokemon still gets 1 | `DamageDivide`, `overlay_12_0224E4FC.c:3110` — the same function the burn tick uses |
+| RNG cost | **zero**, so it carries no token of its own | deterministic, like the burn tick |
+| **order** | **recovery lands BEFORE the burn tick** | `UpdateMonConditionState`, `src/battle/battle_controller_player.c:1143` — `UMC_STATE_LEFTOVERS_RECOVERY` precedes `UMC_STATE_BURN` |
+
+The ordering has a consequence the player will see, and it is the player's own observation: **a
+burned holder can never *end* a turn on full HP.** The recovery is gated on being below maximum,
+so at full HP it is skipped and the tick takes 1/8 anyway. But every turn after that nets 1/16
+instead of 1/8 — `200 + 19 - 38 = 181`, so **-19/turn against -38** — which roughly doubles how
+long a burned Ampharos lasts. Keep the item on after Sacred Fire burns it.
+
+One implementation note worth keeping: the residual is **measured, not predicted**. Both figures
+are clamped by `with_hp`, so a recovery that tops us off restores less than 19, and a predicted
+total would have demanded an HP token on a turn where nothing random happened at all.
+
 ### 4.2 Smeargle Lv58 — the Phase 2 body
 
 `153 HP / 66 Def / 160 Spe`, Technician, +Spe nature with Speed maxed; HP IV+EV/4 = 37, Def = 36.
@@ -640,11 +665,99 @@ Standing decisions:
 
 ---
 
+## 8b. Five things a live test found, and the one that was dangerous
+
+Found by playing the tool against the real encounter rather than by reading it, which is why they
+are grouped: four were *reporting* bugs, where the simulator already modelled the mechanic
+correctly and the interview gave the player no way to say what happened. The fifth was the model
+lying.
+
+### 8b.1 Static's paralysis had no token at all [fixed, clayton-957.10.13]
+
+The player watched "Ho-Oh is paralyzed!" after a Punishment into Ampharos and the interview never
+asked about it. Static is **the one event in a turn that no move announces** -- the message arrives
+with nothing attached to it -- so unlike a secondary effect it cannot ride on the move's own
+question or its `~` marker.
+
+The reporting gap was the visible half. The dangerous half: two candidate seeds differing *only* in
+that 30% roll rendered **identical turns**, so both survived, and the tool carried a split belief
+about the one status the entire run is built on reaching. It resolves eventually -- a paralyzed
+Ho-Oh spends a paralysis check, so the streams diverge a turn or two later -- through an
+observation the player cannot attribute to anything.
+
+Now `*`, after the move's own detail and after any `~`, because that is the roll order: `E2h*`, or
+`E1h~*` for a contact move that also procced. A marker of its own rather than reuse of `~`,
+because both can happen on one token.
+
+It also had to work on a **switch** turn, which is the turn the plan actually uses: a switch
+resolves before any move, so Ho-Oh's Punishment lands on the newcomer and it is the newcomer's
+Static that fires (`S2E2h*HP289`). The snapshot's bench rows carried no `ability` field, so the
+question was being skipped on precisely that turn.
+
+### 8b.2 An invisible proc was being tokenized [fixed, clayton-957.10.10]
+
+**This is the one that was dangerous**, and it had nothing to do with the interview. Non-volatile
+statuses are mutually exclusive, so a Sacred Fire proc against an **already-burned** Ampharos sets
+nothing and *says* nothing -- and the simulator emitted `E1h~` for it anyway.
+
+Sacred Fire procs at 50% and has 8 PP, and the plan has it hitting a burned Ampharos for most of
+them. So a player correctly reporting silence eliminated **every candidate that procced**, the true
+seed included. The same applies to a Discharge proc against an already-paralyzed Ho-Oh, which is
+the state the whole run is built on.
+
+Only the marker is suppressed; the roll is still spent, so the stream is untouched (verified: the
+rendered HP is identical with and without the burn). The *Safeguard* corner of this stays
+`[believed, not verified]` -- whether a Safeguard-blocked secondary prints a protection message is
+decided in the battle scripts in `NARC_a_0_0_1`, which is not in the decompilation. Suppressed on
+the same reasoning as the rest of `_visible_tokens`: losing an observation costs information,
+inventing one costs the run.
+
+While fixing it: **effect 6 ("may paralyze") was listed in `MODELLED_OUR_EFFECTS` and applied
+nowhere.** Ampharos's Discharge rolled its 30% and dropped the result on the floor. Same class as
+957.10.2 -- a move the tool claimed to support, silently changing nothing -- and on the single most
+valuable outcome available.
+
+### 8b.3 A miss our own Flash made possible was unreportable [fixed, clayton-957.10.8]
+
+Flash, then Punishment, then a miss, and no "Missed" chip. The simulator was right all along:
+`act_ours` drops the stage before `act_target` recomputes the net accuracy, so the candidates
+*did* predict `M2E2-`. The page's `can_miss` is read off the state the turn **opened** in, where
+Punishment was still 100% and unmissable.
+
+Same family as the sleep case `hrStatusWeJustApplied` already handled: half a turn happens before
+the other half. A move that bypasses the accuracy check entirely keeps an effective accuracy of 0
+at every stage, so Safeguard stays unmissable no matter how many Flashes have landed.
+
+### 8b.4 The secondary question described Suicune's effects, on every move [fixed, 957.10.9]
+
+The Yes chip was hardcoded as "<ours>'s stat fell" -- true of Aurora Beam, Mist Ball and Luster
+Purge, and wrong twice over here: **Ancient Power raises Ho-Oh's five stats** and **Sacred Fire
+burns us**. The player was being asked to confirm something the game never said, and the two
+outcomes it conflated are the two the plan most needs distinguished.
+
+The description now comes from the table next to the effect constants, as `(side, clause)` -- an
+undescribed effect gets a bare "Yes" rather than a guess.
+
+### 8b.5 The advice sweep outlived the position it described [fixed, 957.10.11]
+
+Ranking is the only slow call in the tool (~8s at 6,000 candidates). The page already dropped a
+stale *reply*; nothing stopped the *computation*, so reporting a turn left a sweep ranking actions
+for a turn that had been played, holding the interpreter against the report the player was waiting
+on. It now polls a position counter and abandons itself.
+
+Found while fixing it: `advice()` **swept the candidate set twice per action** -- once through
+`rank_actions` for the score and again through `partition` for the group count, for the same
+partition. That was half the wait.
+
+---
+
 ## 9. What the simulator still has to learn
 
-**All of it is now implemented** (`tests/test_ho_oh_party.py`, 49 tests). Kept as a record of what
-was wrong and why, because every one of these failed *silently* -- `execute_move` has no notion of
-an unrecognised effect, so an unmodelled status move reported success and changed nothing.
+**All of it is now implemented** (`tests/test_ho_oh_party.py`, plus
+`tests/test_app_hunt_interview.py` and `tests/test_hunt_advice_abort.py` for the round the live
+test produced). Kept as a record of what was wrong and why, because every one of these failed
+*silently* -- `execute_move` has no notion of an unrecognised effect, so an unmodelled status move
+reported success and changed nothing.
 
 The one that mattered most was the smallest change: **957.10.1 was fixed by deleting a guard.**
 A danger floor is the right instrument for the *readiness* question ("can this party do this at
@@ -667,6 +780,12 @@ says so at the call site.
 | *not filed* · n/a | **Our own Pressure is unmodelled** | `act_target` spends a flat `spend_pp(target_slot, 1)`, so a Suicune on the field would burn Ho-Oh's PP twice as fast as the simulator believes and `struggle_deadline` would be wrong. Moot while Suicune stays benched. |
 | **957.10.7** · done | **Screens** | Not implemented. `damage.py` already carries the correct insertion point in a comment ("Burn's halving and the screens would sit here, in that order") and it matches the C exactly — burn, then Reflect, then weather. Only needed if Reflect is actually played. |
 | *not filed* · n/a | **Serene Grace** | sec 5.2. Only if Togekiss comes in. |
+| **957.10.13** · done | **Static's paralysis had no token** | sec 8b.1. The reporting gap was the visible half; the dangerous half is that two candidates differing only in the 30% rendered identical turns and both survived. `*`, after the move detail and after any `~`. Needed the bench rows to publish `ability`, or the question was skipped on the switch turn the plan uses. |
+| **957.10.10** · done | **An invisible proc was tokenized, and effect 6 was inert** | sec 8b.2. The dangerous one. A secondary status that cannot land says nothing, and the simulator claimed it did -- live for Sacred Fire against an already-burned Ampharos, at 50% x 8 PP. Separately, effect 6 ("may paralyze") was listed as modelled and applied nowhere, so Discharge rolled its 30% and discarded the result. |
+| **957.10.8** · done | **A miss our own Flash made possible was unreportable** | sec 8b.3. A page-only fix: the simulator predicted `M2E2-` all along, and `move_info` is read off the turn's opening state. Gated on `effective_accuracy` so a bypassing move (Safeguard) stays unmissable at every stage. |
+| **957.10.9** · done | **The secondary question asserted Suicune's effect for every move** | sec 8b.4. Ancient Power raises *Ho-Oh's* stats and Sacred Fire burns *us*; the page said "our stat fell" for both. Description moved next to the effect constants, with a bare "Yes" as the fallback rather than a guess. |
+| **957.10.12** · done | **Leftovers did not exist** | sec 4.1. `max(1, maxHP/16)`, only below maximum, zero RNG, and **before** the burn tick. Two party members hold one, so the predicted HP was low by 19 every turn. |
+| **957.10.11** · done | **The advice sweep outlived its position** | sec 8b.5. It now polls a position counter and raises `AdviceAborted`; the facade reports that as an outcome rather than an error. Also halved the sweep: `advice()` was partitioning the candidate set twice per action for the same answer. |
 | **957.10.6** · done | **Static's conditional roll** | The RNG call is the LAST term in the `&&` chain, so an already-statused attacker spends nothing and the turn-1 Thunder Wave makes it permanently dormant. Contact-only, read off `Move.makes_contact`. A second screen's `will_fail` landed with 957.10.7. |
 
 **No open [check] items.** The Granbull will be sourced with Intimidate deliberately (sec 3.1), and
