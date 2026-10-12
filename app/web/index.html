@@ -4861,7 +4861,11 @@ function hrCanFaint(){
   // nothing else touched us at all -- the `E3h~X2` case, where the move burned us, we survived
   // it, and the tick did the rest. The tick emits no HP token of its own (it is deterministic),
   // so without this the faint would have no question attached to it.
-  if (s.burn_tick > 0) return true;
+  //
+  // hrActive(), not s.ours: the tick lands on whoever is out when the turn ENDS, and a switch
+  // resolves before any move. Read off the lead, this asked whether the Pokemon coming IN had
+  // fainted to a burn the one going out was carrying (clayton-957.10.16).
+  if (hrActive().burn_tick > 0) return true;
   return hrLanded(t.target);
 }
 
@@ -5485,8 +5489,8 @@ function hrInterview(){
     blocks.push(hrChips(`Did ${who.name} faint?`, [
       hrChip("No", "hrSet('fainted',false)", t.fainted === false),
       hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
-    ], s.burn_tick > 0
-         ? `assumed no — burn takes ${s.burn_tick} at end of turn`
+    ], who.burn_tick > 0
+         ? `assumed no — burn takes ${who.burn_tick} off ${who.name} at end of turn`
          : "assumed no"));
   }
   if (!caught && hrFainted()){

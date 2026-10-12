@@ -108,14 +108,20 @@ class TestBurnNeedsNoTokenOfItsOwn(unittest.TestCase):
         self.assertEqual(nxt.ours.name, "Magneton")
 
     def test_the_interview_knows_a_tick_can_faint_us(self):
-        """It emits no HP token, so the faint would otherwise have no question attached."""
+        """It emits no HP token, so the faint would otherwise have no question attached.
+
+        Read off whoever is out when the turn ENDS -- `hrActive()`, not the snapshot's lead. The
+        tick lands after a switch resolves, so the lead's figure described the wrong Pokemon
+        (clayton-957.10.16).
+        """
         import pathlib
 
         html = (pathlib.Path(__file__).resolve().parent.parent
                 / "app" / "web" / "index.html").read_text()
         body = html[html.index("function hrCanFaint(){"):]
         body = body[:body.index("\n}") + 2]
-        self.assertIn("s.burn_tick > 0", body)
+        self.assertIn("hrActive().burn_tick > 0", body)
+        self.assertNotIn("s.burn_tick", body)
 
     def test_sacred_fire_is_what_applies_it(self):
         self.assertIn(resolve_move("Sacred Fire").effect, BURN_EFFECTS)

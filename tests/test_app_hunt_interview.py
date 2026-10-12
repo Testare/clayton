@@ -347,3 +347,65 @@ class TestTheProseFollowsTheSwitch(unittest.TestCase):
         prose = " ".join(self._prose(["E2h", "X2"]))
         self.assertIn("Chatot fainted", prose)
         self.assertIn("sent out Ampharos", prose)
+
+
+class TestTheBurnTickFollowsWhoIsOutAtTheEndOfTheTurn(unittest.TestCase):
+    """clayton-957.10.16, reported from a live run: switching from a burned Ampharos to Granbull
+    asked *"Did Granbull faint?"* because *"burn takes N at end of turn"* — a burn Ampharos was
+    carrying.
+
+    The question already named the incoming Pokemon, correctly: a switch resolves before any move,
+    so the newcomer is the one the end-of-turn tick lands on. Only its *reason* was read off the
+    lead. Fixed by publishing the figure per Pokemon, which makes every reader name whose it is.
+    """
+
+    def _snapshot(self, **kw):
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
+        from claytonlib.battle_compass.hunt_session import HuntSession
+
+        burned = Battler(**{**{f: getattr(ampharos(), f) for f in (
+            "name", "level", "types", "stats", "moves", "pp", "ability", "held_item")},
+            "party_slot": 3, **kw})
+        granbull = Battler(name="Granbull", level=44, types=("Normal",),
+                           stats={"hp": 162, "atk": 109, "def": 122, "spa": 64, "spd": 66,
+                                  "spe": 52},
+                           moves=("Charm",), pp=(20,), ability="Intimidate", party_slot=4)
+        window = CandidateWindow(
+            key_seed=0x1234, initial_time=dt.datetime(2026, 1, 1, 12, 0, 0), vector_ms=5000.0,
+            frame_centre=1000, second_centre=30, frame_window=2, second_window=0,
+            candidates=tuple(Candidate(seed=0x100E2BD5 + i, frame=1000 + i, second=30)
+                             for i in range(4)))
+        return HuntSession(window, burned, hooh(status=Status.PARALYSIS), HUNT,
+                           bench=(granbull,)).snapshot()
+
+    def test_the_lead_carries_its_own_figure(self):
+        snap = self._snapshot(status=Status.BURN)
+        self.assertEqual(snap["ours"]["burn_tick"], 311 // 8)   # this fixture is 311 HP
+
+    def test_an_unburned_bench_member_carries_zero_while_the_lead_burns(self):
+        """The reported case exactly."""
+        snap = self._snapshot(status=Status.BURN)
+        self.assertEqual(snap["bench"][0]["name"], "Granbull")
+        self.assertEqual(snap["bench"][0]["status"], "none")
+        self.assertEqual(snap["bench"][0]["burn_tick"], 0)
+
+    def test_an_unburned_lead_carries_zero_too(self):
+        self.assertEqual(self._snapshot()["ours"]["burn_tick"], 0)
+
+    def test_there_is_no_single_top_level_figure_left_to_misread(self):
+        """Removing it is the fix, not an extra: a duplicate that is subtly wrong on switch turns
+        invites the same bug back."""
+        self.assertNotIn("burn_tick", self._snapshot(status=Status.BURN))
+
+    def test_the_page_reads_it_off_the_active_pokemon(self):
+        html = INDEX.read_text()
+        self.assertIn("if (hrActive().burn_tick > 0) return true;", html)
+        self.assertNotIn("s.burn_tick", html)
+
+    def test_the_hint_names_whose_burn_it_is(self):
+        """"burn takes N at end of turn", unattributed, was true of nobody on screen."""
+        html = INDEX.read_text()
+        self.assertIn("who.burn_tick > 0", html)
+        self.assertIn("off ${who.name} at end of turn", html)

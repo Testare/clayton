@@ -378,6 +378,16 @@ def _stat_drop_info(move) -> dict | None:
     return {"stat": STAGE_LABELS.get(field, field), "stages": stages}
 
 
+def _burn_tick_of(battler: Battler) -> int:
+    """What burn would take off `battler` at end of turn, or 0 if it is not burned.
+
+    Published per Pokemon rather than once for whoever is out, because the question it answers --
+    "could this Pokemon have fainted to something the turn's tokens do not mention?" -- is about
+    whoever is out when the turn ENDS. On a switch turn that is the Pokemon coming in.
+    """
+    return burn_tick(battler) if battler.status is Status.BURN else 0
+
+
 def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
@@ -1162,10 +1172,6 @@ class HuntSession:
                 "ours": resolution_options(state.ours),
                 "target": resolution_options(state.target),
             },
-            # What burn would take off at end of turn, so the page can explain a faint that
-            # nothing in the turn's own tokens accounts for. Zero when not burned.
-            "burn_tick": (burn_tick(state.ours)
-                          if state.ours.status is Status.BURN else 0),
             "ours": {"name": state.ours.name, "hp": state.ours.hp,
                      "max_hp": state.ours.max_hp,
                      "status": state.ours.status.value,
@@ -1173,6 +1179,7 @@ class HuntSession:
                      "hp_range": self.hp_range("ours"),
                      "ability": state.ours.ability,
                      "held_item": state.ours.held_item,
+                     "burn_tick": _burn_tick_of(state.ours),
                      "effective_speed": effective_speed(state.ours),
                      "level": state.ours.level,
                      "types": list(state.ours.types),
@@ -1209,6 +1216,11 @@ class HuntSession:
                        "hp": b.hp, "max_hp": b.max_hp,
                        "fainted": b.fainted,
                        "status": b.status.value,
+                       # Per Pokemon, because on a SWITCH turn the tick lands on the INCOMING
+                       # one -- a switch resolves before any move. One figure for the lead had
+                       # the interview asking whether Granbull fainted to a burn Ampharos was
+                       # carrying (clayton-957.10.16).
+                       "burn_tick": _burn_tick_of(b),
                        # The INCOMING Pokemon is the one a switch turn asks about, so its ability
                        # has to be here: a switch resolves before any move, so the target's
                        # contact move lands on the newcomer and it is the newcomer's Static that
