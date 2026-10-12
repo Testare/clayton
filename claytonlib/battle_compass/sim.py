@@ -76,6 +76,10 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     149: "double power vs airborne, which never applies here",
     4: "may burn: the status, its deterministic tick, and its halved physical Attack",
     31: "may flinch -- applied, and suppressed when unobservable (`flinch_visible`)",
+    # Aeroblast, and the only reason Lugia's Lv45 set was refused. Listed as modelled once the
+    # crit stage reached `execute_move`: before that the move was simulated as plain damage at
+    # 1/16, which is the "inert rather than refused" failure this table exists to prevent.
+    43: "high crit ratio: one crit stage up, so `% 8` rather than `% 16`",
     46: "Mist: field condition, and it blocks our stat drops",
     68: "lowers our Attack, which raises how many False Swipes the target needs",
     71: "lowers our Sp. Atk, which lowers the special damage WE deal",
@@ -113,6 +117,9 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     24: "lowers the target's evasion (Sweet Scent), and Mist blocks it",
     31: "may flinch, and suppressed when unobservable",
     35: "Light Screen: halves special damage, and a second one fails",
+    # Nothing in the planned parties uses one, but `crit_stage_of` reads the move rather than the
+    # side, so a Sketched Night Slash or Psycho Cut simulates correctly and may as well say so.
+    43: "high crit ratio: one crit stage up, so `% 8` rather than `% 16`",
     58: "lowers the target's Attack by two (Charm)",
     59: "lowers the target's Defence by two (Screech)",
     60: "lowers the target's Speed by two (Scary Face)",
@@ -198,6 +205,42 @@ def flinch_visible(victim: "Battler", *, victim_selected_a_move: bool,
 
 #: Crit modifiers by stage; a crit lands when ``roll % modifier == 0``.
 CRIT_MODIFIERS = (16, 8, 4, 3, 2)
+
+#: Move effects in the **high-crit-ratio group**, which start one crit stage up -- so they land a
+#: critical hit on ``roll % 8 == 0`` rather than ``roll % 16 == 0``.
+#:
+#: Cross-validated against ``metronome_compass.effects`` rather than inferred, which is the
+#: project's rule for anything RNG-shaped: that module resolves all three through
+#: ``hit_crit_or_miss(..., crit_stage=1)`` and is verified against Blackthorn ground truth.
+#: ``_eff_high_crit`` is 43, ``_eff_burn_highcrit`` is 200 and ``_eff_poison_highcrit`` is 209.
+#:
+#: Effect 43 is the big one: Karate Chop, Razor Leaf, Crabhammer, Slash, **Aeroblast**, Cross
+#: Chop, Air Cutter, Leaf Blade, Night Slash, Shadow Claw, Psycho Cut, Stone Edge, Attack Order
+#: and Spacial Rend. Aeroblast is in BOTH Lugia movesets, which is what made this urgent: at
+#: ``CRIT_MODIFIERS[0]`` the simulator disagreed with the game whenever
+#: ``roll % 8 == 0 and roll % 16 != 0`` -- 1/16 of Aeroblast turns against a 1/4 move choice, so
+#: 1.56% of turns, which is a ~47% chance of eliminating the true seed over a 40-turn run. And
+#: wrong in two ways on the same turn: the ``h``/``!`` token AND the damage, since a crit doubles
+#: it.
+#:
+#: **The roll COUNT is unchanged** -- ``hit_crit_or_miss``'s own docstring says so ("same RNG roll
+#: count as standard"), and that is what keeps this away from every verified advance count. It is
+#: an outcome-only correction.
+HIGH_CRIT_EFFECTS = frozenset({43, 200, 209})
+
+
+def crit_stage_of(move: Move, attacker: "Battler" = None) -> int:
+    """The crit stage a hit by `move` is rolled at, capped at the table's top entry.
+
+    Two contributions, kept separate because only one of them exists yet: the move's own group
+    (`HIGH_CRIT_EFFECTS`), and the attacker's accumulated stage from a Focus Energy or a Dire
+    Hit or a Scope Lens. Nothing in any configured party or moveset has the second, so `Battler`
+    carries no crit stage and `attacker` is accepted and read defensively -- the signature is
+    here so that adding one is a field rather than a re-reading of this call site.
+    """
+    stage = 1 if move.effect in HIGH_CRIT_EFFECTS else 0
+    stage += getattr(attacker, "crit_stage", 0) or 0
+    return min(stage, len(CRIT_MODIFIERS) - 1)
 #: Gen 4 damage variance, transcribed from ApplyDamageRange (src/battle/overlay_12_0224E4FC.c):
 #:
 #:     damage *= (100 - (BattleSystem_Random(battleSystem) % 16));
@@ -800,7 +843,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     rng, crit_roll = advance(rng)
     rng, damage_roll = advance(rng)
     used += 2
-    critical = crit_roll % CRIT_MODIFIERS[0] == 0
+    # The STAGE, not `CRIT_MODIFIERS[0]`. A high-crit move lands on `% 8`, and reading the
+    # modifier off slot 0 unconditionally made Aeroblast crit half as often as the game does --
+    # wrong token and wrong damage on the same turn (clayton-957.2).
+    critical = crit_roll % CRIT_MODIFIERS[crit_stage_of(move, attacker)] == 0
     hit = True
     if move.accuracy > 0:
         rng, hit_roll = advance(rng)
