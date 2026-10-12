@@ -1,0 +1,211 @@
+{
+  "id": "e4c9ed8a4995",
+  "name": "J.ON SoulSilver",
+  "trainer_name": "J.ON",
+  "version": "SoulSilver",
+  "console": "Blue DSi",
+  "metronome_users": [
+    {
+      "id": 1,
+      "name": "Rox Richie",
+      "species": "Chansey",
+      "gender": "female",
+      "level": 6,
+      "moveset": [
+        "Metronome",
+        "Fling",
+        "Healing Wish",
+        "Solar Beam"
+      ],
+      "ability": "Natural Cure",
+      "lagging_tail": true
+    }
+  ],
+  "next_metronome_user_id": 2,
+  "excluded_tags": [],
+  "party": [
+    {
+      "id": 1,
+      "name": "Smeargle",
+      "species": "smeargle",
+      "level": 58,
+      "ability": "Technician",
+      "gender": null,
+      "stats": {
+        "hp": 153,
+        "atk": 65,
+        "def": 66,
+        "spa": 45,
+        "spd": 79,
+        "spe": 160
+      },
+      "moveset": [
+        "Sweet Scent",
+        "False Swipe",
+        "Spore",
+        "Mean Look"
+      ],
+      "max_pp": {
+        "1": 20,
+        "2": 40,
+        "3": 15,
+        "4": 5
+      }
+    },
+    {
+      "id": 2,
+      "name": "Magneton",
+      "species": "magneton",
+      "level": 49,
+      "ability": "Sturdy",
+      "gender": null,
+      "stats": {
+        "hp": 122,
+        "atk": 97,
+        "def": 103,
+        "spa": 134,
+        "spd": 92,
+        "spe": 107
+      },
+      "moveset": [
+        "Thunder Wave",
+        "Screech"
+      ],
+      "max_pp": {
+        "1": 20,
+        "2": 40
+      }
+    },
+    {
+      "id": 3,
+      "name": "Pig Boy",
+      "species": "mamoswine",
+      "level": 93,
+      "ability": "Oblivious",
+      "gender": null,
+      "stats": {
+        "hp": 351,
+        "atk": 367,
+        "def": 190,
+        "spa": 145,
+        "spd": 154,
+        "spe": 203
+      },
+      "moveset": [],
+      "max_pp": {}
+    },
+    {
+      "id": 5,
+      "name": "MERCY",
+      "species": "jumpluff",
+      "level": 68,
+      "ability": "Chlorophyll",
+      "gender": null,
+      "stats": {
+        "hp": 213,
+        "atk": 76,
+        "def": 126,
+        "spa": 102,
+        "spd": 145,
+        "spe": 239
+      },
+      "moveset": [
+        "Sleep Powder",
+        "Sunny Day",
+        "Giga Drain"
+      ],
+      "max_pp": {
+        "1": 15,
+        "2": 5,
+        "3": 10
+      }
+    },
+    {
+      "id": 6,
+      "name": "Adamant",
+      "species": "natu",
+      "level": 23,
+      "ability": "Synchronize",
+      "gender": null,
+      "stats": {
+        "hp": 58,
+        "atk": 37,
+        "def": 26,
+        "spa": 34,
+        "spd": 31,
+        "spe": 37
+      },
+      "moveset": [],
+      "max_pp": {}
+    },
+    {
+      "id": 7,
+      "name": "Chatot",
+      "species": "chatot",
+      "level": 21,
+      "ability": "Keen Eye",
+      "gender": null,
+      "stats": {
+        "hp": 66,
+        "atk": 35,
+        "def": 25,
+        "spa": 47,
+        "spd": 28,
+        "spe": 44
+      },
+      "moveset": [
+        "Sing"
+      ],
+      "max_pp": {
+        "1": 15
+      }
+    },
+    {
+      "id": 8,
+      "name": "SCARY  DOG!",
+      "species": "granbull",
+      "level": 44,
+      "ability": "Intimidate",
+      "gender": null,
+      "stats": {
+        "hp": 162,
+        "atk": 109,
+        "def": 122,
+        "spa": 64,
+        "spd": 66,
+        "spe": 52
+      },
+      "moveset": [
+        "Charm"
+      ],
+      "max_pp": {
+        "1": 20
+      }
+    },
+    {
+      "id": 9,
+      "name": "AMY FAIR",
+      "species": "ampharos",
+      "level": 94,
+      "ability": "Static",
+      "gender": null,
+      "stats": {
+        "hp": 314,
+        "atk": 139,
+        "def": 184,
+        "spa": 339,
+        "spd": 212,
+        "spe": 145
+      },
+      "moveset": [
+        "Flash",
+        "Light Screen"
+      ],
+      "max_pp": {
+        "1": 20,
+        "2": 30
+      }
+    }
+  ],
+  "next_party_pokemon_id": 10
+}

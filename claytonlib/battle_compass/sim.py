@@ -1322,7 +1322,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             if not revived.fainted:
                 raise ValueError(
                     f"{revived.name} has not fainted, so a Revive would do nothing")
-            back = revived.with_hp(items.revive_amount(revived.max_hp))
+            # Healthy, not merely alive. `with_hp` clears the status on the way DOWN, so this is
+            # belt-and-braces for a party member configured as fainted rather than simulated into
+            # it -- and it states the rule where a reader looks for it.
+            back = (revived.with_status(Status.NONE)
+                    .with_hp(items.revive_amount(revived.max_hp)))
             new.bench = tuple(back if i == bench_slot else b
                               for i, b in enumerate(new.bench))
             parts.append(tok.revive_token(party_number(revived, bench_slot)))
@@ -1418,7 +1422,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # too, and that is the commoner case here -- a 30% Discharge proc against an
             # already-paralyzed Ho-Oh changes nothing, and shows nothing either, which is why the
             # verdict is carried down to `_visible_tokens` rather than only applied.
+            # A victim the move FAINTED takes nothing: the roll is spent, the status script
+            # never runs, and `with_hp` has already cleared what status it had -- so this has to
+            # be explicit or a corpse gets re-statused.
             secondary_landed = (new.safeguard_turns <= 0
+                                and not new.target.fainted
                                 and new.target.status is Status.NONE)
             if secondary_landed:
                 new.target = new.target.with_status(sec)
@@ -1496,7 +1504,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # once Ampharos is burned, every later proc is invisible. No Safeguard check on this
             # side -- Safeguard is the TARGET's side condition (nothing in any party can set one),
             # so a status aimed at us is never blocked by it.
-            secondary_landed = new.ours.status is Status.NONE
+            secondary_landed = not new.ours.fainted and new.ours.status is Status.NONE
             if secondary_landed:
                 new.ours = new.ours.with_status(sec)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:

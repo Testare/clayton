@@ -12,6 +12,7 @@ The figures are Ho-Oh Lv70 (SoulSilver) at 31 IVs and a neutral nature and the p
 notes/ho_oh_party.md, so a number changing here should mean the game changed, not the model.
 """
 import unittest
+from dataclasses import replace
 
 from claytonlib.battle.damage import (
     SCREEN_TURNS, SCREEN_TURNS_LIGHT_CLAY, Attacker, Defender, damage_range, screen_turns,
@@ -952,3 +953,68 @@ class TestTheSecondaryIsDescribed(unittest.TestCase):
         a claim about something the game never said."""
         from claytonlib.battle_compass.sim import secondary_description
         self.assertIsNone(secondary_description(resolve_move("Thunder Wave")))
+
+
+# --- clayton-957.10.14: a faint clears the status -----------------------------------------------
+
+class TestFaintingClearsTheStatus(unittest.TestCase):
+    """The only mismatch in 108 turns of emulator ground truth (notes/hooh_log_replay.md sec 3).
+
+    Sacred Fire fainted Granbull and its 50% burn procced on the same roll. The token was right --
+    `_visible_tokens` already knew a KO shows no secondary message -- but the STATE took the burn,
+    the Revive brought it back still burned, and the simulator then ticked 20 HP a turn off a
+    Pokemon the game was not burning. Three defects, each checked here.
+    """
+
+    def _state(self, ours, **kw):
+        return state_with(ours, hooh(**kw), rng=0x1010, phase=1,
+                          bench=(smeargle(),))
+
+    def test_a_victim_the_move_fainted_takes_no_status(self):
+        """Defect (a). The roll is spent and the status script never runs."""
+        state = self._state(granbull(hp=20))
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT, replacement=4)
+        self.assertTrue(nxt.faints, "the fixture seed must actually faint Granbull")
+        down = [b for b in nxt.bench if b.name == "Granbull"][0]
+        self.assertIs(down.status, Status.NONE)
+
+    def test_fainting_clears_a_status_it_already_had(self):
+        """Defect (b). Independent of (a): burned first, fainted later."""
+        burned = granbull(hp=20).with_status(Status.BURN)
+        nxt = simulate_turn(self._state(burned), Action.MOVE_1, HUNT, replacement=4)
+        down = [b for b in nxt.bench if b.name == "Granbull"][0]
+        self.assertEqual(down.hp, 0)
+        self.assertIs(down.status, Status.NONE)
+
+    def test_the_choke_point_is_with_hp(self):
+        """So no path can hold a fainted-and-statused Battler, however it got there."""
+        self.assertIs(granbull().with_status(Status.BURN).with_hp(0).status, Status.NONE)
+        self.assertEqual(granbull().with_status(Status.SLEEP, sleep_turns=3)
+                         .with_hp(0).sleep_turns, 0)
+
+    def test_a_revive_brings_back_a_healthy_pokemon(self):
+        """Defect (c), checked against a party member CONFIGURED as fainted and statused -- the
+        one way to reach this state without going through `with_hp`."""
+        down = replace(granbull(), hp=0, status=Status.BURN)
+        state = state_with(chatot(), hooh(moves=("Safeguard",), pp=(25,)),
+                           rng=0x1234, phase=1, bench=(down,))
+        nxt = simulate_turn(state, Action.REVIVE, HUNT, bench_slot=0)
+        self.assertEqual(nxt.bench[0].hp, 72)              # the fixture's 144 // 2
+        self.assertIs(nxt.bench[0].status, Status.NONE)
+
+    def test_a_survivable_sacred_fire_still_burns(self):
+        """The regression that matters: suppressing the status on a KO must not suppress it on a
+        hit the victim lives through. [verified: hooh2 turn 4 is exactly this turn]"""
+        state = state_with(ampharos(), hooh(moves=("Sacred Fire",), pp=(5,)),
+                           rng=0x1000, phase=1)
+        nxt = simulate_turn(state, Action.MOVE_2, HUNT)
+        self.assertIs(nxt.ours.status, Status.BURN)
+        self.assertIn("~", "".join(nxt.log[-1]), "and it is still reported")
+
+    def test_a_statused_target_is_unaffected_by_any_of_this(self):
+        """Ho-Oh never faints -- the solver forbids it -- so its paralysis must survive
+        everything above."""
+        state = state_with(smeargle(), hooh(hp=1, status=Status.PARALYSIS), rng=0x1234)
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+        self.assertIs(nxt.target.status, Status.PARALYSIS)
+        self.assertEqual(nxt.target.hp, 1)

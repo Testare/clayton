@@ -150,9 +150,9 @@ TARGET_OVERRIDE = {
     "battler": 1,
     #: Refuse to write unless the battler really is this species, so a mistimed breakpoint
     #: cannot silently rewrite our own Pokemon. None disables the guard.
-    "species": 245,             # SPECIES_SUICUNE
-    "nature": "Bold",
-    "ivs": {"hp": 29, "atk": 15, "def": 31, "spa": 31, "spd": 31, "spe": 28},
+    "species": 250,             # SPECIES_SUICUNE
+    "nature": "Adamant",
+    "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 17, "spd": 31, "spe": 31},
     #: Wild Pokemon have none; here for completeness.
     "evs": 0,
 }

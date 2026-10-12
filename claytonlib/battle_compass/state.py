@@ -234,7 +234,21 @@ class Battler:
         return replace(self, pp=tuple(pp))
 
     def with_hp(self, hp: int) -> "Battler":
-        return replace(self, hp=max(0, min(hp, self.max_hp)))
+        """`hp`, clamped to 0..max — and **a Pokemon that lands on 0 loses its status**.
+
+        Fainting clears the non-volatile status, which is what makes a Revive bring back a
+        *healthy* Pokemon rather than a burned one. Enforced here, at the one choke point every
+        HP change goes through, so no code path can hold a fainted-and-statused Battler.
+
+        Found by replaying the real run (notes/hooh_log_replay.md sec 3): Sacred Fire fainted
+        Granbull and burned it on the same roll, the Revive brought it back still burned, and the
+        simulator then ticked 20 HP a turn off a Pokemon the game was not burning -- the only
+        mismatch in 108 turns of ground truth (clayton-957.10.14).
+        """
+        landed = max(0, min(hp, self.max_hp))
+        if landed == 0 and self.status is not Status.NONE:
+            return replace(self, hp=0, status=Status.NONE, sleep_turns=0)
+        return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
         """Apply a non-volatile status, which fails if one is already present.
