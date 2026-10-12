@@ -422,6 +422,71 @@ not change the turn's roll count — so unlike Light Screen's self-failure (sec 
 `will_fail` case and Flash stays a usable filler indefinitely. Worth a ground-truth capture if it
 ever becomes load-bearing.
 
+### 5.4 Safeguard blocks a status MOVE but not Static [believed, not verified]
+
+The asymmetry the Safeguard contingency rests on, and the one claim in this file that the
+decompilation cannot settle.
+
+`SIDE_CONDITION_SAFEGUARD` appears in exactly **four** places in the whole of `src/`: the move
+setting it, the move failing against itself (`battle_command.c:3523`), and its expiry
+(`battle_controller_player.c:914`). **There is no Safeguard term in any status-application path.**
+The blocking lives entirely in the battle scripts inside `NARC_a_0_0_1`, where
+`BATTLE_SUBSCRIPT_PARALYZE` cannot be read. `CheckAbilityEffectOnHit` has no Safeguard check of
+its own, which is *consistent* with the Gen 4 behaviour but is not proof, because the subscript it
+dispatches to might carry one.
+
+What is on the record: in Gen 4 the ability-induced statuses — Static, Poison Point, Flame Body,
+Effect Spore — bypass Safeguard, and Gen 5 closes the hole. The simulator already encodes exactly
+that split, and it fell out of modelling Static as an ability rather than as a move: `will_fail`
+refuses a status move while Safeguard is up (clayton-957.7) and `_contact_ability` never consults
+it. Pinned by `TestSafeguardDoesNotStopStaticInGenFour` so it is not "fixed" into blocking later.
+
+It matters because it is the only paralysis route a Safeguard cannot wall off: a Punishment into
+Ampharos is 1-in-4 of Ho-Oh's move choices and 30% to paralyze, and it works through the five
+turns that would otherwise stall the whole plan.
+
+### 5.5 Losing the Speed race costs 0.12 percentage points, not the plan
+
+An earlier reading of this section had an Ancient Power Speed proc *ending* the scarfed-Magneton
+plan, on the grounds that +1 Spe is 228 against Magneton's 186. **That was wrong, and the error is
+worth keeping.** Magneton does not need to move first to paralyze — it needs to survive the turn,
+after which Thunder Wave resolves as normal. Moving first buys one turn's worth of the 25%
+full-paralysis skip and nothing else, because the damage per hit is identical either way:
+
+| Magneton's Thunder Wave turn, Ho-Oh at −1 from Intimidate | P(death) |
+|---|---|
+| moves first (Thunder Wave lands, then a paralyzed Ho-Oh attacks) | 0.36% |
+| moves second (Ho-Oh attacks unparalyzed, Thunder Wave lands if Magneton lives) | 0.48% |
+
+**What an Ancient Power proc actually costs is the Attack**, because it raises every stat by one
+stage and Intimidate is also one stage — so a single proc cancels Granbull's work exactly:
+
+| Ho-Oh's Attack stage | Sacred Fire vs Magneton (171 HP) | P(death) |
+|---|---|---|
+| −1, Intimidate only | 134-162 — survives | 0.48% |
+| **0, Intimidate + one proc** | **204-240 — one-shot** | **7.75%** |
+| −2, plus a Charm | 102-122 — survives | 0.48% |
+
+So the rule is **check Ho-Oh's Attack stage before sending Magneton in**, not *count turns since
+Granbull* — which is precisely what the stage display in `hrStages` exists to make possible. A
+proc that nets the stage to zero shows as *no Attack chip at all*, and that disappearance is the
+warning.
+
+And the guarantee Phase 2 depends on is safe at every reachable stage, which removes the worry
+entirely — a **paralyzed** Ho-Oh never outspeeds Smeargle:
+
+| Ho-Oh Spe, paralyzed | vs Smeargle's 160 |
+|---|---|
+| +0 → 38 | Smeargle first |
+| +1 → 57 | Smeargle first |
+| +6 → 152 | Smeargle first, by 8 — and not a tie, so no unmodelled extra roll |
+
+At +6 the stage multiplier cancels the quartering exactly and Ho-Oh is back to its full 152, and
+Smeargle still clears it. (The 228 figure in sec 7 is the *unparalyzed* speed, which is why it
+rules out the sleep route specifically: sleep leaves the Speed unquartered.)
+
+---
+
 ---
 
 ## 6. The X-item trade, which is not free against this target

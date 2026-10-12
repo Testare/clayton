@@ -43,7 +43,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import Phase, Session
 from claytonlib.battle_compass.sim import (
-    FLINCH_EFFECTS, HuntConfig, accuracy_net_stage, burn_tick, can_flinch, can_miss,
+    FLINCH_EFFECTS, HuntConfig, _effective_accuracy, accuracy_net_stage, burn_tick, can_flinch,
+    can_miss,
     effective_speed, simulate_turn, status_applied_by, variable_base_power, will_fail,
 )
 from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
@@ -335,6 +336,33 @@ def resolution_options(actor: Battler) -> list[dict]:
     return []
 
 
+#: The seven stages a `Battler` carries, in the order a player reads a summary screen plus the
+#: two that have no stat behind them. Named here so the snapshot and the page agree on order.
+STAGE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("atk", "atk_stage"), ("def", "def_stage"), ("spa", "spatk_stage"),
+    ("spd", "spdef_stage"), ("spe", "speed_stage"),
+    ("accuracy", "accuracy_stage"), ("evasion", "evasion_stage"),
+)
+
+
+def stat_stages(battler: Battler) -> dict[str, int]:
+    """Every non-neutral stat stage on `battler`, keyed as the UI labels them.
+
+    **Nothing published these before**, for either side, and it stopped mattering the moment our
+    own stat-change moves started working (clayton-957.10.2). Against Suicune there were two
+    stages in the whole run -- our Attack from Aurora Beam and our Sp. Def from Luster Purge --
+    and both were inferable from the damage. The Ho-Oh plan is built on *tracking* three of the
+    target's at once: accuracy down six from Flash, Attack down from Intimidate and Charm, Defence
+    down six from Screech. A player cannot run that from memory, and an Ancient Power proc
+    silently cancels an Intimidate, so the number has to be on screen.
+
+    Only the non-zero ones, so the page shows nothing at all in the ordinary case rather than a
+    row of seven dashes.
+    """
+    return {label: getattr(battler, field)
+            for label, field in STAGE_FIELDS if getattr(battler, field) != 0}
+
+
 def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
@@ -368,6 +396,11 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # a raised evasion, so this is computed against the real defender, not assumed.
             "can_miss": can_miss(move, accuracy_net_stage(battler, defender)
                                  if defender is not None else 0),
+            # The stage's CONSEQUENCE, not the stage. "Sacred Fire 31" is what a player wants off
+            # six Flashes; "accuracy_stage -6" makes them do the arithmetic. 0 means the move
+            # bypasses the check entirely (Mean Look, Light Screen), which is not the same as 0%.
+            "effective_accuracy": _effective_accuracy(
+                move, accuracy_net_stage(battler, defender) if defender is not None else 0),
             "guaranteed_fail": defender is not None and will_fail(move, defender),
             # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
@@ -1067,6 +1100,7 @@ class HuntSession:
                      "stats": dict(state.ours.stats),
                      "pp": [state.ours.pp_left(i) for i in range(len(state.ours.moves))],
                      "moves": list(state.ours.moves),
+                     "stages": stat_stages(state.ours),
                      "move_info": move_info(state.ours, state.target)},
             "target": {"name": state.target.name, "hp": state.target.hp,
                        "max_hp": state.target.max_hp,
@@ -1085,6 +1119,8 @@ class HuntSession:
                        "stats": dict(state.target.stats),
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
+                       # The three the Ho-Oh plan spends most of its turns moving.
+                       "stages": stat_stages(state.target),
                        "move_info": move_info(state.target, state.ours)},
             # `slot` is the BENCH index, which is what every call back into the session takes;
             # `party_slot` is the stable number the player sees in-game and the one the S/X/R

@@ -652,3 +652,48 @@ class TestMovesThatWouldEndTheRun(unittest.TestCase):
         """Belt and braces: the refusal stops the solver, the report tells the player."""
         problems = dict(unsupported_our_moves(["Teleport", "Roar"]))
         self.assertEqual(set(problems), {"Teleport", "Roar"})
+
+
+class TestSafeguardDoesNotStopStaticInGenFour(unittest.TestCase):
+    """The asymmetry the Safeguard contingency rests on, pinned so it is not "fixed" later.
+
+    A status MOVE is refused while Safeguard is up -- `will_fail` has checked that since
+    clayton-957.7, and it is why a Safeguard raised before Thunder Wave lands is a five-turn
+    block. An ability-induced status is **not** refused in Gen 4: Static, Poison Point, Flame Body
+    and Effect Spore all bypass Safeguard until Gen 5 closes the hole.
+
+    **This is not verifiable from the decompilation**, and that is worth stating rather than
+    implying. `SIDE_CONDITION_SAFEGUARD` appears in exactly four places in the C -- the move
+    setting it, the move failing against itself, and its expiry -- so the blocking lives entirely
+    in the battle scripts inside `NARC_a_0_0_1`, where `BATTLE_SUBSCRIPT_PARALYZE` cannot be read.
+    `CheckAbilityEffectOnHit` itself has no Safeguard term, which is consistent with the Gen 4
+    behaviour but does not prove it, because the subscript it dispatches to might.
+
+    So this test pins a believed mechanic, not a measured one. It is load-bearing for the plan:
+    if Thunder Wave is walled off by a Safeguard, a Punishment into Ampharos is the only paralysis
+    route left.
+    """
+
+    def test_a_status_move_is_refused_through_safeguard(self):
+        field = state_with(chatot(), hooh(), safeguard_turns=5)
+        self.assertTrue(will_fail(resolve_move("Thunder Wave"), hooh(), field, actor=chatot()))
+        self.assertTrue(will_fail(resolve_move("Sing"), hooh(), field, actor=chatot()))
+
+    def test_static_paralyzes_through_safeguard(self):
+        static = ampharos(ability="Static")
+        for seed in range(0x1000, 0x1000 + 4000):
+            state = state_with(static, hooh(), rng=seed, phase=1, safeguard_turns=5)
+            nxt = simulate_turn(state, Action.MOVE_1, HUNT)
+            if nxt.target.status is Status.PARALYSIS:
+                return
+        self.fail("Safeguard blocked Static; in Gen 4 it should not")
+
+    def test_the_two_routes_disagree_on_purpose(self):
+        """Stated as one assertion so the asymmetry reads as a decision, not an oversight."""
+        field = state_with(ampharos(), hooh(), safeguard_turns=5)
+        move_blocked = will_fail(resolve_move("Thunder Wave"), hooh(), field, actor=ampharos())
+        _, outcome = execute_move(0x1234, resolve_move("Punishment"), hooh(),
+                                  ampharos(ability="Static"), actor="E", slot=1, field=field)
+        self.assertTrue(move_blocked, "a status MOVE is walled off")
+        self.assertEqual(outcome.rolls, 4,
+                         "and the Static roll is still spent -- the ability does not consult it")

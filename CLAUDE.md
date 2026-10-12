@@ -125,8 +125,12 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
 
 - `claytonlib/basedata/` — Static game data: `safari_pokemon.json` (catch/flee rates),
   `moves.json`, `mdMap.json` (month-day → seed byte), `safari_zones.json` (encounter
-  tables), `metronome_species.json`. **No base-stat table exists** — nothing currently needs
-  one.
+  tables), `metronome_species.json`, `base_stats.json` (per-species base stats, types,
+  abilities and catch rate — needed for targets, whose stats are *derived* from entered IVs,
+  and for our own party, whose stats are entered but whose TYPES are not). Entries marked
+  `"source": "rom"` were transcribed from the decompilation rather than fetched by
+  `one-offs/populate_base_stats.py`, because PokeAPI reports post-Gen-4 values for some species
+  (Granbull became Fairy in Gen 6; Ampharos's Defence was revised 75 → 85).
 - `data/times/` — Cached seed-to-time mappings
 - `data/expeditions/` — Saved expedition configs (JSON)
 - `one-offs/` — Standalone data-generation scripts (e.g. `populate_moves.py`)

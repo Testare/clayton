@@ -5758,15 +5758,74 @@ function hrSide(label, m, danger, side){
       ${range.certain ? "" : `<span class="muted hr-small">candidates disagree</span>`}</div>
     ${hrBar(range, m.max_hp)}
     ${extras.length ? `<div class="muted hr-small">${extras.join(" · ")}</div>` : ""}
+    ${hrStages(m)}
     <div class="muted hr-small">${m.moves.map((mv, i) =>
-      `${esc(mv)} ${m.pp[i]}`).join(" · ")}</div>
+      `${esc(mv)} ${m.pp[i]}${hrAccSuffix(m, i)}`).join(" · ")}</div>
   </div>`;
+}
+
+// Stat stages, which nothing used to show for either side. They became worth a row the moment
+// our own stat-change moves started working: a Ho-Oh run spends most of its turns moving three
+// of the target's at once (accuracy down six from Flash, Attack down from Intimidate and Charm,
+// Defence down six from Screech), and an Ancient Power proc silently cancels an Intimidate.
+// That is not trackable from memory, and getting it wrong sends a Magneton into a one-shot.
+//
+// Renders nothing when every stage is neutral, so an ordinary run looks exactly as it did.
+const HR_STAGE_NAMES = {atk: "Atk", def: "Def", spa: "SpA", spd: "SpD", spe: "Spe",
+                        accuracy: "Acc", evasion: "Eva"};
+function hrStages(m){
+  const stages = m.stages || {};
+  const keys = Object.keys(HR_STAGE_NAMES).filter(k => stages[k]);
+  if (!keys.length) return "";
+  const chips = keys.map(k => {
+    const v = stages[k];
+    // At the floor or the ceiling it cannot move again, which is the thing a player is counting
+    // towards -- six Flashes, three Screeches -- so say so rather than making them check.
+    const capped = v <= -6 || v >= 6;
+    const dir = v > 0 ? "raised" : "lowered";
+    const plural = Math.abs(v) === 1 ? "" : "s";
+    const tip = esc(HR_STAGE_NAMES[k]) + " " + dir + " " + Math.abs(v) + " stage" + plural
+      + (capped ? " - at the limit" : "");
+    const colour = v < 0 ? "color:#7fd4a0" : "color:#e8a0a0";
+    const weight = capped ? ";font-weight:600" : "";
+    const sign = v > 0 ? "+" : "";
+    const mark = capped ? " (max)" : "";
+    return '<span class="chip" title="' + tip + '" style="' + colour + weight + '">'
+      + esc(HR_STAGE_NAMES[k]) + " " + sign + v + mark + '</span>';
+  });
+  return '<div class="hr-small" style="margin-top:3px">' + chips.join(" ") + '</div>';
+}
+
+// The accuracy a stage actually produces, next to the move it applies to. `0` from the facade
+// means the move bypasses the check altogether, which is not the same as a 0% chance, so it is
+// left unannotated. Shown only below 100 -- otherwise every move would carry a redundant number.
+function hrAccSuffix(m, i){
+  const info = (m.move_info || [])[i];
+  if (!info || !info.known) return "";
+  const acc = info.effective_accuracy;
+  if (!acc || acc >= 100) return "";
+  return ' <span class="muted" title="accuracy after stat stages">(' + acc + '%)</span>';
 }
 
 // The spread, shown HERE rather than only on the search screen. The search screen is before the
 // catch; this is during it, which is when the player can finally put the numbers next to the
 // Pokemon and see whether they agree. A wrong spread desynchronises rather than degrades, so the
 // moment it becomes checkable is the moment worth offering the check.
+// The stage beside the stat it modifies, in the spread modal. Accuracy and evasion get their
+// own rows below, because they modify no stat and so have nowhere else to appear.
+function hrStageNote(m, key){
+  const v = (m.stages || {})[key];
+  if (!v) return "";
+  return ' <span class="muted">(stage ' + (v > 0 ? "+" : "") + v + ')</span>';
+}
+
+function hrStageRow(m, key, label){
+  const v = (m.stages || {})[key];
+  if (!v) return "";
+  return '<tr><td>' + label + '</td><td><span class="muted">stage '
+    + (v > 0 ? "+" : "") + v + '</span></td></tr>';
+}
+
 function hrShowSpread(side){
   const m = _huntSnap[side];
   if (!m) return;
@@ -5785,7 +5844,9 @@ function hrShowSpread(side){
       ${order.map(k => `<tr><td>${names[k]}</td><td><b>${m.stats[k] ?? "—"}</b>${
         k === "spe" && m.effective_speed !== m.stats[k]
           ? ` <span class="muted">(${m.effective_speed} after paralysis)</span>` : ""
-      }</td></tr>`).join("")}
+      }${hrStageNote(m, k)}</td></tr>`).join("")}
+      ${hrStageRow(m, "accuracy", "Accuracy")}
+      ${hrStageRow(m, "evasion", "Evasion")}
       <tr><td>Level</td><td>${m.level ?? "—"}</td></tr>
       <tr><td>Type</td><td>${(m.types || []).map(esc).join(" / ") || "—"}</td></tr>
       ${m.ability ? `<tr><td>Ability</td><td>${esc(m.ability)}</td></tr>` : ""}
