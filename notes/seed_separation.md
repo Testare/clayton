@@ -209,6 +209,63 @@ True, so the gate cannot quietly grow back, and what replaces it is disclosure:
 It also makes Phase 1.5 less of a distinct phase: "throw the capture ball to pin the seed" is
 simply the best information-gain action, which is what Phase 1.5 already ranks for.
 
+## 2b. Two separators found while planning Lugia, both free
+
+Neither needs a move slot or a turn of its own. Both come from `notes/lugia_love_ball.md` §4,
+where the figures and the method live; recorded here because they are general facts about
+separation rather than facts about Lugia.
+
+### Lowering the TARGET's accuracy is a separation tool, not only mitigation
+
+§2 is about the accuracy of a move *we* choose. The same argument applies with the sign flipped:
+a Flash or a Sand Attack pushes **the target's** 100-accuracy moves off 100, and a
+100-accuracy move is exactly the blind case §2 opens with.
+
+Against the Lugia Lv45 moveset — Extrasensory (acc 100) is 30 of its 45 PP, so two turns in
+three were blind:
+
+| | Extrasensory | per turn, whole moveset |
+|---|---|---|
+| no Flash | acc 100 → **0.0%** | ~10% |
+| Flash ×1 | 75 → 37.2% | **~32%** |
+| Flash ×2 | 60 → 47.4% | **~37%** |
+| Flash ×6 | 33 → 43.8% | ~31% |
+
+[measured, 300 strict sibling pairs × 40 advances]
+
+**One application does most of the work** and the peak is around two or three; beyond that the
+target misses so often that both siblings agree on "miss" again. So the first Flash is an
+identification action and the rest are defensive ones, which is the opposite of how a
+party-planning document would naturally rank them.
+
+The matching corollary for §3's framing: **an HP reading can never separate RTC-second
+siblings.** The damage roll is `% 16` and 16 divides 256, so it is in the permanently-blind class
+— 0.0% measured. HP is the richest signal in a turn (~2.5 bits) against *unrelated* candidates
+and worth nothing at all against siblings, so trading hits for accuracy verdicts costs nothing
+on the hard case.
+
+### The `% 3` move-selection cliff
+
+`select_target_move` is `roll % len(usable)`, and the modulus shrinks as the target's PP runs
+out. The blindness rule picks that apart sharply:
+
+| moves with PP | modulus | separation |
+|---|---|---|
+| 4 | `% 4` | **0.0%** |
+| **3** | **`% 3`** | **66.5%** |
+| 2 | `% 2` | **0.0%** |
+
+[measured, as above]
+
+4 and 2 divide 256 and 3 does not. So **the move-selection roll — blind for the whole of a
+full-PP battle — becomes the single sharpest separator in it the moment the target's first move
+runs dry**, and which move it used is always observable.
+
+For a target with three 5-PP moves and one 30-PP move, simulating uniform selection with 25%
+full paralysis: P(the modulus has dropped) is **38% by turn 15, 75% by turn 20, 94% by turn 25**
+[measured]. A long setup phase buys identification rather than only spending time — which is
+worth knowing before anyone optimises a setup sequence for turn count.
+
 ## 3. Why we cannot simply solve for all of them at once
 
 The tempting alternative is a **conformant** plan: one action sequence that captures every

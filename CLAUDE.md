@@ -149,6 +149,10 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
 - `notes/seed_separation.md` — How to tell two candidate battle seeds apart when the battle
   refuses to: why RTC-second siblings are nearly invisible, and why a sub-100-accuracy move is
   the fix. Verified mechanism, measured figures, proposals tagged as design.
+- `notes/lugia_love_ball.md` — The Lugia Lv45 run: why a Love Ball is ×1 (genderless) and
+  therefore identical to Suicune, the two simulator bugs the plan surfaced (the accuracy stage
+  is a ROM *table*, not the fraction; the high-crit stage), and the measured finding that Flash
+  is an identification tool rather than only damage mitigation.
 - `notes/battle_compass.md` — **Design document** for Battle Compass: extending
   compass/machete to ordinary battles, v1 target being Suicune in a Fast Ball. Design only,
   nothing implemented; claims are tagged [verified]/[derived]/[illustrative]/[needs gdb].

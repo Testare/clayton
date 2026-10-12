@@ -6,9 +6,15 @@ order, and a Suicune met any other way would differ. Slot order matters as much 
 it is what the ``E1``-``E4`` tokens refer to and what the wild move-selection roll indexes into
 (sec 5.2 R4), so a reordered list would silently mis-simulate every turn.
 
-One entry for now. v1 targets Suicune (sec 8); adding a target means adding its row here, its
-base stats via ``one-offs/populate_base_stats.py``, and confirming its moves are among the nine
-``sim`` implements.
+Adding a target means adding its row here, its base stats via
+``one-offs/populate_base_stats.py``, and confirming every one of its moves is in
+``sim.MODELLED_TARGET_EFFECTS`` -- which `unsupported_moves` checks for you rather than leaving
+to a reading of a list.
+
+**Two of these encounters are version-split, and they split in OPPOSITE directions.** This
+profile is SoulSilver, so Ho-Oh's row is the Lv70 one and Lugia's is the Lv45 one;
+`VERSION_SPLIT_LEVELS` holds the other side of each so a player on HeartGold is told what they
+are actually facing instead of being silently simulated against the wrong four moves.
 """
 from __future__ import annotations
 
@@ -42,6 +48,26 @@ STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # Derived from wotbl.narc the same way as the Lati twins: `InitBoxMonMoveset` keeps the last
     # four learnable moves in LEARN order, which is the slot order E1-E4 depends on.
     "ho-oh": (70, ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard")),
+    # HGSS Whirl Islands. Version-split the OPPOSITE way round from Ho-Oh, which is the trap:
+    # `GetGameVersion` then `Compare VAR_SPECIAL_RESULT, 7` / `GoToIfNe` sends HeartGold (7) to
+    # Lv70 and the fall-through gives SoulSilver Lv45 (scr_seq_0104_D40R0107.s:75-85). So this
+    # row is **SoulSilver's**, and HeartGold's Lv70 Lugia is a different set entirely --
+    # Aeroblast / Punishment / Ancient Power / Safeguard, none of which this row can stand in
+    # for. `encounter_level` is the cross-check that catches a player on the wrong version.
+    #
+    # Derived from wotbl.narc like the rows above: `InitBoxMonMoveset` keeps the last four
+    # learnable moves in LEARN order, which is the slot order E1-E4 depends on.
+    #
+    # Aeroblast is why this row could not exist until clayton-957.2: it is effect 43, the
+    # high-crit group, and `execute_move` read `CRIT_MODIFIERS[0]` unconditionally -- so the
+    # simulator crit it at 1/16 against the game's 1/8 and was wrong about both the token and
+    # the damage on 1.56% of turns. Inert rather than refused, which is exactly what
+    # `unsupported_moves` exists to stop.
+    #
+    # Two things make this target *easier* than Suicune to identify, both from the moveset
+    # rather than from the catch rate: Hydro Pump's accuracy 80 and Aeroblast's 95 mean it
+    # separates RTC-second siblings on its own, where Suicune's set could not miss at all.
+    "lugia": (45, ("Extrasensory", "Rain Dance", "Hydro Pump", "Aeroblast")),
 }
 
 #: The other side of each version-split encounter, for the cross-check's error message. Not in
@@ -49,6 +75,10 @@ STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
 #: the wrong version is told what they are actually facing rather than just refused.
 VERSION_SPLIT_LEVELS: dict[str, tuple[int, str]] = {
     "ho-oh": (45, "HeartGold's Lv45 Ho-Oh, which has a different moveset"),
+    # The inverse of the row above, and worth stating as its own entry rather than as a note on
+    # it: the two birds split in OPPOSITE directions, so "SoulSilver gets the Lv70 one" is true
+    # of Ho-Oh and false of Lugia.
+    "lugia": (70, "HeartGold's Lv70 Lugia, which has a different moveset"),
 }
 
 
