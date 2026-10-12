@@ -979,6 +979,27 @@ def _visible_tokens(outcome: MoveOutcome, move: Move, *, victim: Battler,
     return tuple(part for part in outcome.tokens if part != tok.SECONDARY)
 
 
+def sent_out(battler: Battler) -> Battler:
+    """`battler` as it arrives on the field: **every stat stage back to neutral**.
+
+    A Pokemon being sent out gets a freshly built BattleMon, and that is where the reset lives
+    [verified: `BattleSystem_GetBattleMon`, src/battle/overlay_12_0224E4FC.c:75 --
+    ``if (!(battleStatus & BATTLE_STATUS_BATON_PASS)) for (i = 0; i < 8; i++)
+    statChanges[i] = 6;``, 6 being neutral]. Baton Pass is the ROM's own exception and nothing in
+    any configured party has it.
+
+    On the way IN rather than on the way out, because that is where the ROM does it -- a benched
+    Pokemon's stages are simply never read.
+
+    What does NOT reset is the non-volatile status: the same function reads it from
+    `MON_DATA_STATUS`, the PARTY Pokemon's own byte, so a burned Pokemon switches out and back
+    still burned. That is also why a revived one comes back clean (clayton-957.10.14), so the two
+    rules are the same rule read from both ends.
+    """
+    return replace(battler, atk_stage=0, def_stage=0, spatk_stage=0, spdef_stage=0,
+                   speed_stage=0, accuracy_stage=0, evasion_stage=0)
+
+
 def _all_stats_up(battler: Battler) -> Battler:
     """Ancient Power's 10%: every stat up one stage, capped at +6.
 
@@ -1298,6 +1319,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.bench = party_order(
                 tuple(b for i, b in enumerate(new.bench) if i != bench_slot)
                 + (replace(new.ours, choice_locked_slot=None),))
+            incoming = sent_out(incoming)
             new.ours = incoming
             # Intimidate fires on the way in, before any move of this turn resolves, and costs no
             # advances. Re-fires on every entry, so a shuttle can stack it (see
@@ -1634,7 +1656,7 @@ def _send_out(state: BattleState, replacement: int | None) -> str:
         return tok.WIPED                     # the party is wiped; nothing follows this
     index = next((i for i in healthy
                   if party_number(state.bench[i], i) == replacement), healthy[0])
-    incoming = state.bench[index]
+    incoming = sent_out(state.bench[index])
     state.bench = party_order(
         tuple(b for i, b in enumerate(state.bench) if i != index)
         + (replace(state.ours, choice_locked_slot=None),))

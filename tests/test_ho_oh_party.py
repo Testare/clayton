@@ -1018,3 +1018,80 @@ class TestFaintingClearsTheStatus(unittest.TestCase):
         nxt = simulate_turn(state, Action.MOVE_1, HUNT)
         self.assertIs(nxt.target.status, Status.PARALYSIS)
         self.assertEqual(nxt.target.hp, 1)
+
+
+# --- clayton-957.10.18: stat stages reset on send-out -------------------------------------------
+
+class TestSendingOutResetsTheStages(unittest.TestCase):
+    """A Pokemon arriving on the field gets a freshly built BattleMon, and the reset is in it:
+
+        BattleSystem_GetBattleMon (src/battle/overlay_12_0224E4FC.c:75)
+            if (!(ctx->battleStatus & BATTLE_STATUS_BATON_PASS))
+                for (i = 0; i < 8; i++) statChanges[i] = 6;     // 6 is neutral
+
+    Nothing reset them here, so a Pokemon that switched out at -1 Attack came back at -1. Not
+    reachable against Ho-Oh -- nothing in its moveset touches our stats -- but Suicune's Aurora
+    Beam drops our Attack, and a Smeargle that shuttles would then under-predict its own False
+    Swipe damage for the rest of the run against an exactly-compared target HP.
+    """
+
+    def _carrying(self):
+        return replace(smeargle(), atk_stage=-1, spdef_stage=-2, accuracy_stage=-3,
+                       status=Status.BURN, party_slot=1)
+
+    def test_the_helper_clears_all_seven(self):
+        from claytonlib.battle_compass.sim import sent_out
+
+        fresh = sent_out(replace(
+            smeargle(), atk_stage=-1, def_stage=2, spatk_stage=-3, spdef_stage=4,
+            speed_stage=-5, accuracy_stage=6, evasion_stage=-6))
+        for field in ("atk_stage", "def_stage", "spatk_stage", "spdef_stage", "speed_stage",
+                      "accuracy_stage", "evasion_stage"):
+            self.assertEqual(getattr(fresh, field), 0, field)
+
+    def test_a_voluntary_switch_in_arrives_neutral(self):
+        state = state_with(chatot(), hooh(status=Status.PARALYSIS), rng=0x1234, phase=1,
+                           bench=(self._carrying(),))
+        nxt = simulate_turn(state, Action.SWITCH, HUNT, bench_slot=0)
+        self.assertEqual(nxt.ours.name, "Smeargle")
+        self.assertEqual((nxt.ours.atk_stage, nxt.ours.spdef_stage, nxt.ours.accuracy_stage),
+                         (0, 0, 0))
+
+    def test_a_post_faint_replacement_arrives_neutral_too(self):
+        """The other send-out path, and the one the plan uses most."""
+        state = state_with(chatot(hp=3), hooh(), rng=0x1010, phase=1,
+                           bench=(replace(self._carrying(), party_slot=2),))
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT, replacement=2)
+        self.assertTrue(nxt.faints, "the fixture seed must faint Chatot")
+        self.assertEqual(nxt.ours.name, "Smeargle")
+        self.assertEqual((nxt.ours.atk_stage, nxt.ours.accuracy_stage), (0, 0))
+
+    def test_the_status_survives_the_switch(self):
+        """The same ROM function reads status from the PARTY Pokemon's own byte, so this is the
+        half that must NOT reset -- and it is why a revived Pokemon comes back clean."""
+        state = state_with(chatot(), hooh(status=Status.PARALYSIS), rng=0x1234, phase=1,
+                           bench=(self._carrying(),))
+        nxt = simulate_turn(state, Action.SWITCH, HUNT, bench_slot=0)
+        self.assertIs(nxt.ours.status, Status.BURN)
+
+    def test_the_reset_is_on_the_way_IN_not_the_way_out(self):
+        """Where the ROM puts it. A benched Pokemon's stages are simply never read, so this is
+        about matching the game rather than about tidiness."""
+        state = state_with(self._carrying(), hooh(status=Status.PARALYSIS), rng=0x1234, phase=1,
+                           bench=(chatot(),))
+        nxt = simulate_turn(state, Action.SWITCH, HUNT, bench_slot=0)
+        benched = [b for b in nxt.bench if b.name == "Smeargle"][0]
+        self.assertEqual(benched.atk_stage, -1, "still carried on the bench")
+        back = simulate_turn(nxt, Action.SWITCH, HUNT,
+                             bench_slot=[b.name for b in nxt.bench].index("Smeargle"))
+        self.assertEqual(back.ours.atk_stage, 0, "and cleared when it returns")
+
+    def test_the_target_is_untouched_by_any_of_it(self):
+        """A wild Pokemon never switches, so six Flashes stay spent -- which is the whole reason
+        the plan prefers stat drops to field conditions."""
+        state = state_with(chatot(), hooh(status=Status.PARALYSIS, atk_stage=-5), rng=0x1234,
+                           phase=1, bench=(smeargle(),))
+        state.target = replace(state.target, accuracy_stage=-6, def_stage=-6)
+        nxt = simulate_turn(state, Action.SWITCH, HUNT, bench_slot=0)
+        self.assertEqual(nxt.target.accuracy_stage, -6)
+        self.assertEqual(nxt.target.def_stage, -6)
