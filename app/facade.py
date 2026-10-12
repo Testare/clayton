@@ -940,14 +940,21 @@ class Facade:
         * ``move_coverage`` — moves of OURS the simulator cannot model. The mirror of the check
           `targets.unsupported_moves` has always done for the target. Advisory rather than
           blocking, because unlike the target's moves we can simply not select ours.
+        * ``access`` — whether the party can **reach** the encounter, which is a different
+          question from whether it can beat it and was not being asked at all. Lugia is behind
+          Surf and Whirlpool, and because there is no PC in the Whirl Islands the carrier has to
+          be one of the six you fight with. Asked of the target even with no party configured,
+          since "you will need Surf and Whirlpool" is most useful before the party is picked.
 
         Only the first blocks; the rest are warnings the player may knowingly accept.
         """
         from claytonlib.battle.readiness import (
             alphabet_report, speed_after_item, speed_checks, speed_warnings,
+            unmodelled_held_items,
         )
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
+        from claytonlib.battle_compass.targets import access_warnings
         from claytonlib.moves import resolve_move
 
         h = self._load_hunt(hunt_id)
@@ -959,6 +966,14 @@ class Facade:
             "speed": None,
             "survivability": [],
             "move_coverage": [],
+            # Whether the party can REACH the encounter, which is a different question from
+            # whether it can beat it and was not being asked at all. Lugia is behind Surf and
+            # Whirlpool, and the party you arrive with is the party you fight with.
+            "access": [],
+            # Held items the simulator cannot model, plus the ones left blank. A misconfigured
+            # item SHOULD desync the run -- what was missing is being told before the encounter
+            # instead of as a turn-2 contradiction blaming the window (clayton-957.10.15).
+            "held_items": [],
             "target_stats": None,
             # Which calibration model the centre-seed maths will use. Never a blocker: models
             # are profile-scoped and every profile is seeded with an active "Standard" one, so
@@ -967,6 +982,13 @@ class Facade:
         }
 
         movesets: dict[str, list] = {}
+        #: The same party, as move NAMES, for the field-move check. Taken from the resolved Move
+        #: where resolution worked, so that whatever spelling the player typed is normalised to
+        #: the table's -- and from the raw string where it did not, since an unrecognised name is
+        #: already reported by `move_coverage` and should not also vanish from this check.
+        move_names: dict[str, list[str]] = {}
+        held_items: dict[str, str] = {}
+        party_species: dict[str, str] = {}
         our_speeds: dict[str, int] = {}
         for slot in h.party:
             pokemon = profile.get_party_pokemon(slot.pokemon_id)
@@ -975,6 +997,15 @@ class Facade:
             moves = [m for m in (resolve_move(name) for name in pokemon.moveset) if m]
             if moves:
                 movesets[pokemon.name] = moves
+            move_names[pokemon.name] = [
+                (resolved.name if (resolved := resolve_move(name)) else name)
+                for name in pokemon.moveset if name]
+            # Keyed on the Pokemon so the warning can name the holder. Held items are per HUNT,
+            # so they come off the slot rather than the profile entry.
+            held_items[pokemon.name] = slot.held_item
+            # Species as well as moves, so the field-move warning can name who COULD carry a
+            # missing HM -- and say plainly when nobody can, which is the Lugia party's answer.
+            party_species[pokemon.name] = pokemon.species or ""
             for name, why in unsupported_our_moves(pokemon.moveset):
                 result["move_coverage"].append(
                     {"pokemon": pokemon.name, "move": name, "reason": why})
@@ -987,6 +1018,11 @@ class Facade:
                 label = (f"{pokemon.name} ({slot.held_item})"
                          if effective != pokemon.speed else pokemon.name)
                 our_speeds[label] = effective
+
+        # Asked of the target regardless of whether a party is configured yet: "you will need
+        # Surf and Whirlpool" is most useful BEFORE the party is picked, not after.
+        result["access"] = access_warnings(h.target.species, move_names, party_species)
+        result["held_items"] = unmodelled_held_items(held_items)
 
         if movesets or our_speeds:
             report = alphabet_report(movesets)

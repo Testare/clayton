@@ -5366,10 +5366,18 @@ function hrInterview(){
   const blocks = [];
 
   // 1. What did you do?
+  // A move the simulator cannot model, or one that would end the battle, is shown DISABLED with
+  // the reason rather than hidden. Hiding it reads as a bug, and the move is often on the
+  // Pokemon on purpose: Lugia is behind Surf and Whirlpool, so a mule carrying Whirlpool is the
+  // only route to the encounter -- it just must never be told to use it. See
+  // `sim.unselectable_reason`, and note this is NOT the same as `guaranteed_fail`: a move that
+  // fails is a fine turn to report, and a failing Sing is one of our best probes.
   const actionChips = s.ours.move_info
     .filter(m => m.known && m.pp > 0 && s.legal_actions.includes("M" + (m.slot + 1)))
-    .map(m => hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
-                     t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
+    .map(m => m.unselectable_reason
+          ? hrChipOff(`${m.name}`, m.unselectable_reason)
+          : hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
+                   t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
   actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
   // Both balls, in every phase. The capture ball never carried a risk -- a landing wins -- and
   // a standard ball's risk is DISCLOSED rather than forbidden: it is smallest early (0.35% per
@@ -6342,7 +6350,10 @@ function renderHuntConfigure(){
 // The two advisory checks. Deliberately separate from hard_errors above: these do not block
 // starting, they tell you how good your chances are and whether the simulation can be trusted.
 function huntReadinessPanel(r){
-  if(!r.alphabet && !r.speed) return "";
+  const access = r.access || [], coverage = r.move_coverage || [];
+  const items = r.held_items || [], survive = r.survivability || [];
+  if(!r.alphabet && !r.speed && !access.length && !coverage.length
+     && !items.length && !survive.length) return "";
   const a = r.alphabet;
   let alphabet = "";
   if(a){
@@ -6363,7 +6374,39 @@ function huntReadinessPanel(r){
         : `<div><span class="badge ok">no ties</span>
             <span class="muted"> · target's Speed is ${r.speed.target_speed}</span></div>`}</div>`;
   }
-  return `<div class="panel" style="margin-top:12px">${alphabet}${speed}</div>`;
+  // Getting THERE, which is a separate question from winning and the only one of these that can
+  // be answered before a party exists.
+  const reach = access.length
+    ? `<div class="field"><label>Getting there</label>
+        ${access.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}</div>`
+    : "";
+  // Computed by `hunt_readiness` since it was written and never shown until now, which made the
+  // whole check dead data -- an unmodelled move of ours is simulated as if it worked, so being
+  // told about it is the entire point.
+  const cover = coverage.length
+    ? `<div class="field"><label>Move coverage</label>
+        ${coverage.map(c => `<div class="notice warn">
+          <b>${esc(c.pokemon)}</b> · ${esc(c.move)} — ${esc(c.reason)}</div>`).join("")}
+        <div class="hr-small muted">Carrying one of these is fine — a Surf/Whirlpool mule is the
+          only way to reach some encounters. You will not be able to <i>select</i> it during the
+          run, and the solver will not plan it.</div></div>`
+    : "";
+  // Held items. A misconfigured one SHOULD desync the run -- the simulator is right once told,
+  // and the only way to tell it is this field. What was missing is hearing about it before the
+  // encounter rather than as a turn-2 contradiction that blames the candidate window.
+  const heldItems = items.length
+    ? `<div class="field"><label>Held items</label>
+        ${items.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}
+        <div class="hr-small muted">Advisory — none of these stops a run. Held items are per
+          hunt, so they are set next to each Pokémon in the party table above.</div></div>`
+    : "";
+  // Also computed since `hunt_readiness` was written and never shown. Last, because it is the
+  // one that is usually a risk to accept knowingly rather than a thing to fix.
+  const survivability = survive.length
+    ? `<div class="field"><label>Survivability</label>
+        ${survive.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}</div>`
+    : "";
+  return `<div class="panel" style="margin-top:12px">${reach}${heldItems}${alphabet}${speed}${cover}${survivability}</div>`;
 }
 
 // The set of initial times a key seed can be loaded at is fixed and small, so the other tools

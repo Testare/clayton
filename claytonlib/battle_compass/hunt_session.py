@@ -46,7 +46,7 @@ from claytonlib.battle_compass.sim import (
     FLINCH_EFFECTS, HuntConfig, _effective_accuracy, accuracy_net_stage, burn_tick, can_flinch,
     can_miss,
     effective_speed, primary_stat_drop, secondary_description, secondary_status, simulate_turn,
-    status_applied_by, variable_base_power, will_fail,
+    status_applied_by, unselectable_reason, variable_base_power, will_fail,
 )
 from claytonlib.battle_compass.solver import (
     Solution, SolverConfig, Unreachable, danger_floor_for, solve,
@@ -404,6 +404,11 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     * ``guaranteed_fail`` -- the move is certain to do nothing given `defender`'s state, and
       renders as the bare slot rather than as a miss. Spore against an already-paralyzed Suicune
       is the case: statuses are mutually exclusive, so it rolls accuracy and then fails.
+
+    And a third that stops it offering the move at all: ``unselectable_reason``. Note how
+    differently that sits from `guaranteed_fail` -- a guaranteed failure is a perfectly good turn
+    to report, and a failing Sing is one of the best identification probes there is, whereas an
+    unselectable move makes the run unrecoverable the moment it is used.
     """
     out: list[dict] = []
     for slot in range(len(battler.moves)):
@@ -414,7 +419,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
                         "secondary_side": None, "stat_drop": None, "makes_contact": False,
-                        "effect_chance": 0, "priority": 0, "pp": 0})
+                        "effect_chance": 0, "priority": 0, "pp": 0,
+                        "unselectable_reason": None})
             continue
         out.append({
             "slot": slot,
@@ -423,13 +429,18 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             "damaging": move.category != CATEGORY_STATUS,
             # Stage-dependent: a 100%-accuracy move becomes missable under an accuracy drop or
             # a raised evasion, so this is computed against the real defender, not assumed.
+            # The HELD ITEMS go in too, not just the stage: a Brightpowder on the defender makes
+            # a 100-accuracy Spore missable at a neutral stage, and an interview that did not know
+            # would refuse to let the player report a miss that really happened.
             "can_miss": can_miss(move, accuracy_net_stage(battler, defender)
-                                 if defender is not None else 0),
+                                 if defender is not None else 0,
+                                 attacker=battler, defender=defender),
             # The stage's CONSEQUENCE, not the stage. "Sacred Fire 31" is what a player wants off
             # six Flashes; "accuracy_stage -6" makes them do the arithmetic. 0 means the move
             # bypasses the check entirely (Mean Look, Light Screen), which is not the same as 0%.
             "effective_accuracy": _effective_accuracy(
-                move, accuracy_net_stage(battler, defender) if defender is not None else 0),
+                move, accuracy_net_stage(battler, defender) if defender is not None else 0,
+                attacker=battler, defender=defender),
             "guaranteed_fail": defender is not None and will_fail(move, defender),
             # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
@@ -466,6 +477,16 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             #: which side's tokens come first.
             "priority": move.priority,
             "pp": battler.pp_left(slot),
+            # Why the interview must not OFFER this move, or None. Distinct from
+            # `guaranteed_fail`, which is a move that may be used and will do nothing: this is a
+            # move that must not be used at all, because using it makes the run unrecoverable
+            # rather than merely wasted. See `sim.unselectable_reason` -- an effect the simulator
+            # cannot model, or one that ends the battle.
+            #
+            # Reported rather than omitted, so the page can show it disabled with the reason: a
+            # move that silently vanishes from the chip row reads as a bug, and a mule is
+            # carrying Whirlpool on purpose (`targets.ENCOUNTER_ACCESS`).
+            "unselectable_reason": unselectable_reason(move),
         })
     return out
 

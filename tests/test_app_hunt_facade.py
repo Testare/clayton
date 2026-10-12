@@ -251,3 +251,81 @@ class TestMetronomeToolsWorkFromAHunt(HuntFacadeCase):
     def test_a_hunt_exposes_the_profile_id_the_tools_need(self):
         self.assertEqual(self.api.get_hunt(self._hunt()["id"])["profile_id"],
                          self.profile["id"])
+
+
+class TestHuntAccess(HuntFacadeCase):
+    """Reaching the encounter, which `hunt_readiness` was not asking about at all.
+
+    Exercised through the facade rather than against `targets.access_warnings` directly, because
+    the thing that was missing was the WIRING: the check is useless if the key never reaches the
+    page. `move_coverage` gets the same treatment for the same reason -- it was computed from the
+    day it was written and never rendered.
+    """
+
+    LAPRAS = dict(
+        name="Lapras", species="lapras", level=40,
+        stats={"hp": 150, "atk": 85, "def": 80, "spa": 85, "spd": 95, "spe": 60},
+        moveset=["Surf", "Whirlpool", "Strength", "Waterfall"],
+        max_pp={"1": 15, "2": 15, "3": 15, "4": 15},
+    )
+
+    def _lugia_hunt(self, **overrides):
+        fields = {
+            "name": "Love Ball Lugia",
+            "capture_ball": "Love Ball",
+            "target": {"species": "lugia", "level": 45, "nature": "Serious",
+                       "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 17,
+                               "spd": 31, "spe": 31}},
+        }
+        fields.update(overrides)
+        return self._hunt(**fields)
+
+    def test_a_lugia_hunt_warns_that_nobody_can_get_there(self):
+        readiness = self.api.hunt_readiness(self._lugia_hunt()["id"])
+        field = [w for w in readiness["access"] if "needs to reach" in w]
+        self.assertEqual(len(field), 1)
+        self.assertIn("Surf or Whirlpool", field[0])
+        self.assertIn("Whirl Islands", field[0])
+
+    def test_it_is_a_warning_and_not_a_hard_error(self):
+        """The player may be bringing a mule the hunt's party list does not mention, or may
+        already be standing in front of the encounter."""
+        readiness = self.api.hunt_readiness(self._lugia_hunt()["id"])
+        self.assertEqual(readiness["hard_errors"], [])
+        self.assertNotEqual(readiness["access"], [])
+
+    def test_the_silver_wing_is_mentioned_even_when_the_moves_are_covered(self):
+        mule = self.api.add_party_pokemon(self.profile["id"], self.LAPRAS)["pokemon_id"]
+        hunt = self._lugia_hunt(party=[{"pokemon_id": self.ids["Magneton"]},
+                                       {"pokemon_id": self.ids["Smeargle"],
+                                        "held_item": "Silk Scarf"},
+                                       {"pokemon_id": mule}])
+        access = self.api.hunt_readiness(hunt["id"])["access"]
+        self.assertEqual([w for w in access if "needs to reach" in w], [])
+        self.assertEqual(len(access), 1)
+        self.assertIn("Silver Wing", access[0])
+
+    def test_a_suicune_hunt_has_nothing_to_report(self):
+        self.assertEqual(self.api.hunt_readiness(self._hunt()["id"])["access"], [])
+
+    def test_the_requirement_is_reported_before_a_party_exists(self):
+        """The most useful moment to hear "you will need Surf and Whirlpool"."""
+        hunt = self._lugia_hunt(party=[])
+        readiness = self.api.hunt_readiness(hunt["id"])
+        self.assertEqual(len([w for w in readiness["access"] if "needs to reach" in w]), 1)
+
+    def test_surf_and_whirlpool_report_differently_in_move_coverage(self):
+        """Surf is inert here (effect 257 is the Dive mirror of Gust's 149) and Whirlpool is
+        not (effect 261 binds), so a mule's own moveset must not read as one undifferentiated
+        warning."""
+        mule = self.api.add_party_pokemon(self.profile["id"], self.LAPRAS)["pokemon_id"]
+        hunt = self._lugia_hunt(party=[{"pokemon_id": self.ids["Smeargle"]},
+                                       {"pokemon_id": mule}])
+        coverage = self.api.hunt_readiness(hunt["id"])["move_coverage"]
+        flagged = {c["move"]: c for c in coverage}
+        self.assertNotIn("Surf", flagged)
+        self.assertNotIn("Strength", flagged)
+        self.assertNotIn("Waterfall", flagged)
+        self.assertIn("Whirlpool", flagged)
+        self.assertEqual(flagged["Whirlpool"]["pokemon"], "Lapras")
+        self.assertIn("desynchronise", flagged["Whirlpool"]["reason"])

@@ -27,10 +27,12 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_stage, apply_stage, damage,
-    unsupported_attacker_reason, unsupported_reason,
+    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_items, apply_accuracy_stage,
+    apply_stage, damage, unsupported_attacker_reason, unsupported_reason,
 )
-from claytonlib.battle.readiness import PARALYSIS_SPEED_DIVISOR, speed_after_item
+from claytonlib.battle.readiness import (
+    LEFTOVERS, PARALYSIS_SPEED_DIVISOR, speed_after_item,
+)
 from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
 from claytonlib.moves import CATEGORY_STATUS, Move
@@ -132,15 +134,78 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     125: "may burn -- as effect 4",
     136: "Rain Dance: field condition and the weather term",
     149: "double power vs airborne, which never applies in a single battle on the ground",
+    # Surf, and it is in here for exactly the reason 149 above is. Effect 257 is
+    # `MOVE_EFFECT_DOUBLE_DAMAGE_DIVE` (include/constants/move_effects.h:255), the mirror of
+    # 149's `MOVE_EFFECT_DOUBLE_DAMAGE_FLY_OR_BOUNCE` -- a conditional multiplier against a
+    # target that is underwater from Dive. Nothing any configured encounter can do puts it
+    # there, so the condition never holds and the move is plain damage. Cross-validated:
+    # `metronome_compass.effects` maps 257 to `_eff_damage`, with no extra roll.
+    #
+    # Here because Lugia is at the Whirl Islands, so a party member has to carry Surf to get
+    # there at all (`targets.ENCOUNTER_ACCESS`) -- and a move sitting in a real moveset should
+    # not read as a coverage gap when it is genuinely inert.
+    257: "Surf: double damage vs a Dive target, which nothing here can be",
 }
+
+
+def unselectable_reason(move: Move) -> str | None:
+    """Why the interview must not let us pick `move` this turn, or None if it may.
+
+    **Carrying a move and being able to report a turn that used it are different things**, and
+    the split matters because a party slot is not free: Lugia is behind Surf and Whirlpool, so a
+    mule has to come along, and refusing to let a Pokemon hold Whirlpool would mean refusing the
+    only route to the encounter (`targets.ENCOUNTER_ACCESS`). So the move is allowed on the
+    Pokemon and refused at the point of use.
+
+    Two families, both of which make the run unrecoverable rather than merely worse -- which is
+    why this is a refusal where `MODELLED_OUR_EFFECTS` coverage is advice:
+
+    * **The simulator cannot model the effect.** `execute_move` has no notion of an unknown one:
+      an unknown status move is treated as having worked and changed nothing, and an unknown
+      damaging move as plain damage. Either way the predicted stream and the real one part
+      company on that turn, and because every candidate is compared exactly, the true seed is
+      eliminated with no contradiction raised. Whirlpool is the case this was written for --
+      effect 261, which `metronome_compass` resolves as `_eff_bind`, so the game spends a hidden
+      duration roll we do not and then chips the target every turn afterwards.
+    * **The move would end the battle.** Teleport and Roar, per `RUN_ENDING_EFFECTS`: the target
+      is gone and there is no turn left to report.
+
+    Deliberately NOT a reason to refuse: a move that merely does nothing useful, or one that
+    `will_fail` says is certain to fail. Those are legal, reportable turns -- and a failing Sing
+    against a paralyzed target is one of the sharpest identification probes there is
+    (notes/seed_separation.md), so refusing it would cost the run information rather than save it.
+    """
+    if move.effect in RUN_ENDING_EFFECTS:
+        return (f"{move.name} would end the battle with the target uncaught, so there would be "
+                f"no turn to report.")
+    if move.effect not in MODELLED_OUR_EFFECTS:
+        # The two failure modes are different, and saying "changed nothing" for a damaging move
+        # was both wrong and reassuring in the wrong direction. An unknown STATUS move is treated
+        # as having worked and done nothing, which is inert; an unknown DAMAGING move is treated
+        # as plain damage, which is not -- any extra roll the real move spends (a trap duration,
+        # a charge turn) desynchronises the stream from that turn on, and any residual it leaves
+        # keeps the predicted HP wrong forever.
+        return (f"The simulator cannot model {move.name} (effect {move.effect}), so it would be "
+                + ("treated as plain damage -- any extra roll or residual the real move has "
+                   "would desynchronise the stream from this turn on and eliminate the true seed."
+                   if move.category != CATEGORY_STATUS else
+                   "treated as having worked and changed nothing, and a turn using it would "
+                   "mis-predict every candidate."))
+    return None
 
 
 def unsupported_our_moves(moves) -> tuple[tuple[str, str], ...]:
     """``((move name, why), ...)`` for each of OUR moves the simulator cannot fully model.
 
-    Advisory, unlike `targets.unsupported_moves` -- see `MODELLED_OUR_EFFECTS` for why the two
-    differ. Callers should surface these next to the readiness warnings and keep the slots out of
-    `SolverConfig.allowed_moves`.
+    Advisory at CONFIGURATION time, unlike `targets.unsupported_moves` -- see
+    `MODELLED_OUR_EFFECTS` for why the two differ. The slot is kept out of
+    `SolverConfig.allowed_moves` and the interview refuses it at the point of use
+    (`unselectable_reason`), so this reports rather than blocks: a mule carrying Whirlpool to
+    reach the Whirl Islands is a legitimate party, it just must not be told to use it.
+
+    Shares its rule with `unselectable_reason` rather than restating it, so the warning on the
+    configure page and the disabled chip in the interview can never disagree about which moves
+    they mean.
 
     `moves` is an iterable of names or of `Move`s, so a caller can pass a `Battler.moves` tuple or
     the already-resolved list it happens to hold.
@@ -155,11 +220,9 @@ def unsupported_our_moves(moves) -> tuple[tuple[str, str], ...]:
         if move is None:
             problems.append((str(entry), "is not in the move table at all"))
             continue
-        if move.effect not in MODELLED_OUR_EFFECTS:
-            problems.append((
-                move.name,
-                f"effect {move.effect} is not modelled, so the simulator would treat it as "
-                f"having worked and changed nothing"))
+        reason = unselectable_reason(move)
+        if reason is not None:
+            problems.append((move.name, reason))
     return tuple(problems)
 
 
@@ -324,7 +387,8 @@ def accuracy_net_stage(attacker: "Battler", defender: "Battler") -> int:
     return max(-6, min(6, attacker.accuracy_stage - defender.evasion_stage))
 
 
-def _effective_accuracy(move: Move, net_stage: int = 0) -> int:
+def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
+                        defender=None) -> int:
     """Accuracy after the combined accuracy/evasion stage.
 
     0 means the move bypasses the check entirely. `net_stage` is the attacker's accuracy stage
@@ -336,13 +400,23 @@ def _effective_accuracy(move: Move, net_stage: int = 0) -> int:
     there -- see `battle.damage.apply_accuracy_stage`, which is now the only place that knows it.
     Not an imprecision: a flipped verdict renders the wrong token and eliminates the true seed
     (clayton-957.27).
+
+    `attacker` and `defender` are read for their HELD ITEMS only -- the stage already arrives in
+    `net_stage`. A Brightpowder on the defender cuts the hit chance by a tenth and a Wide Lens on
+    the attacker raises it, and both are applied AFTER the stage table because every step
+    truncates (`battle.damage.apply_accuracy_items`). Optional, because `can_miss` has callers
+    that know neither battler and a missing item is simply no modifier.
     """
     if move.accuracy == 0:
         return 0
-    return apply_accuracy_stage(move.accuracy, net_stage)
+    accuracy = apply_accuracy_stage(move.accuracy, net_stage)
+    return apply_accuracy_items(
+        accuracy,
+        defender_item=getattr(defender, "held_item", "") or "",
+        attacker_item=getattr(attacker, "held_item", "") or "")
 
 
-def can_miss(move: Move, net_stage: int = 0) -> bool:
+def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None) -> bool:
     """Whether an accuracy roll can actually fail.
 
     Accuracy 0 bypasses the check, and accuracy 100 at a neutral or positive stage passes it
@@ -350,8 +424,12 @@ def can_miss(move: Move, net_stage: int = 0) -> bool:
     stage-dependent, not a property of the move: Spore at 100% becomes missable as soon as our
     accuracy is dropped or the target's evasion is raised, and reporting it as unmissable then
     would suppress a legitimate "missed".
+
+    It is also ITEM-dependent, which is the newer half: a Brightpowder on the target makes a
+    100-accuracy Spore missable at a neutral stage, so an interview that did not know about the
+    item would refuse to let the player report a miss that really happened.
     """
-    return 0 < _effective_accuracy(move, net_stage) < 100
+    return 0 < _effective_accuracy(move, net_stage, attacker=attacker, defender=defender) < 100
 
 
 def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None) -> bool:
@@ -440,7 +518,9 @@ BURN_ATTACK_DIVISOR = 2
 BURN_TICK_DIVISOR = 8
 #: Leftovers' end-of-turn recovery: max HP / 16, by the same floor-but-never-zero rule as the
 #: burn tick -- both go through `DamageDivide` [src/battle/overlay_12_0224E4FC.c:3110].
-LEFTOVERS = "leftovers"
+#:
+#: The NAME is re-exported from `battle.readiness` rather than declared twice, so that the
+#: modelled-items allowlist there and the tick here cannot disagree about the spelling.
 LEFTOVERS_DIVISOR = 16
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
@@ -798,7 +878,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         if move.accuracy > 0:
             rng, roll = advance(rng)
             used += 1
-            hit = roll % 100 < _effective_accuracy(move, net_stage)
+            hit = roll % 100 < _effective_accuracy(
+            move, net_stage, attacker=attacker, defender=defender)
         if not hit:
             parts.append(tok.MISS)
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
@@ -851,7 +932,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     if move.accuracy > 0:
         rng, hit_roll = advance(rng)
         used += 1
-        hit = hit_roll % 100 < _effective_accuracy(move, net_stage)
+        hit = hit_roll % 100 < _effective_accuracy(
+            move, net_stage, attacker=attacker, defender=defender)
     if not hit:
         parts.append(tok.MISS)
         return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)

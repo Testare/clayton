@@ -181,6 +181,36 @@ def has_fast_ball_bonus(name: str) -> bool:
     return species(name)["base_stats"]["spe"] >= 100
 
 
+def learnable_hms(name: str) -> tuple[str, ...]:
+    """The HMs this species can be taught, from the ROM's per-species `hms` list.
+
+    Read out of the decompilation by `one-offs/populate_hm_compatibility.py` rather than from
+    PokeAPI, because HM compatibility is exactly what PokeAPI reports for the wrong generation:
+    the HM list itself differs across Gen 4 (HGSS made Flash a TM where DPPt had it as HM05) and
+    move pools have moved every generation since.
+
+    An empty tuple is a real answer -- Natu, Magneton and Smeargle genuinely learn no HM at all.
+    A species with no `hms` key is a species this file predates the data for, and returns empty
+    too; `can_learn_hm` is where that ambiguity is resolved, not here.
+    """
+    return tuple(species(name).get("hms", ()))
+
+
+def can_learn_hm(name: str, move: str) -> bool | None:
+    """Whether `name` can be taught `move`, or **None when we do not know**.
+
+    The three-valued answer is the point. "This Pokemon cannot carry Surf" and "I have no data
+    for this Pokemon" lead to different advice, and collapsing them would make the second look
+    like the first -- telling a player their Tentacruel cannot Surf because nothing has recorded
+    its move pool yet.
+    """
+    entry = species(name)
+    if "hms" not in entry:
+        return None
+    wanted = move.strip().lower()
+    return any(hm.strip().lower() == wanted for hm in entry["hms"])
+
+
 #: The stat order a spread is written and read in, everywhere in this project: hp/atk/def/spa/
 #: spd/spe. Public because the run page, the facade and the gdb override all have to agree about
 #: which number is which -- a spread read in the wrong order is still six valid IVs, so nothing

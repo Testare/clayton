@@ -82,8 +82,10 @@ there is no Thunder Wave race at all. Lugia's ceiling is 128 with a boosting nat
 | `clayton-957.27` — the accuracy stage table | **fixed** (§3.1) |
 | `clayton-957.2` — the crit stage | **fixed** (§3.2) |
 | `clayton-957.3` — the `STATIC_ENCOUNTERS` row | **added** (§3.3) |
-| `clayton-957.10.15` — warn on unmodelled held items | open |
-| `clayton-957.28` — Brightpowder | open |
+| `clayton-957.30` — Whirlpool carriable, not selectable | **done** (§5a) |
+| `clayton-957.10.15` — warn on unmodelled held items | **done** (§3.4) |
+| `clayton-957.28` — Brightpowder and Lax Incense | **done** (§3.5) |
+| `clayton-957.29` — HM compatibility, so the warning names a carrier | **done** (§5a) |
 
 ### 3.1 The accuracy stage is a table, not the fraction it looks like
 
@@ -169,23 +171,69 @@ side of both.
 
 `targets.unsupported_moves("lugia")` is clean once §3.2 lands; Aeroblast was the only blocker.
 
-### 3.4 Still open
+### 3.4 Held items: warn, never block
 
-**`clayton-957.10.15`** — warn on the hunt page for every team held item the simulator does not
-model, advisory and never blocking. A misconfigured item *should* desync the run; what is missing
-is being told before the encounter. The allowlist is 33 names; the four that fail in the Choice
-Scarf's *kind* rather than its degree, because the roll count or turn order changes, are **Quick
-Claw** (random priority, and it spends a roll), **Brightpowder / Lax Incense** (every accuracy
-verdict wrong), **King's Rock / Razor Fang** (a flinch roll per hit) and **Scope Lens / Razor
-Claw** (wrong crit modulus).
+`clayton-957.10.15`, and the shape of it came from the user rather than from the bead: a
+misconfigured held item *should* desynchronise a run. The simulator is right once told, and the
+only way to tell it is this field. What was missing is hearing about it **before** the encounter
+instead of as a turn-2 contradiction whose message blames the candidate window.
 
-**`clayton-957.28`** — model Brightpowder. **[rom]**
-`battle_controller_player.c:2520-2524`: `HOLD_EFFECT_ACC_REDUCE` on the *defender* does
-`hitChance = hitChance * (100 - itemMod) / 100`. It is a multiplier, not an evasion stage, so
-Simple does not double it and Unaware does not zero it. `itemMod` is 10 but lives in a NARC, so it
-carries the same "not read from source" caveat as `TYPE_ITEM_MODIFIER_PERCENT`. The ordering is
-load-bearing: under Flash ×6 against Extrasensory it is `floor(floor(100·33/100)·90/100)` = 29,
-not 30. Depends on §3.1.
+So `readiness.unmodelled_held_items` is advisory and nothing refuses a run over it. The allowlist
+is **assembled** from the tables that actually read the items rather than hand-written, because a
+hand-list goes stale the first time a mechanism is added — and stale here means *failing to warn*,
+which is the direction that costs a run. 36 names across eight mechanisms.
+
+Two categories, because they call for different decisions. The measured basis, from the hooh1
+replay with one item removed at a time: no Silk Scarf is 11 mismatching turns of 57; no Leftovers
+is 2; **no Choice Scarf is 56 of 57**. That last one fails in *kind* — 107 × 1.5 = 160 beats
+Ho-Oh's 152, so turn order flips on turn 2 and nothing after it matches. The others fail in
+degree, producing one wrong number and a visible contradiction on the turn they fire.
+
+So `HAZARDOUS_UNMODELLED_ITEMS` names the ones that change the **roll count or the turn order**,
+and says how: **Quick Claw** (random priority, and it spends a roll), **King's Rock / Razor Fang**
+(a flinch roll per hit), **Scope Lens / Razor Claw** (wrong crit modulus), **Zoom Lens**
+(state-dependent accuracy). Everything else gets the gentler "if it changes anything, the turn it
+fires on will contradict; harmless if it is inert here."
+
+**A blank item is reported too**, as its own sentence. All three of the hooh1 party's items had to
+be inferred from the logs afterwards, because held items live on the hunt's party slot and the
+profile export carries none of them — so "you left this blank" and "I cannot model this" are
+different messages, and the first says that an empty slot is often simply correct.
+
+Brightpowder was in the hazardous list until §3.5 modelled it; a test pins that the two tables
+cannot both claim it.
+
+### 3.5 Brightpowder and Lax Incense
+
+**[rom]** `battle_controller_player.c:2520-2531`. On the **defender**,
+`HOLD_EFFECT_ACC_REDUCE` does `hitChance = hitChance * (100 - itemMod) / 100`; on the attacker,
+`HOLD_EFFECT_ACCURACY_UP` does `* (100 + itemMod) / 100`. A **multiplier, not an evasion stage** —
+it does not enter `var`, so Simple does not double it and Unaware does not zero it.
+
+`itemMod` is 10 for both, but it lives in a binary NARC rather than in the decompiled source, so
+it carries the same "not read from source" caveat as `TYPE_ITEM_MODIFIER_PERCENT`. The *ordering*
+did come out of the source.
+
+**The ordering is load-bearing, and the obvious example does not show it** — a 100-accuracy move
+under six Flashes is 29 whichever way round you apply the item, so an eyeball check passes a wrong
+implementation. It diverges on **467 of the 1300** (base accuracy, stage) pairs, and on moves this
+project actually rolls: Aeroblast at -6 is 27 the ROM's way against 28 the other, Screech at -1 is
+56 against 57, Sing at -4 is 20 against 21. Defender's reduction before attacker's boost, for the
+same reason — at base 41 that is 39 against 40.
+
+Wide Lens comes free as the mirror. **Zoom Lens is deliberately absent**: it is conditional on the
+holder moving second, so it is state-dependent rather than flat, and the decomp's own TODO at
+`battle_controller_player.c:2532` notes that its hold-effect constant is mislabeled. It is in the
+hazardous list instead.
+
+The consequence that reaches the interview: **a 100-accuracy move becomes missable.** Spore cannot
+miss at a neutral stage and can against a Brightpowder holder, so `can_miss` and `move_info` take
+the held items too — otherwise the interview would refuse to let the player report a miss that
+really happened.
+
+What it buys for the hunt, if Magneton's Lv55 Speed means the Choice Scarf is free: another ~10%
+off every attack Lugia makes, stacking multiplicatively with Flash's ×0.33 — and per §4, every
+accuracy roll pushed off 100 is a roll that separates siblings instead of being blind.
 
 ## 4. Identification: Flash is the engine, not the mitigation
 
@@ -234,7 +282,9 @@ Aeroblast and dies to any crit).
 ## 5. The run
 
 Party: Natu (Synchronize lead, must be **Serious** for the target nature) / Magneton / Ampharos /
-Smeargle (Technician, **Silk Scarf**) / Chatot / Chatot.
+Smeargle (Technician, **Silk Scarf**) / Chatot / Chatot — except that the sixth slot has to become
+the Surf + Whirlpool carrier, because none of these six can learn either move and there is no PC
+in the Whirl Islands. See §5a.
 
 **[design]** Switch → Magneton, Thunder Wave, → Ampharos, Flash ×6, → Magneton, Screech ×3,
 → Smeargle, False Swipe ×2, hand to the solver. ~15 turns.
@@ -286,6 +336,114 @@ and Aeroblast at 0.5× — **[rom: type chart]** — but **Water is neutral on b
 does not resist Water. With 50 base HP that makes Magneton the most exposed member to the only
 move that threatens anyone: at Lv55 (137 HP) a rain Hydro Pump crit does 117-138 and KOs on the
 top rolls. Right switch-in against two of three attacks, wrong one against the third.
+
+## 5a. Getting there costs a party slot, and none of the six can pay it
+
+Lugia is at the bottom of the Whirl Islands, which needs **Surf** and **Whirlpool** — and the
+Silver Wing to make it appear at all. That is a reachability requirement, and the tooling had no
+concept of one; `targets.ENCOUNTER_ACCESS` and `access_warnings` are it now, surfaced on the hunt
+page under "Getting there".
+
+**The constraint that makes it more than a checklist item: there is no PC in the Whirl Islands.**
+The party you arrive with is the party you fight with, so the HM carrier is not a travelling
+companion you drop at the door — it occupies one of the six slots.
+
+**[rom]** `files/poketool/personal/personal.json` carries a per-species `hms` list, 1-indexed
+HM01..HM08 (confirmed against Lapras `[3,4,5,6,7]`, Gyarados the same, Tentacruel `[1,3,5,7]`,
+Pidgeot `[2]`, Geodude `[4,6,8]`, Magikarp `[]`), so HM03 is Surf and HM05 is Whirlpool. For this
+party:
+
+| | `hms` | can learn |
+|---|---|---|
+| Natu | `[]` | nothing |
+| Magneton | `[]` | nothing |
+| Smeargle | `[]` | nothing |
+| Ampharos | `[4, 6, 8]` | Strength, Rock Smash, Rock Climb |
+| Chatot | `[2]` | Fly |
+
+**Not one of the six can learn either move.** So the run needs a seventh Pokemon in a slot one of
+the current six is holding. The decided donor is the **second Chatot**, replaced by a
+**Tentacruel** (`hms` `[1, 3, 5, 7]` — Cut, Surf, Whirlpool, Waterfall). §4.2 wants Sing probes,
+but 7 PP under Pressure from one Chatot is already a generous budget against ~15 turns of setup,
+and the Flash sequence does most of the separating anyway.
+
+`access_warnings` now says this rather than leaving it to be discovered: given the party's
+species it names who *could* carry a missing field move, and when the answer is nobody it says so
+and that a slot has to be dropped. The HM data comes from the decomp's `personal.json` via
+`one-offs/populate_hm_compatibility.py`, because PokeAPI is wrong for exactly this — the HM list
+differs *inside* Gen 4, HGSS having moved Flash to TM70 where DPPt had it as HM05.
+
+**And Flash pays for its slot twice**, which is a happy accident rather than a plan: Ampharos is
+carrying it for the accuracy drops of §4, and it also lights the Whirl Islands. It is not in
+`field_moves` — the caves are navigable without it, so requiring it would warn falsely — but it
+means the party needs no extra room for the field move it does have.
+
+A Lapras or Gyarados carries both HMs and needs no role in the battle; it never has to act, so
+its stats and level are irrelevant.
+
+The hazard is not Struggle — `PartyPokemon.warnings` already covers a *moveless* Pokemon, and a
+mule carrying four HMs is the opposite case. It is that **every move it has would KO a Lugia at
+1 HP**: Surf, Strength and Waterfall are all ordinary damaging moves. `can_faint_target` is what
+keeps the solver off them (it prices the maximum roll, critical, and refuses anything that could
+take the target below 1 HP), so the planned path is safe and only a manual Fight is not. The
+move that would hurt in a second way is Whirlpool, which also desynchronises the stream — so of
+the mule's two spare slots, prefer the modelled HMs: Strength, Cut, Waterfall, Rock Climb.
+
+### Surf is safe to leave in a moveset; Whirlpool is not
+
+**[rom]** Surf is effect **257**, `MOVE_EFFECT_DOUBLE_DAMAGE_DIVE`
+(`include/constants/move_effects.h:255`) — the exact mirror of Gust's 149,
+`MOVE_EFFECT_DOUBLE_DAMAGE_FLY_OR_BOUNCE`, which the simulator already accepts on the reasoning
+that nothing here can be airborne. Nothing here can be underwater either, so the condition never
+holds and Surf is plain damage. Cross-validated: `metronome_compass` maps 257 to `_eff_damage`,
+no extra roll. It is now in `MODELLED_OUR_EFFECTS`.
+
+Whirlpool is effect **261**, `MOVE_EFFECT_WHIRLPOOL` — its own id, not the bind group's 42 — and
+`metronome_compass` resolves it as `_eff_bind`: a hidden duration roll and then a per-turn
+residual. **Deliberately left unmodelled.** Using it once would desynchronise the stream from that
+turn, keep the predicted HP wrong forever, and the residual can knock the target out and lose the
+run outright.
+
+**The resolution is to allow it on the Pokemon and refuse it at the point of use**, rather than
+to implement bind. Implementing it properly would mean a counter on `Battler`, the duration roll,
+residual accounting, the counter in `_dominance_key`, and `can_faint_target` taught to see
+residual rather than only direct damage — real work for a move nobody intends to use. And
+refusing to let a Pokemon *hold* it would refuse the only route to the encounter, since the party
+slot is what is actually scarce.
+
+So `sim.unselectable_reason` is the rule, and it covers two families that are alike in making the
+run **unrecoverable** rather than merely wasted:
+
+* an effect the simulator cannot model — the stream parts company on that turn and every
+  candidate is eliminated with no contradiction raised;
+* an effect that ends the battle (`RUN_ENDING_EFFECTS`: Teleport, Roar) — there is no turn left
+  to report. Worth its own message, because "the simulator cannot model it" would be the wrong
+  explanation.
+
+Three places honour it: `move_info` carries the reason per slot, the interview renders the move
+**disabled with that reason** rather than hiding it (a chip that vanishes reads as a bug, and the
+move is on the mule on purpose), and `solver._legal_actions` skips the slot.
+
+That last one closed a real hole. `MODELLED_OUR_EFFECTS` has said since it was written that
+callers should "keep the slots out of `SolverConfig.allowed_moves`" — and **no caller ever did**;
+the default is all four slots. So the solver could have planned a Whirlpool as filler and the plan
+would have desynchronised on the turn it ran. It is enforced in `_legal_actions` beside
+`ends_the_run` rather than left to the caller, so forgetting gets the safe behaviour.
+
+**What is deliberately still selectable: a move certain to FAIL.** `guaranteed_fail` and
+`unselectable_reason` look similar and are opposites — a failing move is a perfectly good turn to
+report, and a Sing against an already-paralyzed target is the sharpest probe in §4.2. Refusing it
+would cost the run information rather than protect it.
+
+That turned up a reporting bug worth recording. `unsupported_our_moves` said every unmodelled move
+"would be treated as having worked and changed nothing", which is the *status-move* failure.
+`execute_move` treats an unknown **damaging** move as plain damage, so the real failure is a
+desync, not inertness — the message understated it in the dangerous direction, and now splits on
+the category.
+
+The other HMs, since a mule has two spare slots: **Surf, Strength, Cut, Waterfall and Rock Climb
+are all modelled**; **Whirlpool, Fly, Dive, Defog and Rock Smash are not.** Prefer the first list
+for the spare slots, so a mis-click costs nothing.
 
 ## 6. Training
 

@@ -180,9 +180,16 @@ class TestOurMoveCoverageIsCheckedAtAll(unittest.TestCase):
         self.assertEqual(unsupported_our_moves(planned), ())
 
     def test_an_unmodelled_move_is_reported_rather_than_simulated_as_inert(self):
+        """Asserted on the move and its effect id rather than on a phrase. This used to look for
+        the literal "not modelled" and broke when the reason split damaging from status moves --
+        the claim being made is that the move is REPORTED, not that it is reported in those
+        words."""
         problems = unsupported_our_moves(["Belly Drum"])
         self.assertEqual(len(problems), 1)
-        self.assertIn("not modelled", problems[0][1])
+        name, why = problems[0]
+        self.assertEqual(name, "Belly Drum")
+        self.assertIn(str(resolve_move("Belly Drum").effect), why)
+        self.assertIn("changed nothing", why, "Belly Drum is a status move")
 
     def test_every_table_entry_resolves_to_a_real_effect(self):
         """Guards against a typo'd effect id silently covering nothing."""

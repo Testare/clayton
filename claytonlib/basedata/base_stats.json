@@ -13,6 +13,11 @@
   },
   "catch_rate": 45,
   "dex_no": 181,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "ampharos",
   "source": "rom",
   "types": [
@@ -35,6 +40,9 @@
   },
   "catch_rate": 30,
   "dex_no": 441,
+  "hms": [
+   "Fly"
+  ],
   "name": "chatot",
   "source": "rom",
   "types": [
@@ -57,6 +65,11 @@
   },
   "catch_rate": 3,
   "dex_no": 483,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "dialga",
   "types": [
    "Steel",
@@ -78,6 +91,12 @@
   },
   "catch_rate": 3,
   "dex_no": 244,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "entei",
   "types": [
    "Fire"
@@ -98,6 +117,13 @@
   },
   "catch_rate": 3,
   "dex_no": 487,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "giratina-altered",
   "types": [
    "Ghost",
@@ -120,6 +146,11 @@
   },
   "catch_rate": 75,
   "dex_no": 210,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "granbull",
   "source": "rom",
   "types": [
@@ -141,6 +172,12 @@
   },
   "catch_rate": 3,
   "dex_no": 383,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "groudon",
   "types": [
    "Ground"
@@ -161,6 +198,13 @@
   },
   "catch_rate": 45,
   "dex_no": 130,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "gyarados",
   "source": "rom",
   "types": [
@@ -183,6 +227,11 @@
   },
   "catch_rate": 3,
   "dex_no": 250,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "ho-oh",
   "types": [
    "Fire",
@@ -204,6 +253,13 @@
   },
   "catch_rate": 3,
   "dex_no": 382,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "kyogre",
   "types": [
    "Water"
@@ -224,6 +280,13 @@
   },
   "catch_rate": 3,
   "dex_no": 380,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "latias",
   "types": [
    "Dragon",
@@ -245,6 +308,13 @@
   },
   "catch_rate": 3,
   "dex_no": 381,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "latios",
   "types": [
    "Dragon",
@@ -266,6 +336,14 @@
   },
   "catch_rate": 3,
   "dex_no": 249,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "lugia",
   "types": [
    "Psychic",
@@ -288,6 +366,7 @@
   },
   "catch_rate": 190,
   "dex_no": 81,
+  "hms": [],
   "name": "magnemite",
   "types": [
    "Electric",
@@ -310,6 +389,7 @@
   },
   "catch_rate": 60,
   "dex_no": 82,
+  "hms": [],
   "name": "magneton",
   "types": [
    "Electric",
@@ -332,6 +412,11 @@
   },
   "catch_rate": 50,
   "dex_no": 473,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "mamoswine",
   "types": [
    "Ice",
@@ -353,6 +438,11 @@
   },
   "catch_rate": 3,
   "dex_no": 150,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "mewtwo",
   "types": [
    "Psychic"
@@ -374,6 +464,7 @@
   },
   "catch_rate": 190,
   "dex_no": 177,
+  "hms": [],
   "name": "natu",
   "source": "rom",
   "types": [
@@ -396,6 +487,13 @@
   },
   "catch_rate": 3,
   "dex_no": 484,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
   "name": "palkia",
   "types": [
    "Water",
@@ -417,6 +515,12 @@
   },
   "catch_rate": 3,
   "dex_no": 243,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "raikou",
   "types": [
    "Electric"
@@ -437,6 +541,14 @@
   },
   "catch_rate": 45,
   "dex_no": 384,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "rayquaza",
   "types": [
    "Dragon",
@@ -459,6 +571,7 @@
   },
   "catch_rate": 45,
   "dex_no": 235,
+  "hms": [],
   "name": "smeargle",
   "types": [
    "Normal"
@@ -480,6 +593,13 @@
   },
   "catch_rate": 25,
   "dex_no": 143,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
   "name": "snorlax",
   "types": [
    "Normal"
@@ -501,6 +621,10 @@
   },
   "catch_rate": 65,
   "dex_no": 185,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
   "name": "sudowoodo",
   "types": [
    "Rock"
@@ -521,6 +645,14 @@
   },
   "catch_rate": 3,
   "dex_no": 245,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
   "name": "suicune",
   "types": [
    "Water"
@@ -542,6 +674,10 @@
   },
   "catch_rate": 30,
   "dex_no": 468,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
   "name": "togekiss",
   "source": "rom",
   "types": [

@@ -36,7 +36,9 @@ from claytonlib.battle.catch import capture_windows as _capture_windows
 from claytonlib.battle import turn as turn_costs
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass import tokens as tok
-from claytonlib.battle_compass.sim import HuntConfig, advance, simulate_turn
+from claytonlib.battle_compass.sim import (
+    HuntConfig, advance, simulate_turn, unselectable_reason,
+)
 from claytonlib.battle_compass.state import (
     HOLDING_STATUSES, Action, BattleState, Status,
 )
@@ -469,6 +471,17 @@ def _legal_actions(state: BattleState, config: SolverConfig,
         if can_faint_target(move, state.ours, state.target, field=state):
             continue
         if ends_the_run(move):
+            continue
+        # A move the simulator cannot model. `allowed_moves` defaults to all four and nothing
+        # ever narrowed it, so this was a real hole rather than a belt-and-braces guard:
+        # `MODELLED_OUR_EFFECTS` has said since it was written that the caller should "keep the
+        # slots out of `SolverConfig.allowed_moves`", and no caller did -- so the solver could
+        # plan a Whirlpool as filler and the plan would desynchronise on the turn it ran.
+        #
+        # Enforced here rather than left to `allowed_moves` for the same reason `ends_the_run` is:
+        # a caller that forgets gets the safe behaviour, and a caller that deliberately widens
+        # `allowed_moves` still cannot reach a move the simulator would mis-predict.
+        if unselectable_reason(move) is not None:
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:

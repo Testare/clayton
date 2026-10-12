@@ -18,6 +18,8 @@ are actually facing instead of being silently simulated against the wrong four m
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 #: species key -> (level, moves in slot order). Levels are the encounter's, not a range.
 STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # HGSS Bell Tower, after the Burned Tower release. Roaming Suicune is the same set.
@@ -80,6 +82,140 @@ VERSION_SPLIT_LEVELS: dict[str, tuple[int, str]] = {
     # of Ho-Oh and false of Lugia.
     "lugia": (70, "HeartGold's Lv70 Lugia, which has a different moveset"),
 }
+
+
+@dataclass(frozen=True)
+class EncounterAccess:
+    """What a party needs in order to **reach** an encounter, as opposed to beat it.
+
+    A different kind of requirement from everything else in this module, and the reason it needs
+    saying at all: the party you arrive with is the party you fight with. There is no PC in the
+    Whirl Islands, so a Surf/Whirlpool carrier is not a travelling companion you leave at the
+    door -- it occupies one of the six slots, and noticing that after a two-hour seed-targeting
+    setup is the expensive way to find out.
+
+    `field_moves` are checked against the party's movesets. `also_needed` is prose for things no
+    moveset can express -- a key item, a story flag, a Mystery Gift -- and is reported alongside
+    rather than checked, in the same spirit as the Enigma Stone being called out as a real-world
+    prerequisite rather than a work item.
+    """
+    #: Where the encounter is, for a message that tells the player why the moves are wanted.
+    where: str
+    #: Field moves some party member must know. Names as `resolve_move` spells them.
+    field_moves: tuple[str, ...] = ()
+    #: Non-move prerequisites, reported and never checked.
+    also_needed: tuple[str, ...] = ()
+
+
+#: species key -> what reaching that encounter requires.
+#:
+#: Only Lugia has field-move requirements on this profile, which is why this reads as a table
+#: with one real entry: the Bell Tower and the Pewter museum are both walk-in, and a roamer is
+#: wherever it happens to be. Absent means "nothing to check", not "unknown" -- a target with no
+#: row produces no warnings rather than an empty one.
+ENCOUNTER_ACCESS: dict[str, EncounterAccess] = {
+    "lugia": EncounterAccess(
+        where="the Whirl Islands",
+        # HM03 and HM05. Needed to get in and then to cross the whirlpools down to the chamber.
+        field_moves=("Surf", "Whirlpool"),
+        # The Silver Wing is what makes Lugia appear at all, and no moveset can express it.
+        also_needed=("the Silver Wing",)),
+    # Ho-Oh needs the Rainbow Wing and Suicune the Clear Bell chain, both story flags rather than
+    # moves, and the Bell Tower itself is walk-in. Latias needs the Enigma Stone, which was a
+    # Mystery Gift distribution -- whether it is reachable at all on a given cartridge is a
+    # real-world question (notes/battle_compass_next_targets.md sec 4F). None of those is a field
+    # move, so none of them gets a row until something actually checks them.
+}
+
+
+def access_warnings(species: str, movesets: dict[str, list[str]],
+                    party_species: dict[str, str] | None = None) -> list[str]:
+    """Warnings about reaching `species`, given ``{pokemon name: move names}``.
+
+    Advisory, never blocking, and deliberately so: the player may be carrying an HM mule the
+    hunt's party list does not mention, or may simply already be standing in front of the
+    encounter with a save ready to reload. A tool that refused to start on this would be wrong
+    more often than it was right.
+
+    `party_species` (``{pokemon name: species}``) is optional and turns the warning into
+    something actionable: with it, the message can say which party members *could* learn a
+    missing field move -- and, when the answer is none of them, say that instead of leaving the
+    player to check six move pools by hand. For the Lugia party the answer really is none, which
+    is the whole reason it is worth saying.
+
+    Unknown target, or no row for it -> no warnings. The absence of a requirement and the absence
+    of knowledge are not distinguished here on purpose, because every encounter this project
+    supports is one or the other and conflating them costs nothing.
+    """
+    access = ENCOUNTER_ACCESS.get(species.strip().lower().replace(" ", "-"))
+    if access is None:
+        return []
+    known = {move.strip().lower() for moves in movesets.values() for move in moves if move}
+    out = []
+    missing = [name for name in access.field_moves if name.lower() not in known]
+    if missing:
+        out.append(
+            f"No party Pokemon knows {_join(missing)}, which {access.where} needs to reach "
+            f"{species.capitalize()}. The party you arrive with is the party you fight with -- "
+            f"there is no PC down there -- so the carrier has to be one of your six."
+            + _carrier_note(missing, party_species))
+    for extra in access.also_needed:
+        out.append(f"{species.capitalize()} also needs {extra}, which is not a move and is not "
+                   f"checked here.")
+    return out
+
+
+def _carrier_note(missing: list[str], party_species: dict[str, str] | None) -> str:
+    """" Who could learn `missing`", appended to the field-move warning, or "" if unknown.
+
+    Silent rather than speculative when the data is thin. `can_learn_hm` returns None for a
+    species whose move pool nothing has recorded, and a Pokemon in that state is neither
+    suggested nor ruled out -- saying "none of your party can carry this" on the strength of
+    missing data would send a player to the Game Corner for a Pokemon they already own.
+    """
+    if not party_species:
+        return ""
+    from claytonlib.battle.stats import can_learn_hm
+
+    able: dict[str, list[str]] = {}
+    unknown = False
+    for pokemon, species_name in party_species.items():
+        if not species_name:
+            unknown = True
+            continue
+        for move in missing:
+            try:
+                verdict = can_learn_hm(species_name, move)
+            except KeyError:                 # a species base_stats.json has never heard of
+                unknown = True
+                continue
+            if verdict is None:
+                unknown = True
+            elif verdict:
+                able.setdefault(pokemon, []).append(move)
+
+    if able:
+        listed = "; ".join(f"{who} ({_join(moves, 'and')})" for who, moves in sorted(able.items()))
+        return f" Able to learn: {listed}."
+    if unknown:
+        return ""
+    which = "either move" if len(missing) == 2 else (
+        _join(missing) if len(missing) == 1 else "any of them")
+    return (f" **None of your current party can learn {which}**, so this needs a Pokemon you are "
+            f"not carrying -- which means dropping one of the six.")
+
+
+def _join(names: list[str], conjunction: str = "or") -> str:
+    """``"Surf"`` / ``"Surf or Whirlpool"`` / ``"Surf, Whirlpool or Dive"``.
+
+    The conjunction is a parameter because the two call sites mean opposite things: "nobody knows
+    Surf OR Whirlpool" is a disjunction over what is missing, while "Gyarados can learn Surf AND
+    Whirlpool" is a conjunction over what it covers. Reading the second as a choice would suggest
+    a second carrier is still needed.
+    """
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
 
 
 def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:

@@ -136,6 +136,61 @@ def apply_accuracy_stage(accuracy: int, net_stage: int) -> int:
     return accuracy * num // den
 
 
+#: Held items that cut the **attacker's** hit chance when the DEFENDER holds one, as
+#: ``{name: percent}``. `HOLD_EFFECT_ACC_REDUCE` in the ROM's check.
+#:
+#: A multiplier on the hit chance, **not an evasion stage** -- which is the distinction that
+#: matters: it does not go into `var`, so Simple does not double it and Unaware does not zero it.
+#:
+#: The percentages are the item's own ITEM_VAR_MODIFIER and live in a binary NARC rather than in
+#: the decompiled source, so 10 is the documented Gen 4 figure for both and was NOT read out of
+#: the ROM -- the same caveat as `TYPE_ITEM_MODIFIER_PERCENT`. The *ordering* below was read out
+#: of the source.
+ACCURACY_REDUCING_ITEMS: dict[str, int] = {"brightpowder": 10, "lax incense": 10}
+
+#: The mirror, when the ATTACKER holds one: `HOLD_EFFECT_ACCURACY_UP`, ``* (100 + mod) / 100``.
+#:
+#: Wide Lens only. **Zoom Lens is deliberately absent**: it is conditional on the holder moving
+#: second, so it is state-dependent rather than a flat modifier, and the decomp's own TODO at
+#: battle_controller_player.c:2532 notes that the constant for it (`HOLD_EFFECT_CRITRATE_UP_SLOWER`)
+#: is mislabeled. Nothing in any planned party holds either; Wide Lens is here because it is free
+#: and because leaving it out would make the modelled-items allowlist lie by omission.
+ACCURACY_RAISING_ITEMS: dict[str, int] = {"wide lens": 10}
+
+
+def apply_accuracy_items(accuracy: int, *, defender_item: str = "",
+                         attacker_item: str = "") -> int:
+    """`accuracy` after both held-item terms, in the ROM's order and arithmetic.
+
+    Transcribed from `BattleSystem_CheckMoveHit`
+    (src/battle/battle_controller_player.c:2520-2531)::
+
+        item    = GetBattlerHeldItemEffect(ctx, battlerIdTarget);
+        itemMod = GetHeldItemModifier(ctx, battlerIdTarget, 0);
+        if (item == HOLD_EFFECT_ACC_REDUCE) hitChance = hitChance * (100 - itemMod) / 100;
+
+        item    = GetBattlerHeldItemEffect(ctx, battlerIdAttacker);
+        itemMod = GetHeldItemModifier(ctx, battlerIdAttacker, 0);
+        if (item == HOLD_EFFECT_ACCURACY_UP) hitChance = hitChance * (100 + itemMod) / 100;
+
+    **Applied AFTER the stage table, and the order is load-bearing**, because every step
+    truncates. It disagrees with folding the item in first on 467 of the 1300 (base accuracy,
+    stage) pairs -- including, for the moves this project actually rolls: Aeroblast at -6 (27 vs
+    28), Screech at -1 (56 vs 57), Sing at -4 (20 vs 21). Defender's reduction before attacker's
+    boost, for the same reason.
+
+    (The obvious example does *not* diverge -- a 100-accuracy move under six Flashes is 29 either
+    way -- which is exactly why the ordering is worth a test rather than an eyeball.)
+    """
+    reduce_pct = ACCURACY_REDUCING_ITEMS.get(defender_item.strip().lower())
+    if reduce_pct is not None:
+        accuracy = accuracy * (100 - reduce_pct) // 100
+    raise_pct = ACCURACY_RAISING_ITEMS.get(attacker_item.strip().lower())
+    if raise_pct is not None:
+        accuracy = accuracy * (100 + raise_pct) // 100
+    return accuracy
+
+
 #: Gravity multiplies the final hit chance by ``10 / 6``, and it is applied **last** -- after the
 #: stage table, after every weather and ability term, after both held-item terms and after the
 #: Micle Berry (battle_controller_player.c:2544-2546). Every step truncates, so the position is

@@ -23,6 +23,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from claytonlib.battle.damage import (
+    ACCURACY_RAISING_ITEMS as _ACCURACY_RAISING_ITEMS,
+    ACCURACY_REDUCING_ITEMS as _ACCURACY_REDUCING_ITEMS,
+    LIGHT_CLAY as _LIGHT_CLAY,
+    TYPE_ENHANCING_ITEMS as _TYPE_ENHANCING_ITEMS,
+)
 from claytonlib.moves import CATEGORY_STATUS, Move
 
 # sec 1.1, measured by simulation over real LCRNG streams.
@@ -59,6 +65,86 @@ SPEED_HALVING_ITEMS = frozenset({
 #: somewhere: `metronome_compass` mandates a Lagging Tail, and reading it as a Speed modifier
 #: would be wrong in both directions.
 MOVES_LAST_ITEMS = frozenset({"lagging tail", "full incense"})
+#: Leftovers' end-of-turn recovery is max HP / 16. The NAME lives here rather than in
+#: `battle_compass.sim` (which owns the divisor and the tick itself) so that
+#: `MODELLED_HELD_ITEMS` below can be assembled without the shared battle core importing from a
+#: module that depends on it. `sim` imports it from here; a test asserts there is only one.
+LEFTOVERS = "leftovers"
+
+
+#: Held items whose behaviour the simulator actually models, grouped by the mechanism that reads
+#: them. The union is the allowlist `unmodelled_held_items` checks against.
+#:
+#: Assembled rather than hand-listed, because a hand-list goes stale the first time somebody adds
+#: a mechanism and forgets this -- and going stale here means *failing to warn*, which is the
+#: direction that costs a run.
+MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
+    "raises a matching move's power by 20%": frozenset(_TYPE_ENHANCING_ITEMS),
+    "locks the holder into one move (and the Scarf is x1.5 Speed)": CHOICE_ITEMS,
+    "halves the holder's Speed": SPEED_HALVING_ITEMS,
+    "makes the holder move last in its bracket": MOVES_LAST_ITEMS,
+    "cuts the attacker's accuracy": frozenset(_ACCURACY_REDUCING_ITEMS),
+    "raises the holder's accuracy": frozenset(_ACCURACY_RAISING_ITEMS),
+    "restores 1/16 max HP at end of turn": frozenset({LEFTOVERS}),
+    "extends a screen from five turns to eight": frozenset({_LIGHT_CLAY}),
+}
+
+#: Items the simulator does NOT model whose absence fails in the Choice Scarf's *kind* rather
+#: than its degree -- the roll COUNT or the turn ORDER changes, so nothing matches for the rest of
+#: the run and the contradiction names a cause that did not happen.
+#:
+#: Separated from the generic "not modelled" message because the two call for different
+#: decisions. A Life Orb produces one wrong HP and a visible contradiction on the turn it fires;
+#: a Quick Claw silently re-orders a turn and poisons everything after it. The measured version
+#: of that distinction is in clayton-957.10.15: removing the Choice Scarf from the hooh1 party
+#: left 56 of 57 turns wrong, against 11 for the Silk Scarf and 2 for Leftovers.
+HAZARDOUS_UNMODELLED_ITEMS: dict[str, str] = {
+    "quick claw": "randomly gives the holder priority -- it flips turn order AND spends a roll",
+    "king's rock": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
+    "razor fang": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
+    "scope lens": "raises the holder's crit stage -- the wrong crit modulus on every hit",
+    "razor claw": "raises the holder's crit stage -- the wrong crit modulus on every hit",
+    "zoom lens": "raises accuracy when the holder moves second, which is state-dependent",
+}
+
+
+def unmodelled_held_items(party: dict[str, str]) -> list[str]:
+    """Warnings for ``{pokemon name: held item}`` entries the simulator cannot model.
+
+    **Advisory, and it must stay that way.** A misconfigured held item genuinely should
+    desynchronise the run -- the simulator is right once told, and there is no way to be told
+    except by the player. What was missing is being told *before* the encounter rather than
+    discovering it as a turn-2 contradiction whose message blames the candidate window
+    (clayton-957.10.15).
+
+    So this never blocks. A player who knows their Expert Belt is irrelevant to a False Swipe
+    must be able to carry it and start.
+
+    An EMPTY item is reported too, and deliberately: all three of the hooh1 party's items had to
+    be inferred from the logs afterwards, because held items live on the hunt's party slot and
+    the profile export carries none of them. "You left this blank" and "I cannot model this" are
+    different sentences, so they are phrased differently.
+    """
+    allowed = frozenset().union(*MODELLED_HELD_ITEMS.values())
+    out: list[str] = []
+    for name, item in party.items():
+        key = (item or "").strip().lower()
+        if not key:
+            out.append(f"{name} has no held item recorded. If it is actually holding something, "
+                       f"the simulation will be wrong from the first turn the item matters -- "
+                       f"and if it is holding nothing, this is correct and can be ignored.")
+            continue
+        if key in allowed:
+            continue
+        hazard = HAZARDOUS_UNMODELLED_ITEMS.get(key)
+        if hazard is not None:
+            out.append(f"{name}'s {item} is NOT modelled, and it is the dangerous kind: it "
+                       f"{hazard}. Nothing would match for the rest of the run, and the "
+                       f"contradiction would blame the candidate window. Take it off.")
+        else:
+            out.append(f"{name}'s {item} is not modelled. If it changes anything in battle, the "
+                       f"turn it fires on will contradict. Harmless if it is inert here.")
+    return out
 
 
 def speed_after_item(speed: int, held_item: str) -> int:
