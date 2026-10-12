@@ -70,10 +70,20 @@ class TestDangerFloor(unittest.TestCase):
         after STAB rather than before it, and with Smeargle's stats assumed rather than entered."""
         self.assertEqual(worst_incoming_hit(_ours(), _target()), 56)
 
-    def test_the_session_adopts_it_as_the_solver_floor(self):
-        s = _session()
-        self.assertEqual(s.danger_floor, 56)
-        self.assertEqual(s.solver_config.danger_floor, 56)
+    def test_the_session_reports_it_for_whoever_is_out(self):
+        """56 here because the Suicune fixture's lead IS the Pokemon that stays out all run."""
+        self.assertEqual(_session().danger_floor, 56)
+
+    def test_the_session_does_not_freeze_it_into_the_solver_config(self):
+        """It used to, and that was the bug (clayton-957.10.17). The floor is per-Pokemon -- it
+        reads the DEFENDER's Def and Sp. Def -- and `SolverConfig.danger_floor` is a LOWER bound,
+        so seeding it from the lead pinned the floor at the lead's figure and silently defeated
+        the live recomputation 957.10.5 added. With a sacrificial Lv23 Natu leading that figure is
+        1584, which marks a 314 HP Ampharos as one hit from fainting at full health, forever.
+
+        The field survives for a caller that deliberately wants a minimum; the session is not
+        such a caller."""
+        self.assertEqual(_session().solver_config.danger_floor, 0)
 
     def test_it_is_critical_because_a_crit_ignores_our_defensive_boosts(self):
         from claytonlib.battle.damage import Attacker, Defender, damage_range
@@ -1360,3 +1370,89 @@ class TestThePlanIsCachedUntilItDiverges(unittest.TestCase):
         snap = session.observe(step.action, step.tokens, item_code=step.item)
         self.assertFalse(snap["solution"]["replanned"])
         self.assertEqual(snap["solution"]["replans"], 1)
+
+
+class TestTheDangerFloorFollowsWhoIsOut(unittest.TestCase):
+    """clayton-957.10.17, reported from a live run: Ampharos took a hit, was marked "in range of
+    one hit", recovered to FULL HP through misses and Leftovers, and the marker never cleared.
+
+    It was never about Ampharos. `HuntSession` took `worst_incoming_hit` once from the configured
+    LEAD and used it as the threshold for everyone -- and the Ho-Oh plan leads with a sacrificial
+    Lv23 Natu, whose figure is 1584 against a maximum of 314.
+    """
+
+    HOOH = dict(name="Ho-Oh", level=70, types=("Fire", "Flying"),
+                stats={"hp": 250, "atk": 228, "def": 152, "spa": 153, "spd": 242, "spe": 152},
+                moves=("Sacred Fire", "Punishment", "Ancient Power", "Safeguard"),
+                pp=(5, 5, 5, 25), ability="Pressure")
+    NATU = dict(name="Adamant", level=23, types=("Psychic", "Flying"),
+                stats={"hp": 58, "atk": 37, "def": 26, "spa": 34, "spd": 31, "spe": 37},
+                moves=("Peck",), pp=(35,), ability="Synchronize", party_slot=1)
+    AMPHAROS = dict(name="Ampharos", level=94, types=("Electric",),
+                    stats={"hp": 314, "atk": 139, "def": 184, "spa": 339, "spd": 212,
+                           "spe": 145},
+                    moves=("Flash", "Light Screen"), pp=(20, 30), ability="Static",
+                    held_item="Leftovers", party_slot=4)
+
+    def setUp(self):
+        self.natu = Battler(**self.NATU)
+        self.ampharos = Battler(**self.AMPHAROS)
+        self.session = HuntSession(_window(4), self.natu, Battler(**self.HOOH), HUNT,
+                                   bench=(self.ampharos,))
+
+    def _with_out(self, mon):
+        self.session._session.states = {
+            seed: replace(state, ours=mon, bench=(self.natu,))
+            for seed, state in self.session._session.states.items()}
+        return self.session.snapshot()
+
+    def test_the_lead_really_is_in_danger(self):
+        """The figure is not wrong about Natu -- 1584 against 58 HP. It is wrong about everyone
+        else, which is why it has to be per-Pokemon rather than suppressed."""
+        snap = self.session.snapshot()
+        self.assertGreater(snap["danger_floor"], self.natu.max_hp)
+        self.assertTrue(snap["in_danger"])
+
+    def test_a_full_hp_ampharos_is_not(self):
+        """The reported case. 228 against 314."""
+        snap = self._with_out(self.ampharos)
+        self.assertEqual(snap["danger_floor"], 228)
+        self.assertFalse(snap["in_danger"])
+
+    def test_and_the_marker_clears_as_hp_comes_back(self):
+        """What the player watched fail: hurt, then recovered, with no healing item involved."""
+        self.assertTrue(self._with_out(self.ampharos.with_hp(150))["in_danger"])
+        self.assertTrue(self._with_out(self.ampharos.with_hp(228))["in_danger"])
+        self.assertFalse(self._with_out(self.ampharos.with_hp(229))["in_danger"])
+        self.assertFalse(self._with_out(self.ampharos.with_hp(314))["in_danger"])
+
+    def test_the_floor_moves_with_the_targets_stages_too(self):
+        """The other half of 957.10.5, now reachable: Intimidate and Charm roughly halve every
+        PHYSICAL hit, so the floor falls as the plan works the target down."""
+        self.session._session.states = {
+            seed: replace(state, ours=self.ampharos, bench=(self.natu,),
+                          target=replace(state.target, atk_stage=-5))
+            for seed, state in self.session._session.states.items()}
+        softened = self.session.snapshot()["danger_floor"]
+        self.assertLessEqual(softened, 228)
+
+    def test_the_display_and_the_solver_cannot_disagree(self):
+        """Both go through `danger_floor_for`, so there is one definition of the figure."""
+        from claytonlib.battle_compass.solver import danger_floor_for
+
+        self.session._session.states = {
+            seed: replace(state, ours=self.ampharos, bench=(self.natu,))
+            for seed, state in self.session._session.states.items()}
+        state = next(iter(self.session._session.states.values()))
+        self.assertEqual(self.session.snapshot()["danger_floor"],
+                         danger_floor_for(state, self.session.solver_config))
+
+    def test_a_caller_can_still_pin_a_minimum(self):
+        """The lower bound is a feature for a deliberate caller -- it was only wrong as a default
+        filled in from the lead."""
+        from claytonlib.battle_compass.solver import SolverConfig
+
+        pinned = HuntSession(_window(4), self.natu, Battler(**self.HOOH), HUNT,
+                             bench=(self.ampharos,),
+                             solver_config=SolverConfig(danger_floor=9999))
+        self.assertEqual(pinned.danger_floor, 9999)

@@ -48,7 +48,9 @@ from claytonlib.battle_compass.sim import (
     effective_speed, primary_stat_drop, secondary_description, secondary_status, simulate_turn,
     status_applied_by, variable_base_power, will_fail,
 )
-from claytonlib.battle_compass.solver import Solution, SolverConfig, Unreachable, solve
+from claytonlib.battle_compass.solver import (
+    Solution, SolverConfig, Unreachable, danger_floor_for, solve,
+)
 from claytonlib.battle_compass.state import Action, Battler, Status
 from claytonlib.moves import CATEGORY_STATUS, resolve_move
 
@@ -518,8 +520,15 @@ class HuntSession:
         self.target = target
         self.config = config
         self.capture_ball = capture_ball
-        self.danger_floor = worst_incoming_hit(ours, target)
-        self.solver_config = solver_config or SolverConfig(danger_floor=self.danger_floor)
+        # NOT `SolverConfig(danger_floor=...)`. The floor is per-Pokemon -- it reads the
+        # DEFENDER's Def and Sp. Def -- and per-stage, so a figure taken here describes the LEAD
+        # for the rest of the run. `SolverConfig.danger_floor` is a LOWER bound, so seeding it
+        # from the lead also silently defeated clayton-957.10.5's live recomputation:
+        # max(the lead's figure, the live one) never reaches the live one when the lead is the
+        # squishier Pokemon. With the shiny-seed plan's sacrificial Lv23 Natu leading that figure
+        # is 1584, against a 314 HP Ampharos (clayton-957.10.17). It stays a deliberate override
+        # for a caller that really does want a minimum.
+        self.solver_config = solver_config or SolverConfig()
         self.turns: list[TurnLog] = []
         #: Phase transitions as (turns taken before it, phase), in order. A list rather than a
         #: dict keyed by turn index because two transitions can share an index -- declaring 1 HP
@@ -635,6 +644,27 @@ class HuntSession:
         return self.snapshot()
 
     # -- read-only state ------------------------------------------------
+
+    @property
+    def danger_floor(self) -> int:
+        """The worst single hit the target can land **right now**, on whoever is out.
+
+        Derived, not stored. Two things move it and both move during an ordinary run: *who* is
+        out (it reads that Pokemon's Def and Sp. Def) and the target's Attack stages (Intimidate
+        and Charm roughly halve every physical hit, an Ancient Power proc raises them all).
+
+        Taken once at construction it described the lead forever -- and the Ho-Oh plan leads with
+        a sacrificial Lv23 Natu, whose figure is **1584**. Every party member was then reported as
+        one hit from fainting at full health for the whole run, which is what the player saw: a
+        marker that never cleared because it was never about the Pokemon it was next to.
+
+        Routed through the solver's own `danger_floor_for` so the display and the search cannot
+        disagree about it.
+        """
+        state = next(iter(self._session.states.values()), None)
+        if state is None:
+            return worst_incoming_hit(self.ours, self.target)
+        return danger_floor_for(state, self.solver_config)
 
     @property
     def phase(self) -> Phase:
@@ -1112,6 +1142,7 @@ class HuntSession:
         """
         state = next(iter(self._session.states.values()))
         we_first = effective_speed(state.ours) > effective_speed(state.target)
+        floor = danger_floor_for(state, self.solver_config)
         seed = self.identified
         # How the run ENDED, which the snapshot never said. Its absence is why the capture bug
         # was reachable at all: with no terminal flag the page had no reason to stop asking for
@@ -1244,8 +1275,11 @@ class HuntSession:
                            statused=state.ours.status is not Status.NONE)}
                       for i in items.ITEMS],
             "capture_ball": self.capture_ball,
-            "danger_floor": self.danger_floor,
-            "in_danger": state.ours.hp is not None and state.ours.hp <= self.danger_floor,
+            # Both describe whoever is out NOW, at the target's current stages -- see the
+            # `danger_floor` property. Computed once here rather than twice so the number the
+            # page prints and the flag it colours cannot disagree.
+            "danger_floor": floor,
+            "in_danger": state.ours.hp is not None and state.ours.hp <= floor,
             # The action column stays a CODE: `action_label` names a move from the currently
             # active Pokemon, so labelling a turn played before a switch would name the wrong
             # move, and the column pairs with `path` below, which is in codes anyway. `explain`
