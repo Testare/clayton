@@ -27,22 +27,21 @@ PARTY = {
 
 class TestTheFieldMoveCheck(unittest.TestCase):
     def test_a_party_with_neither_is_warned_about_both(self):
-        warnings = access_warnings("lugia", PARTY)
-        field = [w for w in warnings if "Surf" in w]
+        field = [w for w in access_warnings("lugia", PARTY) if "Surf" in w]
         self.assertEqual(len(field), 1)
         self.assertIn("Surf or Whirlpool", field[0])
         self.assertIn("Whirl Islands", field[0])
 
     def test_a_party_with_one_is_warned_about_the_other_only(self):
         party = dict(PARTY, Chatot=["Surf", "Sing", "Peck", "Mirror Move"])
-        field = [w for w in access_warnings("lugia", party) if "needs to reach" in w]
+        field = [w for w in access_warnings("lugia", party) if "Nothing knows" in w]
         self.assertEqual(len(field), 1)
         self.assertIn("Whirlpool", field[0])
         self.assertNotIn("Surf or", field[0])
 
     def test_a_party_with_both_gets_no_field_move_warning(self):
         party = dict(PARTY, Lapras=["Surf", "Whirlpool", "Ice Beam", "Strength"])
-        self.assertEqual([w for w in access_warnings("lugia", party) if "needs to reach" in w],
+        self.assertEqual([w for w in access_warnings("lugia", party) if "Nothing knows" in w],
                          [])
 
     def test_the_two_can_be_split_across_two_pokemon(self):
@@ -50,17 +49,17 @@ class TestTheFieldMoveCheck(unittest.TestCase):
         party = dict(PARTY,
                      Chatot=["Surf", "Sing", "Peck", "Mirror Move"],
                      Lapras=["Whirlpool", "Ice Beam", "Body Slam", "Rest"])
-        self.assertEqual([w for w in access_warnings("lugia", party) if "needs to reach" in w],
+        self.assertEqual([w for w in access_warnings("lugia", party) if "Nothing knows" in w],
                          [])
 
     def test_spelling_and_case_do_not_matter(self):
         party = dict(PARTY, Lapras=["  surf  ", "WHIRLPOOL", "", "Rest"])
-        self.assertEqual([w for w in access_warnings("lugia", party) if "needs to reach" in w],
+        self.assertEqual([w for w in access_warnings("lugia", party) if "Nothing knows" in w],
                          [])
 
     def test_an_empty_party_still_reports_the_requirement(self):
         """The most useful moment to be told is BEFORE the party is picked."""
-        field = [w for w in access_warnings("lugia", {}) if "needs to reach" in w]
+        field = [w for w in access_warnings("lugia", {}) if "Nothing knows" in w]
         self.assertEqual(len(field), 1)
 
 
@@ -168,14 +167,14 @@ class TestTheReasonDistinguishesDamageFromStatus(unittest.TestCase):
     def test_a_damaging_move_says_the_stream_desynchronises(self):
         (_, why), = unsupported_our_moves(["Whirlpool"])
         self.assertIn("plain damage", why)
-        self.assertIn("desynchronise", why)
-        self.assertNotIn("changed nothing", why)
+        self.assertIn("desynchronising", why)
+        self.assertNotIn("doing nothing", why)
 
     def test_a_status_move_still_says_it_changed_nothing(self):
         defog = resolve_move("Defog")
         self.assertEqual(defog.category, CATEGORY_STATUS)
         (_, why), = unsupported_our_moves(["Defog"])
-        self.assertIn("changed nothing", why)
+        self.assertIn("doing nothing", why)
 
     def test_a_move_that_is_not_in_the_table_is_reported_separately(self):
         (name, why), = unsupported_our_moves(["Hyperspace Fury"])
@@ -358,22 +357,21 @@ class TestTheSlotArithmetic(unittest.TestCase):
         return {name: ["Tackle"] for name in names}
 
     def test_a_full_party_is_told_something_must_make_room(self):
-        (warning,) = access_warnings("lugia", self._party(6))
-        self.assertIn("All 6 are listed", warning)
-        self.assertIn("make room", warning)
+        advice = access_warnings("lugia", self._party(6))[-1]
+        self.assertIn("All 6 are listed", advice)
+        self.assertIn("make room", advice)
 
     def test_a_partial_party_is_NOT_told_to_drop_anybody(self):
         for n in (1, 3, 4, 5):
             with self.subTest(configured=n):
-                (warning,) = access_warnings("lugia", self._party(n))
-                self.assertIn(f"lists {n} of 6", warning)
-                self.assertIn("without displacing anything", warning)
-                self.assertNotIn("make room", warning)
-                self.assertNotIn("dropping", warning)
+                advice = access_warnings("lugia", self._party(n))[-1]
+                self.assertIn(f"{n} of 6 listed", advice)
+                self.assertIn("Room for one", advice)
+                self.assertNotIn("make room", advice)
+                self.assertNotIn("dropping", advice)
 
     def test_the_four_member_case_from_the_report(self):
-        (warning,) = access_warnings("lugia", self._party(4))
-        self.assertIn("This hunt lists 4 of 6", warning)
+        self.assertIn("4 of 6 listed", access_warnings("lugia", self._party(4))[-1])
 
     def test_an_unconfigured_hunt_does_no_arithmetic_at_all(self):
         """Zero of six is not a useful sentence -- the requirement is the whole message there."""
@@ -382,12 +380,21 @@ class TestTheSlotArithmetic(unittest.TestCase):
         self.assertNotIn("make room", warning)
         self.assertIn("Surf or Whirlpool", warning)
 
+    def test_the_room_note_is_suppressed_when_somebody_could_learn_it(self):
+        """"Room for one more" answers a question nobody asked when the fix is to teach a move
+        to a Pokemon that is already here."""
+        party = dict(self._party(4), Gyarados=["Waterfall"])
+        species_map = {name: "natu" for name in self._party(4)} | {"Gyarados": "gyarados"}
+        advice = access_warnings("lugia", party, species_map)[-1]
+        self.assertIn("Can learn: Gyarados", advice)
+        self.assertNotIn("Room for one", advice)
+
     def test_the_carrier_note_no_longer_repeats_the_slot_advice(self):
         """It said "dropping one of the six" too, so a four-member hunt got it wrong twice."""
         species_map = {name: "natu" for name in self._party(4)}
-        (warning,) = access_warnings("lugia", self._party(4), species_map)
-        self.assertIn("not carrying yet", warning)
-        self.assertNotIn("one of the six", warning)
+        advice = access_warnings("lugia", self._party(4), species_map)[-1]
+        self.assertIn("None of your party can learn", advice)
+        self.assertNotIn("one of the six", advice)
 
     def test_party_size_is_a_named_constant(self):
         from claytonlib.battle_compass.targets import PARTY_SIZE

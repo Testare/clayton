@@ -42,7 +42,7 @@ def _smeargle():
 class TestTheWeatherIsNamed(unittest.TestCase):
     def test_the_rain_boosted_case_says_so(self):
         (warning,) = survivability_warnings([_smeargle()], _lugia())
-        self.assertIn("Hydro Pump under its own rain", warning)
+        self.assertIn("Hydro Pump in its own rain", warning)
         self.assertIn("172", warning)
 
     def test_the_two_figures_really_do_differ_enough_to_matter(self):
@@ -76,7 +76,7 @@ class TestTheWeatherIsNamed(unittest.TestCase):
             [Battler(name="Paper", level=5, types=("Normal",),
                      stats={"hp": 12, "atk": 5, "def": 5, "spa": 5, "spd": 5, "spe": 5})],
             no_rain)
-        self.assertNotIn("under its own", warning)
+        self.assertNotIn("in its own", warning)
 
 
 class TestItNoLongerClaimsTheSolverRefuses(unittest.TestCase):
@@ -87,14 +87,21 @@ class TestItNoLongerClaimsTheSolverRefuses(unittest.TestCase):
 
     def test_it_says_what_the_solver_actually_does(self):
         (warning,) = survivability_warnings([_smeargle()], _lugia())
-        self.assertIn("computes exactly which actions faint you", warning)
-        self.assertIn("routing around the crit", warning)
+        self.assertIn("avoids lethal turns", warning)
 
     def test_and_names_the_real_cost(self):
         """Not "it will not play" but "you cannot heal out of range" -- which is true and is the
         thing the player can act on."""
         (warning,) = survivability_warnings([_smeargle()], _lugia())
-        self.assertIn("heal out of range", warning)
+        self.assertIn("cannot heal out of range", warning)
+
+    def test_it_fits_on_one_line(self):
+        """These are read on every readiness check. The first version of this message ran to 457
+        characters of explanation, which trains the reader to skip the panel -- the reasoning
+        lives in the docstring now and the warning states the fact."""
+        for warning in survivability_warnings([_smeargle()], _lugia()):
+            with self.subTest(warning=warning[:40]):
+                self.assertLess(len(warning), 160, warning)
 
     def test_the_solver_has_no_in_danger_collapse_to_describe(self):
         """The claim the message used to make, asserted against the code rather than trusted:

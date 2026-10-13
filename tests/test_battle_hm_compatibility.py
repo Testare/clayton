@@ -99,61 +99,55 @@ class TestTheThreeValuedAnswer(unittest.TestCase):
 class TestTheWarningBecomesActionable(unittest.TestCase):
     def test_the_lugia_party_is_told_that_nobody_can_carry_it(self):
         """The finding that justifies the whole import."""
-        field = [w for w in access_warnings("lugia", PARTY, SPECIES) if "needs to reach" in w]
-        self.assertEqual(len(field), 1)
-        self.assertIn("None of your current party can learn either move", field[0])
-        self.assertIn("not carrying yet", field[0])
-        # The slot advice lives in `_room_note` now and is computed from how many are actually
-        # configured -- five here, so nothing has to be dropped.
-        self.assertIn("lists 5 of 6", field[0])
+        advice = access_warnings("lugia", PARTY, SPECIES)[-1]
+        self.assertIn("None of your party can learn either move", advice)
+        # The slot advice is computed from how many are actually configured -- five here, so
+        # nothing has to be dropped.
+        self.assertIn("5 of 6 listed", advice)
 
     def test_a_capable_party_member_is_named_instead(self):
         party = dict(PARTY, Gyarados=["Waterfall"])
         species_map = dict(SPECIES, Gyarados="gyarados")
-        field = [w for w in access_warnings("lugia", party, species_map)
-                 if "needs to reach" in w][0]
-        self.assertIn("Able to learn: Gyarados (Surf and Whirlpool)", field)
-        self.assertNotIn("None of your current party", field)
+        advice = access_warnings("lugia", party, species_map)[-1]
+        self.assertIn("Can learn: Gyarados (Surf and Whirlpool)", advice)
+        self.assertNotIn("None of your party", advice)
 
     def test_the_conjunction_is_AND_for_what_a_carrier_covers(self):
         """"Gyarados (Surf or Whirlpool)" would read as a choice and imply a second carrier is
         still needed."""
         party = dict(PARTY, Gyarados=["Waterfall"])
         species_map = dict(SPECIES, Gyarados="gyarados")
-        field = [w for w in access_warnings("lugia", party, species_map)
-                 if "needs to reach" in w][0]
-        self.assertIn("Surf and Whirlpool", field)
-        self.assertIn("knows Surf or Whirlpool", field)      # the missing list stays a disjunction
+        warnings = access_warnings("lugia", party, species_map)
+        self.assertIn("Surf and Whirlpool", warnings[-1])
+        # The missing list stays a disjunction.
+        self.assertIn("Nothing knows Surf or Whirlpool", warnings[0])
 
     def test_an_unrecorded_species_makes_it_stay_SILENT(self):
         """Not "nobody can" -- that would send a player to catch a Pokemon they already own."""
         party = dict(PARTY, Tentacruel=["Cut"])
         species_map = dict(SPECIES, Tentacruel="tentacruel")
-        field = [w for w in access_warnings("lugia", party, species_map)
-                 if "needs to reach" in w][0]
-        self.assertNotIn("None of your current party", field)
-        self.assertNotIn("Able to learn", field)
+        joined = " ".join(access_warnings("lugia", party, species_map))
+        self.assertNotIn("None of your party", joined)
+        self.assertNotIn("Can learn", joined)
 
     def test_a_blank_species_also_makes_it_silent(self):
         party = dict(PARTY, Mystery=["Tackle"])
         species_map = dict(SPECIES, Mystery="")
-        field = [w for w in access_warnings("lugia", party, species_map)
-                 if "needs to reach" in w][0]
-        self.assertNotIn("None of your current party", field)
+        joined = " ".join(access_warnings("lugia", party, species_map))
+        self.assertNotIn("None of your party", joined)
 
     def test_omitting_the_species_map_keeps_the_original_behaviour(self):
-        field = [w for w in access_warnings("lugia", PARTY) if "needs to reach" in w][0]
-        self.assertNotIn("Able to learn", field)
-        self.assertNotIn("None of your current party", field)
+        joined = " ".join(access_warnings("lugia", PARTY))
+        self.assertNotIn("Can learn", joined)
+        self.assertNotIn("None of your party", joined)
 
     def test_only_the_MISSING_move_is_suggested_for(self):
         """With Surf already covered, the suggestion must be about Whirlpool alone."""
         party = dict(PARTY, Chatot=["Surf"], Gyarados=["Waterfall"])
         species_map = dict(SPECIES, Gyarados="gyarados")
-        field = [w for w in access_warnings("lugia", party, species_map)
-                 if "needs to reach" in w][0]
-        self.assertIn("knows Whirlpool", field)
-        self.assertIn("Able to learn: Gyarados (Whirlpool)", field)
+        warnings = access_warnings("lugia", party, species_map)
+        self.assertIn("Nothing knows Whirlpool", warnings[0])
+        self.assertIn("Can learn: Gyarados (Whirlpool)", warnings[-1])
 
 
 if __name__ == "__main__":

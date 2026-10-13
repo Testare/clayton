@@ -108,11 +108,18 @@ class TestSpeedChecks(unittest.TestCase):
         self.assertIn("desynchronise", warnings[0])
 
     def test_the_lv17_magnemite_margin_of_one_is_flagged_as_fragile(self):
-        """The case sec 11.4 caught: 22 vs a paralyzed Suicune's 21."""
+        """The case sec 11.4 caught: 22 vs a paralyzed Suicune's 21.
+
+        Asserted on the figures rather than the phrasing -- this looked for the literal
+        "within 1" and broke when the messages were shortened. The claim is that a margin of one
+        is reported with both Speeds, not how the sentence is worded.
+        """
         warnings = speed_warnings(speed_checks({"Magnemite": 22}, 85,
                                                include_our_paralysis=False))
         self.assertEqual(len(warnings), 1)
-        self.assertIn("within 1", warnings[0])
+        self.assertIn("Magnemite", warnings[0])
+        self.assertIn("22 vs 21", warnings[0])
+        self.assertIn("tie or reverse", warnings[0])
 
     def test_ties_are_listed_before_merely_fragile_margins(self):
         checks = speed_checks({"Tied": 21, "Close": 22}, 85, include_our_paralysis=False)

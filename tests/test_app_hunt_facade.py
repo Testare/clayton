@@ -282,7 +282,7 @@ class TestHuntAccess(HuntFacadeCase):
 
     def test_a_lugia_hunt_warns_that_nobody_can_get_there(self):
         readiness = self.api.hunt_readiness(self._lugia_hunt()["id"])
-        field = [w for w in readiness["access"] if "needs to reach" in w]
+        field = [w for w in readiness["access"] if "Nothing knows" in w]
         self.assertEqual(len(field), 1)
         self.assertIn("Surf or Whirlpool", field[0])
         self.assertIn("Whirl Islands", field[0])
@@ -311,7 +311,9 @@ class TestHuntAccess(HuntFacadeCase):
         """The most useful moment to hear "you will need Surf and Whirlpool"."""
         hunt = self._lugia_hunt(party=[])
         readiness = self.api.hunt_readiness(hunt["id"])
-        self.assertEqual(len([w for w in readiness["access"] if "needs to reach" in w]), 1)
+        self.assertEqual([w for w in readiness["access"] if "Nothing knows" in w and "of 6" in w],
+                         [], "an unconfigured hunt does no slot arithmetic")
+        self.assertEqual(len([w for w in readiness["access"] if "Nothing knows" in w]), 1)
 
     def test_surf_and_whirlpool_report_differently_in_move_coverage(self):
         """Surf is inert here (effect 257 is the Dive mirror of Gust's 149) and Whirlpool is
@@ -327,4 +329,4 @@ class TestHuntAccess(HuntFacadeCase):
         self.assertNotIn("Waterfall", flagged)
         self.assertIn("Whirlpool", flagged)
         self.assertEqual(flagged["Whirlpool"]["pokemon"], "Lapras")
-        self.assertIn("desynchronise", flagged["Whirlpool"]["reason"])
+        self.assertIn("desynchronising", flagged["Whirlpool"]["reason"])

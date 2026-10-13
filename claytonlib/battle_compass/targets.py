@@ -167,11 +167,16 @@ def access_warnings(species: str, movesets: dict[str, list[str]],
     missing = [name for name in access.field_moves if name.lower() not in known]
     if missing:
         out.append(
-            f"No party Pokemon knows {_join(missing)}, which {access.where} needs to reach "
-            f"{species.capitalize()}. The party you arrive with is the party you fight with -- "
-            f"there is no PC down there -- so the carrier has to come in with you."
-            + _room_note(len(movesets))
-            + _carrier_note(missing, party_species, len(movesets)))
+            f"Nothing knows {_join(missing)}, which {access.where} needs. The carrier has to "
+            f"travel with you \u2014 there is no PC down there.")
+        carrier = _carrier_note(missing, party_species)
+        # The room note only matters when a NEW Pokemon is needed. If somebody already in the
+        # party can learn the move, the fix is to teach it -- "room for one more" would be
+        # answering a question nobody asked.
+        room = "" if (carrier.startswith("Can learn")) else _room_note(len(movesets))
+        note = (carrier + room).strip()
+        if note:
+            out.append(note)
     return out
 
 
@@ -193,9 +198,8 @@ def _room_note(configured: int) -> str:
     if configured == 0:
         return ""
     if configured < PARTY_SIZE:
-        return (f" This hunt lists {configured} of {PARTY_SIZE}, so one can come along without "
-                f"displacing anything.")
-    return f" All {PARTY_SIZE} are listed, so one of them has to make room."
+        return f" Room for one: {configured} of {PARTY_SIZE} listed."
+    return f" All {PARTY_SIZE} are listed, so one has to make room."
 
 
 def _carrier_note(missing: list[str], party_species: dict[str, str] | None,
@@ -230,15 +234,14 @@ def _carrier_note(missing: list[str], party_species: dict[str, str] | None,
 
     if able:
         listed = "; ".join(f"{who} ({_join(moves, 'and')})" for who, moves in sorted(able.items()))
-        return f" Able to learn: {listed}."
+        return f"Can learn: {listed}."
     if unknown:
         return ""
     which = "either move" if len(missing) == 2 else (
         _join(missing) if len(missing) == 1 else "any of them")
-    # No "dropping one of the six" here either: `_room_note` has already said whether anything
-    # has to make room, and saying it twice got it wrong twice for a four-member hunt.
-    return (f" **None of your current party can learn {which}**, so this needs a Pokemon you are "
-            f"not carrying yet.")
+    # No slot advice here: `_room_note` says whether anything has to make room, and saying it
+    # twice got it wrong twice for a four-member hunt.
+    return f"None of your party can learn {which}."
 
 
 def _join(names: list[str], conjunction: str = "or") -> str:

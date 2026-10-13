@@ -189,7 +189,7 @@ class TestOurMoveCoverageIsCheckedAtAll(unittest.TestCase):
         name, why = problems[0]
         self.assertEqual(name, "Belly Drum")
         self.assertIn(str(resolve_move("Belly Drum").effect), why)
-        self.assertIn("changed nothing", why, "Belly Drum is a status move")
+        self.assertIn("doing nothing", why, "Belly Drum is a status move")
 
     def test_every_table_entry_resolves_to_a_real_effect(self):
         """Guards against a typo'd effect id silently covering nothing."""

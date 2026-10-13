@@ -6387,9 +6387,8 @@ function huntReadinessPanel(r){
     ? `<div class="field"><label>Move coverage</label>
         ${coverage.map(c => `<div class="notice warn">
           <b>${esc(c.pokemon)}</b> · ${esc(c.move)} — ${esc(c.reason)}</div>`).join("")}
-        <div class="hr-small muted">Carrying one of these is fine — a Surf/Whirlpool mule is the
-          only way to reach some encounters. You will not be able to <i>select</i> it during the
-          run, and the solver will not plan it.</div></div>`
+        <div class="hr-small muted">Carrying these is fine — you just cannot select them during
+          the run, and the solver will not plan them.</div></div>`
     : "";
   // Held items. A misconfigured one SHOULD desync the run -- the simulator is right once told,
   // and the only way to tell it is this field. What was missing is hearing about it before the
@@ -6397,8 +6396,8 @@ function huntReadinessPanel(r){
   const heldItems = items.length
     ? `<div class="field"><label>Held items</label>
         ${items.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}
-        <div class="hr-small muted">Advisory — none of these stops a run. Held items are per
-          hunt, so they are set next to each Pokémon in the party table above.</div></div>`
+        <div class="hr-small muted">Advisory. Held items are per hunt — set them in the party
+          table above.</div></div>`
     : "";
   // Also computed since `hunt_readiness` was written and never shown. Last, because it is the
   // one that is usually a risk to accept knowingly rather than a thing to fix.

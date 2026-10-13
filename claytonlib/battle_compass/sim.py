@@ -176,8 +176,7 @@ def unselectable_reason(move: Move) -> str | None:
     (notes/seed_separation.md), so refusing it would cost the run information rather than save it.
     """
     if move.effect in RUN_ENDING_EFFECTS:
-        return (f"{move.name} would end the battle with the target uncaught, so there would be "
-                f"no turn to report.")
+        return f"{move.name} would end the battle with the target uncaught."
     if move.effect not in MODELLED_OUR_EFFECTS:
         # The two failure modes are different, and saying "changed nothing" for a damaging move
         # was both wrong and reassuring in the wrong direction. An unknown STATUS move is treated
@@ -185,12 +184,10 @@ def unselectable_reason(move: Move) -> str | None:
         # as plain damage, which is not -- any extra roll the real move spends (a trap duration,
         # a charge turn) desynchronises the stream from that turn on, and any residual it leaves
         # keeps the predicted HP wrong forever.
-        return (f"The simulator cannot model {move.name} (effect {move.effect}), so it would be "
-                + ("treated as plain damage -- any extra roll or residual the real move has "
-                   "would desynchronise the stream from this turn on and eliminate the true seed."
+        return (f"{move.name} (effect {move.effect}) is not modelled: it would simulate as "
+                + ("plain damage, desynchronising the run."
                    if move.category != CATEGORY_STATUS else
-                   "treated as having worked and changed nothing, and a turn using it would "
-                   "mis-predict every candidate."))
+                   "doing nothing, mis-predicting the turn."))
     return None
 
 

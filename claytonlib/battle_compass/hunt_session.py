@@ -166,6 +166,11 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
     Advisory in all three cases. A Pokemon that cannot survive the worst hit is still the right
     one to bring most turns, because the worst hit needs a 1/4 move choice and a 1/16 crit, and
     `Flash` can cut the hit chance to a third on top of that.
+
+    **Kept to one line each.** These are read on every readiness check, and the reasoning behind
+    them belongs here rather than in the panel -- a warning that takes a paragraph to make its
+    point trains the reader to skip the whole section, which costs more than the detail adds.
+    What the solver does with a lethal hit is explained in `solver._legal_actions`.
     """
     out: list[str] = []
     for mon in party:
@@ -176,17 +181,12 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
         move = _worst_move_name(mon, target)
         if now >= mon.max_hp:
             out.append(
-                f"Nothing can keep {mon.name} alive through a critical {move}: it does up to "
-                f"{now} against {mon.max_hp} HP. The solver still plans normally -- in Phase 2 "
-                f"the seed is identified, so it computes exactly which actions faint you on this "
-                f"stream and discards those, routing around the crit rather than refusing to "
-                f"throw. What this costs you is the ability to heal out of range of it, so the "
-                f"risk is the turns where the stream leaves no safe action at all.")
+                f"{mon.name} ({mon.max_hp} HP) dies to a critical {move}, up to {now}. The "
+                f"solver avoids lethal turns but cannot heal out of range.")
         elif boosted >= mon.max_hp:
             out.append(
-                f"{mon.name} survives a critical {move} now ({now} against {mon.max_hp} HP) but "
-                f"not once the target has boosted: {boosted} at the highest stage its Ancient "
-                f"Power can reach.")
+                f"{mon.name} ({mon.max_hp} HP) survives a critical {move} at {now} now, but "
+                f"{boosted} once the target has boosted.")
     return out
 
 
@@ -224,9 +224,9 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
             if high > best:
                 best, name, worst_weather = high, move.name, weather
     if worst_weather == WEATHER_RAIN:
-        return f"{name} under its own rain"
+        return f"{name} in its own rain"
     if worst_weather == WEATHER_SUN:
-        return f"{name} under its own sun"
+        return f"{name} in its own sun"
     return name
 
 

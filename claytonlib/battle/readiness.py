@@ -99,13 +99,15 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
 #: a Quick Claw silently re-orders a turn and poisons everything after it. The measured version
 #: of that distinction is in clayton-957.10.15: removing the Choice Scarf from the hooh1 party
 #: left 56 of 57 turns wrong, against 11 for the Silk Scarf and 2 for Leftovers.
+#: Each value is a short verb phrase that reads inside "it ..." -- the message is one line, so
+#: the "how" has to fit in a clause rather than a sentence of its own.
 HAZARDOUS_UNMODELLED_ITEMS: dict[str, str] = {item_key(k): v for k, v in {
-    "Quick Claw": "randomly gives the holder priority -- it flips turn order AND spends a roll",
-    "King's Rock": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
-    "Razor Fang": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
-    "Scope Lens": "raises the holder's crit stage -- the wrong crit modulus on every hit",
-    "Razor Claw": "raises the holder's crit stage -- the wrong crit modulus on every hit",
-    "Zoom Lens": "raises accuracy when the holder moves second, which is state-dependent",
+    "Quick Claw": "flips turn order and spends a roll",
+    "King's Rock": "adds a flinch roll to every hit",
+    "Razor Fang": "adds a flinch roll to every hit",
+    "Scope Lens": "changes the crit modulus on every hit",
+    "Razor Claw": "changes the crit modulus on every hit",
+    "Zoom Lens": "changes accuracy depending on turn order",
 }.items()}
 
 
@@ -121,30 +123,26 @@ def unmodelled_held_items(party: dict[str, str]) -> list[str]:
     So this never blocks. A player who knows their Expert Belt is irrelevant to a False Swipe
     must be able to carry it and start.
 
-    An EMPTY item is reported too, and deliberately: all three of the hooh1 party's items had to
-    be inferred from the logs afterwards, because held items live on the hunt's party slot and
-    the profile export carries none of them. "You left this blank" and "I cannot model this" are
-    different sentences, so they are phrased differently.
+    **An empty item is NOT reported.** An earlier version did, on the reasoning that all three of
+    the hooh1 party's items had to be inferred from the logs afterwards -- held items live on the
+    hunt's party slot and the profile export carries none of them. But holding nothing is the
+    common case, not a suspicious one, so that fired on most of the party on every readiness
+    check: noise that trains the reader to skip the whole panel, which costs more than the rare
+    forgotten Leftovers it would have caught. A warning has to earn its line.
     """
     allowed = frozenset().union(*MODELLED_HELD_ITEMS.values())
     out: list[str] = []
     for name, item in party.items():
         key = item_key(item or "")
-        if not key:
-            out.append(f"{name} has no held item recorded. If it is actually holding something, "
-                       f"the simulation will be wrong from the first turn the item matters -- "
-                       f"and if it is holding nothing, this is correct and can be ignored.")
-            continue
-        if key in allowed:
+        if not key or key in allowed:
             continue
         hazard = HAZARDOUS_UNMODELLED_ITEMS.get(key)
         if hazard is not None:
-            out.append(f"{name}'s {item} is NOT modelled, and it is the dangerous kind: it "
-                       f"{hazard}. Nothing would match for the rest of the run, and the "
-                       f"contradiction would blame the candidate window. Take it off.")
+            out.append(f"Take {name}'s {item} off: it {hazard}, so nothing would match after "
+                       f"it fires.")
         else:
-            out.append(f"{name}'s {item} is not modelled. If it changes anything in battle, the "
-                       f"turn it fires on will contradict. Harmless if it is inert here.")
+            out.append(f"{name}'s {item} is not modelled — harmless if inert, otherwise the "
+                       f"turn it fires on contradicts.")
     return out
 
 
@@ -319,30 +317,35 @@ def speed_checks(our_speeds: dict[str, int], target_speed: int, *,
 
 
 def speed_warnings(checks: list[SpeedCheck]) -> list[str]:
-    """Human-readable problems: ties first, then fragile margins."""
+    """Human-readable problems: ties first, then fragile margins.
+
+    One line each. Why a tie is fatal rather than merely untidy is in this module's docstring and
+    notes/ss_rng/speed.md; the panel only has room to say that it is.
+    """
     messages = []
     for check in checks:
         if check.is_tie:
             messages.append(
-                f"{check.ours} ties the target's Speed when it is {check.target_state} "
-                f"(both {check.our_speed}). A tie spends extra RNG rolls that are not "
-                f"simulated, so the run would desynchronise — change a Speed stat."
+                f"{check.ours} ties the target's Speed at {check.our_speed} "
+                f"({check.target_state}) — a tie desynchronises the run. Change a Speed stat."
                 + _boost_note(check))
     for check in checks:
         if check.is_fragile:
             messages.append(
-                f"{check.ours} is within {abs(check.margin)} of the target's Speed when it is "
-                f"{check.target_state} ({check.our_speed} vs {check.target_speed}). One stat "
-                f"point either way would tie or reverse the order."
-                + _boost_note(check))
+                f"{check.ours} is {abs(check.margin)} from the target's Speed "
+                f"({check.our_speed} vs {check.target_speed}, {check.target_state}) — one stat "
+                f"point would tie or reverse it." + _boost_note(check))
     return messages
 
 
 def _boost_note(check: SpeedCheck) -> str:
-    """Where a boosted row came from, so it does not read as an arbitrary hypothetical."""
+    """Where a boosted row came from, so it does not read as an arbitrary hypothetical.
+
+    A clause, not a sentence: the unboosted rows are the common case and these are the ones a
+    reader scrolls past, so the qualifier has to be short enough not to bury the figure.
+    """
     if check.target_speed_stage == 0:
         return ""
-    extra = (" At +6 the boost cancels the quartering exactly, putting it back at full Speed."
-             if check.target_speed_stage == 6 else "")
-    return (f" This assumes the target has reached +{check.target_speed_stage} Speed, which its "
-            f"Ancient Power can do one stage at a time (10% per use).{extra}")
+    if check.target_speed_stage == 6:
+        return " (at +6 Speed, where the boost cancels paralysis exactly)"
+    return f" (at +{check.target_speed_stage} Speed, reachable via Ancient Power)"

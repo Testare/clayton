@@ -84,38 +84,46 @@ class TestTheWarnings(unittest.TestCase):
         self.assertIn("Chatot", warning)
         self.assertIn("Quick Claw", warning)
         self.assertIn("flips turn order", warning)
-        self.assertIn("Take it off", warning)
+        self.assertTrue(warning.startswith("Take "), warning)
 
     def test_an_ordinary_unmodelled_item_is_reported_more_gently(self):
         (warning,) = unmodelled_held_items({"Natu": "Life Orb"})
         self.assertIn("Life Orb", warning)
         self.assertIn("not modelled", warning)
-        self.assertNotIn("Take it off", warning)
-        self.assertIn("Harmless if it is inert", warning)
+        self.assertFalse(warning.startswith("Take "))
+        self.assertIn("harmless if inert", warning)
 
-    def test_a_blank_item_is_reported_as_its_own_case(self):
-        """All three hooh1 items had to be inferred from the logs afterwards, because held items
-        live on the hunt's party slot and the profile export carries none. "You left this blank"
-        and "I cannot model this" are different sentences."""
-        (warning,) = unmodelled_held_items({"Tentacruel": ""})
-        self.assertIn("no held item recorded", warning)
-        self.assertIn("can be ignored", warning, "an empty slot is often simply correct")
+    def test_a_blank_item_is_SILENT(self):
+        """Holding nothing is the common case, not a suspicious one.
+
+        An earlier version warned here, reasoning that all three hooh1 items had to be inferred
+        from the logs afterwards. But it then fired on most of the party on every readiness
+        check, and noise that trains the reader to skip the panel costs more than the rare
+        forgotten Leftovers it catches.
+        """
+        for blank in ("", "   ", None):
+            with self.subTest(blank=blank):
+                self.assertEqual(unmodelled_held_items({"Tentacruel": blank}), [])
+
+    def test_a_whole_party_holding_nothing_produces_no_warnings_at_all(self):
+        self.assertEqual(
+            unmodelled_held_items({n: "" for n in ("Natu", "Magneton", "Ampharos")}), [])
 
     def test_case_and_whitespace_do_not_matter(self):
         self.assertEqual(unmodelled_held_items({"A": "  SILK SCARF "}), [])
 
     def test_the_name_of_the_holder_is_always_in_the_message(self):
         """Six party members and one warning is useless without it."""
-        for item in ("Quick Claw", "Life Orb", ""):
+        for item in ("Quick Claw", "Life Orb"):
             with self.subTest(item=item):
                 (warning,) = unmodelled_held_items({"Tentacruel": item})
-                self.assertTrue(warning.startswith("Tentacruel"), warning)
+                self.assertIn("Tentacruel", warning)
 
     def test_every_hazardous_item_produces_the_harsher_message(self):
         for item in HAZARDOUS_UNMODELLED_ITEMS:
             with self.subTest(item):
                 (warning,) = unmodelled_held_items({"X": item})
-                self.assertIn("dangerous kind", warning)
+                self.assertTrue(warning.startswith("Take X's "), warning)
 
     def test_an_empty_party_is_silent_rather_than_an_error(self):
         self.assertEqual(unmodelled_held_items({}), [])
@@ -179,7 +187,7 @@ class TestSpellingTolerance(unittest.TestCase):
         for spelling in ("King's Rock", "Kings Rock", "kings rock", "KINGSROCK"):
             with self.subTest(spelling):
                 (warning,) = unmodelled_held_items({"X": spelling})
-                self.assertIn("dangerous kind", warning,
+                self.assertIn("flinch roll", warning,
                               f"{spelling!r} should be recognised as hazardous")
 
     def test_the_type_enhancing_items_too(self):
