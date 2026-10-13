@@ -193,9 +193,25 @@ class TestHuntReadiness(HuntFacadeCase):
         errors = self.api.hunt_readiness(hunt["id"])["hard_errors"]
         self.assertTrue(any("no longer on the profile" in e for e in errors))
 
-    def test_our_own_paralysis_is_included_in_the_speed_checks(self):
+    def test_our_own_paralysis_is_included_only_when_the_target_can_inflict_it(self):
+        """Suicune cannot paralyze -- Rain Dance / Gust / Aurora Beam / Mist, and Pressure
+        rather than Static -- so those rows are a state the player cannot reach. They used to
+        appear for every target because `include_our_paralysis` defaulted on and nothing derived
+        it (clayton-36b), which halved the table's signal.
+        """
         readiness = self.api.hunt_readiness(self._hunt()["id"])
         labels = {c["ours"] for c in readiness["speed"]["checks"]}
+        self.assertNotIn("Smeargle (paralyzed)", labels)
+        self.assertIn("Smeargle", labels)
+
+    def test_and_they_come_back_against_a_target_that_CAN(self):
+        """Asserted through `speed_checks` rather than a hunt, because no configured target has
+        a paralysing move yet -- effect 6 is in MODELLED_OUR_EFFECTS only, so a Dragon Breath
+        target is still refused. The roamer Lati twins are what will need this."""
+        from claytonlib.battle.readiness import speed_checks
+
+        labels = {c.ours for c in speed_checks({"Smeargle": 160}, 80,
+                                               include_our_paralysis=True)}
         self.assertIn("Smeargle (paralyzed)", labels)
 
     def test_every_party_member_is_speed_checked_not_only_the_lead(self):
@@ -206,7 +222,6 @@ class TestHuntReadiness(HuntFacadeCase):
         labels = {c["ours"] for c in readiness["speed"]["checks"]}
         self.assertIn("Magneton", labels)
         self.assertIn("Smeargle", labels)
-        self.assertIn("Magneton (paralyzed)", labels)
 
     def test_an_unknown_target_species_is_reported_not_raised(self):
         hunt = self._hunt(target={"species": "missingno", "level": 40, "nature": "Bold",
@@ -330,3 +345,33 @@ class TestHuntAccess(HuntFacadeCase):
         self.assertIn("Whirlpool", flagged)
         self.assertEqual(flagged["Whirlpool"]["pokemon"], "Lapras")
         self.assertIn("desynchronising", flagged["Whirlpool"]["reason"])
+
+
+class TestTheSnapshotCarriesTheSpreadInputs(HuntFacadeCase):
+    """clayton-1jd: the popup shows derived stats, so it needs what they were derived from."""
+
+    def test_the_hunts_configured_nature_and_ivs_reach_the_snapshot(self):
+        snap = self.api.hunt_session_start(self._hunt()["id"])["snapshot"]
+        self.assertEqual(snap["target"]["nature"], "Bold")
+        self.assertEqual(snap["target"]["ivs"], dict(PERFECT_IVS))
+
+    def test_a_run_OVERRIDE_is_what_gets_shown(self):
+        """Not the hunt's stored spread: the popup has to describe the Pokemon this run is
+        actually simulating, or it would vouch for numbers nothing used."""
+        hunt = self._hunt()
+        snap = self.api.hunt_session_start(hunt["id"], {
+            "target_nature": "Timid", "target_ivs": "18 15 16 26 1 4"})["snapshot"]
+        self.assertEqual(snap["target"]["nature"], "Timid")
+        self.assertEqual(snap["target"]["ivs"]["hp"], 18)
+        self.assertEqual(snap["target"]["ivs"]["spe"], 4)
+
+    def test_the_derived_stats_and_the_shown_inputs_agree(self):
+        """The whole point -- if these could disagree the popup would be worse than nothing."""
+        from claytonlib.battle.stats import derive_species_stats
+
+        snap = self.api.hunt_session_start(self._hunt()["id"])["snapshot"]
+        target = snap["target"]
+        self.assertEqual(
+            target["stats"],
+            derive_species_stats("suicune", target["level"], target["nature"],
+                                 ivs=target["ivs"]))

@@ -652,7 +652,11 @@ class TestTheReportButtonRecovers(unittest.TestCase):
         self.assertNotIn("renderHuntRun", body)
 
     def test_a_rejected_turn_keeps_the_answers(self):
-        self.assertIn("if (!_huntSnap.contradiction) hrTurnReset();", self.html)
+        """The condition gained a second clause: the draft is also kept across calls that do not
+        consume it, so widening no longer discards a half-filled turn (clayton-lqt). The claim
+        here -- a contradiction keeps the answers -- is unchanged."""
+        self.assertIn("if (!_huntSnap.contradiction && ", self.html)
+        self.assertIn("HR_METHODS_THAT_CONSUME_THE_DRAFT.has(method)", self.html)
 
     def test_observing_no_longer_clears_before_the_call(self):
         body = self.html[self.html.index("function huntRunObserve()"):]
@@ -1827,3 +1831,54 @@ class TestAnItemTheGameRefusesIsNotOffered(unittest.TestCase):
         self.assertIsNotNone(picked)
         self.assertIsNone(items.unusable_reason(
             picked[0], hp=ours.hp, max_hp=ours.max_hp, statused=False))
+
+
+class TestTheDraftTurnSurvivesNonTurnCalls(unittest.TestCase):
+    """Widening the candidate pool threw away the half-filled turn.
+
+    Reported from the app: "When you widen the candidate pool it clears all the inputs for the
+    last move, relying on memory." `huntRunDo` reset the draft after every successful session
+    call, not only after one that consumed it -- and widening is explicitly NOT a turn report: it
+    replays the accepted turns against a bigger set and costs no information, so there is nothing
+    for it to consume.
+
+    clayton-lqt.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (pathlib.Path(__file__).resolve().parent.parent
+                    / "app" / "web" / "index.html").read_text()
+
+    def test_only_reporting_and_undoing_consume_the_draft(self):
+        self.assertIn("HR_METHODS_THAT_CONSUME_THE_DRAFT = new Set([", self.html)
+        block = self.html[self.html.index(
+            "HR_METHODS_THAT_CONSUME_THE_DRAFT = new Set(["):]
+        block = block[:block.index("]);")]
+        self.assertIn("hunt_session_observe", block)
+        # Undo rewinds the last REPORTED turn, so what you enter next is that turn rather than
+        # the one the draft describes.
+        self.assertIn("hunt_session_undo", block)
+        self.assertNotIn("widen", block)
+        self.assertNotIn("enter_pinning", block)
+        self.assertNotIn("enter_solving", block)
+
+    def test_the_reset_is_gated_on_the_method(self):
+        self.assertIn("HR_METHODS_THAT_CONSUME_THE_DRAFT.has(method)", self.html)
+
+    def test_a_rejected_turn_still_keeps_its_answers(self):
+        """The pre-existing behaviour this must not break: a contradiction means one chip is
+        probably wrong, so clearing the form would make the player re-enter a turn they had
+        almost right."""
+        self.assertIn("if (!_huntSnap.contradiction && "
+                      "HR_METHODS_THAT_CONSUME_THE_DRAFT.has(method))", self.html)
+
+    def test_the_draft_is_still_initialised_when_a_run_opens(self):
+        """It starts as null, so something has to build it -- and now that `huntRunDo` no longer
+        resets unconditionally, the run-start call is the only thing that does."""
+        self.assertIn("_huntRun = started.session_id;", self.html)
+        start = self.html.index("_huntRun = started.session_id;")
+        self.assertIn("hrTurnReset();", self.html[start:start + 400])
+
+    def test_and_the_player_can_still_clear_it_by_hand(self):
+        self.assertIn('onclick="hrTurnReset();renderHuntRun()"', self.html)

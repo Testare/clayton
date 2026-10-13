@@ -2,10 +2,10 @@
 
 Two things keep this much smaller than ``metronome_compass``'s state.
 
-*The target is frozen.* Phase 2 begins with it at exactly 1 HP and held still -- paralyzed, or
-asleep against a target that can shed paralysis -- and
-we never damage it again, so almost nothing about it changes turn to turn
+*The target barely moves.* Phase 2 begins with it at exactly 1 HP -- the only precondition --
+and we never damage it again, so almost nothing about it changes turn to turn
 (notes/battle_compass.md sec 2.2).  Its HP is a declared binary rather than a tracked number.
+A status is no longer required: it can be applied mid-path, and ``b`` already varies along one.
 
 *We only simulate forwards.* The grammar's job is canonical rendering, not parsing (sec 13.1):
 a candidate seed is simulated to produce the tokens it *would* emit, and filtering is a
@@ -36,6 +36,16 @@ class Status(Enum):
 #: `Battler.frozen_for_phase2`, which is the explanation. Module-level so the solver can ask
 #: which of them it could still APPLY, not merely which one the target has.
 HOLDING_STATUSES = frozenset({Status.PARALYSIS, Status.SLEEP, Status.FREEZE})
+
+#: Statuses that damage their holder every turn, which at 1 HP kills the target before any ball
+#: can land. Phase 2 refuses a target holding one.
+#:
+#: **And the target's own tick is deliberately not simulated.** There is no reason to ever burn or
+#: poison a Pokemon you are trying to catch -- the x1.5 catch bonus is the same as paralysis's and
+#: comes with a clock that kills the prize -- so the useful behaviour is to refuse the state, not
+#: to model your way through it. Refusing here is the ANSWER rather than a stand-in for missing
+#: machinery, which is why `sim.simulate_turn` ticks only our own burn and never the target's.
+HP_TICKING_STATUSES = frozenset({Status.BURN, Status.POISON})
 
 
 class Action(Enum):

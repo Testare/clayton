@@ -240,13 +240,33 @@ class TestTheDangerFloorAccountsForIt(unittest.TestCase):
                          moves=target_moves, pp=target_pp, hp=1)
         return ours, target
 
-    def test_a_rain_setter_raises_the_floor(self):
+    def test_a_rain_setter_raises_the_REACHABLE_floor(self):
+        """`any_reachable_weather=True` now, because that is the question this asks.
+
+        The flag did not exist when this was written: the figure always enumerated reachable
+        weathers, so merely holding Rain Dance raised it. That is right for the heal decision
+        and wrong for a live indicator -- a Magneton at 122/134 was reported in range in clear
+        weather, where the worst hit was 92 (clayton-5rz). The claim here is unchanged; it just
+        has to say which of the two figures it means.
+        """
+        from claytonlib.battle_compass.hunt_session import worst_incoming_hit
+
+        without = worst_incoming_hit(*self._party(("Hydro Pump",), (5,)),
+                                     any_reachable_weather=True)
+        with_rain = worst_incoming_hit(*self._party(("Hydro Pump", "Rain Dance"), (5, 5)),
+                                       any_reachable_weather=True)
+        self.assertGreater(with_rain, without,
+                           "Rain Dance in the moveset did not raise the reachable floor")
+
+    def test_but_it_does_NOT_raise_the_live_floor_while_it_is_dry(self):
+        """The other half, and the reported bug. The target picks one move per turn: Rain Dance
+        deals no damage, and Hydro Pump uses whatever weather was already up -- so a Rain Dance
+        it has not used is not a hit it can land this turn."""
         from claytonlib.battle_compass.hunt_session import worst_incoming_hit
 
         without = worst_incoming_hit(*self._party(("Hydro Pump",), (5,)))
         with_rain = worst_incoming_hit(*self._party(("Hydro Pump", "Rain Dance"), (5, 5)))
-        self.assertGreater(with_rain, without,
-                           "Rain Dance in the moveset did not raise the floor")
+        self.assertEqual(with_rain, without)
 
     def test_a_target_with_no_setter_is_unaffected(self):
         from claytonlib.battle_compass.hunt_session import reachable_weathers, worst_incoming_hit

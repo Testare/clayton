@@ -7,9 +7,9 @@ there is no second implementation to keep in step (sec 13.1).
 
 Phases, per sec 15.3, because they optimise different things:
 
-* **Phase 1** — setup, player-driven, working the target to 1 HP and *held still*: paralyzed, or
-  asleep where the target can shed paralysis (`Battler.frozen_for_phase2`).
-* **Phase 1.5** — already at 1 HP and held still, pinning the seed. The tool advises; the
+* **Phase 1** — setup, player-driven, working the target down to 1 HP. A status is optional:
+  sleep or paralysis raises ``b``, and the solver can apply one itself mid-path.
+* **Phase 1.5** — already at 1 HP, pinning the seed. The tool advises; the
   objective is **information gain**.
 * **Phase 2** — seed pinned, solver-driven; the objective is **minimum distance**.
 
@@ -25,7 +25,9 @@ from enum import IntEnum
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.candidates import Candidate
 from claytonlib.battle_compass.sim import HuntConfig, opening_rng, simulate_turn
-from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
+from claytonlib.battle_compass.state import (
+    HP_TICKING_STATUSES, Action, Battler, BattleState, Status,
+)
 
 
 #: Measured median turns for two seeds one RTC second apart to predict different tokens when
@@ -287,16 +289,25 @@ class Session:
     def solver_blockers(self) -> list[str]:
         """Why Phase 2 cannot start yet. Empty means it can.
 
-        The solver asserts its preconditions rather than coping with their absence: the target at
-        exactly 1 HP with a *freezing* status is what makes ``b`` a single constant and the battle
-        state nearly frozen (sec 2.2).
+        **The only battle-state requirement is 1 HP.** There is no status precondition, and
+        removing it was the last step of a change that had already happened underneath:
+        `solver.reachable_statuses` includes NONE, `max_reachable_threshold` prices the largest
+        ``b`` any reachable status allows, and `_dominance_key` separates states by status and
+        sleep counter so the search plans through a wake-up.
 
-        Paralysis is no longer the only answer. **Sleep** satisfies the same purpose more
-        strongly -- a sleeping target cannot act at all -- and is the status of choice against a
-        target that knows Refresh, which sheds paralysis but cannot be used while asleep
-        (notes/battle_compass_next_targets.md sec 4b). Burn and poison are still refused: they
-        carry the same catch bonus as paralysis and tick HP every turn, so the target is not
-        frozen and ``b`` is not a constant. See `Battler.frozen_for_phase2`.
+        The original contract was "1 HP and permanently paralyzed", because that made ``b`` a
+        single constant (sec 2.2). Sleep broke the constant -- it wears off -- and the solver was
+        taught to cope rather than to refuse, which is what made Latias possible at all: Refresh
+        sheds paralysis but cannot be used while asleep. Once ``b`` varies along a path, an
+        UNSTATUSED target is not a different kind of problem, only a smaller ``b``: 19784 at a x1
+        ball and 1 HP against 21845 paralyzed. Refusing it reported "no solution" for a battle
+        the player could still win.
+
+        Burn and poison are the one exception, and not as a status requirement in disguise: they
+        tick the target's HP every turn, which at 1 HP faints it before any ball can land. There
+        is no reason to ever inflict one on a Pokemon you are trying to catch -- the catch bonus
+        is exactly paralysis's, with a clock attached -- so the target's own tick is deliberately
+        unsimulated and the state is refused instead (`state.HP_TICKING_STATUSES`).
         """
         problems: list[str] = []
         if self.phase is Phase.SETUP:
@@ -306,10 +317,10 @@ class Session:
         for state in self.states.values():
             if state.target.hp != 1:
                 problems.append(f"the target is at {state.target.hp} HP, not 1")
-            if not state.target.frozen_for_phase2:
+            if state.target.status in HP_TICKING_STATUSES:
                 problems.append(
-                    f"the target is {state.target.status.value}, which does not hold it still — "
-                    f"it needs to be paralyzed or asleep")
+                    f"the target is {state.target.status.value}, which ticks its HP every turn — "
+                    f"at 1 HP that faints it before a ball can land")
             break
         return problems
 

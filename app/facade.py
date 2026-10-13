@@ -510,6 +510,36 @@ class Facade:
                 return tuple(range(7))
         return (0,)
 
+    @staticmethod
+    def _target_can_paralyze_us(target) -> bool:
+        """Whether this target has any way to paralyze our Pokemon.
+
+        Gates the half of the speed-check table that assumes OUR paralysis. It quarters our
+        Speed and really can flip an order that looked safe -- but only if the target can
+        actually inflict it, and `include_our_paralysis` defaulted on with nothing deriving it.
+        Against Lugia (no paralysing move, Pressure rather than Static) every one of those rows
+        was a state the player could not reach (clayton-36b).
+
+        Unknown species -> True, the same direction `can_inflict` errs in: a spurious row costs a
+        line of advice and a missing one costs an unmodelled desync.
+        """
+        from claytonlib.battle.stats import abilities
+        from claytonlib.battle_compass.sim import can_inflict
+        from claytonlib.battle_compass.state import Battler, Status
+        from claytonlib.battle_compass.targets import moveset, supported
+
+        key = (target.species or "").strip().lower().replace(" ", "-")
+        if key not in supported():
+            return True
+        try:
+            ability = (abilities(key) or ("",))[0]
+        except KeyError:
+            ability = ""
+        moves = moveset(key)
+        probe = Battler(name=key, level=1, types=("Normal",), stats={},
+                        moves=moves, pp=(1,) * len(moves), ability=ability)
+        return can_inflict(probe, Status.PARALYSIS)
+
     def hunt_run_setup(self, hunt_id: str) -> dict:
         """What the run page needs to open, before any seed has been looked for.
 
@@ -755,8 +785,13 @@ class Facade:
             # there is none DOUBLE-COUNTS our PP, halving every budget the solver plans against,
             # and the run quietly runs out of moves earlier than the plan said it would.
             target_has_pressure=has_pressure(h.target.species))
+        # The spread the stats were DERIVED from, for the popup that lets the player check them
+        # against the summary screen -- a run override if there was one, else the hunt's own
+        # (clayton-1jd).
+        shown = spread or {"nature": h.target.nature, "ivs": dict(h.target.ivs or {})}
         session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball,
-                              bench=bench)
+                              bench=bench, target_nature=shown.get("nature", ""),
+                              target_ivs=shown.get("ivs") or {})
         session_id = self._hunt_sessions.add(hunt_id, session)
         return {"session_id": session_id, "hunt_id": hunt_id, "window": probe,
                 "snapshot": session.snapshot(),
@@ -866,6 +901,20 @@ class Facade:
             extra["replacement"] = int(replacement)
         return {f"{seed:#010x}": pred
                 for seed, pred in session.predict(Action(action), **extra).items()}
+
+    def hunt_session_replay_path(self, session_id: str, path: str) -> dict:
+        """Report every turn of a pasted path in order. Returns the snapshot.
+
+        The recovery route for a run that has to be re-entered: a code error or a missed frame on
+        a not-shiny run is sometimes only discovered later, when the damage numbers stop matching,
+        and retyping thirty turns by hand is the friction that makes the tool not worth using
+        (clayton-fag).
+
+        Paths round-trip because the tool renders them and `tokens.tokenise` reads them back, so
+        the input this accepts is exactly the string the run page offers to copy. It stops at the
+        first turn that does not fit and reports which -- see `HuntSession.replay_path`.
+        """
+        return self._hunt_sessions.get(session_id).replay_path(str(path or ""))
 
     def hunt_session_widen(self, session_id: str, frame_window: int | None = None,
                            second_window: int | None = None) -> dict:
@@ -1050,8 +1099,12 @@ class Facade:
                     # its stats, and stages are applied BEFORE paralysis quarters Speed -- so a
                     # boosted paralyzed target can claw back the Speed gap the precondition
                     # depends on, and at +6 it recovers it exactly.
-                    checks = speed_checks(our_speeds, stats["spe"],
-                                          target_speed_stages=self._target_speed_stages(h.target))
+                    checks = speed_checks(
+                        our_speeds, stats["spe"],
+                        target_speed_stages=self._target_speed_stages(h.target),
+                        # Half the table assumed our paralysis against a target with no way to
+                        # inflict it (clayton-36b).
+                        include_our_paralysis=self._target_can_paralyze_us(h.target))
                     result["speed"] = {
                         "target_speed": stats["spe"],
                         "checks": [

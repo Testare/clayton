@@ -1,18 +1,12 @@
-clayton-957.10.1 is the priority. Obviously I'll need another party member who can survive sacred fire during the solving, as well as some other tools to help get Ho-oh down to 1 hp.
-* Magneton is going to have screech in addition to thunder wave. Obviously with the choice scarf I can't change my selected move without switching out, but this could help us lower ho-oh's defense enough to false swipe it better later.
-* I'm thinking of using an Ampharos who is about level 93 with light screen, flash, discharge, and signal beam. 
-  * Stats: 311 137 182 336 210 143
-  * Light screen would reduce the damage of all of Ho-oh's attacks, helping Ampharos and Smeargle to survive non-critical hits (Critical hits ignore screens though).
-  * Flash can reduce the accuracy of its attacks, adding more entrophy to identify seeds but also critically allowing us more time for moves between heals and to switch in smeargle for false swipes.
-  * Verify this, but I think Ampharos is tanky enough to withstand any of Ho-oh's attacks once, even if Ho-oh gets a crit or gets one ancient power boost and light screen is not up yet.
-* I'm considering using the discharge or signal beam on the ampharos to deal damage to Ho-oh. I'm not sure if this will be necessary or not, but Ho-oh doesn't have a *lot* of PP, so it might be good to whittle its HP down quicker without having to risk smeargle being fainted, costing us turns to use a revive and switch.
-* I can also consider giving the ampharos different items to help:
-  * Light clay to increase light screen duration
-  * Leftovers
-  * Magnet?
-* I'm also thinking of adding a level 92 togekiss with serene grace and air slash, who is hit for super-effective damage from ancient power but also can hit ho-oh and flinch it more than half the time if needed to quickly reduce its HP without letting it get many moves off. Do you think this would be helpful?
-  * Stats: 290 121 244 278 249 238
-* Another thought is using our lvl 40 suicune we caught earlier, who knows rain dance, to reduce sacred fire damage (Which still applies even on crit). One issue is that the suicune is untrained and only level 40, so it could take some time to train up, but if we train it with some emphasis on its bulk, it might be useful even at an early level.
-  * Current Stats: 141 63 119 89 109 84 (Has not been EV trained yet)
+* My Lvl 54 Magneton was at 122/134 HP (101 sp def). The UI said it was in range of a single hit, but rain was not up, so magneton was not actually in range.
+* Might be good to have a banner for field effects and their duration, like rain, safeguard, screens, etc. 
+* When you widen the candidate pool it clears all the inputs for the last move, relying on memory. Can we prevent that from happening?
+* It would be good if Seed A was shared on the battle compass screen somewhere.
+* Go ahead and add base stats for ALL pokemon up to gen 4 please. Make sure to get their Gen 4 stats, some pokemon's stats change in later generations (Like Electrode's speed)
+* Share nature and IVs on the pokemon spread summary pop-up.
+* "Start pinning" does not need to be a 2 click process, unless the pokemon is not at 1 hp. Also the "pokemon is held" is not a requirement anymore with us supporting sleep.
+* A button to "load path" would be good after loading seed A, where we could paste the path we copied from the shared summary screen, if we want to reload a path we already played out and apply all its eliminations rapidly. I've had some issues where an error with the code occured, or I missed a frame when doing not-shiny runs and couldn't tell until damage calculations were off.
+* Stop doing speed checks on paralyzed team members when the opponent has no way to paralyze them.
+* Deferred: Rethink "Only the RTC second is still in doubt" message
+* Deferred: Figure out how we'll handle roamers.
 
-Do some analysis of these options please.

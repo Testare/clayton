@@ -450,6 +450,33 @@ The other HMs, since a mule has two spare slots: **Surf, Strength, Cut, Waterfal
 are all modelled**; **Whirlpool, Fly, Dive, Defog and Rock Smash are not.** Prefer the first list
 for the spare slots, so a mis-click costs nothing.
 
+## 5b. The Phase 2 precondition is now just 1 HP
+
+The original contract was "1 HP and **permanently paralyzed**", because that made `b` a single
+constant. Sleep broke the constant — it wears off — and the solver was taught to cope rather than
+refuse, which is what made Latias possible at all: Refresh sheds paralysis but cannot be used
+while asleep.
+
+Once `b` varies along a path, an **unstatused** target is not a different kind of problem, only a
+smaller `b`: 19784 at a ×1 ball and 1 HP against 21845 paralyzed. So the status requirement is
+gone entirely, in both `identify.solver_blockers` and `solver.solve`. Everything it was guarding
+had already been built — `reachable_statuses` includes NONE, `max_reachable_threshold` prices the
+most generous reachable `b`, `_dominance_key` separates states by status and sleep counter, and
+every throw is settled by `simulate_turn` rather than by the prune.
+
+It had relaxed once already, accepting an unstatused target *provided our moveset could re-apply
+a holding status*. That proviso was the same mistake one step smaller, and it refused battles the
+player could still win.
+
+**Burn and poison stay refused, for a different reason.** Their tick faints a 1 HP target before
+any ball lands, and there is no reason to ever inflict one on a Pokemon you are trying to catch —
+the catch bonus is exactly paralysis's with a clock attached. So the target's own tick is
+**deliberately not simulated**, and the refusal is the answer rather than a placeholder.
+
+That means it has to stay a *gate*: with it removed, the simulator believes a burned target is
+healthy and the solver returned `M1hE3hHP125 M3E4 M1hE3hHP098 M1hE1 C` — five confident steps
+against something that died on turn one.
+
 ## 6. Training
 
 Real-world prerequisites, not work items.

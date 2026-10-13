@@ -11,8 +11,9 @@ threshold, so a flat x1 and the hardest multiplier case there is.
 Modules:
 
 * ``state`` — battlers, actions, and the battle state, deliberately small because Phase 2's
-  target is frozen at 1 HP and held still -- paralyzed, or asleep against a target that can
-  shed paralysis (see Battler.frozen_for_phase2).
+  target is at 1 HP. **That is the only precondition** -- no status is required, since a
+  status can be applied mid-path and `b` already varies along one. Burn and poison are
+  refused, not as a status rule but because their tick faints a 1 HP target.
 * ``tokens`` — the reporting grammar (sec 13).  Its job is *canonical rendering*: a candidate
   seed is simulated forwards to produce the tokens it would emit, and filtering is a comparison
   against what the player reported.

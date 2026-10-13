@@ -47,7 +47,8 @@ from claytonlib.battle_compass.sim import (
     FLINCH_EFFECTS, HuntConfig, _effective_accuracy, accuracy_net_stage, burn_tick, can_flinch,
     can_miss,
     effective_speed, primary_stat_drop, secondary_description, secondary_status, simulate_turn,
-    status_applied_by, unselectable_reason, variable_base_power, will_fail,
+    status_applied_by, unselectable_reason, variable_base_power, weather_of,
+    will_fail,
 )
 from claytonlib.battle_compass.solver import (
     Solution, SolverConfig, Unreachable, danger_floor_for, solve,
@@ -136,6 +137,14 @@ _WORST_HIT_CACHE: dict[tuple, int] = {}
 
 
 def _worst_hit_key(ours: Battler, target: Battler, field) -> tuple:
+    """Everything `worst_incoming_hit` reads, so the memo cannot serve a stale answer.
+
+    **The weather belongs here**, and did not until clayton-5rz. It was safe to leave out only
+    because the figure enumerated every reachable weather and so never looked at the field's --
+    the moment the live figure started reading it, the first call cached its answer for every
+    later one, and a rained-on state got the clear-weather number back. Caught by a test that
+    asked both questions of the same state.
+    """
     return (
         ours.stats["def"], ours.stats["spd"], ours.types,
         target.level, target.stats["atk"], target.stats["spa"], target.types,
@@ -143,6 +152,7 @@ def _worst_hit_key(ours: Battler, target: Battler, field) -> tuple:
         target.atk_stage, target.spatk_stage,
         getattr(field, "reflect_turns", 0) > 0,
         getattr(field, "light_screen_turns", 0) > 0,
+        weather_of(field),
     )
 
 
@@ -176,8 +186,13 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
     for mon in party:
         if not mon.stats:
             continue
-        now = worst_incoming_hit(mon, target)
-        boosted = worst_incoming_hit(mon, target, any_reachable_stage=True)
+        # `any_reachable_weather` on BOTH, because this is pre-hunt advice: the question is
+        # "what can this battle ever do to me", and a Lugia that has not used Rain Dance yet
+        # certainly will. The live indicator is the one that reads the current field
+        # (`HuntSession.danger_floor`) -- see `worst_incoming_hit` for why those differ.
+        now = worst_incoming_hit(mon, target, any_reachable_weather=True)
+        boosted = worst_incoming_hit(mon, target, any_reachable_stage=True,
+                                     any_reachable_weather=True)
         move = _worst_move_name(mon, target)
         if now >= mon.max_hp:
             out.append(
@@ -230,27 +245,131 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
     return name
 
 
+#: Field conditions worth showing, as ``(state attribute, label, whose it is)``. Ordered by how
+#: much each one changes play rather than alphabetically: weather first because it scales damage,
+#: then the things that block an action outright, then the merely-defensive.
+#:
+#: "whose" is the side the condition belongs to, which matters for reading it: Mist and Safeguard
+#: are the TARGET's and work against us, while Reflect and Light Screen are ours.
+FIELD_CONDITIONS: tuple[tuple[str, str, str], ...] = (
+    ("rain_turns", "Rain", "field"),
+    ("safeguard_turns", "Safeguard", "target"),
+    ("mist_turns", "Mist", "target"),
+    ("reflect_turns", "Reflect", "ours"),
+    ("light_screen_turns", "Light Screen", "ours"),
+)
+
+#: The same, for conditions that are on or off rather than counted down.
+FIELD_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("target_trapped", "Trapped", "target"),
+    ("target_water_sport", "Water Sport", "target"),
+)
+
+
+def field_conditions(state) -> list[dict]:
+    """What is currently up, newest-relevant first: ``{name, turns, whose}``.
+
+    `turns` is None for a flag that does not count down, so the page can render "Trapped"
+    without a number rather than inventing one. Only ACTIVE conditions are returned -- a banner
+    listing six "inactive" rows is a banner nobody reads.
+
+    Sleep is deliberately not here even though it is a counter: it belongs to a Pokemon rather
+    than the field, and both sides already render their own status chip. Putting it in a field
+    banner would report it twice and in the wrong place.
+    """
+    out: list[dict] = []
+    for attr, label, whose in FIELD_CONDITIONS:
+        turns = getattr(state, attr, 0) or 0
+        if turns > 0:
+            out.append({"name": label, "turns": turns, "whose": whose})
+    for attr, label, whose in FIELD_FLAGS:
+        if getattr(state, attr, False):
+            out.append({"name": label, "turns": None, "whose": whose})
+    return out
+
+
+def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
+    """``(action, kwargs)`` for `HuntSession.observe`, read off a turn's first token.
+
+    The slot-bearing actions carry their argument in the same token, so a switch is ``S3`` and a
+    revive ``R2``, and those have to be handed to `observe` separately.
+
+    **Scanned rather than read off token zero**, because a turn does not always lead with our
+    half. When the target moves first and faints us we never acted, so the turn is ``E3!X3`` --
+    their hit, then our faint and replacement. Taking the first token called that "not one of our
+    actions" and refused a turn the grammar explicitly allows.
+
+    `Ic` before `I` matters: the prefixes are matched longest-first, or a cure would read as a
+    plain item and the turn would be simulated with the wrong one. Same for `X` being tried after
+    the moves, since nothing else starts with it.
+    """
+    if not tokens:
+        raise ValueError("empty turn")
+    ours = [Action.ITEM_CURE, Action.ITEM, Action.MOVE_1, Action.MOVE_2, Action.MOVE_3,
+            Action.MOVE_4, Action.CAPTURE_BALL, Action.STANDARD_BALL, Action.SWITCH,
+            Action.REVIVE, Action.FAINTED]
+    first = next((t for t in tokens
+                  if any(t.startswith(a.value) for a in ours)), None)
+    if first is None:
+        raise ValueError(f"no action of ours in {tokens}")
+    for action in (Action.ITEM_CURE, Action.ITEM):
+        if first.startswith(action.value):
+            # The item CODE follows the prefix (`Ihp`, `Ifr`), and an `I` on its own is an
+            # unspecified item -- legal in the grammar, so it must not be forced to a code here.
+            code = first[len(action.value):] or None
+            return action, ({"item_code": code} if code else {})
+    for action in (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4,
+                   Action.CAPTURE_BALL, Action.STANDARD_BALL):
+        if first.startswith(action.value):
+            return action, {}
+    for action in (Action.SWITCH, Action.REVIVE):
+        if first.startswith(action.value):
+            digits = "".join(c for c in first[len(action.value):] if c.isdigit())
+            if not digits:
+                raise ValueError(f"{first!r} names no party slot")
+            # `observe` takes a BENCH index for a switch and a PARTY SLOT for a revive, which is
+            # the one asymmetry here; `replacement` is the party slot a faint switched in.
+            key = "bench_slot" if action is Action.SWITCH else "replacement"
+            return action, {key: int(digits)}
+    if first.startswith(Action.FAINTED.value):
+        digits = "".join(c for c in first[len(Action.FAINTED.value):] if c.isdigit())
+        return Action.FAINTED, ({"replacement": int(digits)} if digits else {})
+    raise ValueError(f"{first!r} is not one of our actions")
+
+
 def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
-                       any_reachable_stage: bool = False) -> int:
+                       any_reachable_stage: bool = False,
+                       any_reachable_weather: bool = False) -> int:
     """The largest single hit the target can land: max roll, critical, over all its moves.
 
     The solver's `danger_floor` -- heal at or below this and no single hit can faint us, without
     needing to know which move is coming (sec 11.2). Critical, because a crit ignores any stat
     change that would reduce the damage, so a Sp. Def boost cannot be relied on.
 
-    And over every weather the target can SET, not just the current one. A floor computed in
-    clear weather is not a floor at all against a target holding Rain Dance: Lugia's Hydro Pump
-    gains half again under its own rain, so the solver would heal to a number it believed was
-    safe and get fainted anyway. The point of the figure is that no single hit can beat it.
+    **Weather comes from `field` unless `any_reachable_weather` asks otherwise**, and that
+    default is a correction. This used to enumerate every weather the target could SET regardless
+    of the field, justified as "the target can put it up on the turn it attacks, so there is no
+    state in which we could have observed it first."
 
-    Weather and stat stages are treated differently, and the asymmetry is deliberate. Weather is
-    enumerated because the target can put it up *on the turn it attacks*, so there is no state in
-    which we could have observed it first. A stat boost is not like that: Ancient Power's proc is
-    reported, lands in the state, and the floor is recomputed from it next turn. So stages come
-    from the target as it is now, and `any_reachable_stage=True` -- which enumerates upward -- is
-    for the readiness ADVICE rather than for the gate. See the comment on `stages` below.
+    That is not true. The target selects ONE move per turn: pick Rain Dance and it deals no
+    damage, pick Hydro Pump and the weather is whatever was already up. So the weather at the
+    start of a turn is fully observable -- exactly like the Ancient Power stat boost the old
+    docstring contrasted it against, and the asymmetry it drew was unjustified. A Lv54 Magneton
+    at 122/134 was reported in range of a single hit in clear weather, where Lugia's worst crit
+    is 92 and only reaches 136 once it is raining (clayton-5rz).
+
+    So there are two questions and they get two answers:
+
+    * **What can hit me this turn** -- the default, read off `field`. This is what a live
+      indicator must use, or it cries wolf for the whole run.
+    * **What can this battle ever do to me** -- `any_reachable_weather=True`, which keeps the
+      solver's heal decision conservative and is what the pre-hunt advice wants.
+
+    `any_reachable_stage` is the same split for the target's Attack stages, and was already
+    right; see the comment on `stages` below.
     """
-    key = _worst_hit_key(ours, target, field) + (any_reachable_stage,)
+    key = (_worst_hit_key(ours, target, field)
+           + (any_reachable_stage, any_reachable_weather))
     cached = _WORST_HIT_CACHE.get(key)
     if cached is not None:
         return cached
@@ -258,7 +377,8 @@ def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
     worst = 0
     defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
                         types=ours.types)
-    weathers = reachable_weathers(target)
+    weathers = (reachable_weathers(target) if any_reachable_weather
+                else (weather_of(field),))
     # **The target's CURRENT stages by default, not every stage it could ever reach.**
     #
     # Enumerating upward to +6 is the honest answer to "what is the worst this battle can ever
@@ -542,7 +662,8 @@ class HuntSession:
 
     def __init__(self, window: CandidateWindow, ours: Battler, target: Battler,
                  config: HuntConfig, *, solver_config: SolverConfig | None = None,
-                 capture_ball: str = "", bench: tuple[Battler, ...] = ()):
+                 capture_ball: str = "", bench: tuple[Battler, ...] = (),
+                 target_nature: str = "", target_ivs: dict | None = None):
         if not window.candidates:
             raise ValueError("no candidate seeds: widen the window or check the seed targeting")
         self.window = window
@@ -555,6 +676,13 @@ class HuntSession:
         self.bench = tuple(b if b.party_slot else replace(b, party_slot=i + 2)
                            for i, b in enumerate(bench))
         self.target = target
+        # The nature and IVs the target's stats were DERIVED from. Carried so the spread popup
+        # can show them: the derived numbers are what the player checks against the summary
+        # screen, and when one disagrees the next question is always "which input was wrong",
+        # which the popup could not answer (clayton-1jd). Not used by the simulation -- the
+        # stats on `target` are already final.
+        self.target_nature = target_nature
+        self.target_ivs = dict(target_ivs or {})
         self.config = config
         self.capture_ball = capture_ball
         # NOT `SolverConfig(danger_floor=...)`. The floor is per-Pokemon -- it reads the
@@ -695,12 +823,34 @@ class HuntSession:
         one hit from fainting at full health for the whole run, which is what the player saw: a
         marker that never cleared because it was never about the Pokemon it was next to.
 
-        Routed through the solver's own `danger_floor_for` so the display and the search cannot
-        disagree about it.
+        **Current weather only.** The solver's `danger_floor_for` enumerates every weather the
+        target could set, which is right for a heal decision and wrong for a live indicator: a
+        Lv54 Magneton at 122/134 was reported in range of a single hit in clear weather, where
+        the worst crit is 92 and only reaches 136 once it is raining (clayton-5rz). So this
+        reads the field, and `danger_floor_if_weather` below is the other half -- the two
+        numbers answer two different questions and the page shows which is which.
         """
         state = next(iter(self._session.states.values()), None)
         if state is None:
             return worst_incoming_hit(self.ours, self.target)
+        return max(self.solver_config.danger_floor,
+                   worst_incoming_hit(state.ours, state.target, field=state))
+
+    @property
+    def danger_floor_if_weather(self) -> int:
+        """`danger_floor`, but counting weather the target can still put up.
+
+        The other half of clayton-5rz. Equal to `danger_floor` when the worst weather is already
+        up, or when the target has no weather move -- so the page can compare the two and say
+        "in range if it rains" only when that is actually a different answer, rather than
+        attaching a hypothetical to every hit.
+
+        This is the figure the solver heals against (`solver.danger_floor_for`), so showing it
+        also explains why a plan heals earlier than the live number seems to require.
+        """
+        state = next(iter(self._session.states.values()), None)
+        if state is None:
+            return worst_incoming_hit(self.ours, self.target, any_reachable_weather=True)
         return danger_floor_for(state, self.solver_config)
 
     @property
@@ -885,6 +1035,57 @@ class HuntSession:
         return lambda: self.position == position
 
     # -- the loop -------------------------------------------------------
+
+    def replay_path(self, path: str) -> dict:
+        """Report every turn of a rendered `path` in order. Returns the final snapshot.
+
+        For recovering a run rather than playing one. A code error or a missed frame on a
+        not-shiny run is sometimes only discovered later, when the damage numbers stop matching
+        -- and re-entering thirty turns by hand to get back to where you were is the kind of
+        friction that makes people give up on the tool (clayton-fag).
+
+        **Stops at the first turn that does not fit**, leaving the session exactly where that
+        turn began and the contradiction on the snapshot. Pressing on would report later turns
+        against a state the game never reached, and the resulting candidate set would be
+        confidently wrong rather than visibly stuck -- which is the failure this whole tool is
+        built to avoid.
+
+        The action is derived from the turn's own first token rather than passed in, because a
+        rendered path already carries it: that is what makes a path round-trip at all.
+        """
+        turns = tok.split_turns(path)
+        if not turns:
+            self.contradiction = {"kind": "grammar", "problems": ["no turns in that path"],
+                                  "observed": path.strip()[:80]}
+            return self.snapshot()
+        replayed = 0
+        for turn in turns:
+            try:
+                tokens = tok.tokenise(turn)
+            except ValueError as exc:
+                self.contradiction = {
+                    "kind": "grammar",
+                    "problems": [f"turn {replayed + 1} ({turn!r}) is not a turn: {exc}"],
+                    "observed": turn}
+                return self.snapshot()
+            try:
+                action, extra = _action_from_tokens(tokens)
+            except ValueError as exc:
+                self.contradiction = {
+                    "kind": "grammar",
+                    "problems": [f"turn {replayed + 1} ({turn!r}): {exc}"],
+                    "observed": turn}
+                return self.snapshot()
+            self.observe(action, tokens, **extra)
+            if self.contradiction:
+                problems = list(self.contradiction.get("problems", []))
+                self.contradiction = dict(
+                    self.contradiction,
+                    problems=[f"stopped at turn {replayed + 1} of {len(turns)} ({turn})"]
+                             + problems)
+                return self.snapshot()
+            replayed += 1
+        return self.snapshot()
 
     def observe(self, action: Action, tokens: tuple[str, ...] | list[str],
                 item_code: str | None = None, bench_slot: int | None = None,
@@ -1179,7 +1380,8 @@ class HuntSession:
         """
         state = next(iter(self._session.states.values()))
         we_first = effective_speed(state.ours) > effective_speed(state.target)
-        floor = danger_floor_for(state, self.solver_config)
+        floor = self.danger_floor
+        floor_weather = self.danger_floor_if_weather
         seed = self.identified
         # How the run ENDED, which the snapshot never said. Its absence is why the capture bug
         # was reachable at all: with no terminal flag the page had no reason to stop asking for
@@ -1273,9 +1475,20 @@ class HuntSession:
                        "stats": dict(state.target.stats),
                        "pp": [state.target.pp_left(i) for i in range(len(state.target.moves))],
                        "moves": list(state.target.moves),
+                       # What the stats were derived FROM, so a mismatch against the summary
+                       # screen points at the input that is wrong rather than just at the output.
+                       "nature": self.target_nature,
+                       "ivs": dict(self.target_ivs),
                        # The three the Ho-Oh plan spends most of its turns moving.
                        "stages": stat_stages(state.target),
                        "move_info": move_info(state.target, state.ours)},
+            # Every field condition the simulator tracks, with its remaining turns. None of it
+            # was shown, so the player was holding counters in their head -- and several of these
+            # change the ADVANCE COUNT of a turn (a Rain Dance into standing rain fails and so
+            # costs two fewer advances), which makes them exactly the sort of thing worth seeing
+            # rather than remembering. Built from the state rather than from the turn log so it
+            # cannot drift from what the simulation believes (clayton-gni).
+            "field": field_conditions(state),
             # `slot` is the BENCH index, which is what every call back into the session takes;
             # `party_slot` is the stable number the player sees in-game and the one the S/X/R
             # tokens name. Both, because they are not the same once anybody has switched.
@@ -1317,6 +1530,14 @@ class HuntSession:
             # page prints and the flag it colours cannot disagree.
             "danger_floor": floor,
             "in_danger": state.ours.hp is not None and state.ours.hp <= floor,
+            # The same question asked of weather the target has not put up yet. Separate from
+            # `in_danger` so the page can distinguish "one hit kills you" from "one hit kills you
+            # once it rains" -- conflating them reported a Magneton at 122/134 as in range in
+            # clear weather, where the worst hit was 92 (clayton-5rz).
+            "danger_floor_if_weather": floor_weather,
+            "in_danger_if_weather": (state.ours.hp is not None
+                                     and floor_weather > floor
+                                     and state.ours.hp <= floor_weather),
             # The action column stays a CODE: `action_label` names a move from the currently
             # active Pokemon, so labelling a turn played before a switch would name the wrong
             # move, and the column pairs with `path` below, which is in codes anyway. `explain`

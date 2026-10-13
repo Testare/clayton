@@ -4646,6 +4646,24 @@ function huntPickInitialTime(t){
   renderHuntSetup();
 }
 
+// Which session calls actually CONSUME the half-filled turn. Only reporting one does.
+//
+// This used to reset after every call, so widening the candidate pool threw away the answers
+// already entered for the turn in progress and the player had to retype them from memory
+// (clayton-lqt). Widening is not a turn report -- it replays the accepted turns against a bigger
+// set and deliberately costs no information -- so the draft should survive it untouched. Same
+// for entering a phase, which changes what comes next rather than consuming what is typed.
+//
+// `undo` is in the set on purpose: it rewinds the last REPORTED turn, so the thing you are about
+// to enter afterwards is that turn rather than the one the draft describes.
+const HR_METHODS_THAT_CONSUME_THE_DRAFT = new Set([
+  "hunt_session_observe",
+  "hunt_session_undo",
+  // A bulk replay jumps the run forward by many turns, so a draft written for the turn that
+  // used to be next describes something else entirely.
+  "hunt_session_replay_path",
+]);
+
 async function huntRunDo(method, ...args){
   _hrBusy = true;
   renderHuntRun();                  // show the spinner before the call blocks
@@ -4654,7 +4672,9 @@ async function huntRunDo(method, ...args){
     // Keep the answers when the turn was REJECTED: the set did not move, and the likeliest
     // cause is one wrong chip, so clearing the form would make the player re-enter a turn they
     // had almost right.
-    if (!_huntSnap.contradiction) hrTurnReset();
+    if (!_huntSnap.contradiction && HR_METHODS_THAT_CONSUME_THE_DRAFT.has(method)) {
+      hrTurnReset();
+    }
     huntAdviceInvalidate();
   } catch (e) { toast(String(e.message || e)); }
   finally {
@@ -5158,6 +5178,39 @@ function hrAutoAnswer(options, apply){
   if (options.length > 1) return false;
   apply();
   return true;
+}
+
+// What is up on the field and for how long. Nothing showed any of this, so the player was
+// keeping turn counters in their head -- and several of these change the ADVANCE COUNT of a
+// turn (a Rain Dance into standing rain fails, costing two fewer advances), which makes them
+// worth seeing rather than remembering. Hidden entirely when nothing is active: a banner of
+// six "inactive" rows is a banner nobody reads.
+const HR_FIELD_WHOSE = {field: "", target: "on the target", ours: "on your side"};
+
+// Seed A, which is identified on the setup screen and was then never shown again -- so there
+// was no way to check it without leaving the run. Copy-on-click like the other seeds, and the
+// advance frame alongside it when one was pinned, since the two are only meaningful together.
+function hrSeedALabel(){
+  const seed = _hsa && _hsa.seedA && _hsa.seedA.seed;
+  if(seed == null) return "";
+  const hex = "0x" + Number(seed).toString(16).padStart(8, "0");
+  const frame = (_hsa && _hsa.pinnedFrame != null)
+    ? ` <span class="muted hr-small">frame ${_hsa.pinnedFrame}</span>` : "";
+  return `<span class="muted hr-small" style="text-transform:none;font-weight:400;
+    margin-left:auto">Seed A ${hrCopyable(hex, "Seed A")}${frame}</span>`;
+}
+
+function hrFieldBanner(field){
+  if(!field || !field.length) return "";
+  const chips = field.map(c => {
+    const whose = HR_FIELD_WHOSE[c.whose] || "";
+    const turns = c.turns === null ? "" : ` ${c.turns}`;
+    return `<span class="chip" title="${esc(c.name)}${whose ? " " + esc(whose) : ""}${
+      c.turns === null ? "" : `, ${c.turns} turn${c.turns === 1 ? "" : "s"} left`}">${
+      esc(c.name)}${turns}</span>`;
+  }).join(" ");
+  return `<div class="hr-phase" style="text-transform:none;font-weight:400">
+    <span class="muted hr-small">Field:</span> ${chips}</div>`;
 }
 
 function hrChip(text, onclick, active, title){
@@ -5690,10 +5743,58 @@ function huntRunObserve(){
             t.replacement === undefined ? null : t.replacement);
 }
 
+// Declaring the target at 1 HP, and then solving straight away if nothing is in the way.
+//
+// The second click was dead whenever the seed was already pinned by the setup turns: the page
+// moved to Phase 1.5, found no blockers, and offered "Start solving" for the player to press
+// with no decision to make. Phase 1.5 still exists and is still entered -- it is where turns
+// get reported until the seed narrows to one -- this only skips the button when there is
+// nothing left to narrow (clayton-pv0).
+//
+// Deliberately NOT a blind auto-advance: if anything blocks, the blocker panel appears exactly
+// as before, because that panel is a decision the player has to make.
+async function huntStartPinning(){
+  await huntRunDo("hunt_session_enter_pinning");
+  const s = _huntSnap;
+  if (s && s.phase === 2 && !(s.solver_blockers || []).length) {
+    await huntRunDo("hunt_session_enter_solving");
+  }
+}
+
+// Re-applying a whole run's eliminations from a pasted path. For recovery rather than play: a
+// code error or a missed frame on a not-shiny run is sometimes only noticed later, when the
+// damage numbers stop matching, and re-entering thirty turns by hand is what makes a player give
+// up on the tool (clayton-fag).
+//
+// The path the run page offers to copy is exactly the input this takes -- the tool renders it and
+// `tokens.tokenise` reads it back -- so there is no second format to get wrong.
+function openLoadPathModal(){
+  openModal(`<h3>Load a path</h3>
+    <div class="hr-small muted" style="margin-bottom:10px">Paste a path copied from a run's
+      summary. Every turn is reported in order, applying the same eliminations. It stops at the
+      first turn that does not fit and tells you which, so a half-remembered path cannot
+      quietly put the run somewhere the game never was.</div>
+    <div class="field"><label>Path</label>
+      <textarea id="lp-path" rows="4" placeholder="M2hE4hHP110 M3Eslp M2hE2 …"></textarea></div>
+    <div class="hr-small muted">This replays on top of whatever has already been reported, so
+      load it into a run with no turns yet unless you mean to continue one.</div>
+    <div class="actions">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn primary" onclick="loadPathConfirmed()">Load</button></div>`);
+  $("lp-path")?.focus();
+}
+
+async function loadPathConfirmed(){
+  const path = ($("lp-path")?.value || "").trim();
+  if (!path) { toast("Nothing to load."); return; }
+  closeModal();
+  await huntRunDo("hunt_session_replay_path", path);
+}
+
 function huntForceSolving(){
   const blockers = (_huntSnap.solver_blockers || []).join("; ");
   if (!confirm(`Our model says: ${blockers}.\n\nStart solving anyway? Do this only if the game `
-             + `itself shows the target at 1 HP and held still.`)) return;
+             + `itself shows the target at 1 HP.`)) return;
   huntRunDo("hunt_session_enter_solving", true);
 }
 
@@ -5861,10 +5962,15 @@ function hrHpText(range, max){
                        : `${range.low}–${range.high} / ${max}`;
 }
 
-function hrSide(label, m, danger, side){
+// `danger` is the worst hit landable RIGHT NOW; `dangerIfWeather` counts weather the target has
+// not put up yet. Two numbers because they are two questions: a Magneton at 122/134 was reported
+// in range in clear weather, where the worst hit was 92 and only reached 136 once it rained.
+function hrSide(label, m, danger, side, dangerIfWeather){
   const range = m.hp_range || {low: m.hp, high: m.hp, certain: true};
   // Danger is judged on the WORST case the candidates allow, not the best.
   const low = danger && range.low !== null && range.low <= danger;
+  const lowIfWeather = !low && dangerIfWeather && range.low !== null
+                       && range.low <= dangerIfWeather;
   const extras = [];
   if (m.ability) extras.push(esc(m.ability));
   if (m.held_item) extras.push(esc(m.held_item));
@@ -5876,7 +5982,9 @@ function hrSide(label, m, danger, side){
         title="The full stat spread this run is simulating — check it against the Pokémon">
         Spread</button>` : ""}</div>
     <div class="${low ? "hr-danger" : ""}">${hrHpText(range, m.max_hp)}
-      ${low ? " — in range of one hit" : ""}
+      ${low ? ` — in range of one hit (${danger})` : ""}
+      ${lowIfWeather ? `<span class="muted hr-small"> — in range once weather is up
+        (${dangerIfWeather})</span>` : ""}
       ${range.certain ? "" : `<span class="muted hr-small">candidates disagree</span>`}</div>
     ${hrBar(range, m.max_hp)}
     ${extras.length ? `<div class="muted hr-small">${extras.join(" · ")}</div>` : ""}
@@ -5948,6 +6056,24 @@ function hrStageRow(m, key, label){
     + (v > 0 ? "+" : "") + v + '</span></td></tr>';
 }
 
+// The nature and IVs the target's stats were DERIVED from. Shown because they are the answer to
+// the question the popup provokes: when a derived number disagrees with the summary screen, the
+// next thing you need is which input was wrong (clayton-1jd). Our own side has neither -- its
+// stats are typed in directly -- so the rows are omitted rather than shown empty.
+const HR_IV_ORDER = ["hp", "atk", "def", "spa", "spd", "spe"];
+
+function hrSpreadInputRows(m){
+  const ivs = m.ivs || {};
+  const have = HR_IV_ORDER.filter(k => ivs[k] != null);
+  if (!m.nature && !have.length) return "";
+  const spread = have.length === HR_IV_ORDER.length
+    ? HR_IV_ORDER.map(k => ivs[k]).join(" ")
+    : HR_IV_ORDER.map(k => ivs[k] ?? "?").join(" ");
+  return `${m.nature ? `<tr><td>Nature</td><td>${esc(m.nature)}</td></tr>` : ""}
+    ${have.length ? `<tr><td>IVs</td><td>${hrCopyable(spread, "the IV spread")}
+      <span class="muted hr-small">hp atk def spa spd spe</span></td></tr>` : ""}`;
+}
+
 function hrShowSpread(side){
   const m = _huntSnap[side];
   if (!m) return;
@@ -5970,6 +6096,7 @@ function hrShowSpread(side){
       ${hrStageRow(m, "accuracy", "Accuracy")}
       ${hrStageRow(m, "evasion", "Evasion")}
       <tr><td>Level</td><td>${m.level ?? "—"}</td></tr>
+      ${hrSpreadInputRows(m)}
       <tr><td>Type</td><td>${(m.types || []).map(esc).join(" / ") || "—"}</td></tr>
       ${m.ability ? `<tr><td>Ability</td><td>${esc(m.ability)}</td></tr>` : ""}
       ${m.held_item ? `<tr><td>Held item</td><td>${esc(m.held_item)}</td></tr>` : ""}
@@ -6084,7 +6211,7 @@ function renderHuntRun(){
   }
 
   const phaseButtons = s.phase === 1
-    ? `<button class="btn" onclick="huntRunDo('hunt_session_enter_pinning')">
+    ? `<button class="btn" onclick="huntStartPinning()">
          Target is at 1 HP → start pinning</button>`
     : s.phase === 2
       ? (s.solver_blockers.length
@@ -6099,8 +6226,13 @@ function renderHuntRun(){
                can lag reality.</div>
              <button class="btn" onclick="huntForceSolving()">Start solving anyway</button></div>`
           : `<div class="panel ok-cta"><div class="section-label">${esc(s.target.name)} is at
-               1 HP and held still</div>
-             <div class="hr-small muted">Everything the solver needs is in place.</div>
+               1 HP${s.target.status === "none" ? ""
+                     : ` and ${esc(s.target.status)}`}</div>
+             <div class="hr-small muted">Everything the solver needs is in place.${
+               s.target.status === "none"
+                 ? " A status is optional — it raises the catch rate, and the solver can apply"
+                   + " one itself if your moveset can."
+                 : ""}</div>
              <button class="btn primary"
                onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button></div>`)
       : "";
@@ -6159,9 +6291,12 @@ function renderHuntRun(){
     <div class="hr-phase">${esc(s.phase_label)}
       <span class="chip">Turn ${s.turns.length + (s.over ? 0 : 1)}</span>
       ${s.turns.length ? `<span class="muted" style="text-transform:none;font-weight:400">
-        ${s.turns.length} reported</span>` : ""}</div>
+        ${s.turns.length} reported</span>` : ""}
+      ${hrSeedALabel()}</div>
     ${outcome}${ambiguity}${contra}
-    <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor, "ours")}${
+    ${hrFieldBanner(s.field)}
+    <div class="hr-sides">${hrSide("Us:", s.ours, s.danger_floor, "ours",
+                                    s.danger_floor_if_weather)}${
       hrSide("Target:", s.target, 0, "target")}</div>
     ${s.over ? "" : solver}
     ${s.over ? "" : hrExpectedBlock()}
@@ -6176,6 +6311,10 @@ function renderHuntRun(){
       ${s.path ? `<div class="muted hr-small" style="margin-top:8px">Path:
         ${hrCopyable(s.path, "the path so far")}</div>` : ""}
       <div class="chip-row">
+        <button class="btn small" onclick="openLoadPathModal()"
+          ${_hrBusy ? "disabled" : ""}
+          title="Paste a path from a previous run to re-apply every elimination at once.">
+          Load path</button>
         <button class="btn small" onclick="huntRunDo('hunt_session_undo')"
           ${s.turns.length && !_hrBusy ? "" : "disabled"}
           title="${s.turns.length

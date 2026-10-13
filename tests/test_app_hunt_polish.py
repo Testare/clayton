@@ -298,7 +298,10 @@ class TestTheSpreadPopup(unittest.TestCase):
         self.assertIn('onclick="hrShowSpread(\'${side}\')"', HTML)
 
     def test_both_sides_get_one(self):
-        self.assertIn('hrSide("Us:", s.ours, s.danger_floor, "ours")', HTML)
+        # Our side also passes `danger_floor_if_weather`, so the page can tell "in range of one
+        # hit" from "in range once it rains" (clayton-5rz).
+        self.assertIn('hrSide("Us:", s.ours, s.danger_floor, "ours",', HTML)
+        self.assertIn('s.danger_floor_if_weather)', HTML)
         self.assertIn('hrSide("Target:", s.target, 0, "target")', HTML)
 
     def test_the_target_popup_says_the_numbers_are_derived_and_what_a_mismatch_means(self):
@@ -428,3 +431,64 @@ class TestTheConfirmButtonShowsItIsWorking(unittest.TestCase):
         before = body[:body.index("await api(")]
         self.assertIn("_hrBusy = true;", before)
         self.assertIn("renderHuntRun();", before)
+
+
+class TestSeedAOnTheRunScreen(unittest.TestCase):
+    """Seed A is identified on the setup screen and was then never shown again, so there was no
+    way to check it without leaving the run (clayton-dnk)."""
+
+    def test_the_run_header_renders_it(self):
+        self.assertIn("function hrSeedALabel(){", HTML)
+        self.assertIn("${hrSeedALabel()}", HTML)
+
+    def test_it_is_copy_on_click_like_the_other_seeds(self):
+        block = HTML[HTML.index("function hrSeedALabel(){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn('hrCopyable(hex, "Seed A")', block)
+
+    def test_it_is_hex_padded_to_eight_digits(self):
+        block = HTML[HTML.index("function hrSeedALabel(){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn('toString(16).padStart(8, "0")', block)
+
+    def test_nothing_is_rendered_before_a_seed_is_chosen(self):
+        block = HTML[HTML.index("function hrSeedALabel(){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn('if(seed == null) return "";', block)
+
+    def test_the_pinned_advance_frame_comes_with_it(self):
+        """The two are only meaningful together: a Seed A without the frame does not say where
+        in the stream the encounter was taken from."""
+        block = HTML[HTML.index("function hrSeedALabel(){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn("_hsa.pinnedFrame", block)
+
+
+class TestTheSpreadPopupShowsItsInputs(unittest.TestCase):
+    """The popup shows DERIVED stats, and the nature and IVs that produced them are what the
+    player is actually verifying. When a number disagrees with the summary screen the next
+    question is which input was wrong, which the popup could not answer (clayton-1jd)."""
+
+    def test_the_popup_has_rows_for_them(self):
+        self.assertIn("function hrSpreadInputRows(m){", HTML)
+        self.assertIn("${hrSpreadInputRows(m)}", HTML)
+
+    def test_the_ivs_are_labelled_in_the_projects_stat_order(self):
+        """A spread read in the wrong order is still six valid IVs, so nothing downstream would
+        object -- the label is the only thing that prevents it."""
+        block = HTML[HTML.index("function hrSpreadInputRows(m){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn("hp atk def spa spd spe", block)
+        self.assertIn('HR_IV_ORDER = ["hp", "atk", "def", "spa", "spd", "spe"]', HTML)
+
+    def test_the_spread_is_copyable(self):
+        block = HTML[HTML.index("function hrSpreadInputRows(m){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn('hrCopyable(spread, "the IV spread")', block)
+
+    def test_our_own_side_gets_no_rows(self):
+        """Our stats are typed in from the summary screen rather than derived, so there is no
+        nature or IV spread behind them -- empty rows would imply there was."""
+        block = HTML[HTML.index("function hrSpreadInputRows(m){"):]
+        block = block[:block.index("\n}\n")]
+        self.assertIn('if (!m.nature && !have.length) return "";', block)

@@ -542,9 +542,18 @@ class TestSleepIsModelled(unittest.TestCase):
 
 
 class TestThePreconditionAcceptsSleep(unittest.TestCase):
-    """A. Paralysis was asserted twice; sleep satisfies the purpose more strongly. Burn and
-    poison are still refused -- same catch bonus, but they tick HP, so the target is not frozen
-    and `b` is not a constant."""
+    """A. Paralysis was asserted twice; sleep satisfies the purpose more strongly.
+
+    **And the status requirement is now gone entirely** -- the only precondition is 1 HP. This
+    class was written when "accepts sleep" was the whole change; the history is kept because the
+    Latias run is what forced each step: Refresh sheds paralysis but cannot be used while asleep,
+    so sleep had to be allowed, which meant `b` stopped being constant, which meant an unstatused
+    target was never a dead end either.
+
+    Burn and poison are still refused, for a reason that is not about statuses: their tick faints
+    a 1 HP target before a ball can land, and the target's own tick is deliberately unsimulated
+    because there is no reason to ever inflict one on something you are catching.
+    """
 
     def test_which_statuses_hold_the_target_still(self):
         for status in (Status.PARALYSIS, Status.SLEEP, Status.FREEZE):
@@ -595,10 +604,14 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
         self.assertIsInstance(solve(asleep, HUNT, config), Solution)
         self.assertIsInstance(solve(awake, HUNT, config), Solution)
 
-    def test_an_unstatused_target_we_cannot_re_sleep_is_still_refused(self):
-        """What the relaxation does NOT do. With no Spore left there is no way back to a holding
-        status, so the x1.5 bonus the plan is priced against is genuinely out of reach -- and
-        saying so is better than planning against a bonus that will not be there."""
+    def test_an_unstatused_target_we_cannot_re_sleep_is_SEARCHED_now(self):
+        """This asserted a refusal, and the refusal was the old requirement one step smaller.
+
+        With no Spore left there is no way back to a holding status -- which makes the capture
+        *less likely per throw*, not unreachable. `b` is simply the unstatused figure, and
+        `max_reachable_threshold` returns it. Refusing reported "no solution" for a battle the
+        player could still win, which is the costliest wrong answer this tool can give.
+        """
         from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
 
         # Spore is slot 3 of the fixture moveset; empty every slot's PP but False Swipe's.
@@ -606,9 +619,10 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
         state = BattleState(ours=spent, rng=0xEC1504DC, phase=2,
                             target=_latias().with_status(Status.NONE))
         result = solve(state, HUNT, SolverConfig(danger_floor=56))
-        self.assertIsInstance(result, Unreachable)
-        self.assertIn("nothing left in our moveset can paralyze, sleep or freeze it",
-                      result.reason)
+        if isinstance(result, Unreachable):
+            # An honest empty search is allowed; a precondition refusal is not.
+            self.assertNotIn("nothing left in our moveset", result.reason)
+            self.assertNotIn("out of reach", result.reason)
 
     def test_the_wrong_hp_is_still_refused(self):
         """A misconfigured start rather than a recoverable state: we never damage the target
@@ -637,18 +651,30 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
                             target=_latias().with_status(Status.BURN))
         result = solve(state, HUNT, SolverConfig(danger_floor=56))
         self.assertIsInstance(result, Unreachable)
-        # Refused for the reason that actually applies, which the old blanket message did not
-        # give: burn cannot be displaced by a status move -- our Spore would simply fail -- and
-        # its tick kills a target sitting on 1 HP.
-        self.assertIn("neither wears off nor can be displaced", result.reason)
+        # Refused for the reason that actually applies: the tick faints a 1 HP target before any
+        # ball can land. It has to stay a GATE rather than fall out of the search, because
+        # `simulate_turn` deliberately does not tick the TARGET's burn -- so the simulator
+        # believes a burned target is healthy and would return a confident plan.
+        self.assertIn("ticks its HP every turn", result.reason)
 
-    def test_the_blocker_message_names_what_is_needed(self):
+    def test_the_blocker_message_names_the_tick_rather_than_a_status_requirement(self):
+        """It used to say "it needs to be paralyzed or asleep", which is no longer true of
+        anything -- and was never the reason burn fails."""
         from claytonlib.battle_compass.candidates import Candidate
         from claytonlib.battle_compass.identify import Phase, Session
         session = Session([Candidate(seed=0xEC1504DC, frame=1, second=0)],
                           _ours(), _latias(status=Status.BURN), HUNT, phase=Phase.PINNING)
         blockers = session.solver_blockers()
-        self.assertTrue(any("paralyzed or asleep" in b for b in blockers), blockers)
+        self.assertTrue(any("ticks its HP" in b for b in blockers), blockers)
+        self.assertFalse(any("paralyzed or asleep" in b for b in blockers), blockers)
+
+    def test_an_unstatused_one_hp_target_has_no_blocker_at_all(self):
+        """The contract, asserted where the run page reads it."""
+        from claytonlib.battle_compass.candidates import Candidate
+        from claytonlib.battle_compass.identify import Phase, Session
+        session = Session([Candidate(seed=0xEC1504DC, frame=1, second=0)], _ours(),
+                          _latias().with_status(Status.NONE), HUNT, phase=Phase.PINNING)
+        self.assertEqual(session.solver_blockers(), [])
 
     def test_a_sleeping_one_hp_target_has_no_status_blocker(self):
         from claytonlib.battle_compass.candidates import Candidate

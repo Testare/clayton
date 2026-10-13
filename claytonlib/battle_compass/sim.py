@@ -569,6 +569,59 @@ SECONDARY_STATUSES: dict[int, Status] = {
 }
 
 
+def can_inflict(battler: "Battler", status: Status) -> bool:
+    """Whether `battler` has any way to put `status` on the other side.
+
+    Three routes, all of them real for some configured target: a move whose PRIMARY effect is
+    the status (Thunder Wave, Spore), a move whose SECONDARY is (Discharge, Sacred Fire), and
+    the holder's own ability firing on contact (Static).
+
+    Written for the speed checks. `speed_checks` enumerates our Pokemon both healthy and
+    paralyzed because paralysis quarters our Speed and can flip an order that looked safe -- but
+    `include_our_paralysis` defaulted on and nothing derived it, so a hunt against Lugia (no
+    paralysing move, Pressure not Static) reported ties for a state the player could not reach.
+    Half the rows in the table were hypotheticals (clayton-36b).
+
+    Deliberately over-inclusive on abilities: an ability we do not model is assumed capable
+    rather than assumed safe, because the cost of a spurious row is a line of advice and the cost
+    of a missing one is an unmodelled desync.
+    """
+    for slot in range(len(battler.moves)):
+        move = battler.move(slot)
+        if move is None:
+            continue
+        if status_applied_by(move) is status or secondary_status(move) is status:
+            return True
+    return _ability_inflicts(battler.ability, status)
+
+
+#: Abilities that inflict a status on whoever touches their holder. Only the ones this project
+#: models; `can_inflict` treats an UNKNOWN ability as capable, so a new one is a spurious speed
+#: row rather than a silent hole.
+_CONTACT_STATUS_ABILITIES: dict[str, Status] = {
+    "static": Status.PARALYSIS,
+    "flame body": Status.BURN,
+    "poison point": Status.POISON,
+    "effect spore": Status.PARALYSIS,      # also sleep and poison; any of them is enough here
+}
+#: Abilities known to inflict nothing on contact, so a target holding one produces no rows at
+#: all. Everything outside both sets is treated as capable.
+_INERT_ABILITIES = frozenset({
+    "pressure", "levitate", "technician", "own tempo", "sturdy", "magnet pull",
+    "serene grace", "synchronize", "early bird", "keen eye", "tangled feet", "", "none",
+})
+
+
+def _ability_inflicts(ability: str, status: Status) -> bool:
+    key = (ability or "").strip().lower()
+    if key in _INERT_ABILITIES:
+        return False
+    known = _CONTACT_STATUS_ABILITIES.get(key)
+    if known is not None:
+        return known is status or key == "effect spore"
+    return True             # unknown ability: assume it can, and say so in a spurious row
+
+
 def secondary_status(move: Move) -> Status | None:
     """The status this move's secondary effect would inflict, or None.
 

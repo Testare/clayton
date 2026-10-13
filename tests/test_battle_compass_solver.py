@@ -121,10 +121,19 @@ class TestCaptureWindows(unittest.TestCase):
 
 
 class TestPreconditions(unittest.TestCase):
-    """The solver asserts its preconditions rather than coping without them -- but only the ones
-    a path cannot fix. A target at exactly 1 HP is non-negotiable (we never damage it again);
-    being held still is what makes b a single constant (sec 2.2), and an unstatused target is
-    one Spore away from it, so that half is recoverable rather than fatal."""
+    """**The only precondition is 1 HP.** No status is required.
+
+    The original contract was "1 HP and permanently paralyzed", because that made `b` a single
+    constant (sec 2.2). Sleep broke the constant and the solver learned to cope -- which is what
+    made Latias possible, since Refresh sheds paralysis but cannot be used while asleep. Once `b`
+    varies along a path, an unstatused target is not a different problem, only a smaller `b`:
+    19784 at a x1 ball against 21845 paralyzed.
+
+    Burn and poison are refused, and not as the old requirement in disguise. They tick the
+    target's HP, which at 1 HP faints it before a ball lands -- and because there is no reason to
+    ever inflict one on a Pokemon you are trying to catch, the target's tick is deliberately
+    unsimulated and the state is refused instead.
+    """
 
     def test_a_target_above_one_hp_is_refused(self):
         result = solve(_state(hp=50), HUNT, _config())
@@ -138,29 +147,35 @@ class TestPreconditions(unittest.TestCase):
         result = solve(_state(status=Status.NONE), HUNT, _config())
         self.assertNotIsInstance(result, Unreachable)
 
-    def test_unless_nothing_can_put_it_back_under(self):
-        """Then the x1.5 bonus really is out of reach, and saying so beats planning against a
-        bonus that will not be there. The fixture's status move is Spore, in slot 4."""
+    def test_and_it_is_SEARCHED_even_when_nothing_can_put_it_back_under(self):
+        """This used to refuse. It was the old requirement one step smaller: a target we cannot
+        status is not unreachable, only less likely per throw -- `max_reachable_threshold` returns
+        the unstatused `b` and the window search runs at that. Refusing reported "no solution"
+        for a battle the player could still win.
+
+        The fixture's only status move is Spore, in slot 4, so zeroing its PP is what removes the
+        possibility entirely.
+        """
         state = _state(status=Status.NONE)
         state.ours = replace(state.ours, pp=(40, 5, 20, 0))
         result = solve(state, HUNT, _config())
-        self.assertIsInstance(result, Unreachable)
-        self.assertIn("nothing left in our moveset", result.reason)
+        self.assertNotIsInstance(result, Unreachable)
 
-    def test_a_status_that_ticks_hp_is_refused_too(self):
-        """Burn and poison carry the same x1.5 catch bonus as paralysis, so "has a status" is
-        not the test -- they damage the target every turn, so it is not frozen and b is not a
-        constant (Battler.frozen_for_phase2).
+    def test_a_status_that_ticks_hp_is_still_refused(self):
+        """And it has to stay a GATE rather than fall out of the search.
 
-        And unlike NONE they are not recoverable: a non-volatile status cannot be displaced by
-        another, so our Spore would simply fail, and the tick kills a target on 1 HP. This is
-        the case that `statuses_we_can_apply` exists to separate from an unstatused one --
-        `reachable_statuses` is an over-estimate and would have let both through.
+        `simulate_turn` ticks our burn and never the target's, deliberately -- there is no reason
+        to burn a Pokemon you are trying to catch, so refusing the state is the answer rather
+        than a placeholder for machinery nobody needs. Which means the simulator believes a
+        burned target is healthy: with the gate removed, a burned 1 HP target produced the
+        five-step plan `M1hE3hHP125 M3E4 M1hE3hHP098 M1hE1 C` against something that died on
+        turn one.
         """
         for status in (Status.BURN, Status.POISON):
             result = solve(_state(status=status), HUNT, _config())
             self.assertIsInstance(result, Unreachable, status)
-            self.assertIn("neither wears off nor can be displaced", result.reason)
+            self.assertIn("ticks its HP every turn", result.reason)
+            self.assertFalse(result.proven, "it says nothing about the seed")
 
     def test_sleep_is_accepted(self):
         """Stronger than paralysis -- the target cannot act at all -- and the status of choice
@@ -437,3 +452,67 @@ class TestAWindowIsATargetNotAReachableOne(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheOnlyPreconditionIsOneHp(unittest.TestCase):
+    """Stated as its own class because the contract changed, and the old one is written into
+    several docstrings that a reader will meet first.
+
+    Requested directly: "we should drop the requirement of there being a status condition before
+    solving. It isn't a matter of wording: The only requirement is the pokemon being at 1 hp."
+    """
+
+    def test_every_non_ticking_status_is_accepted_including_none(self):
+        for status in (Status.NONE, Status.PARALYSIS, Status.SLEEP, Status.FREEZE):
+            with self.subTest(status=status.value):
+                self.assertNotIsInstance(solve(_state(status=status), HUNT, _config()),
+                                         Unreachable)
+
+    def test_identify_reports_no_status_blocker(self):
+        """`solver_blockers` drives the run page's "not yet" panel, so a stale blocker there
+        would keep offering a two-click confirm for a state that is actually fine."""
+        from claytonlib.battle_compass.candidates import Candidate
+        from claytonlib.battle_compass.identify import Session
+
+        cands = (Candidate(seed=0xEC1504DC, frame=1000, second=30),)
+        state = _state(status=Status.NONE)
+        session = Session(cands, state.ours, state.target, HUNT)
+        blockers = " ".join(session.solver_blockers())
+        self.assertNotIn("hold it still", blockers)
+        self.assertNotIn("paralyzed or asleep", blockers)
+
+    def test_identify_still_blocks_a_ticking_status(self):
+        from claytonlib.battle_compass.candidates import Candidate
+        from claytonlib.battle_compass.identify import Phase, Session
+
+        cands = (Candidate(seed=0xEC1504DC, frame=1000, second=30),)
+        state = _state(status=Status.BURN)
+        session = Session(cands, state.ours, state.target, HUNT)
+        session.phase = Phase.PINNING
+        for st in session.states.values():
+            st.target = st.target.with_hp(1).with_status(Status.BURN)
+        self.assertIn("ticks its HP", " ".join(session.solver_blockers()))
+
+    def test_the_old_contract_is_gone_from_the_docstrings(self):
+        """The pattern this project keeps getting caught by: prose outliving the code it
+        describes. Three modules asserted "1 HP and held still" as the precondition."""
+        import inspect
+
+        from claytonlib import battle_compass
+        from claytonlib.battle_compass import identify, solver
+        from claytonlib.battle_compass import state as state_mod
+
+        for module in (battle_compass, identify, solver, state_mod):
+            with self.subTest(module.__name__):
+                self.assertNotIn("held still", inspect.getdoc(module) or "")
+
+    def test_frozen_for_phase2_is_no_longer_a_gate_anywhere(self):
+        """The property survives as a meaningful question about a Battler; what must not survive
+        is anything consulting it to refuse."""
+        import inspect
+
+        from claytonlib.battle_compass import identify, solver
+
+        for module in (identify, solver):
+            with self.subTest(module.__name__):
+                self.assertNotIn("frozen_for_phase2", inspect.getsource(module))

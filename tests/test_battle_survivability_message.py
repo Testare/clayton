@@ -63,7 +63,12 @@ class TestTheWeatherIsNamed(unittest.TestCase):
         rained = damage(hydro, attacker, defender, roll=100, critical=True, weather="rain")
         self.assertLess(clear, ours.max_hp)
         self.assertGreater(rained, ours.max_hp)
-        self.assertEqual(rained, worst_incoming_hit(ours, lugia))
+        # `any_reachable_weather=True` because that is what `survivability_warnings` asks: this
+        # is pre-hunt advice about what the battle can ever do, not what can land this turn.
+        # The bare call now answers the live question instead (clayton-5rz).
+        self.assertEqual(rained, worst_incoming_hit(ours, lugia, any_reachable_weather=True))
+        self.assertLess(worst_incoming_hit(ours, lugia), rained,
+                        "the live figure must not count a rain that is not up")
 
     def test_a_target_with_no_weather_move_is_named_plainly(self):
         """Suicune has Rain Dance too, so this uses a target whose worst hit is weather-neutral:

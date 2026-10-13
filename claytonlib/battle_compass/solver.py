@@ -1,9 +1,11 @@
 """Phase 2: steer the RNG until the capture ball captures.
 
-Given an identified seed and a target at exactly 1 HP and held still (paralyzed or asleep), find the
-sequence of actions whose ball throw succeeds.  The state is nearly frozen — the target's HP and
-status do not change, so ``b`` is a single constant — which is why the search is cheap
-(notes/battle_compass.md sec 2.2).
+Given an identified seed and a target at exactly 1 HP, find the sequence of actions whose ball
+throw succeeds.  The target's HP never changes again, which is most of why the search is cheap
+(notes/battle_compass.md sec 2.2) -- but ``b`` is NOT a single constant any more: a status can
+be applied or wear off along a path, so `max_reachable_threshold` prices the prune at the most
+generous figure any reachable status allows.  1 HP is the only precondition; burn and poison
+are refused because their tick faints the target, not because a status is wanted.
 
 **Windows prune; the simulator decides.**  Section 6.1 describes precomputing the offsets where
 four consecutive rolls fall under ``b`` and then solving reachability to ``{w - 4}``.  The
@@ -40,7 +42,7 @@ from claytonlib.battle_compass.sim import (
     HuntConfig, advance, simulate_turn, unselectable_reason,
 )
 from claytonlib.battle_compass.state import (
-    HOLDING_STATUSES, Action, BattleState, Status,
+    HP_TICKING_STATUSES, Action, BattleState, Status,
 )
 from claytonlib.safari import advance_rng
 
@@ -342,10 +344,19 @@ def danger_floor_for(state: BattleState, config: SolverConfig) -> int:
     So the figure is recomputed from the live stages. `config.danger_floor` survives as a lower
     bound: a caller that deliberately set a floor (or a test that pins one) still gets at least
     it, and the upward enumeration in `worst_incoming_hit` does the rest.
+
+    **Weather is enumerated here and nowhere else.** The solver's only use for this figure is
+    `choose_item` deciding between a full heal and cheap filler, and healing against a rain that
+    has not happened yet is the safe direction to be wrong in -- the thing that actually stops
+    the search walking into a KO is the exact per-action faint test in `solve`. The LIVE
+    indicator must not do this, because a Rain Dance the target has not used is not a hit it can
+    land this turn (clayton-5rz).
     """
     from claytonlib.battle_compass.hunt_session import worst_incoming_hit
 
-    return max(config.danger_floor, worst_incoming_hit(state.ours, state.target, field=state))
+    return max(config.danger_floor,
+               worst_incoming_hit(state.ours, state.target, field=state,
+                                  any_reachable_weather=True))
 
 
 def ends_the_run(move) -> bool:
@@ -548,38 +559,45 @@ def solve(state: BattleState, hunt: HuntConfig,
     # An unstatused target is not a dead end -- it is the ordinary consequence of a sleep wearing
     # off, and the fix is a turn of the search rather than the end of the run.
     #
-    # This used to refuse outright, and the refusal was the one thing in the solver that did not
-    # believe the rest of it: `reachable_statuses` already includes NONE *because* "sleep and
-    # freeze wear off", `max_reachable_threshold` already prices the Spore-then-throw path by
-    # name, and `_dominance_key` already separates states by `sleep_turns` so the search can plan
-    # through the wake-up. All of that worked; the gate in front of it did not, so a run that
-    # followed the solver's own recommendation into the turn the target woke on was told there
-    # was no solution.
+    # **No status is required.** The target at 1 HP is the precondition; it does not have to be
+    # paralyzed, asleep, frozen, or anything else, and our moveset does not have to be able to
+    # make it so.
     #
-    # Note what this does NOT relax. A target the search cannot put back under a holding status
-    # is still refused, because then the x1.5 catch bonus is genuinely out of reach -- and so is
-    # one at the wrong HP, which is a misconfigured start rather than a recoverable state.
-    if not state.target.frozen_for_phase2:
-        # Only NONE is recoverable, and the distinction is the whole reason this is not simply
-        # `reachable_statuses`. That function is a deliberate OVER-estimate -- it is a necessary
-        # condition for the window prune, where including a status we cannot actually reach only
-        # costs a false positive. Here over-including is unsound: it would accept a burned
-        # target, and burn can neither wear off nor be displaced by a status move (non-volatile
-        # statuses are mutually exclusive, so our Spore simply fails), while ticking HP that at
-        # 1 HP kills the target outright.
-        if state.target.status is not Status.NONE:
-            return Unreachable(
-                reason=(f"the target is {state.target.status.value}, which neither wears off nor "
-                        f"can be displaced by a status move -- and it ticks HP every turn, so at "
-                        f"1 HP the target faints rather than being caught"),
-                proven=False, states_explored=0)
-        if not statuses_we_can_apply(state, config) & HOLDING_STATUSES:
-            return Unreachable(
-                reason=("the target woke up and nothing left in our moveset can paralyze, sleep "
-                        "or freeze it -- so the x1.5 catch bonus the plan is priced against is "
-                        "out of reach"),
-                proven=False, states_explored=0)
-
+    # That gate was the last holdout of the paralysis-only design, and everything it was
+    # protecting had already been built: `reachable_statuses` includes the current status AND
+    # NONE, `max_reachable_threshold` prices the largest `b` any reachable status allows,
+    # `_dominance_key` separates states by status and sleep counter so the search plans through a
+    # wake-up, and every actual throw is settled by `simulate_turn` rather than by the prune.
+    #
+    # It had relaxed once already -- an unstatused target was accepted provided our moveset could
+    # put a holding status back on it. That proviso was the same mistake one step smaller. A
+    # target we cannot status is not unreachable, only less likely per throw: `b` is 19784 at a
+    # x1 ball and 1 HP against 21845 paralyzed, and the window search simply runs at the smaller
+    # figure. Refusing it reported "no solution" for a battle the player could still win, which
+    # is the costliest wrong answer this tool can give -- `proven=False` or not, it is what stops
+    # them trying.
+    #
+    # **Burn and poison are still refused, and for a different reason than they used to be.**
+    # Not because "a status is required" -- it is not -- but because they kill the prize. The tick
+    # is a fixed fraction of max HP every turn, and at 1 HP it faints the target before any ball
+    # can land.
+    #
+    # There is no reason to ever burn or poison a Pokemon you are trying to catch: the x1.5 catch
+    # bonus is exactly paralysis's, and it arrives attached to a clock. So the target's own tick
+    # is deliberately NOT simulated -- `simulate_turn` ticks our burn and never the target's --
+    # and this refusal is the answer rather than a placeholder for machinery somebody should
+    # write later.
+    #
+    # It has to stay a GATE for that reason. Without it the search runs against a target the
+    # simulator believes is healthy and returns a confident plan: removing it produced
+    # `M1hE3hHP125 M3E4 M1hE3hHP098 M1hE1 C` for a burned 1 HP target, five steps against
+    # something that died on turn one.
+    if state.target.status in HP_TICKING_STATUSES:
+        return Unreachable(
+            reason=(f"the target is {state.target.status.value}, which ticks its HP every turn "
+                    f"-- at 1 HP that faints it before any ball can land, so there is no path "
+                    f"to a capture from here"),
+            proven=False, states_explored=0)
     deadline = struggle_deadline(state.target, config.turns_per_pp)
     max_turns = min(config.max_turns, deadline)
     # The MAXIMUM b any reachable status allows, not the entry state's -- see
