@@ -18,6 +18,7 @@ clayton-957.10.15.
 """
 import unittest
 
+from claytonlib.battle.damage import item_key
 from claytonlib.battle.readiness import (
     CHOICE_ITEMS, HAZARDOUS_UNMODELLED_ITEMS, MODELLED_HELD_ITEMS, MOVES_LAST_ITEMS,
     SPEED_HALVING_ITEMS, unmodelled_held_items,
@@ -38,7 +39,8 @@ class TestTheAllowlist(unittest.TestCase):
 
         expected = (set(TYPE_ENHANCING_ITEMS) | set(CHOICE_ITEMS) | set(SPEED_HALVING_ITEMS)
                     | set(MOVES_LAST_ITEMS) | set(ACCURACY_REDUCING_ITEMS)
-                    | set(ACCURACY_RAISING_ITEMS) | {LEFTOVERS, LIGHT_CLAY})
+                    | set(ACCURACY_RAISING_ITEMS)
+                    | {item_key(LEFTOVERS), item_key(LIGHT_CLAY)})
         self.assertEqual(ALLOWED, expected)
 
     def test_leftovers_is_spelled_in_exactly_one_place(self):
@@ -52,7 +54,7 @@ class TestTheAllowlist(unittest.TestCase):
     def test_the_items_the_lugia_plan_actually_uses_are_all_modelled(self):
         for item in ("Silk Scarf", "Leftovers", "Choice Scarf", "Light Clay", "Brightpowder"):
             with self.subTest(item):
-                self.assertIn(item.lower(), ALLOWED)
+                self.assertIn(item_key(item), ALLOWED)
 
     def test_nothing_is_both_allowed_and_hazardous(self):
         self.assertEqual(ALLOWED & set(HAZARDOUS_UNMODELLED_ITEMS), frozenset())
@@ -60,9 +62,9 @@ class TestTheAllowlist(unittest.TestCase):
     def test_brightpowder_moved_from_hazardous_to_allowed(self):
         """It was in the dangerous list until clayton-957.28 modelled it. Pinned so that the two
         tables cannot both claim it."""
-        self.assertIn("brightpowder", ALLOWED)
-        self.assertNotIn("brightpowder", HAZARDOUS_UNMODELLED_ITEMS)
-        self.assertIn("lax incense", ALLOWED)
+        self.assertIn(item_key("BrightPowder"), ALLOWED)
+        self.assertNotIn(item_key("BrightPowder"), HAZARDOUS_UNMODELLED_ITEMS)
+        self.assertIn(item_key("Lax Incense"), ALLOWED)
 
     def test_every_group_is_non_empty_and_described(self):
         for why, names in MODELLED_HELD_ITEMS.items():
@@ -148,3 +150,65 @@ class TestItIsAdvisoryThroughTheFacade(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpellingTolerance(unittest.TestCase):
+    """Item names are typed from memory, and the in-game spellings are inconsistent.
+
+    "BrightPowder" is one word on the item screen and "Bright Powder" is what most people write;
+    "King's Rock" has an apostrophe that is easy to drop. Every item table is keyed on
+    `damage.item_key` -- lowercase, alphanumerics only -- so all of those match.
+
+    Checked for collisions before adopting: across all eight tables plus the hazardous list, the
+    only two raw names that reduced to the same key were "never-melt ice" and "nevermeltice",
+    which were already there as deliberate aliases for the same item. So the normaliser REPLACED
+    the need for aliases rather than risking a wrong match.
+
+    This matters more than cosmetics: a held item that silently fails to match desynchronises the
+    whole run, which is the failure `unmodelled_held_items` exists to pre-empt.
+    """
+
+    def test_brightpowder_both_ways_round(self):
+        for spelling in ("BrightPowder", "Bright Powder", "bright powder", "brightpowder",
+                         "BRIGHT POWDER", "  Bright  Powder  "):
+            with self.subTest(spelling):
+                self.assertEqual(unmodelled_held_items({"X": spelling}), [],
+                                 f"{spelling!r} should be recognised as modelled")
+
+    def test_an_apostrophe_is_optional(self):
+        for spelling in ("King's Rock", "Kings Rock", "kings rock", "KINGSROCK"):
+            with self.subTest(spelling):
+                (warning,) = unmodelled_held_items({"X": spelling})
+                self.assertIn("dangerous kind", warning,
+                              f"{spelling!r} should be recognised as hazardous")
+
+    def test_the_type_enhancing_items_too(self):
+        for spelling in ("Silk Scarf", "silkscarf", "SILK SCARF"):
+            with self.subTest(spelling):
+                self.assertEqual(unmodelled_held_items({"X": spelling}), [])
+
+    def test_the_message_echoes_what_the_PLAYER_typed(self):
+        """Normalised for matching, not for display -- the warning has to name the thing they
+        can see in their own field."""
+        (warning,) = unmodelled_held_items({"X": "Life  Orb"})
+        self.assertIn("Life  Orb", warning)
+
+    def test_every_table_key_is_already_normalised(self):
+        """Or a lookup through `item_key` would never reach it. Asserted over the tables rather
+        than spot-checked, so a hand-added entry with a space fails here instead of silently
+        never matching."""
+        for why, names in MODELLED_HELD_ITEMS.items():
+            for name in names:
+                with self.subTest(why=why, name=name):
+                    self.assertEqual(item_key(name), name)
+        for name in HAZARDOUS_UNMODELLED_ITEMS:
+            with self.subTest(name=name):
+                self.assertEqual(item_key(name), name)
+
+    def test_the_normaliser_does_not_merge_two_different_items(self):
+        """The check that made this safe to adopt at all."""
+        from claytonlib.battle.damage import TYPE_ENHANCING_ITEMS
+
+        raw = (set(TYPE_ENHANCING_ITEMS) | set(HAZARDOUS_UNMODELLED_ITEMS)
+               | frozenset().union(*MODELLED_HELD_ITEMS.values()))
+        self.assertEqual(len({item_key(n) for n in raw}), len(raw))

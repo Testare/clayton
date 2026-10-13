@@ -64,14 +64,30 @@ class TestTheFieldMoveCheck(unittest.TestCase):
         self.assertEqual(len(field), 1)
 
 
-class TestNonMovePrerequisites(unittest.TestCase):
-    def test_the_silver_wing_is_reported_and_never_checked(self):
-        """No moveset can express a key item, so it is said rather than tested -- and said even
-        when the field moves are satisfied."""
+class TestNonMovePrerequisitesAreNotWarnedAbout(unittest.TestCase):
+    """The Silver Wing is NOT reported, and that is the considered answer rather than an omission.
+
+    A field move is worth checking because a party can be assembled wrongly and the mistake is
+    invisible until you are standing at the water's edge. A key item is not like that: you either
+    have it or you cannot reach the encounter to try at all, so the warning would fire on every
+    readiness check forever and tell nobody anything. It lives in notes/lugia_love_ball.md, where
+    a reader looks once.
+    """
+
+    def test_a_covered_party_is_COMPLETELY_silent(self):
         party = dict(PARTY, Lapras=["Surf", "Whirlpool", "Ice Beam", "Strength"])
-        warnings = access_warnings("lugia", party)
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("Silver Wing", warnings[0])
+        self.assertEqual(access_warnings("lugia", party), [])
+
+    def test_no_warning_mentions_the_silver_wing(self):
+        for party in (PARTY, dict(PARTY, Lapras=["Surf", "Whirlpool"])):
+            for warning in access_warnings("lugia", party):
+                with self.subTest(warning=warning[:40]):
+                    self.assertNotIn("Silver Wing", warning)
+
+    def test_the_dataclass_has_no_field_for_them(self):
+        """Machinery with no users is worse than no machinery: it reads as a feature someone
+        forgot to populate."""
+        self.assertFalse(hasattr(EncounterAccess(where="x"), "also_needed"))
 
 
 class TestTargetsWithNothingToCheck(unittest.TestCase):
@@ -189,7 +205,6 @@ class TestTheDataclass(unittest.TestCase):
     def test_a_row_with_no_requirements_is_legal_and_silent(self):
         access = EncounterAccess(where="nowhere in particular")
         self.assertEqual(access.field_moves, ())
-        self.assertEqual(access.also_needed, ())
 
 
 if __name__ == "__main__":
@@ -324,3 +339,61 @@ class TestTheSolverCannotPlanOne(unittest.TestCase):
                                                    HuntConfig(target_catch_rate=3))}
         self.assertNotIn(Action.MOVE_1, actions, "Whirlpool must not be planned")
         self.assertIn(Action.MOVE_2, actions, "Sweet Scent is fine and must stay available")
+
+
+class TestTheSlotArithmetic(unittest.TestCase):
+    """How many party slots are free, which the message used to assert rather than compute.
+
+    It said "the carrier has to be one of your six" and "which means dropping one of the six" on
+    every hunt, so a player with four configured was told to drop somebody while holding two
+    spare slots. Reported from the app.
+
+    The subtler half: **the hunt party is not the game party.** This function only sees what the
+    hunt lists, so it cannot claim a slot is empty -- only that a carrier need not displace
+    anything the hunt knows about.
+    """
+
+    def _party(self, n):
+        names = ["Natu", "Magneton", "Ampharos", "Smeargle", "Chatot", "Chatot2"][:n]
+        return {name: ["Tackle"] for name in names}
+
+    def test_a_full_party_is_told_something_must_make_room(self):
+        (warning,) = access_warnings("lugia", self._party(6))
+        self.assertIn("All 6 are listed", warning)
+        self.assertIn("make room", warning)
+
+    def test_a_partial_party_is_NOT_told_to_drop_anybody(self):
+        for n in (1, 3, 4, 5):
+            with self.subTest(configured=n):
+                (warning,) = access_warnings("lugia", self._party(n))
+                self.assertIn(f"lists {n} of 6", warning)
+                self.assertIn("without displacing anything", warning)
+                self.assertNotIn("make room", warning)
+                self.assertNotIn("dropping", warning)
+
+    def test_the_four_member_case_from_the_report(self):
+        (warning,) = access_warnings("lugia", self._party(4))
+        self.assertIn("This hunt lists 4 of 6", warning)
+
+    def test_an_unconfigured_hunt_does_no_arithmetic_at_all(self):
+        """Zero of six is not a useful sentence -- the requirement is the whole message there."""
+        (warning,) = access_warnings("lugia", {})
+        self.assertNotIn("of 6", warning)
+        self.assertNotIn("make room", warning)
+        self.assertIn("Surf or Whirlpool", warning)
+
+    def test_the_carrier_note_no_longer_repeats_the_slot_advice(self):
+        """It said "dropping one of the six" too, so a four-member hunt got it wrong twice."""
+        species_map = {name: "natu" for name in self._party(4)}
+        (warning,) = access_warnings("lugia", self._party(4), species_map)
+        self.assertIn("not carrying yet", warning)
+        self.assertNotIn("one of the six", warning)
+
+    def test_party_size_is_a_named_constant(self):
+        from claytonlib.battle_compass.targets import PARTY_SIZE
+
+        self.assertEqual(PARTY_SIZE, 6)
+
+    def test_none_of_this_fires_once_a_carrier_is_present(self):
+        party = dict(self._party(3), Tentacruel=["Surf", "Whirlpool"])
+        self.assertEqual(access_warnings("lugia", party), [])

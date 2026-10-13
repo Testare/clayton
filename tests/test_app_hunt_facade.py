@@ -294,16 +294,15 @@ class TestHuntAccess(HuntFacadeCase):
         self.assertEqual(readiness["hard_errors"], [])
         self.assertNotEqual(readiness["access"], [])
 
-    def test_the_silver_wing_is_mentioned_even_when_the_moves_are_covered(self):
+    def test_a_covered_party_goes_completely_quiet(self):
+        """No Silver Wing nag left over: a key item you either have or cannot reach the encounter
+        to try, so warning about it forever tells nobody anything."""
         mule = self.api.add_party_pokemon(self.profile["id"], self.LAPRAS)["pokemon_id"]
         hunt = self._lugia_hunt(party=[{"pokemon_id": self.ids["Magneton"]},
                                        {"pokemon_id": self.ids["Smeargle"],
                                         "held_item": "Silk Scarf"},
                                        {"pokemon_id": mule}])
-        access = self.api.hunt_readiness(hunt["id"])["access"]
-        self.assertEqual([w for w in access if "needs to reach" in w], [])
-        self.assertEqual(len(access), 1)
-        self.assertIn("Silver Wing", access[0])
+        self.assertEqual(self.api.hunt_readiness(hunt["id"])["access"], [])
 
     def test_a_suicune_hunt_has_nothing_to_report(self):
         self.assertEqual(self.api.hunt_readiness(self._hunt()["id"])["access"], [])

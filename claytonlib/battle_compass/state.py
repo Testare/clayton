@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from enum import Enum
 
+from claytonlib.battle.damage import item_key
 from claytonlib.moves import Move, resolve_move
 
 
@@ -203,7 +204,7 @@ class Battler:
         """Whether this Pokemon's held item locks it into one move once it attacks."""
         from claytonlib.battle.readiness import CHOICE_ITEMS
 
-        return self.held_item.strip().lower() in CHOICE_ITEMS
+        return item_key(self.held_item) in CHOICE_ITEMS
 
     def usable_slots(self) -> tuple[int, ...]:
         """Slots with a known move and PP remaining -- and, under a Choice item, only the one.

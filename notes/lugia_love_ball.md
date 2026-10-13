@@ -339,10 +339,15 @@ top rolls. Right switch-in against two of three attacks, wrong one against the t
 
 ## 5a. Getting there costs a party slot, and none of the six can pay it
 
-Lugia is at the bottom of the Whirl Islands, which needs **Surf** and **Whirlpool** — and the
-Silver Wing to make it appear at all. That is a reachability requirement, and the tooling had no
-concept of one; `targets.ENCOUNTER_ACCESS` and `access_warnings` are it now, surfaced on the hunt
-page under "Getting there".
+Lugia is at the bottom of the Whirl Islands, which needs **Surf** and **Whirlpool**. That is a
+reachability requirement, and the tooling had no concept of one; `targets.ENCOUNTER_ACCESS` and
+`access_warnings` are it now, surfaced on the hunt page under "Getting there".
+
+The **Silver Wing is deliberately not warned about**, though you do need it. A field move earns a
+check because a party can be assembled wrongly and the mistake stays invisible until you are at
+the water's edge; a key item you either have or cannot reach the encounter to try at all, so the
+warning would fire on every readiness check forever and tell nobody anything. It is recorded here
+instead, where a reader looks once.
 
 **The constraint that makes it more than a checklist item: there is no PC in the Whirl Islands.**
 The party you arrive with is the party you fight with, so the HM carrier is not a travelling

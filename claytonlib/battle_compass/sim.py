@@ -28,7 +28,7 @@ from claytonlib.battle.catch import (
 )
 from claytonlib.battle.damage import (
     WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_items, apply_accuracy_stage,
-    apply_stage, damage, unsupported_attacker_reason, unsupported_reason,
+    apply_stage, damage, item_key, unsupported_attacker_reason, unsupported_reason,
 )
 from claytonlib.battle.readiness import (
     LEFTOVERS, PARALYSIS_SPEED_DIVISOR, speed_after_item,
@@ -815,7 +815,7 @@ def leftovers_tick(battler: Battler) -> int:
     (Ho-Oh's is a Sacred Ash, inert in battle) and none of them is Leftovers, so wiring the target
     would be untested code; this stays side-agnostic so that doing it later is one line.
     """
-    if battler.held_item.strip().lower() != LEFTOVERS:
+    if item_key(battler.held_item) != item_key(LEFTOVERS):
         return 0
     if battler.hp >= battler.max_hp:
         return 0

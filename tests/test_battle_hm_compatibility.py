@@ -102,7 +102,10 @@ class TestTheWarningBecomesActionable(unittest.TestCase):
         field = [w for w in access_warnings("lugia", PARTY, SPECIES) if "needs to reach" in w]
         self.assertEqual(len(field), 1)
         self.assertIn("None of your current party can learn either move", field[0])
-        self.assertIn("dropping one of the six", field[0])
+        self.assertIn("not carrying yet", field[0])
+        # The slot advice lives in `_room_note` now and is computed from how many are actually
+        # configured -- five here, so nothing has to be dropped.
+        self.assertIn("lists 5 of 6", field[0])
 
     def test_a_capable_party_member_is_named_instead(self):
         party = dict(PARTY, Gyarados=["Waterfall"])

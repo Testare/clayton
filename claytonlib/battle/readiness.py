@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from claytonlib.battle.damage import (
+    item_key,
     ACCURACY_RAISING_ITEMS as _ACCURACY_RAISING_ITEMS,
     ACCURACY_REDUCING_ITEMS as _ACCURACY_REDUCING_ITEMS,
     LIGHT_CLAY as _LIGHT_CLAY,
@@ -50,21 +51,21 @@ PARALYSIS_SPEED_DIVISOR = 4
 #
 # The summary screen does not show any of this, so it has to be MODELLED rather than entered: a
 # player reads 124 off a scarfed Magneton that is really moving at 186.
-CHOICE_SPEED_ITEMS = frozenset({"choice scarf"})
+CHOICE_SPEED_ITEMS = frozenset(map(item_key, ("Choice Scarf",)))
 #: Every Choice item, for the move LOCK rather than for Speed. All three lock
 #: (`HOLD_EFFECT_CHOICE_ATK` / `_SPEED` / `_SPATK` in the ROM's check); only the Scarf is a Speed
 #: modifier, which is why these are two sets rather than one.
-CHOICE_ITEMS = frozenset({"choice scarf", "choice band", "choice specs"})
+CHOICE_ITEMS = frozenset(map(item_key, ("Choice Scarf", "Choice Band", "Choice Specs")))
 #: `sSpeedHalvingItemEffects`: Macho Brace, Iron Ball and the six Power items.
-SPEED_HALVING_ITEMS = frozenset({
-    "macho brace", "iron ball", "power weight", "power bracer", "power belt",
-    "power anklet", "power lens", "power band",
-})
+SPEED_HALVING_ITEMS = frozenset(map(item_key, (
+    "Macho Brace", "Iron Ball", "Power Weight", "Power Bracer", "Power Belt",
+    "Power Anklet", "Power Lens", "Power Band",
+)))
 #: Lagging Tail and Full Incense do not touch Speed at all -- they set a lowered-priority flag, so
 #: the holder moves last within its bracket. Named here so the distinction is written down
 #: somewhere: `metronome_compass` mandates a Lagging Tail, and reading it as a Speed modifier
 #: would be wrong in both directions.
-MOVES_LAST_ITEMS = frozenset({"lagging tail", "full incense"})
+MOVES_LAST_ITEMS = frozenset(map(item_key, ("Lagging Tail", "Full Incense")))
 #: Leftovers' end-of-turn recovery is max HP / 16. The NAME lives here rather than in
 #: `battle_compass.sim` (which owns the divisor and the tick itself) so that
 #: `MODELLED_HELD_ITEMS` below can be assembled without the shared battle core importing from a
@@ -85,8 +86,8 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
     "makes the holder move last in its bracket": MOVES_LAST_ITEMS,
     "cuts the attacker's accuracy": frozenset(_ACCURACY_REDUCING_ITEMS),
     "raises the holder's accuracy": frozenset(_ACCURACY_RAISING_ITEMS),
-    "restores 1/16 max HP at end of turn": frozenset({LEFTOVERS}),
-    "extends a screen from five turns to eight": frozenset({_LIGHT_CLAY}),
+    "restores 1/16 max HP at end of turn": frozenset({item_key(LEFTOVERS)}),
+    "extends a screen from five turns to eight": frozenset({item_key(_LIGHT_CLAY)}),
 }
 
 #: Items the simulator does NOT model whose absence fails in the Choice Scarf's *kind* rather
@@ -98,14 +99,14 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
 #: a Quick Claw silently re-orders a turn and poisons everything after it. The measured version
 #: of that distinction is in clayton-957.10.15: removing the Choice Scarf from the hooh1 party
 #: left 56 of 57 turns wrong, against 11 for the Silk Scarf and 2 for Leftovers.
-HAZARDOUS_UNMODELLED_ITEMS: dict[str, str] = {
-    "quick claw": "randomly gives the holder priority -- it flips turn order AND spends a roll",
-    "king's rock": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
-    "razor fang": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
-    "scope lens": "raises the holder's crit stage -- the wrong crit modulus on every hit",
-    "razor claw": "raises the holder's crit stage -- the wrong crit modulus on every hit",
-    "zoom lens": "raises accuracy when the holder moves second, which is state-dependent",
-}
+HAZARDOUS_UNMODELLED_ITEMS: dict[str, str] = {item_key(k): v for k, v in {
+    "Quick Claw": "randomly gives the holder priority -- it flips turn order AND spends a roll",
+    "King's Rock": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
+    "Razor Fang": "adds a flinch chance to the holder's damaging moves -- an extra roll per hit",
+    "Scope Lens": "raises the holder's crit stage -- the wrong crit modulus on every hit",
+    "Razor Claw": "raises the holder's crit stage -- the wrong crit modulus on every hit",
+    "Zoom Lens": "raises accuracy when the holder moves second, which is state-dependent",
+}.items()}
 
 
 def unmodelled_held_items(party: dict[str, str]) -> list[str]:
@@ -128,7 +129,7 @@ def unmodelled_held_items(party: dict[str, str]) -> list[str]:
     allowed = frozenset().union(*MODELLED_HELD_ITEMS.values())
     out: list[str] = []
     for name, item in party.items():
-        key = (item or "").strip().lower()
+        key = item_key(item or "")
         if not key:
             out.append(f"{name} has no held item recorded. If it is actually holding something, "
                        f"the simulation will be wrong from the first turn the item matters -- "
@@ -156,7 +157,7 @@ def speed_after_item(speed: int, held_item: str) -> int:
     straight off the summary screen -- which does not include a Choice Scarf's boost. So it
     cleared a scarfed Lv70 Magneton at 124 when the figure that decides turn order is 186.
     """
-    item = held_item.strip().lower()
+    item = item_key(held_item)
     if item in SPEED_HALVING_ITEMS:
         speed //= 2
     if item in CHOICE_SPEED_ITEMS:

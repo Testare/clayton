@@ -136,6 +136,24 @@ def apply_accuracy_stage(accuracy: int, net_stage: int) -> int:
     return accuracy * num // den
 
 
+def item_key(name: str) -> str:
+    """A held item's name reduced to a lookup key: lowercase, letters and digits only.
+
+    **Every item table in this project is keyed on this**, because the in-game names are spelled
+    inconsistently and players type them from memory. "BrightPowder" is one word on the item
+    screen and "Bright Powder" is what most people write; "King's Rock" has an apostrophe that is
+    easy to drop. Matching on `strip().lower()` alone meant the first of each pair worked and the
+    second silently did not -- and for a held item, silently not matching is the failure mode that
+    desynchronises a whole run.
+
+    Checked for collisions before adopting: across all eight item tables plus the hazardous list,
+    the only two raw names that reduce to the same key are ``never-melt ice`` and ``nevermeltice``
+    -- which were already there as deliberate spellings of the SAME item, and are exactly the
+    kind of alias this removes the need for.
+    """
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
 #: Held items that cut the **attacker's** hit chance when the DEFENDER holds one, as
 #: ``{name: percent}``. `HOLD_EFFECT_ACC_REDUCE` in the ROM's check.
 #:
@@ -146,7 +164,8 @@ def apply_accuracy_stage(accuracy: int, net_stage: int) -> int:
 #: the decompiled source, so 10 is the documented Gen 4 figure for both and was NOT read out of
 #: the ROM -- the same caveat as `TYPE_ITEM_MODIFIER_PERCENT`. The *ordering* below was read out
 #: of the source.
-ACCURACY_REDUCING_ITEMS: dict[str, int] = {"brightpowder": 10, "lax incense": 10}
+ACCURACY_REDUCING_ITEMS: dict[str, int] = {
+    item_key("BrightPowder"): 10, item_key("Lax Incense"): 10}
 
 #: The mirror, when the ATTACKER holds one: `HOLD_EFFECT_ACCURACY_UP`, ``* (100 + mod) / 100``.
 #:
@@ -155,7 +174,7 @@ ACCURACY_REDUCING_ITEMS: dict[str, int] = {"brightpowder": 10, "lax incense": 10
 #: battle_controller_player.c:2532 notes that the constant for it (`HOLD_EFFECT_CRITRATE_UP_SLOWER`)
 #: is mislabeled. Nothing in any planned party holds either; Wide Lens is here because it is free
 #: and because leaving it out would make the modelled-items allowlist lie by omission.
-ACCURACY_RAISING_ITEMS: dict[str, int] = {"wide lens": 10}
+ACCURACY_RAISING_ITEMS: dict[str, int] = {item_key("Wide Lens"): 10}
 
 
 def apply_accuracy_items(accuracy: int, *, defender_item: str = "",
@@ -182,10 +201,10 @@ def apply_accuracy_items(accuracy: int, *, defender_item: str = "",
     (The obvious example does *not* diverge -- a 100-accuracy move under six Flashes is 29 either
     way -- which is exactly why the ordering is worth a test rather than an eyeball.)
     """
-    reduce_pct = ACCURACY_REDUCING_ITEMS.get(defender_item.strip().lower())
+    reduce_pct = ACCURACY_REDUCING_ITEMS.get(item_key(defender_item))
     if reduce_pct is not None:
         accuracy = accuracy * (100 - reduce_pct) // 100
-    raise_pct = ACCURACY_RAISING_ITEMS.get(attacker_item.strip().lower())
+    raise_pct = ACCURACY_RAISING_ITEMS.get(item_key(attacker_item))
     if raise_pct is not None:
         accuracy = accuracy * (100 + raise_pct) // 100
     return accuracy
@@ -205,14 +224,14 @@ HUSTLE_ACCURACY_PERCENT = 80
 #: Type-enhancing held items -> the type they boost, from the ROM's `sTypeEnhancingItems`
 #: (src/battle/overlay_12_0224E4FC.c). All the Gen 4 classics; plates and incenses behave the
 #: same way and can be added here as needed.
-TYPE_ENHANCING_ITEMS: dict[str, str] = {
-    "silk scarf": "Normal",      "charcoal": "Fire",         "mystic water": "Water",
-    "magnet": "Electric",        "miracle seed": "Grass",    "never-melt ice": "Ice",
-    "nevermeltice": "Ice",       "black belt": "Fighting",   "poison barb": "Poison",
-    "soft sand": "Ground",       "sharp beak": "Flying",     "twisted spoon": "Psychic",
-    "silver powder": "Bug",      "hard stone": "Rock",       "spell tag": "Ghost",
-    "dragon fang": "Dragon",     "black glasses": "Dark",    "metal coat": "Steel",
-}
+TYPE_ENHANCING_ITEMS: dict[str, str] = {item_key(k): v for k, v in {
+    "Silk Scarf": "Normal",      "Charcoal": "Fire",         "Mystic Water": "Water",
+    "Magnet": "Electric",        "Miracle Seed": "Grass",    "NeverMeltIce": "Ice",
+    "Black Belt": "Fighting",    "Poison Barb": "Poison",    "Soft Sand": "Ground",
+    "Sharp Beak": "Flying",      "TwistedSpoon": "Psychic",  "SilverPowder": "Bug",
+    "Hard Stone": "Rock",        "Spell Tag": "Ghost",       "Dragon Fang": "Dragon",
+    "BlackGlasses": "Dark",      "Metal Coat": "Steel",
+}.items()}
 #: Percent added by a matching type-enhancing item. The ROM reads this from the item's own
 #: ITEM_VAR_MODIFIER, which lives in a binary NARC -- 20 is the documented Gen 4 value for every
 #: item above, but unlike the ORDERING below it was not read out of the source.
@@ -251,7 +270,7 @@ LIGHT_CLAY = "light clay"
 
 def screen_turns(held_item: str) -> int:
     """How many turns a screen set by the holder of `held_item` lasts."""
-    return (SCREEN_TURNS_LIGHT_CLAY if held_item.strip().lower() == LIGHT_CLAY
+    return (SCREEN_TURNS_LIGHT_CLAY if item_key(held_item) == item_key(LIGHT_CLAY)
             else SCREEN_TURNS)
 
 
@@ -343,7 +362,7 @@ def effective_power(move: Move, attacker: Attacker, *, base: int | None = None) 
     ability = attacker.ability.strip().lower()
     if ability == "technician" and power <= TECHNICIAN_POWER_CAP:
         power = power * 15 // 10
-    boosted = TYPE_ENHANCING_ITEMS.get(attacker.held_item.strip().lower())
+    boosted = TYPE_ENHANCING_ITEMS.get(item_key(attacker.held_item))
     if boosted is not None and boosted == move.type_name:
         power = power * (100 + TYPE_ITEM_MODIFIER_PERCENT) // 100
     return power

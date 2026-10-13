@@ -14,6 +14,7 @@ clayton-957.28.
 import unittest
 
 from claytonlib.battle.damage import (
+    item_key,
     ACCURACY_RAISING_ITEMS, ACCURACY_REDUCING_ITEMS, apply_accuracy_items, apply_accuracy_stage,
 )
 from claytonlib.battle_compass.sim import _effective_accuracy, can_miss
@@ -27,12 +28,13 @@ def _mon(item=""):
 
 class TestTheTable(unittest.TestCase):
     def test_both_accuracy_reducing_items_are_ten_percent(self):
-        self.assertEqual(ACCURACY_REDUCING_ITEMS, {"brightpowder": 10, "lax incense": 10})
+        self.assertEqual(ACCURACY_REDUCING_ITEMS,
+                         {item_key("BrightPowder"): 10, item_key("Lax Incense"): 10})
 
     def test_wide_lens_raises_and_zoom_lens_is_deliberately_absent(self):
         """Zoom Lens is conditional on moving second, so it is state-dependent rather than a flat
         modifier -- and the decomp's own TODO notes its hold-effect constant is mislabeled."""
-        self.assertEqual(ACCURACY_RAISING_ITEMS, {"wide lens": 10})
+        self.assertEqual(ACCURACY_RAISING_ITEMS, {item_key("Wide Lens"): 10})
 
     def test_an_unknown_or_absent_item_is_no_modifier(self):
         for item in ("", "   ", "Leftovers", "Silk Scarf", "Choice Scarf"):

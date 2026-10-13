@@ -96,8 +96,14 @@ class TestTheChoiceLock(unittest.TestCase):
     sets rather than one."""
 
     def test_every_choice_item_locks(self):
+        """Asserted through `item_key` rather than against the raw spellings. The tables are
+        keyed on it now, so that "choice scarf" and "ChoiceScarf" both match -- a held item that
+        silently fails to match desynchronises a run (clayton-957.32). The claim being made here
+        is which three items lock, not how they are spelled in the table."""
+        from claytonlib.battle.damage import item_key
+
         self.assertEqual(CHOICE_ITEMS,
-                         {"choice scarf", "choice band", "choice specs"})
+                         {item_key(n) for n in ("Choice Scarf", "Choice Band", "Choice Specs")})
         self.assertTrue(CHOICE_SPEED_ITEMS < CHOICE_ITEMS)
 
     def test_only_the_scarf_changes_speed(self):

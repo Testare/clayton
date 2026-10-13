@@ -36,7 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, damage_range, unsupported_reason,
+    WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, damage_range,
+    unsupported_reason,
 )
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
@@ -176,8 +177,11 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
         if now >= mon.max_hp:
             out.append(
                 f"Nothing can keep {mon.name} alive through a critical {move}: it does up to "
-                f"{now} against {mon.max_hp} HP. The solver will treat every turn as dangerous "
-                f"and refuse to throw a ball unless you accept the risk explicitly.")
+                f"{now} against {mon.max_hp} HP. The solver still plans normally -- in Phase 2 "
+                f"the seed is identified, so it computes exactly which actions faint you on this "
+                f"stream and discards those, routing around the crit rather than refusing to "
+                f"throw. What this costs you is the ability to heal out of range of it, so the "
+                f"risk is the turns where the stream leaves no safe action at all.")
         elif boosted >= mon.max_hp:
             out.append(
                 f"{mon.name} survives a critical {move} now ({now} against {mon.max_hp} HP) but "
@@ -187,11 +191,19 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
 
 
 def _worst_move_name(ours: Battler, target: Battler) -> str:
-    """Which of the target's moves produces `worst_incoming_hit`, for the warning text."""
+    """Which of the target's moves produces `worst_incoming_hit`, for the warning text.
+
+    **Named with its weather when the weather is what makes it worst.** `worst_incoming_hit`
+    maximises over every weather the target can SET, so against Lugia the figure comes from a
+    Hydro Pump under its own Rain Dance -- 172 against Smeargle, where a clear-weather one is 116
+    and survivable. Reporting it as "a critical Hydro Pump" left no way to tell which of those
+    two numbers the warning meant, and they call for different decisions: one is a reason to
+    train, the other is a reason to not be out while it is raining.
+    """
     from claytonlib.battle.damage import unsupported_reason
     from claytonlib.battle_compass.sim import variable_base_power
 
-    best, name = -1, "hit"
+    best, name, worst_weather = -1, "hit", WEATHER_NONE
     defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
                         types=ours.types)
     for slot in range(len(target.moves)):
@@ -210,7 +222,11 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
             _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
                                    base_power=base_power)
             if high > best:
-                best, name = high, move.name
+                best, name, worst_weather = high, move.name, weather
+    if worst_weather == WEATHER_RAIN:
+        return f"{name} under its own rain"
+    if worst_weather == WEATHER_SUN:
+        return f"{name} under its own sun"
     return name
 
 

@@ -94,17 +94,18 @@ class EncounterAccess:
     door -- it occupies one of the six slots, and noticing that after a two-hour seed-targeting
     setup is the expensive way to find out.
 
-    `field_moves` are checked against the party's movesets. `also_needed` is prose for things no
-    moveset can express -- a key item, a story flag, a Mystery Gift -- and is reported alongside
-    rather than checked, in the same spirit as the Enigma Stone being called out as a real-world
-    prerequisite rather than a work item.
+    `field_moves` are checked against the party's movesets, and that is the whole of it.
+    **Non-move prerequisites are deliberately NOT here** -- the Silver Wing, Ho-Oh's Rainbow Wing,
+    Latias's Enigma Stone. A field move is worth checking because a party can be assembled
+    wrongly and the mistake is invisible until you are standing at the water's edge; a key item
+    you either have or cannot reach the encounter at all to begin with, so warning about it is
+    noise on every single readiness check. They live in notes/lugia_love_ball.md, where a reader
+    looks once, instead of in a warning a player reads forever.
     """
     #: Where the encounter is, for a message that tells the player why the moves are wanted.
     where: str
     #: Field moves some party member must know. Names as `resolve_move` spells them.
     field_moves: tuple[str, ...] = ()
-    #: Non-move prerequisites, reported and never checked.
-    also_needed: tuple[str, ...] = ()
 
 
 #: species key -> what reaching that encounter requires.
@@ -113,13 +114,20 @@ class EncounterAccess:
 #: with one real entry: the Bell Tower and the Pewter museum are both walk-in, and a roamer is
 #: wherever it happens to be. Absent means "nothing to check", not "unknown" -- a target with no
 #: row produces no warnings rather than an empty one.
+#: Slots in a Pokemon party. Named because the access warning does arithmetic with it, and a
+#: hardcoded "one of your six" was wrong for every hunt configured with fewer -- it told a player
+#: with four to drop somebody when they had two slots spare.
+PARTY_SIZE = 6
+
 ENCOUNTER_ACCESS: dict[str, EncounterAccess] = {
     "lugia": EncounterAccess(
         where="the Whirl Islands",
         # HM03 and HM05. Needed to get in and then to cross the whirlpools down to the chamber.
-        field_moves=("Surf", "Whirlpool"),
-        # The Silver Wing is what makes Lugia appear at all, and no moveset can express it.
-        also_needed=("the Silver Wing",)),
+        #
+        # Flash is NOT here. It lights the caves and the party happens to be carrying one for the
+        # accuracy drops, but the Whirl Islands are navigable without it -- so requiring it would
+        # warn falsely. The Silver Wing is not here either; see `EncounterAccess`.
+        field_moves=("Surf", "Whirlpool")),
     # Ho-Oh needs the Rainbow Wing and Suicune the Clear Bell chain, both story flags rather than
     # moves, and the Bell Tower itself is walk-in. Latias needs the Enigma Stone, which was a
     # Mystery Gift distribution -- whether it is reachable at all on a given cartridge is a
@@ -136,6 +144,10 @@ def access_warnings(species: str, movesets: dict[str, list[str]],
     hunt's party list does not mention, or may simply already be standing in front of the
     encounter with a save ready to reload. A tool that refused to start on this would be wrong
     more often than it was right.
+
+    Only field moves. A key item like the Silver Wing is not warned about: you either have it or
+    you cannot reach the encounter to try, so the warning would fire forever and tell nobody
+    anything. See `EncounterAccess`.
 
     `party_species` (``{pokemon name: species}``) is optional and turns the warning into
     something actionable: with it, the message can say which party members *could* learn a
@@ -157,15 +169,37 @@ def access_warnings(species: str, movesets: dict[str, list[str]],
         out.append(
             f"No party Pokemon knows {_join(missing)}, which {access.where} needs to reach "
             f"{species.capitalize()}. The party you arrive with is the party you fight with -- "
-            f"there is no PC down there -- so the carrier has to be one of your six."
-            + _carrier_note(missing, party_species))
-    for extra in access.also_needed:
-        out.append(f"{species.capitalize()} also needs {extra}, which is not a move and is not "
-                   f"checked here.")
+            f"there is no PC down there -- so the carrier has to come in with you."
+            + _room_note(len(movesets))
+            + _carrier_note(missing, party_species, len(movesets)))
     return out
 
 
-def _carrier_note(missing: list[str], party_species: dict[str, str] | None) -> str:
+def _room_note(configured: int) -> str:
+    """Whether a carrier needs to displace anybody, given how many are CONFIGURED.
+
+    Two things this gets right that a hardcoded "one of your six" did not.
+
+    **The arithmetic.** A hunt configured with four has two slots spare, so nothing has to be
+    dropped -- telling that player to drop somebody is advice that is simply false.
+
+    **And the hunt party is not the game party.** This only ever sees what the hunt lists, and a
+    player may well be walking in with a Lapras in a slot Battle Compass was never told about.
+    So the wording says the carrier need not *displace* anything rather than claiming a slot is
+    empty -- which would assert something this function cannot know. The caveat itself stays in
+    `access_warnings`'s docstring instead of in the message: it is true of every warning here,
+    and a sentence the player reads on every readiness check should not spend its length on it.
+    """
+    if configured == 0:
+        return ""
+    if configured < PARTY_SIZE:
+        return (f" This hunt lists {configured} of {PARTY_SIZE}, so one can come along without "
+                f"displacing anything.")
+    return f" All {PARTY_SIZE} are listed, so one of them has to make room."
+
+
+def _carrier_note(missing: list[str], party_species: dict[str, str] | None,
+                  configured: int = PARTY_SIZE) -> str:
     """" Who could learn `missing`", appended to the field-move warning, or "" if unknown.
 
     Silent rather than speculative when the data is thin. `can_learn_hm` returns None for a
@@ -201,8 +235,10 @@ def _carrier_note(missing: list[str], party_species: dict[str, str] | None) -> s
         return ""
     which = "either move" if len(missing) == 2 else (
         _join(missing) if len(missing) == 1 else "any of them")
+    # No "dropping one of the six" here either: `_room_note` has already said whether anything
+    # has to make room, and saying it twice got it wrong twice for a four-member hunt.
     return (f" **None of your current party can learn {which}**, so this needs a Pokemon you are "
-            f"not carrying -- which means dropping one of the six.")
+            f"not carrying yet.")
 
 
 def _join(names: list[str], conjunction: str = "or") -> str:
