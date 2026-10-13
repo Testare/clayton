@@ -1,5 +1,32 @@
 #!/usr/bin/env python3
-"""populate_base_stats.py — build claytonlib/basedata/base_stats.json from PokeAPI.
+"""populate_base_stats.py — SUPERSEDED by populate_base_stats_from_rom.py.
+
+**Do not use this to populate base_stats.json.** It fetches from PokeAPI, which reports Gen 9
+values, and corrected for that with the hand-maintained `KNOWN_POST_GEN4_CHANGES` list below.
+That approach works for a couple of dozen species and cannot work for 493: it only catches what
+somebody thought to look up, and a silently-modern stat does not announce itself -- it
+mis-derives a target's whole spread from the entered IVs, and the run contradicts on the first
+hit. Replacing the fetched data with the ROM's own table corrected five catch rates that had
+been wrong in the file (clayton-rp2).
+
+`one-offs/populate_base_stats_from_rom.py` reads
+`files/poketool/personal/personal.json` from the decompilation instead, which is Gen-4-exact by
+construction.
+
+Kept rather than deleted for two things the ROM's personal table does not carry:
+
+* **weight_hg**, for the Heavy Ball. The ROM keeps weights in a binary NARC rather than in
+  decompiled source, so PokeAPI is still the only easy source -- and weight has not changed
+  since Gen 4 for any species, so fetching it is safe in a way fetching stats is not.
+* a **cross-check**: `--check` against a ROM-populated file reports every value where PokeAPI
+  and the cartridge disagree, which is a useful list rather than a problem.
+
+The original docstring follows.
+
+---
+
+"""
+populate_base_stats.py — build claytonlib/basedata/base_stats.json from PokeAPI.
 
 Battle Compass needs base stats for two things: deriving a *target's* actual stats from the
 IVs and nature the player enters (notes/battle_compass.md sec 15.4.1), and the Fast Ball's

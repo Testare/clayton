@@ -125,12 +125,18 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
 
 - `claytonlib/basedata/` — Static game data: `safari_pokemon.json` (catch/flee rates),
   `moves.json`, `mdMap.json` (month-day → seed byte), `safari_zones.json` (encounter
-  tables), `metronome_species.json`, `base_stats.json` (per-species base stats, types,
-  abilities and catch rate — needed for targets, whose stats are *derived* from entered IVs,
-  and for our own party, whose stats are entered but whose TYPES are not). Entries marked
-  `"source": "rom"` were transcribed from the decompilation rather than fetched by
-  `one-offs/populate_base_stats.py`, because PokeAPI reports post-Gen-4 values for some species
-  (Granbull became Fairy in Gen 6; Ampharos's Defence was revised 75 → 85).
+  tables), `metronome_species.json`, `base_stats.json` (**all 493 Gen 4 species**: base
+  stats, types, abilities, catch rate, gender and HM compatibility — needed for targets, whose
+  stats are *derived* from entered IVs, and for our own party, whose stats are entered but whose
+  TYPES are not). Built by `one-offs/populate_base_stats_from_rom.py` from the decompilation's
+  `files/poketool/personal/personal.json`, so every value is Gen-4-exact by construction and
+  every entry is marked `"source": "rom"`.
+  **Not from PokeAPI**, which reports modern values — Electrode's Speed is 140 in Gen 4 and 150
+  from Gen 8, Ampharos's Defence 75 then 85, Granbull gained Fairy in Gen 6. The old
+  `populate_base_stats.py` corrected for that with a hand-maintained list, which does not scale
+  past the species somebody thought to check; replacing it with the ROM table also corrected
+  five catch rates that were already wrong in the file. It survives only for `weight_hg` (kept
+  in a binary NARC the decomp does not expose) and as a cross-check.
 - `data/times/` — Cached seed-to-time mappings
 - `data/expeditions/` — Saved expedition configs (JSON)
 - `one-offs/` — Standalone data-generation scripts (e.g. `populate_moves.py`)

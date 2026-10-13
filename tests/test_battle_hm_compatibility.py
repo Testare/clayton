@@ -70,15 +70,17 @@ class TestTheDataLandedCorrectly(unittest.TestCase):
         for entry in basedata_json("base_stats.json").values():
             self.assertNotIn("Flash", entry.get("hms", ()))
 
-    def test_base_stat_provenance_was_not_overwritten(self):
-        """`source: rom` in this file means the BASE STATS were transcribed from the decomp. The
-        HM import must not have claimed that of species whose stats came from PokeAPI."""
+    def test_every_entry_is_rom_sourced_now(self):
+        """This used to assert the opposite for two species, and rightly: `source: rom` meant
+        "the BASE STATS were transcribed from the decomp", and the HM import must not have
+        claimed it of PokeAPI-fetched stats. clayton-rp2 made it true of all 493 by rebuilding
+        the whole file from the ROM, so the claim is now universal rather than per-entry."""
         from claytonlib._resources import basedata_json
 
         data = basedata_json("base_stats.json")
-        self.assertEqual(data["ampharos"].get("source"), "rom")   # was rom before
-        self.assertIsNone(data["magneton"].get("source"))          # was absent before
-        self.assertIsNone(data["lugia"].get("source"))
+        for key in ("ampharos", "magneton", "lugia", "electrode", "tentacruel"):
+            with self.subTest(key):
+                self.assertEqual(data[key].get("source"), "rom")
 
 
 class TestTheThreeValuedAnswer(unittest.TestCase):
@@ -87,8 +89,12 @@ class TestTheThreeValuedAnswer(unittest.TestCase):
         them would tell a player their Tentacruel cannot Surf because nothing recorded it."""
         self.assertIs(can_learn_hm("magneton", "Surf"), False)
         self.assertIs(can_learn_hm("gyarados", "Surf"), True)
+        # Every Gen 4 species is in the file now (clayton-rp2), so "unknown" means Gen 5 and
+        # later -- which is the real boundary, and a better test than the arbitrary gap that
+        # used to exist. Tentacruel was the example here and is now recorded.
+        self.assertIs(can_learn_hm("tentacruel", "Surf"), True)
         with self.assertRaises(KeyError):
-            can_learn_hm("tentacruel", "Surf")      # not in base_stats.json at all
+            can_learn_hm("zorua", "Surf")
 
     def test_case_and_whitespace_do_not_matter(self):
         for spelling in ("Surf", "surf", "  SURF  "):
@@ -124,11 +130,21 @@ class TestTheWarningBecomesActionable(unittest.TestCase):
 
     def test_an_unrecorded_species_makes_it_stay_SILENT(self):
         """Not "nobody can" -- that would send a player to catch a Pokemon they already own."""
-        party = dict(PARTY, Tentacruel=["Cut"])
-        species_map = dict(SPECIES, Tentacruel="tentacruel")
+        # A Gen 5 species, since every Gen 4 one is now recorded. Tentacruel used to stand in
+        # for "unrecorded" and is now in the file -- which is why the next test exists.
+        party = dict(PARTY, Zorua=["Scratch"])
+        species_map = dict(SPECIES, Zorua="zorua")
         joined = " ".join(access_warnings("lugia", party, species_map))
         self.assertNotIn("None of your party", joined)
         self.assertNotIn("Can learn", joined)
+
+    def test_a_tentacruel_is_NAMED_now_that_it_is_recorded(self):
+        """The payoff of the 493-species import: the carrier the player actually chose is named
+        instead of silently skipped."""
+        party = dict(PARTY, Tentacruel=["Cut"])
+        species_map = dict(SPECIES, Tentacruel="tentacruel")
+        advice = access_warnings("lugia", party, species_map)[-1]
+        self.assertIn("Can learn: Tentacruel (Surf and Whirlpool)", advice)
 
     def test_a_blank_species_also_makes_it_silent(self):
         party = dict(PARTY, Mystery=["Tackle"])

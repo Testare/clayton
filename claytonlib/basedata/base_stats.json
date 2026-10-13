@@ -1,4 +1,252 @@
 {
+ "abomasnow": {
+  "abilities": [
+   "Snow Warning"
+  ],
+  "base_stats": {
+   "atk": 92,
+   "def": 75,
+   "hp": 90,
+   "spa": 92,
+   "spd": 85,
+   "spe": 60
+  },
+  "catch_rate": 60,
+  "dex_no": 460,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "abomasnow",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Ice"
+  ]
+ },
+ "abra": {
+  "abilities": [
+   "Synchronize",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 15,
+   "hp": 25,
+   "spa": 105,
+   "spd": 55,
+   "spe": 90
+  },
+  "catch_rate": 200,
+  "dex_no": 63,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [],
+  "name": "abra",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "absol": {
+  "abilities": [
+   "Pressure",
+   "Super Luck"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 60,
+   "hp": 65,
+   "spa": 75,
+   "spd": 60,
+   "spe": 75
+  },
+  "catch_rate": 30,
+  "dex_no": 359,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "absol",
+  "source": "rom",
+  "types": [
+   "Dark"
+  ]
+ },
+ "aerodactyl": {
+  "abilities": [
+   "Rock Head",
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 65,
+   "hp": 80,
+   "spa": 60,
+   "spd": 75,
+   "spe": 130
+  },
+  "catch_rate": 45,
+  "dex_no": 142,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "aerodactyl",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Flying"
+  ]
+ },
+ "aggron": {
+  "abilities": [
+   "Sturdy",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 180,
+   "hp": 70,
+   "spa": 60,
+   "spd": 60,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 306,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "aggron",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Rock"
+  ]
+ },
+ "aipom": {
+  "abilities": [
+   "Run Away",
+   "Pickup"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 55,
+   "hp": 55,
+   "spa": 40,
+   "spd": 55,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 190,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "aipom",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "alakazam": {
+  "abilities": [
+   "Synchronize",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 45,
+   "hp": 55,
+   "spa": 135,
+   "spd": 85,
+   "spe": 120
+  },
+  "catch_rate": 50,
+  "dex_no": 65,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [],
+  "name": "alakazam",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "altaria": {
+  "abilities": [
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 90,
+   "hp": 75,
+   "spa": 70,
+   "spd": 105,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 334,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "altaria",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ "ambipom": {
+  "abilities": [
+   "Technician",
+   "Pickup"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 66,
+   "hp": 75,
+   "spa": 60,
+   "spd": 66,
+   "spe": 115
+  },
+  "catch_rate": 45,
+  "dex_no": 424,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "ambipom",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
  "ampharos": {
   "abilities": [
    "Static"
@@ -13,6 +261,8 @@
   },
   "catch_rate": 45,
   "dex_no": 181,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [
    "Rock Climb",
    "Rock Smash",
@@ -24,6 +274,1335 @@
    "Electric"
   ],
   "weight_hg": null
+ },
+ "anorith": {
+  "abilities": [
+   "Battle Armor"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 50,
+   "hp": 45,
+   "spa": 40,
+   "spd": 50,
+   "spe": 75
+  },
+  "catch_rate": 45,
+  "dex_no": 347,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "anorith",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Bug"
+  ]
+ },
+ "arbok": {
+  "abilities": [
+   "Intimidate",
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 69,
+   "hp": 60,
+   "spa": 65,
+   "spd": 79,
+   "spe": 80
+  },
+  "catch_rate": 90,
+  "dex_no": 24,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "arbok",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "arcanine": {
+  "abilities": [
+   "Intimidate",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 80,
+   "hp": 90,
+   "spa": 100,
+   "spd": 80,
+   "spe": 95
+  },
+  "catch_rate": 75,
+  "dex_no": 59,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "arcanine",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "arceus": {
+  "abilities": [
+   "Multitype"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 120,
+   "hp": 120,
+   "spa": 120,
+   "spd": 120,
+   "spe": 120
+  },
+  "catch_rate": 3,
+  "dex_no": 493,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "arceus",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "ariados": {
+  "abilities": [
+   "Swarm",
+   "Insomnia"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 70,
+   "hp": 70,
+   "spa": 60,
+   "spd": 60,
+   "spe": 40
+  },
+  "catch_rate": 90,
+  "dex_no": 168,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "ariados",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "armaldo": {
+  "abilities": [
+   "Battle Armor"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 100,
+   "hp": 75,
+   "spa": 70,
+   "spd": 80,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 348,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "armaldo",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Bug"
+  ]
+ },
+ "aron": {
+  "abilities": [
+   "Sturdy",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 100,
+   "hp": 50,
+   "spa": 40,
+   "spd": 40,
+   "spe": 30
+  },
+  "catch_rate": 180,
+  "dex_no": 304,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "aron",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Rock"
+  ]
+ },
+ "articuno": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 100,
+   "hp": 90,
+   "spa": 95,
+   "spd": 125,
+   "spe": 85
+  },
+  "catch_rate": 3,
+  "dex_no": 144,
+  "genderless": true,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "articuno",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Flying"
+  ]
+ },
+ "azelf": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 70,
+   "hp": 75,
+   "spa": 125,
+   "spd": 70,
+   "spe": 115
+  },
+  "catch_rate": 3,
+  "dex_no": 482,
+  "genderless": true,
+  "hms": [],
+  "name": "azelf",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "azumarill": {
+  "abilities": [
+   "Thick Fat",
+   "Huge Power"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 80,
+   "hp": 100,
+   "spa": 50,
+   "spd": 80,
+   "spe": 50
+  },
+  "catch_rate": 75,
+  "dex_no": 184,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "azumarill",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "azurill": {
+  "abilities": [
+   "Thick Fat",
+   "Huge Power"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 40,
+   "hp": 50,
+   "spa": 20,
+   "spd": 40,
+   "spe": 20
+  },
+  "catch_rate": 150,
+  "dex_no": 298,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "azurill",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "bagon": {
+  "abilities": [
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 60,
+   "hp": 45,
+   "spa": 40,
+   "spd": 30,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 371,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "bagon",
+  "source": "rom",
+  "types": [
+   "Dragon"
+  ]
+ },
+ "baltoy": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 55,
+   "hp": 40,
+   "spa": 40,
+   "spd": 70,
+   "spe": 55
+  },
+  "catch_rate": 255,
+  "dex_no": 343,
+  "genderless": true,
+  "hms": [],
+  "name": "baltoy",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Psychic"
+  ]
+ },
+ "banette": {
+  "abilities": [
+   "Insomnia",
+   "Frisk"
+  ],
+  "base_stats": {
+   "atk": 115,
+   "def": 65,
+   "hp": 64,
+   "spa": 83,
+   "spd": 63,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 354,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "banette",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "barboach": {
+  "abilities": [
+   "Oblivious",
+   "Anticipation"
+  ],
+  "base_stats": {
+   "atk": 48,
+   "def": 43,
+   "hp": 50,
+   "spa": 46,
+   "spd": 41,
+   "spe": 60
+  },
+  "catch_rate": 190,
+  "dex_no": 339,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "barboach",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "bastiodon": {
+  "abilities": [
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 52,
+   "def": 168,
+   "hp": 60,
+   "spa": 47,
+   "spd": 138,
+   "spe": 30
+  },
+  "catch_rate": 45,
+  "dex_no": 411,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "bastiodon",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Steel"
+  ]
+ },
+ "bayleef": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 62,
+   "def": 80,
+   "hp": 60,
+   "spa": 63,
+   "spd": 80,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 153,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "bayleef",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "beautifly": {
+  "abilities": [
+   "Swarm"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 50,
+   "hp": 60,
+   "spa": 90,
+   "spd": 50,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 267,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "beautifly",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "beedrill": {
+  "abilities": [
+   "Swarm"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 40,
+   "hp": 65,
+   "spa": 45,
+   "spd": 80,
+   "spe": 75
+  },
+  "catch_rate": 45,
+  "dex_no": 15,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "beedrill",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "beldum": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 80,
+   "hp": 40,
+   "spa": 35,
+   "spd": 60,
+   "spe": 30
+  },
+  "catch_rate": 3,
+  "dex_no": 374,
+  "genderless": true,
+  "hms": [],
+  "name": "beldum",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "bellossom": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 85,
+   "hp": 75,
+   "spa": 90,
+   "spd": 100,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 182,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "bellossom",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "bellsprout": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 35,
+   "hp": 50,
+   "spa": 70,
+   "spd": 30,
+   "spe": 40
+  },
+  "catch_rate": 255,
+  "dex_no": 69,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "bellsprout",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "bibarel": {
+  "abilities": [
+   "Simple",
+   "Unaware"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 60,
+   "hp": 79,
+   "spa": 55,
+   "spd": 60,
+   "spe": 71
+  },
+  "catch_rate": 127,
+  "dex_no": 400,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "bibarel",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Water"
+  ]
+ },
+ "bidoof": {
+  "abilities": [
+   "Simple",
+   "Unaware"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 40,
+   "hp": 59,
+   "spa": 35,
+   "spd": 40,
+   "spe": 31
+  },
+  "catch_rate": 255,
+  "dex_no": 399,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "bidoof",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "blastoise": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 83,
+   "def": 100,
+   "hp": 79,
+   "spa": 85,
+   "spd": 105,
+   "spe": 78
+  },
+  "catch_rate": 45,
+  "dex_no": 9,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "blastoise",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "blaziken": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 70,
+   "hp": 80,
+   "spa": 110,
+   "spd": 70,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 257,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "blaziken",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ "blissey": {
+  "abilities": [
+   "Natural Cure",
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 10,
+   "def": 10,
+   "hp": 255,
+   "spa": 75,
+   "spd": 135,
+   "spe": 55
+  },
+  "catch_rate": 30,
+  "dex_no": 242,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "blissey",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "bonsly": {
+  "abilities": [
+   "Sturdy",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 95,
+   "hp": 50,
+   "spa": 10,
+   "spd": 45,
+   "spe": 10
+  },
+  "catch_rate": 255,
+  "dex_no": 438,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "bonsly",
+  "source": "rom",
+  "types": [
+   "Rock"
+  ]
+ },
+ "breloom": {
+  "abilities": [
+   "Effect Spore",
+   "Poison Heal"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 80,
+   "hp": 60,
+   "spa": 60,
+   "spd": 60,
+   "spe": 70
+  },
+  "catch_rate": 90,
+  "dex_no": 286,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "breloom",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Fighting"
+  ]
+ },
+ "bronzong": {
+  "abilities": [
+   "Levitate",
+   "Heatproof"
+  ],
+  "base_stats": {
+   "atk": 89,
+   "def": 116,
+   "hp": 67,
+   "spa": 79,
+   "spd": 116,
+   "spe": 33
+  },
+  "catch_rate": 90,
+  "dex_no": 437,
+  "genderless": true,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "bronzong",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "bronzor": {
+  "abilities": [
+   "Levitate",
+   "Heatproof"
+  ],
+  "base_stats": {
+   "atk": 24,
+   "def": 86,
+   "hp": 57,
+   "spa": 24,
+   "spd": 86,
+   "spe": 23
+  },
+  "catch_rate": 255,
+  "dex_no": 436,
+  "genderless": true,
+  "hms": [],
+  "name": "bronzor",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "budew": {
+  "abilities": [
+   "Natural Cure",
+   "Poison Point"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 35,
+   "hp": 40,
+   "spa": 50,
+   "spd": 70,
+   "spe": 55
+  },
+  "catch_rate": 255,
+  "dex_no": 406,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "budew",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "buizel": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 35,
+   "hp": 55,
+   "spa": 60,
+   "spd": 30,
+   "spe": 85
+  },
+  "catch_rate": 190,
+  "dex_no": 418,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "buizel",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "bulbasaur": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 49,
+   "def": 49,
+   "hp": 45,
+   "spa": 65,
+   "spd": 65,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 1,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "bulbasaur",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "buneary": {
+  "abilities": [
+   "Run Away",
+   "Klutz"
+  ],
+  "base_stats": {
+   "atk": 66,
+   "def": 44,
+   "hp": 55,
+   "spa": 44,
+   "spd": 56,
+   "spe": 85
+  },
+  "catch_rate": 190,
+  "dex_no": 427,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "buneary",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "burmy": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 29,
+   "def": 45,
+   "hp": 40,
+   "spa": 29,
+   "spd": 45,
+   "spe": 36
+  },
+  "catch_rate": 120,
+  "dex_no": 412,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "burmy",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "butterfree": {
+  "abilities": [
+   "Compoundeyes"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 50,
+   "hp": 60,
+   "spa": 80,
+   "spd": 80,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 12,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "butterfree",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "cacnea": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 40,
+   "hp": 50,
+   "spa": 85,
+   "spd": 40,
+   "spe": 35
+  },
+  "catch_rate": 190,
+  "dex_no": 331,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "cacnea",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "cacturne": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 115,
+   "def": 60,
+   "hp": 70,
+   "spa": 115,
+   "spd": 60,
+   "spe": 55
+  },
+  "catch_rate": 60,
+  "dex_no": 332,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Strength"
+  ],
+  "name": "cacturne",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Dark"
+  ]
+ },
+ "camerupt": {
+  "abilities": [
+   "Magma Armor",
+   "Solid Rock"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 70,
+   "hp": 70,
+   "spa": 105,
+   "spd": 75,
+   "spe": 40
+  },
+  "catch_rate": 150,
+  "dex_no": 323,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "camerupt",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Ground"
+  ]
+ },
+ "carnivine": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 72,
+   "hp": 74,
+   "spa": 90,
+   "spd": 72,
+   "spe": 46
+  },
+  "catch_rate": 200,
+  "dex_no": 455,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "carnivine",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "carvanha": {
+  "abilities": [
+   "Rough Skin"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 20,
+   "hp": 45,
+   "spa": 65,
+   "spd": 20,
+   "spe": 65
+  },
+  "catch_rate": 225,
+  "dex_no": 318,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "carvanha",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ "cascoon": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 55,
+   "hp": 50,
+   "spa": 25,
+   "spd": 25,
+   "spe": 15
+  },
+  "catch_rate": 120,
+  "dex_no": 268,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "cascoon",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "castform": {
+  "abilities": [
+   "Forecast"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 70,
+   "hp": 70,
+   "spa": 70,
+   "spd": 70,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 351,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "castform",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "caterpie": {
+  "abilities": [
+   "Shield Dust"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 35,
+   "hp": 45,
+   "spa": 20,
+   "spd": 20,
+   "spe": 45
+  },
+  "catch_rate": 255,
+  "dex_no": 10,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "caterpie",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "celebi": {
+  "abilities": [
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 100,
+   "hp": 100,
+   "spa": 100,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 251,
+  "genderless": true,
+  "hms": [
+   "Cut"
+  ],
+  "name": "celebi",
+  "source": "rom",
+  "types": [
+   "Psychic",
+   "Grass"
+  ]
+ },
+ "chansey": {
+  "abilities": [
+   "Natural Cure",
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 5,
+   "def": 5,
+   "hp": 250,
+   "spa": 35,
+   "spd": 105,
+   "spe": 50
+  },
+  "catch_rate": 30,
+  "dex_no": 113,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "chansey",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "charizard": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 84,
+   "def": 78,
+   "hp": 78,
+   "spa": 109,
+   "spd": 85,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 6,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "charizard",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Flying"
+  ]
+ },
+ "charmander": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 52,
+   "def": 43,
+   "hp": 39,
+   "spa": 60,
+   "spd": 50,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 4,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "charmander",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "charmeleon": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 64,
+   "def": 58,
+   "hp": 58,
+   "spa": 80,
+   "spd": 65,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 5,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "charmeleon",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
  },
  "chatot": {
   "abilities": [
@@ -40,6 +1619,8 @@
   },
   "catch_rate": 30,
   "dex_no": 441,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [
    "Fly"
   ],
@@ -50,6 +1631,835 @@
    "Flying"
   ],
   "weight_hg": null
+ },
+ "cherrim": {
+  "abilities": [
+   "Flower Gift"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 70,
+   "hp": 70,
+   "spa": 87,
+   "spd": 78,
+   "spe": 85
+  },
+  "catch_rate": 75,
+  "dex_no": 421,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "cherrim",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "cherubi": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 45,
+   "hp": 45,
+   "spa": 62,
+   "spd": 53,
+   "spe": 35
+  },
+  "catch_rate": 190,
+  "dex_no": 420,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "cherubi",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "chikorita": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 49,
+   "def": 65,
+   "hp": 45,
+   "spa": 49,
+   "spd": 65,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 152,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "chikorita",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "chimchar": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 58,
+   "def": 44,
+   "hp": 44,
+   "spa": 58,
+   "spd": 44,
+   "spe": 61
+  },
+  "catch_rate": 45,
+  "dex_no": 390,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "chimchar",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "chimecho": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 70,
+   "hp": 65,
+   "spa": 95,
+   "spd": 80,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 358,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "chimecho",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "chinchou": {
+  "abilities": [
+   "Volt Absorb",
+   "Illuminate"
+  ],
+  "base_stats": {
+   "atk": 38,
+   "def": 38,
+   "hp": 75,
+   "spa": 56,
+   "spd": 56,
+   "spe": 67
+  },
+  "catch_rate": 190,
+  "dex_no": 170,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "chinchou",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Electric"
+  ]
+ },
+ "chingling": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 50,
+   "hp": 45,
+   "spa": 65,
+   "spd": 50,
+   "spe": 45
+  },
+  "catch_rate": 120,
+  "dex_no": 433,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "chingling",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "clamperl": {
+  "abilities": [
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 64,
+   "def": 85,
+   "hp": 35,
+   "spa": 74,
+   "spd": 55,
+   "spe": 32
+  },
+  "catch_rate": 255,
+  "dex_no": 366,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "clamperl",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "claydol": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 105,
+   "hp": 60,
+   "spa": 70,
+   "spd": 120,
+   "spe": 75
+  },
+  "catch_rate": 90,
+  "dex_no": 344,
+  "genderless": true,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "claydol",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Psychic"
+  ]
+ },
+ "clefable": {
+  "abilities": [
+   "Cute Charm",
+   "Magic Guard"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 73,
+   "hp": 95,
+   "spa": 85,
+   "spd": 90,
+   "spe": 60
+  },
+  "catch_rate": 25,
+  "dex_no": 36,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "clefable",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "clefairy": {
+  "abilities": [
+   "Cute Charm",
+   "Magic Guard"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 48,
+   "hp": 70,
+   "spa": 60,
+   "spd": 65,
+   "spe": 35
+  },
+  "catch_rate": 150,
+  "dex_no": 35,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "clefairy",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "cleffa": {
+  "abilities": [
+   "Cute Charm",
+   "Magic Guard"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 28,
+   "hp": 50,
+   "spa": 45,
+   "spd": 55,
+   "spe": 15
+  },
+  "catch_rate": 150,
+  "dex_no": 173,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [],
+  "name": "cleffa",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "cloyster": {
+  "abilities": [
+   "Shell Armor",
+   "Skill Link"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 180,
+   "hp": 50,
+   "spa": 85,
+   "spd": 45,
+   "spe": 70
+  },
+  "catch_rate": 60,
+  "dex_no": 91,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "cloyster",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ice"
+  ]
+ },
+ "combee": {
+  "abilities": [
+   "Honey Gather"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 42,
+   "hp": 30,
+   "spa": 30,
+   "spd": 42,
+   "spe": 70
+  },
+  "catch_rate": 120,
+  "dex_no": 415,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [],
+  "name": "combee",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "combusken": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 60,
+   "hp": 60,
+   "spa": 85,
+   "spd": 60,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 256,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "combusken",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ "corphish": {
+  "abilities": [
+   "Hyper Cutter",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 65,
+   "hp": 43,
+   "spa": 50,
+   "spd": 35,
+   "spe": 35
+  },
+  "catch_rate": 205,
+  "dex_no": 341,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "corphish",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "corsola": {
+  "abilities": [
+   "Hustle",
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 85,
+   "hp": 55,
+   "spa": 65,
+   "spd": 85,
+   "spe": 35
+  },
+  "catch_rate": 60,
+  "dex_no": 222,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "corsola",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Rock"
+  ]
+ },
+ "cradily": {
+  "abilities": [
+   "Suction Cups"
+  ],
+  "base_stats": {
+   "atk": 81,
+   "def": 97,
+   "hp": 86,
+   "spa": 81,
+   "spd": 107,
+   "spe": 43
+  },
+  "catch_rate": 45,
+  "dex_no": 346,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "cradily",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Grass"
+  ]
+ },
+ "cranidos": {
+  "abilities": [
+   "Mold Breaker"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 40,
+   "hp": 67,
+   "spa": 30,
+   "spd": 30,
+   "spe": 58
+  },
+  "catch_rate": 45,
+  "dex_no": 408,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "cranidos",
+  "source": "rom",
+  "types": [
+   "Rock"
+  ]
+ },
+ "crawdaunt": {
+  "abilities": [
+   "Hyper Cutter",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 85,
+   "hp": 63,
+   "spa": 90,
+   "spd": 55,
+   "spe": 55
+  },
+  "catch_rate": 155,
+  "dex_no": 342,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "crawdaunt",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ "cresselia": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 120,
+   "hp": 120,
+   "spa": 75,
+   "spd": 130,
+   "spe": 85
+  },
+  "catch_rate": 3,
+  "dex_no": 488,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "cresselia",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "croagunk": {
+  "abilities": [
+   "Anticipation",
+   "Dry Skin"
+  ],
+  "base_stats": {
+   "atk": 61,
+   "def": 40,
+   "hp": 48,
+   "spa": 61,
+   "spd": 40,
+   "spe": 50
+  },
+  "catch_rate": 140,
+  "dex_no": 453,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "croagunk",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Fighting"
+  ]
+ },
+ "crobat": {
+  "abilities": [
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 80,
+   "hp": 85,
+   "spa": 70,
+   "spd": 80,
+   "spe": 130
+  },
+  "catch_rate": 90,
+  "dex_no": 169,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "crobat",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Flying"
+  ]
+ },
+ "croconaw": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 80,
+   "hp": 65,
+   "spa": 59,
+   "spd": 63,
+   "spe": 58
+  },
+  "catch_rate": 45,
+  "dex_no": 159,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "croconaw",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "cubone": {
+  "abilities": [
+   "Rock Head",
+   "Lightningrod"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 95,
+   "hp": 50,
+   "spa": 40,
+   "spd": 50,
+   "spe": 35
+  },
+  "catch_rate": 190,
+  "dex_no": 104,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "cubone",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "cyndaquil": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 52,
+   "def": 43,
+   "hp": 39,
+   "spa": 60,
+   "spd": 50,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 155,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "cyndaquil",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "darkrai": {
+  "abilities": [
+   "Bad Dreams"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 90,
+   "hp": 70,
+   "spa": 135,
+   "spd": 90,
+   "spe": 125
+  },
+  "catch_rate": 3,
+  "dex_no": 491,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "darkrai",
+  "source": "rom",
+  "types": [
+   "Dark"
+  ]
+ },
+ "delcatty": {
+  "abilities": [
+   "Cute Charm",
+   "Normalize"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 65,
+   "hp": 70,
+   "spa": 55,
+   "spd": 55,
+   "spe": 70
+  },
+  "catch_rate": 60,
+  "dex_no": 301,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "delcatty",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "delibird": {
+  "abilities": [
+   "Vital Spirit",
+   "Hustle"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 45,
+   "hp": 45,
+   "spa": 65,
+   "spd": 45,
+   "spe": 75
+  },
+  "catch_rate": 45,
+  "dex_no": 225,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "delibird",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Flying"
+  ]
+ },
+ "deoxys": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 150,
+   "def": 50,
+   "hp": 50,
+   "spa": 150,
+   "spd": 50,
+   "spe": 150
+  },
+  "catch_rate": 3,
+  "dex_no": 386,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "deoxys",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "dewgong": {
+  "abilities": [
+   "Thick Fat",
+   "Hydration"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 80,
+   "hp": 90,
+   "spa": 70,
+   "spd": 95,
+   "spe": 70
+  },
+  "catch_rate": 75,
+  "dex_no": 87,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "dewgong",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ice"
+  ]
  },
  "dialga": {
   "abilities": [
@@ -63,19 +2473,708 @@
    "spd": 100,
    "spe": 90
   },
-  "catch_rate": 3,
+  "catch_rate": 30,
   "dex_no": 483,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Smash",
    "Strength"
   ],
   "name": "dialga",
+  "source": "rom",
   "types": [
    "Steel",
    "Dragon"
   ],
   "weight_hg": 6830
+ },
+ "diglett": {
+  "abilities": [
+   "Sand Veil",
+   "Arena Trap"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 25,
+   "hp": 10,
+   "spa": 35,
+   "spd": 45,
+   "spe": 95
+  },
+  "catch_rate": 255,
+  "dex_no": 50,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "diglett",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "ditto": {
+  "abilities": [
+   "Limber"
+  ],
+  "base_stats": {
+   "atk": 48,
+   "def": 48,
+   "hp": 48,
+   "spa": 48,
+   "spd": 48,
+   "spe": 48
+  },
+  "catch_rate": 35,
+  "dex_no": 132,
+  "genderless": true,
+  "hms": [],
+  "name": "ditto",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "dodrio": {
+  "abilities": [
+   "Run Away",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 70,
+   "hp": 60,
+   "spa": 60,
+   "spd": 60,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 85,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "dodrio",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "doduo": {
+  "abilities": [
+   "Run Away",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 45,
+   "hp": 35,
+   "spa": 35,
+   "spd": 35,
+   "spe": 75
+  },
+  "catch_rate": 190,
+  "dex_no": 84,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "doduo",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "donphan": {
+  "abilities": [
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 120,
+   "hp": 90,
+   "spa": 60,
+   "spd": 60,
+   "spe": 50
+  },
+  "catch_rate": 60,
+  "dex_no": 232,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "donphan",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "dragonair": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 84,
+   "def": 65,
+   "hp": 61,
+   "spa": 70,
+   "spd": 70,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 148,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "dragonair",
+  "source": "rom",
+  "types": [
+   "Dragon"
+  ]
+ },
+ "dragonite": {
+  "abilities": [
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 134,
+   "def": 95,
+   "hp": 91,
+   "spa": 100,
+   "spd": 100,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 149,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "dragonite",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ "drapion": {
+  "abilities": [
+   "Battle Armor",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 110,
+   "hp": 70,
+   "spa": 60,
+   "spd": 75,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 452,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "drapion",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Dark"
+  ]
+ },
+ "dratini": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 64,
+   "def": 45,
+   "hp": 41,
+   "spa": 50,
+   "spd": 50,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 147,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "dratini",
+  "source": "rom",
+  "types": [
+   "Dragon"
+  ]
+ },
+ "drifblim": {
+  "abilities": [
+   "Aftermath",
+   "Unburden"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 44,
+   "hp": 150,
+   "spa": 90,
+   "spd": 54,
+   "spe": 80
+  },
+  "catch_rate": 60,
+  "dex_no": 426,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly"
+  ],
+  "name": "drifblim",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Flying"
+  ]
+ },
+ "drifloon": {
+  "abilities": [
+   "Aftermath",
+   "Unburden"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 34,
+   "hp": 90,
+   "spa": 60,
+   "spd": 44,
+   "spe": 70
+  },
+  "catch_rate": 125,
+  "dex_no": 425,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "drifloon",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Flying"
+  ]
+ },
+ "drowzee": {
+  "abilities": [
+   "Insomnia",
+   "Forewarn"
+  ],
+  "base_stats": {
+   "atk": 48,
+   "def": 45,
+   "hp": 60,
+   "spa": 43,
+   "spd": 90,
+   "spe": 42
+  },
+  "catch_rate": 190,
+  "dex_no": 96,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "drowzee",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "dugtrio": {
+  "abilities": [
+   "Sand Veil",
+   "Arena Trap"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 50,
+   "hp": 35,
+   "spa": 50,
+   "spd": 70,
+   "spe": 120
+  },
+  "catch_rate": 50,
+  "dex_no": 51,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "dugtrio",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "dunsparce": {
+  "abilities": [
+   "Serene Grace",
+   "Run Away"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 70,
+   "hp": 100,
+   "spa": 65,
+   "spd": 65,
+   "spe": 45
+  },
+  "catch_rate": 190,
+  "dex_no": 206,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "dunsparce",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "dusclops": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 130,
+   "hp": 40,
+   "spa": 60,
+   "spd": 130,
+   "spe": 25
+  },
+  "catch_rate": 90,
+  "dex_no": 356,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "dusclops",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "dusknoir": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 135,
+   "hp": 45,
+   "spa": 65,
+   "spd": 135,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 477,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "dusknoir",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "duskull": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 90,
+   "hp": 20,
+   "spa": 30,
+   "spd": 90,
+   "spe": 25
+  },
+  "catch_rate": 190,
+  "dex_no": 355,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "duskull",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "dustox": {
+  "abilities": [
+   "Shield Dust"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 70,
+   "hp": 60,
+   "spa": 50,
+   "spd": 90,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 269,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "dustox",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "eevee": {
+  "abilities": [
+   "Run Away",
+   "Adaptability"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 50,
+   "hp": 55,
+   "spa": 45,
+   "spd": 65,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 133,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [],
+  "name": "eevee",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "ekans": {
+  "abilities": [
+   "Intimidate",
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 44,
+   "hp": 35,
+   "spa": 40,
+   "spd": 54,
+   "spe": 55
+  },
+  "catch_rate": 255,
+  "dex_no": 23,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "ekans",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "electabuzz": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 83,
+   "def": 57,
+   "hp": 65,
+   "spa": 95,
+   "spd": 85,
+   "spe": 105
+  },
+  "catch_rate": 45,
+  "dex_no": 125,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "electabuzz",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "electivire": {
+  "abilities": [
+   "Motor Drive"
+  ],
+  "base_stats": {
+   "atk": 123,
+   "def": 67,
+   "hp": 75,
+   "spa": 95,
+   "spd": 85,
+   "spe": 95
+  },
+  "catch_rate": 30,
+  "dex_no": 466,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "electivire",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "electrike": {
+  "abilities": [
+   "Static",
+   "Lightningrod"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 40,
+   "hp": 40,
+   "spa": 65,
+   "spd": 40,
+   "spe": 65
+  },
+  "catch_rate": 120,
+  "dex_no": 309,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "electrike",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "electrode": {
+  "abilities": [
+   "Soundproof",
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 70,
+   "hp": 60,
+   "spa": 80,
+   "spd": 80,
+   "spe": 140
+  },
+  "catch_rate": 60,
+  "dex_no": 101,
+  "genderless": true,
+  "hms": [],
+  "name": "electrode",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "elekid": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 63,
+   "def": 37,
+   "hp": 45,
+   "spa": 65,
+   "spd": 55,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 239,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "elekid",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "empoleon": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 86,
+   "def": 88,
+   "hp": 84,
+   "spa": 111,
+   "spd": 101,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 395,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "empoleon",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Steel"
+  ]
  },
  "entei": {
   "abilities": [
@@ -91,6 +3190,7 @@
   },
   "catch_rate": 3,
   "dex_no": 244,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Climb",
@@ -98,10 +3198,727 @@
    "Strength"
   ],
   "name": "entei",
+  "source": "rom",
   "types": [
    "Fire"
   ],
   "weight_hg": 1980
+ },
+ "espeon": {
+  "abilities": [
+   "Synchronize"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 60,
+   "hp": 65,
+   "spa": 130,
+   "spd": 95,
+   "spe": 110
+  },
+  "catch_rate": 45,
+  "dex_no": 196,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "espeon",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "exeggcute": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 80,
+   "hp": 60,
+   "spa": 60,
+   "spd": 45,
+   "spe": 40
+  },
+  "catch_rate": 90,
+  "dex_no": 102,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "exeggcute",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Psychic"
+  ]
+ },
+ "exeggutor": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 85,
+   "hp": 95,
+   "spa": 125,
+   "spd": 65,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 103,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "exeggutor",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Psychic"
+  ]
+ },
+ "exploud": {
+  "abilities": [
+   "Soundproof"
+  ],
+  "base_stats": {
+   "atk": 91,
+   "def": 63,
+   "hp": 104,
+   "spa": 91,
+   "spd": 63,
+   "spe": 68
+  },
+  "catch_rate": 45,
+  "dex_no": 295,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "exploud",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "farfetchd": {
+  "abilities": [
+   "Keen Eye",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 55,
+   "hp": 52,
+   "spa": 58,
+   "spd": 62,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 83,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly"
+  ],
+  "name": "farfetchd",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "fearow": {
+  "abilities": [
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 65,
+   "hp": 65,
+   "spa": 61,
+   "spd": 61,
+   "spe": 100
+  },
+  "catch_rate": 90,
+  "dex_no": 22,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "fearow",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "feebas": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 15,
+   "def": 20,
+   "hp": 20,
+   "spa": 10,
+   "spd": 55,
+   "spe": 80
+  },
+  "catch_rate": 255,
+  "dex_no": 349,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "feebas",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "feraligatr": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 100,
+   "hp": 85,
+   "spa": 79,
+   "spd": 83,
+   "spe": 78
+  },
+  "catch_rate": 45,
+  "dex_no": 160,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "feraligatr",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "finneon": {
+  "abilities": [
+   "Swift Swim",
+   "Storm Drain"
+  ],
+  "base_stats": {
+   "atk": 49,
+   "def": 56,
+   "hp": 49,
+   "spa": 49,
+   "spd": 61,
+   "spe": 66
+  },
+  "catch_rate": 190,
+  "dex_no": 456,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "finneon",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "flaaffy": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 55,
+   "hp": 70,
+   "spa": 80,
+   "spd": 60,
+   "spe": 45
+  },
+  "catch_rate": 120,
+  "dex_no": 180,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "flaaffy",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "flareon": {
+  "abilities": [
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 60,
+   "hp": 65,
+   "spa": 95,
+   "spd": 110,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 136,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "flareon",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "floatzel": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 55,
+   "hp": 85,
+   "spa": 85,
+   "spd": 50,
+   "spe": 115
+  },
+  "catch_rate": 75,
+  "dex_no": 419,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "floatzel",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "flygon": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 80,
+   "hp": 80,
+   "spa": 80,
+   "spd": 80,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 330,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "flygon",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Dragon"
+  ]
+ },
+ "forretress": {
+  "abilities": [
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 140,
+   "hp": 75,
+   "spa": 60,
+   "spd": 60,
+   "spe": 40
+  },
+  "catch_rate": 75,
+  "dex_no": 205,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "forretress",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Steel"
+  ]
+ },
+ "froslass": {
+  "abilities": [
+   "Snow Cloak"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 70,
+   "hp": 70,
+   "spa": 80,
+   "spd": 70,
+   "spe": 110
+  },
+  "catch_rate": 75,
+  "dex_no": 478,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "froslass",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Ghost"
+  ]
+ },
+ "furret": {
+  "abilities": [
+   "Run Away",
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 76,
+   "def": 64,
+   "hp": 85,
+   "spa": 45,
+   "spd": 55,
+   "spe": 90
+  },
+  "catch_rate": 90,
+  "dex_no": 162,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "furret",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "gabite": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 65,
+   "hp": 68,
+   "spa": 50,
+   "spd": 55,
+   "spe": 82
+  },
+  "catch_rate": 45,
+  "dex_no": 444,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gabite",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Ground"
+  ]
+ },
+ "gallade": {
+  "abilities": [
+   "Steadfast"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 65,
+   "hp": 68,
+   "spa": 65,
+   "spd": 115,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 475,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gallade",
+  "source": "rom",
+  "types": [
+   "Psychic",
+   "Fighting"
+  ]
+ },
+ "garchomp": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 95,
+   "hp": 108,
+   "spa": 80,
+   "spd": 85,
+   "spe": 102
+  },
+  "catch_rate": 45,
+  "dex_no": 445,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "garchomp",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Ground"
+  ]
+ },
+ "gardevoir": {
+  "abilities": [
+   "Synchronize",
+   "Trace"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 65,
+   "hp": 68,
+   "spa": 125,
+   "spd": 115,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 282,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "gardevoir",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "gastly": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 30,
+   "hp": 30,
+   "spa": 100,
+   "spd": 35,
+   "spe": 80
+  },
+  "catch_rate": 190,
+  "dex_no": 92,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "gastly",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Poison"
+  ]
+ },
+ "gastrodon": {
+  "abilities": [
+   "Sticky Hold",
+   "Storm Drain"
+  ],
+  "base_stats": {
+   "atk": 83,
+   "def": 68,
+   "hp": 111,
+   "spa": 92,
+   "spd": 82,
+   "spe": 39
+  },
+  "catch_rate": 75,
+  "dex_no": 423,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "gastrodon",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "gengar": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 60,
+   "hp": 60,
+   "spa": 130,
+   "spd": 75,
+   "spe": 110
+  },
+  "catch_rate": 45,
+  "dex_no": 94,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gengar",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Poison"
+  ]
+ },
+ "geodude": {
+  "abilities": [
+   "Rock Head",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 100,
+   "hp": 40,
+   "spa": 30,
+   "spd": 30,
+   "spe": 20
+  },
+  "catch_rate": 255,
+  "dex_no": 74,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "geodude",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
+ },
+ "gible": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 45,
+   "hp": 58,
+   "spa": 40,
+   "spd": 45,
+   "spe": 42
+  },
+  "catch_rate": 45,
+  "dex_no": 443,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gible",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Ground"
+  ]
+ },
+ "girafarig": {
+  "abilities": [
+   "Inner Focus",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 65,
+   "hp": 70,
+   "spa": 90,
+   "spd": 65,
+   "spe": 85
+  },
+  "catch_rate": 60,
+  "dex_no": 203,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "girafarig",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Psychic"
+  ]
  },
  "giratina-altered": {
   "abilities": [
@@ -117,6 +3934,7 @@
   },
   "catch_rate": 3,
   "dex_no": 487,
+  "genderless": true,
   "hms": [
    "Cut",
    "Fly",
@@ -125,11 +3943,313 @@
    "Strength"
   ],
   "name": "giratina-altered",
+  "source": "rom",
   "types": [
    "Ghost",
    "Dragon"
   ],
   "weight_hg": 7500
+ },
+ "glaceon": {
+  "abilities": [
+   "Snow Cloak"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 110,
+   "hp": 65,
+   "spa": 130,
+   "spd": 95,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 471,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "glaceon",
+  "source": "rom",
+  "types": [
+   "Ice"
+  ]
+ },
+ "glalie": {
+  "abilities": [
+   "Inner Focus",
+   "Ice Body"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 80,
+   "hp": 80,
+   "spa": 80,
+   "spd": 80,
+   "spe": 80
+  },
+  "catch_rate": 75,
+  "dex_no": 362,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "glalie",
+  "source": "rom",
+  "types": [
+   "Ice"
+  ]
+ },
+ "glameow": {
+  "abilities": [
+   "Limber",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 42,
+   "hp": 49,
+   "spa": 42,
+   "spd": 37,
+   "spe": 85
+  },
+  "catch_rate": 190,
+  "dex_no": 431,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "glameow",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "gligar": {
+  "abilities": [
+   "Hyper Cutter",
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 105,
+   "hp": 65,
+   "spa": 35,
+   "spd": 65,
+   "spe": 85
+  },
+  "catch_rate": 60,
+  "dex_no": 207,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gligar",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Flying"
+  ]
+ },
+ "gliscor": {
+  "abilities": [
+   "Hyper Cutter",
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 125,
+   "hp": 75,
+   "spa": 45,
+   "spd": 75,
+   "spe": 95
+  },
+  "catch_rate": 30,
+  "dex_no": 472,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gliscor",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Flying"
+  ]
+ },
+ "gloom": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 70,
+   "hp": 60,
+   "spa": 85,
+   "spd": 75,
+   "spe": 40
+  },
+  "catch_rate": 120,
+  "dex_no": 44,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "gloom",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "golbat": {
+  "abilities": [
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 70,
+   "hp": 75,
+   "spa": 65,
+   "spd": 75,
+   "spe": 90
+  },
+  "catch_rate": 90,
+  "dex_no": 42,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "golbat",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Flying"
+  ]
+ },
+ "goldeen": {
+  "abilities": [
+   "Swift Swim",
+   "Water Veil"
+  ],
+  "base_stats": {
+   "atk": 67,
+   "def": 60,
+   "hp": 45,
+   "spa": 35,
+   "spd": 50,
+   "spe": 63
+  },
+  "catch_rate": 225,
+  "dex_no": 118,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "goldeen",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "golduck": {
+  "abilities": [
+   "Damp",
+   "Cloud Nine"
+  ],
+  "base_stats": {
+   "atk": 82,
+   "def": 78,
+   "hp": 80,
+   "spa": 95,
+   "spd": 80,
+   "spe": 85
+  },
+  "catch_rate": 75,
+  "dex_no": 55,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "golduck",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "golem": {
+  "abilities": [
+   "Rock Head",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 130,
+   "hp": 80,
+   "spa": 55,
+   "spd": 65,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 76,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "golem",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
+ },
+ "gorebyss": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 84,
+   "def": 105,
+   "hp": 55,
+   "spa": 114,
+   "spd": 75,
+   "spe": 52
+  },
+  "catch_rate": 60,
+  "dex_no": 368,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "gorebyss",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
  },
  "granbull": {
   "abilities": [
@@ -146,6 +4266,8 @@
   },
   "catch_rate": 75,
   "dex_no": 210,
+  "female_ratio": 0.75,
+  "genderless": false,
   "hms": [
    "Rock Climb",
    "Rock Smash",
@@ -157,6 +4279,89 @@
    "Normal"
   ],
   "weight_hg": null
+ },
+ "graveler": {
+  "abilities": [
+   "Rock Head",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 115,
+   "hp": 55,
+   "spa": 45,
+   "spd": 45,
+   "spe": 35
+  },
+  "catch_rate": 120,
+  "dex_no": 75,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "graveler",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
+ },
+ "grimer": {
+  "abilities": [
+   "Stench",
+   "Sticky Hold"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 50,
+   "hp": 80,
+   "spa": 40,
+   "spd": 50,
+   "spe": 25
+  },
+  "catch_rate": 190,
+  "dex_no": 88,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "grimer",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "grotle": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 89,
+   "def": 85,
+   "hp": 75,
+   "spa": 55,
+   "spd": 65,
+   "spe": 36
+  },
+  "catch_rate": 45,
+  "dex_no": 388,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "grotle",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
  },
  "groudon": {
   "abilities": [
@@ -170,8 +4375,9 @@
    "spd": 90,
    "spe": 90
   },
-  "catch_rate": 3,
+  "catch_rate": 5,
   "dex_no": 383,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Climb",
@@ -179,10 +4385,116 @@
    "Strength"
   ],
   "name": "groudon",
+  "source": "rom",
   "types": [
    "Ground"
   ],
   "weight_hg": 9500
+ },
+ "grovyle": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 45,
+   "hp": 50,
+   "spa": 85,
+   "spd": 65,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 253,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "grovyle",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "growlithe": {
+  "abilities": [
+   "Intimidate",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 45,
+   "hp": 55,
+   "spa": 70,
+   "spd": 50,
+   "spe": 60
+  },
+  "catch_rate": 190,
+  "dex_no": 58,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "growlithe",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "grumpig": {
+  "abilities": [
+   "Thick Fat",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 65,
+   "hp": 80,
+   "spa": 90,
+   "spd": 110,
+   "spe": 80
+  },
+  "catch_rate": 60,
+  "dex_no": 326,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "grumpig",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "gulpin": {
+  "abilities": [
+   "Liquid Ooze",
+   "Sticky Hold"
+  ],
+  "base_stats": {
+   "atk": 43,
+   "def": 53,
+   "hp": 70,
+   "spa": 43,
+   "spd": 53,
+   "spe": 40
+  },
+  "catch_rate": 225,
+  "dex_no": 316,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "gulpin",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
  },
  "gyarados": {
   "abilities": [
@@ -198,6 +4510,8 @@
   },
   "catch_rate": 45,
   "dex_no": 130,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [
    "Rock Smash",
    "Strength",
@@ -213,6 +4527,276 @@
   ],
   "weight_hg": null
  },
+ "happiny": {
+  "abilities": [
+   "Natural Cure",
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 5,
+   "def": 5,
+   "hp": 100,
+   "spa": 15,
+   "spd": 65,
+   "spe": 30
+  },
+  "catch_rate": 130,
+  "dex_no": 440,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "happiny",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "hariyama": {
+  "abilities": [
+   "Thick Fat",
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 60,
+   "hp": 144,
+   "spa": 40,
+   "spd": 60,
+   "spe": 50
+  },
+  "catch_rate": 200,
+  "dex_no": 297,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "hariyama",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "haunter": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 45,
+   "hp": 45,
+   "spa": 115,
+   "spd": 55,
+   "spe": 95
+  },
+  "catch_rate": 90,
+  "dex_no": 93,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "haunter",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Poison"
+  ]
+ },
+ "heatran": {
+  "abilities": [
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 106,
+   "hp": 91,
+   "spa": 130,
+   "spd": 106,
+   "spe": 77
+  },
+  "catch_rate": 3,
+  "dex_no": 485,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "heatran",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Steel"
+  ]
+ },
+ "heracross": {
+  "abilities": [
+   "Swarm",
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 75,
+   "hp": 80,
+   "spa": 40,
+   "spd": 95,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 214,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "heracross",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Fighting"
+  ]
+ },
+ "hippopotas": {
+  "abilities": [
+   "Sand Stream"
+  ],
+  "base_stats": {
+   "atk": 72,
+   "def": 78,
+   "hp": 68,
+   "spa": 38,
+   "spd": 42,
+   "spe": 32
+  },
+  "catch_rate": 140,
+  "dex_no": 449,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "hippopotas",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "hippowdon": {
+  "abilities": [
+   "Sand Stream"
+  ],
+  "base_stats": {
+   "atk": 112,
+   "def": 118,
+   "hp": 108,
+   "spa": 68,
+   "spd": 72,
+   "spe": 47
+  },
+  "catch_rate": 60,
+  "dex_no": 450,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "hippowdon",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "hitmonchan": {
+  "abilities": [
+   "Keen Eye",
+   "Iron Fist"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 79,
+   "hp": 50,
+   "spa": 35,
+   "spd": 110,
+   "spe": 76
+  },
+  "catch_rate": 45,
+  "dex_no": 107,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "hitmonchan",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "hitmonlee": {
+  "abilities": [
+   "Limber",
+   "Reckless"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 53,
+   "hp": 50,
+   "spa": 35,
+   "spd": 110,
+   "spe": 87
+  },
+  "catch_rate": 45,
+  "dex_no": 106,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "hitmonlee",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "hitmontop": {
+  "abilities": [
+   "Intimidate",
+   "Technician"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 95,
+   "hp": 50,
+   "spa": 35,
+   "spd": 110,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 237,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "hitmontop",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
  "ho-oh": {
   "abilities": [
    "Pressure"
@@ -227,17 +4811,814 @@
   },
   "catch_rate": 3,
   "dex_no": 250,
+  "genderless": true,
   "hms": [
    "Fly",
    "Rock Smash",
    "Strength"
   ],
   "name": "ho-oh",
+  "source": "rom",
   "types": [
    "Fire",
    "Flying"
   ],
   "weight_hg": 1990
+ },
+ "honchkrow": {
+  "abilities": [
+   "Insomnia",
+   "Super Luck"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 52,
+   "hp": 100,
+   "spa": 105,
+   "spd": 52,
+   "spe": 71
+  },
+  "catch_rate": 30,
+  "dex_no": 430,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "honchkrow",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Flying"
+  ]
+ },
+ "hoothoot": {
+  "abilities": [
+   "Insomnia",
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 30,
+   "hp": 60,
+   "spa": 36,
+   "spd": 56,
+   "spe": 50
+  },
+  "catch_rate": 255,
+  "dex_no": 163,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "hoothoot",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "hoppip": {
+  "abilities": [
+   "Chlorophyll",
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 40,
+   "hp": 35,
+   "spa": 35,
+   "spd": 55,
+   "spe": 50
+  },
+  "catch_rate": 255,
+  "dex_no": 187,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "hoppip",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Flying"
+  ]
+ },
+ "horsea": {
+  "abilities": [
+   "Swift Swim",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 70,
+   "hp": 30,
+   "spa": 70,
+   "spd": 25,
+   "spe": 60
+  },
+  "catch_rate": 225,
+  "dex_no": 116,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "horsea",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "houndoom": {
+  "abilities": [
+   "Early Bird",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 50,
+   "hp": 75,
+   "spa": 110,
+   "spd": 80,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 229,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "houndoom",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Fire"
+  ]
+ },
+ "houndour": {
+  "abilities": [
+   "Early Bird",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 30,
+   "hp": 45,
+   "spa": 80,
+   "spd": 50,
+   "spe": 65
+  },
+  "catch_rate": 120,
+  "dex_no": 228,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "houndour",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Fire"
+  ]
+ },
+ "huntail": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 104,
+   "def": 105,
+   "hp": 55,
+   "spa": 94,
+   "spd": 75,
+   "spe": 52
+  },
+  "catch_rate": 60,
+  "dex_no": 367,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "huntail",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "hypno": {
+  "abilities": [
+   "Insomnia",
+   "Forewarn"
+  ],
+  "base_stats": {
+   "atk": 73,
+   "def": 70,
+   "hp": 85,
+   "spa": 73,
+   "spd": 115,
+   "spe": 67
+  },
+  "catch_rate": 75,
+  "dex_no": 97,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "hypno",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "igglybuff": {
+  "abilities": [
+   "Cute Charm"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 15,
+   "hp": 90,
+   "spa": 40,
+   "spd": 20,
+   "spe": 15
+  },
+  "catch_rate": 170,
+  "dex_no": 174,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [],
+  "name": "igglybuff",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "illumise": {
+  "abilities": [
+   "Oblivious",
+   "Tinted Lens"
+  ],
+  "base_stats": {
+   "atk": 47,
+   "def": 55,
+   "hp": 65,
+   "spa": 73,
+   "spd": 75,
+   "spe": 85
+  },
+  "catch_rate": 150,
+  "dex_no": 314,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "illumise",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "infernape": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 104,
+   "def": 71,
+   "hp": 76,
+   "spa": 104,
+   "spd": 71,
+   "spe": 108
+  },
+  "catch_rate": 45,
+  "dex_no": 392,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "infernape",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ "ivysaur": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 62,
+   "def": 63,
+   "hp": 60,
+   "spa": 80,
+   "spd": 80,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 2,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "ivysaur",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "jigglypuff": {
+  "abilities": [
+   "Cute Charm"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 20,
+   "hp": 115,
+   "spa": 45,
+   "spd": 25,
+   "spe": 20
+  },
+  "catch_rate": 170,
+  "dex_no": 39,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "jigglypuff",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "jirachi": {
+  "abilities": [
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 100,
+   "hp": 100,
+   "spa": 100,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 3,
+  "dex_no": 385,
+  "genderless": true,
+  "hms": [],
+  "name": "jirachi",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "jolteon": {
+  "abilities": [
+   "Volt Absorb"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 60,
+   "hp": 65,
+   "spa": 110,
+   "spd": 95,
+   "spe": 130
+  },
+  "catch_rate": 45,
+  "dex_no": 135,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "jolteon",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "jumpluff": {
+  "abilities": [
+   "Chlorophyll",
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 70,
+   "hp": 75,
+   "spa": 55,
+   "spd": 85,
+   "spe": 110
+  },
+  "catch_rate": 45,
+  "dex_no": 189,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "jumpluff",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Flying"
+  ]
+ },
+ "jynx": {
+  "abilities": [
+   "Oblivious",
+   "Forewarn"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 35,
+   "hp": 65,
+   "spa": 115,
+   "spd": 95,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 124,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "jynx",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Psychic"
+  ]
+ },
+ "kabuto": {
+  "abilities": [
+   "Swift Swim",
+   "Battle Armor"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 90,
+   "hp": 30,
+   "spa": 55,
+   "spd": 45,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 140,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "kabuto",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Water"
+  ]
+ },
+ "kabutops": {
+  "abilities": [
+   "Swift Swim",
+   "Battle Armor"
+  ],
+  "base_stats": {
+   "atk": 115,
+   "def": 105,
+   "hp": 60,
+   "spa": 65,
+   "spd": 70,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 141,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "kabutops",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Water"
+  ]
+ },
+ "kadabra": {
+  "abilities": [
+   "Synchronize",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 30,
+   "hp": 40,
+   "spa": 120,
+   "spd": 70,
+   "spe": 105
+  },
+  "catch_rate": 100,
+  "dex_no": 64,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [],
+  "name": "kadabra",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "kakuna": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 50,
+   "hp": 45,
+   "spa": 25,
+   "spd": 25,
+   "spe": 35
+  },
+  "catch_rate": 120,
+  "dex_no": 14,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "kakuna",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "kangaskhan": {
+  "abilities": [
+   "Early Bird",
+   "Scrappy"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 80,
+   "hp": 105,
+   "spa": 40,
+   "spd": 80,
+   "spe": 90
+  },
+  "catch_rate": 45,
+  "dex_no": 115,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "kangaskhan",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "kecleon": {
+  "abilities": [
+   "Color Change"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 70,
+   "hp": 60,
+   "spa": 60,
+   "spd": 120,
+   "spe": 40
+  },
+  "catch_rate": 200,
+  "dex_no": 352,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "kecleon",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "kingdra": {
+  "abilities": [
+   "Swift Swim",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 95,
+   "hp": 75,
+   "spa": 95,
+   "spd": 95,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 230,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "kingdra",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Dragon"
+  ]
+ },
+ "kingler": {
+  "abilities": [
+   "Hyper Cutter",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 115,
+   "hp": 55,
+   "spa": 50,
+   "spd": 50,
+   "spe": 75
+  },
+  "catch_rate": 60,
+  "dex_no": 99,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "kingler",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "kirlia": {
+  "abilities": [
+   "Synchronize",
+   "Trace"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 35,
+   "hp": 38,
+   "spa": 65,
+   "spd": 55,
+   "spe": 50
+  },
+  "catch_rate": 120,
+  "dex_no": 281,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "kirlia",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "koffing": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 95,
+   "hp": 40,
+   "spa": 60,
+   "spd": 45,
+   "spe": 35
+  },
+  "catch_rate": 190,
+  "dex_no": 109,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "koffing",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "krabby": {
+  "abilities": [
+   "Hyper Cutter",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 90,
+   "hp": 30,
+   "spa": 25,
+   "spd": 25,
+   "spe": 50
+  },
+  "catch_rate": 225,
+  "dex_no": 98,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "krabby",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "kricketot": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 41,
+   "hp": 37,
+   "spa": 25,
+   "spd": 41,
+   "spe": 25
+  },
+  "catch_rate": 255,
+  "dex_no": 401,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "kricketot",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "kricketune": {
+  "abilities": [
+   "Swarm"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 51,
+   "hp": 77,
+   "spa": 55,
+   "spd": 51,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 402,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "kricketune",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
  },
  "kyogre": {
   "abilities": [
@@ -251,8 +5632,9 @@
    "spd": 140,
    "spe": 90
   },
-  "catch_rate": 3,
+  "catch_rate": 5,
   "dex_no": 382,
+  "genderless": true,
   "hms": [
    "Rock Smash",
    "Strength",
@@ -261,10 +5643,126 @@
    "Whirlpool"
   ],
   "name": "kyogre",
+  "source": "rom",
   "types": [
    "Water"
   ],
   "weight_hg": 3520
+ },
+ "lairon": {
+  "abilities": [
+   "Sturdy",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 140,
+   "hp": 60,
+   "spa": 50,
+   "spd": 50,
+   "spe": 40
+  },
+  "catch_rate": 90,
+  "dex_no": 305,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "lairon",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Rock"
+  ]
+ },
+ "lanturn": {
+  "abilities": [
+   "Volt Absorb",
+   "Illuminate"
+  ],
+  "base_stats": {
+   "atk": 58,
+   "def": 58,
+   "hp": 125,
+   "spa": 76,
+   "spd": 76,
+   "spe": 67
+  },
+  "catch_rate": 75,
+  "dex_no": 171,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "lanturn",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Electric"
+  ]
+ },
+ "lapras": {
+  "abilities": [
+   "Water Absorb",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 80,
+   "hp": 130,
+   "spa": 85,
+   "spd": 95,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 131,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "lapras",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ice"
+  ]
+ },
+ "larvitar": {
+  "abilities": [
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 64,
+   "def": 50,
+   "hp": 50,
+   "spa": 45,
+   "spd": 50,
+   "spe": 41
+  },
+  "catch_rate": 45,
+  "dex_no": 246,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "larvitar",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
  },
  "latias": {
   "abilities": [
@@ -280,6 +5778,8 @@
   },
   "catch_rate": 3,
   "dex_no": 380,
+  "female_ratio": 1.0,
+  "genderless": false,
   "hms": [
    "Cut",
    "Fly",
@@ -288,6 +5788,7 @@
    "Whirlpool"
   ],
   "name": "latias",
+  "source": "rom",
   "types": [
    "Dragon",
    "Psychic"
@@ -308,6 +5809,8 @@
   },
   "catch_rate": 3,
   "dex_no": 381,
+  "female_ratio": 0.0,
+  "genderless": false,
   "hms": [
    "Cut",
    "Fly",
@@ -316,11 +5819,381 @@
    "Whirlpool"
   ],
   "name": "latios",
+  "source": "rom",
   "types": [
    "Dragon",
    "Psychic"
   ],
   "weight_hg": 600
+ },
+ "leafeon": {
+  "abilities": [
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 130,
+   "hp": 65,
+   "spa": 60,
+   "spd": 65,
+   "spe": 95
+  },
+  "catch_rate": 45,
+  "dex_no": 470,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "leafeon",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "ledian": {
+  "abilities": [
+   "Swarm",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 50,
+   "hp": 55,
+   "spa": 55,
+   "spd": 110,
+   "spe": 85
+  },
+  "catch_rate": 90,
+  "dex_no": 166,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "ledian",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "ledyba": {
+  "abilities": [
+   "Swarm",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 30,
+   "hp": 40,
+   "spa": 40,
+   "spd": 80,
+   "spe": 55
+  },
+  "catch_rate": 255,
+  "dex_no": 165,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "ledyba",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "lickilicky": {
+  "abilities": [
+   "Own Tempo",
+   "Oblivious"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 95,
+   "hp": 110,
+   "spa": 80,
+   "spd": 95,
+   "spe": 50
+  },
+  "catch_rate": 30,
+  "dex_no": 463,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "lickilicky",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "lickitung": {
+  "abilities": [
+   "Own Tempo",
+   "Oblivious"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 75,
+   "hp": 90,
+   "spa": 60,
+   "spd": 75,
+   "spe": 30
+  },
+  "catch_rate": 45,
+  "dex_no": 108,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "lickitung",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "lileep": {
+  "abilities": [
+   "Suction Cups"
+  ],
+  "base_stats": {
+   "atk": 41,
+   "def": 77,
+   "hp": 66,
+   "spa": 61,
+   "spd": 87,
+   "spe": 23
+  },
+  "catch_rate": 45,
+  "dex_no": 345,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [],
+  "name": "lileep",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Grass"
+  ]
+ },
+ "linoone": {
+  "abilities": [
+   "Pickup",
+   "Gluttony"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 61,
+   "hp": 78,
+   "spa": 50,
+   "spd": 61,
+   "spe": 100
+  },
+  "catch_rate": 90,
+  "dex_no": 264,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "linoone",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "lombre": {
+  "abilities": [
+   "Swift Swim",
+   "Rain Dish"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 50,
+   "hp": 60,
+   "spa": 60,
+   "spd": 70,
+   "spe": 50
+  },
+  "catch_rate": 120,
+  "dex_no": 271,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "lombre",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Grass"
+  ]
+ },
+ "lopunny": {
+  "abilities": [
+   "Cute Charm",
+   "Klutz"
+  ],
+  "base_stats": {
+   "atk": 76,
+   "def": 84,
+   "hp": 65,
+   "spa": 54,
+   "spd": 96,
+   "spe": 105
+  },
+  "catch_rate": 60,
+  "dex_no": 428,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "lopunny",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "lotad": {
+  "abilities": [
+   "Swift Swim",
+   "Rain Dish"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 30,
+   "hp": 40,
+   "spa": 40,
+   "spd": 50,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 270,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "lotad",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Grass"
+  ]
+ },
+ "loudred": {
+  "abilities": [
+   "Soundproof"
+  ],
+  "base_stats": {
+   "atk": 71,
+   "def": 43,
+   "hp": 84,
+   "spa": 71,
+   "spd": 43,
+   "spe": 48
+  },
+  "catch_rate": 120,
+  "dex_no": 294,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "loudred",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "lucario": {
+  "abilities": [
+   "Steadfast",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 70,
+   "hp": 70,
+   "spa": 115,
+   "spd": 70,
+   "spe": 90
+  },
+  "catch_rate": 45,
+  "dex_no": 448,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "lucario",
+  "source": "rom",
+  "types": [
+   "Fighting",
+   "Steel"
+  ]
+ },
+ "ludicolo": {
+  "abilities": [
+   "Swift Swim",
+   "Rain Dish"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 70,
+   "hp": 80,
+   "spa": 90,
+   "spd": 100,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 272,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "ludicolo",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Grass"
+  ]
  },
  "lugia": {
   "abilities": [
@@ -336,6 +6209,7 @@
   },
   "catch_rate": 3,
   "dex_no": 249,
+  "genderless": true,
   "hms": [
    "Fly",
    "Rock Smash",
@@ -345,11 +6219,356 @@
    "Whirlpool"
   ],
   "name": "lugia",
+  "source": "rom",
   "types": [
    "Psychic",
    "Flying"
   ],
   "weight_hg": 2160
+ },
+ "lumineon": {
+  "abilities": [
+   "Swift Swim",
+   "Storm Drain"
+  ],
+  "base_stats": {
+   "atk": 69,
+   "def": 76,
+   "hp": 69,
+   "spa": 69,
+   "spd": 86,
+   "spe": 91
+  },
+  "catch_rate": 75,
+  "dex_no": 457,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "lumineon",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "lunatone": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 65,
+   "hp": 70,
+   "spa": 95,
+   "spd": 85,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 337,
+  "genderless": true,
+  "hms": [],
+  "name": "lunatone",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Psychic"
+  ]
+ },
+ "luvdisc": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 55,
+   "hp": 43,
+   "spa": 40,
+   "spd": 65,
+   "spe": 97
+  },
+  "catch_rate": 225,
+  "dex_no": 370,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "luvdisc",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "luxio": {
+  "abilities": [
+   "Rivalry",
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 49,
+   "hp": 60,
+   "spa": 60,
+   "spd": 49,
+   "spe": 60
+  },
+  "catch_rate": 120,
+  "dex_no": 404,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "luxio",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "luxray": {
+  "abilities": [
+   "Rivalry",
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 79,
+   "hp": 80,
+   "spa": 95,
+   "spd": 79,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 405,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "luxray",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "machamp": {
+  "abilities": [
+   "Guts",
+   "No Guard"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 80,
+   "hp": 90,
+   "spa": 65,
+   "spd": 85,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 68,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "machamp",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "machoke": {
+  "abilities": [
+   "Guts",
+   "No Guard"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 70,
+   "hp": 80,
+   "spa": 50,
+   "spd": 60,
+   "spe": 45
+  },
+  "catch_rate": 90,
+  "dex_no": 67,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "machoke",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "machop": {
+  "abilities": [
+   "Guts",
+   "No Guard"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 50,
+   "hp": 70,
+   "spa": 35,
+   "spd": 35,
+   "spe": 35
+  },
+  "catch_rate": 180,
+  "dex_no": 66,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "machop",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "magby": {
+  "abilities": [
+   "Flame Body"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 37,
+   "hp": 45,
+   "spa": 70,
+   "spd": 55,
+   "spe": 83
+  },
+  "catch_rate": 45,
+  "dex_no": 240,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "magby",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "magcargo": {
+  "abilities": [
+   "Magma Armor",
+   "Flame Body"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 120,
+   "hp": 50,
+   "spa": 80,
+   "spd": 80,
+   "spe": 30
+  },
+  "catch_rate": 75,
+  "dex_no": 219,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "magcargo",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Rock"
+  ]
+ },
+ "magikarp": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 10,
+   "def": 55,
+   "hp": 20,
+   "spa": 15,
+   "spd": 20,
+   "spe": 80
+  },
+  "catch_rate": 255,
+  "dex_no": 129,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "magikarp",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "magmar": {
+  "abilities": [
+   "Flame Body"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 57,
+   "hp": 65,
+   "spa": 100,
+   "spd": 85,
+   "spe": 93
+  },
+  "catch_rate": 45,
+  "dex_no": 126,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "magmar",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "magmortar": {
+  "abilities": [
+   "Flame Body"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 67,
+   "hp": 75,
+   "spa": 125,
+   "spd": 95,
+   "spe": 83
+  },
+  "catch_rate": 30,
+  "dex_no": 467,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "magmortar",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
  },
  "magnemite": {
   "abilities": [
@@ -366,8 +6585,10 @@
   },
   "catch_rate": 190,
   "dex_no": 81,
+  "genderless": true,
   "hms": [],
   "name": "magnemite",
+  "source": "rom",
   "types": [
    "Electric",
    "Steel"
@@ -389,13 +6610,69 @@
   },
   "catch_rate": 60,
   "dex_no": 82,
+  "genderless": true,
   "hms": [],
   "name": "magneton",
+  "source": "rom",
   "types": [
    "Electric",
    "Steel"
   ],
   "weight_hg": 600
+ },
+ "magnezone": {
+  "abilities": [
+   "Magnet Pull",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 115,
+   "hp": 70,
+   "spa": 130,
+   "spd": 90,
+   "spe": 60
+  },
+  "catch_rate": 30,
+  "dex_no": 462,
+  "genderless": true,
+  "hms": [],
+  "name": "magnezone",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Steel"
+  ]
+ },
+ "makuhita": {
+  "abilities": [
+   "Thick Fat",
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 30,
+   "hp": 72,
+   "spa": 20,
+   "spd": 30,
+   "spe": 25
+  },
+  "catch_rate": 180,
+  "dex_no": 296,
+  "female_ratio": 0.25,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "makuhita",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
  },
  "mamoswine": {
   "abilities": [
@@ -412,17 +6689,558 @@
   },
   "catch_rate": 50,
   "dex_no": 473,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [
    "Rock Climb",
    "Rock Smash",
    "Strength"
   ],
   "name": "mamoswine",
+  "source": "rom",
   "types": [
    "Ice",
    "Ground"
   ],
   "weight_hg": 2910
+ },
+ "manaphy": {
+  "abilities": [
+   "Hydration"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 100,
+   "hp": 100,
+   "spa": 100,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 3,
+  "dex_no": 490,
+  "genderless": true,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "manaphy",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "manectric": {
+  "abilities": [
+   "Static",
+   "Lightningrod"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 60,
+   "hp": 70,
+   "spa": 105,
+   "spd": 60,
+   "spe": 105
+  },
+  "catch_rate": 45,
+  "dex_no": 310,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "manectric",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "mankey": {
+  "abilities": [
+   "Vital Spirit",
+   "Anger Point"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 35,
+   "hp": 40,
+   "spa": 35,
+   "spd": 45,
+   "spe": 70
+  },
+  "catch_rate": 190,
+  "dex_no": 56,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "mankey",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "mantine": {
+  "abilities": [
+   "Swift Swim",
+   "Water Absorb"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 70,
+   "hp": 65,
+   "spa": 80,
+   "spd": 140,
+   "spe": 70
+  },
+  "catch_rate": 25,
+  "dex_no": 226,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "mantine",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ "mantyke": {
+  "abilities": [
+   "Swift Swim",
+   "Water Absorb"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 50,
+   "hp": 45,
+   "spa": 60,
+   "spd": 120,
+   "spe": 50
+  },
+  "catch_rate": 25,
+  "dex_no": 458,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "mantyke",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ "mareep": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 40,
+   "hp": 55,
+   "spa": 65,
+   "spd": 45,
+   "spe": 35
+  },
+  "catch_rate": 235,
+  "dex_no": 179,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "mareep",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "marill": {
+  "abilities": [
+   "Thick Fat",
+   "Huge Power"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 50,
+   "hp": 70,
+   "spa": 20,
+   "spd": 50,
+   "spe": 40
+  },
+  "catch_rate": 190,
+  "dex_no": 183,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "marill",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "marowak": {
+  "abilities": [
+   "Rock Head",
+   "Lightningrod"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 110,
+   "hp": 60,
+   "spa": 50,
+   "spd": 80,
+   "spe": 45
+  },
+  "catch_rate": 75,
+  "dex_no": 105,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "marowak",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "marshtomp": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 70,
+   "hp": 70,
+   "spa": 60,
+   "spd": 70,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 259,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "marshtomp",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "masquerain": {
+  "abilities": [
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 62,
+   "hp": 70,
+   "spa": 80,
+   "spd": 82,
+   "spe": 60
+  },
+  "catch_rate": 75,
+  "dex_no": 284,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "masquerain",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "mawile": {
+  "abilities": [
+   "Hyper Cutter",
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 85,
+   "hp": 50,
+   "spa": 55,
+   "spd": 55,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 303,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "mawile",
+  "source": "rom",
+  "types": [
+   "Steel"
+  ]
+ },
+ "medicham": {
+  "abilities": [
+   "Pure Power"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 75,
+   "hp": 60,
+   "spa": 60,
+   "spd": 75,
+   "spe": 80
+  },
+  "catch_rate": 90,
+  "dex_no": 308,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "medicham",
+  "source": "rom",
+  "types": [
+   "Fighting",
+   "Psychic"
+  ]
+ },
+ "meditite": {
+  "abilities": [
+   "Pure Power"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 55,
+   "hp": 30,
+   "spa": 40,
+   "spd": 55,
+   "spe": 60
+  },
+  "catch_rate": 180,
+  "dex_no": 307,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "meditite",
+  "source": "rom",
+  "types": [
+   "Fighting",
+   "Psychic"
+  ]
+ },
+ "meganium": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 82,
+   "def": 100,
+   "hp": 80,
+   "spa": 83,
+   "spd": 100,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 154,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "meganium",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "meowth": {
+  "abilities": [
+   "Pickup",
+   "Technician"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 35,
+   "hp": 40,
+   "spa": 40,
+   "spd": 40,
+   "spe": 90
+  },
+  "catch_rate": 255,
+  "dex_no": 52,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "meowth",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "mesprit": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 105,
+   "hp": 80,
+   "spa": 105,
+   "spd": 105,
+   "spe": 80
+  },
+  "catch_rate": 3,
+  "dex_no": 481,
+  "genderless": true,
+  "hms": [],
+  "name": "mesprit",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "metagross": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 135,
+   "def": 130,
+   "hp": 80,
+   "spa": 95,
+   "spd": 90,
+   "spe": 70
+  },
+  "catch_rate": 3,
+  "dex_no": 376,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "metagross",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "metang": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 100,
+   "hp": 60,
+   "spa": 55,
+   "spd": 80,
+   "spe": 50
+  },
+  "catch_rate": 3,
+  "dex_no": 375,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "metang",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Psychic"
+  ]
+ },
+ "metapod": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 55,
+   "hp": 50,
+   "spa": 25,
+   "spd": 25,
+   "spe": 30
+  },
+  "catch_rate": 120,
+  "dex_no": 11,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "metapod",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "mew": {
+  "abilities": [
+   "Synchronize"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 100,
+   "hp": 100,
+   "spa": 100,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 151,
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "mew",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
  },
  "mewtwo": {
   "abilities": [
@@ -438,16 +7256,410 @@
   },
   "catch_rate": 3,
   "dex_no": 150,
+  "genderless": true,
   "hms": [
    "Rock Climb",
    "Rock Smash",
    "Strength"
   ],
   "name": "mewtwo",
+  "source": "rom",
   "types": [
    "Psychic"
   ],
   "weight_hg": 1220
+ },
+ "mightyena": {
+  "abilities": [
+   "Intimidate",
+   "Quick Feet"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 70,
+   "hp": 70,
+   "spa": 60,
+   "spd": 60,
+   "spe": 70
+  },
+  "catch_rate": 127,
+  "dex_no": 262,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "mightyena",
+  "source": "rom",
+  "types": [
+   "Dark"
+  ]
+ },
+ "milotic": {
+  "abilities": [
+   "Marvel Scale"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 79,
+   "hp": 95,
+   "spa": 100,
+   "spd": 125,
+   "spe": 81
+  },
+  "catch_rate": 60,
+  "dex_no": 350,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "milotic",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "miltank": {
+  "abilities": [
+   "Thick Fat",
+   "Scrappy"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 105,
+   "hp": 95,
+   "spa": 40,
+   "spd": 70,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 241,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "miltank",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "mime-jr": {
+  "abilities": [
+   "Soundproof",
+   "Filter"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 45,
+   "hp": 20,
+   "spa": 70,
+   "spd": 90,
+   "spe": 60
+  },
+  "catch_rate": 145,
+  "dex_no": 439,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "mime-jr",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "minun": {
+  "abilities": [
+   "Minus"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 50,
+   "hp": 60,
+   "spa": 75,
+   "spd": 85,
+   "spe": 95
+  },
+  "catch_rate": 200,
+  "dex_no": 312,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "minun",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "misdreavus": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 60,
+   "hp": 60,
+   "spa": 85,
+   "spd": 85,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 200,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "misdreavus",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "mismagius": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 60,
+   "hp": 60,
+   "spa": 105,
+   "spd": 105,
+   "spe": 105
+  },
+  "catch_rate": 45,
+  "dex_no": 429,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "mismagius",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "moltres": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 90,
+   "hp": 90,
+   "spa": 125,
+   "spd": 85,
+   "spe": 90
+  },
+  "catch_rate": 3,
+  "dex_no": 146,
+  "genderless": true,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "moltres",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Flying"
+  ]
+ },
+ "monferno": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 78,
+   "def": 52,
+   "hp": 64,
+   "spa": 78,
+   "spd": 52,
+   "spe": 81
+  },
+  "catch_rate": 45,
+  "dex_no": 391,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "monferno",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Fighting"
+  ]
+ },
+ "mothim": {
+  "abilities": [
+   "Swarm"
+  ],
+  "base_stats": {
+   "atk": 94,
+   "def": 50,
+   "hp": 70,
+   "spa": 94,
+   "spd": 50,
+   "spe": 66
+  },
+  "catch_rate": 45,
+  "dex_no": 414,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [],
+  "name": "mothim",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "mr-mime": {
+  "abilities": [
+   "Soundproof",
+   "Filter"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 65,
+   "hp": 40,
+   "spa": 100,
+   "spd": 120,
+   "spe": 90
+  },
+  "catch_rate": 45,
+  "dex_no": 122,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "mr-mime",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "mudkip": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 50,
+   "hp": 50,
+   "spa": 50,
+   "spd": 50,
+   "spe": 40
+  },
+  "catch_rate": 45,
+  "dex_no": 258,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "mudkip",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "muk": {
+  "abilities": [
+   "Stench",
+   "Sticky Hold"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 75,
+   "hp": 105,
+   "spa": 65,
+   "spd": 100,
+   "spe": 50
+  },
+  "catch_rate": 75,
+  "dex_no": 89,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "muk",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "munchlax": {
+  "abilities": [
+   "Pickup",
+   "Thick Fat"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 40,
+   "hp": 135,
+   "spa": 40,
+   "spd": 85,
+   "spe": 5
+  },
+  "catch_rate": 50,
+  "dex_no": 446,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "munchlax",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "murkrow": {
+  "abilities": [
+   "Insomnia",
+   "Super Luck"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 42,
+   "hp": 60,
+   "spa": 85,
+   "spd": 42,
+   "spe": 91
+  },
+  "catch_rate": 30,
+  "dex_no": 198,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "murkrow",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Flying"
+  ]
  },
  "natu": {
   "abilities": [
@@ -464,6 +7676,8 @@
   },
   "catch_rate": 190,
   "dex_no": 177,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [],
   "name": "natu",
   "source": "rom",
@@ -472,6 +7686,538 @@
    "Flying"
   ],
   "weight_hg": null
+ },
+ "nidoking": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 92,
+   "def": 77,
+   "hp": 81,
+   "spa": 85,
+   "spd": 75,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 34,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "nidoking",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Ground"
+  ]
+ },
+ "nidoqueen": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 82,
+   "def": 87,
+   "hp": 90,
+   "spa": 75,
+   "spd": 85,
+   "spe": 76
+  },
+  "catch_rate": 45,
+  "dex_no": 31,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "nidoqueen",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Ground"
+  ]
+ },
+ "nidoran-f": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 47,
+   "def": 52,
+   "hp": 55,
+   "spa": 40,
+   "spd": 40,
+   "spe": 41
+  },
+  "catch_rate": 235,
+  "dex_no": 29,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nidoran-f",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "nidoran-m": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 57,
+   "def": 40,
+   "hp": 46,
+   "spa": 40,
+   "spd": 40,
+   "spe": 50
+  },
+  "catch_rate": 235,
+  "dex_no": 32,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nidoran-m",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "nidorina": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 62,
+   "def": 67,
+   "hp": 70,
+   "spa": 55,
+   "spd": 55,
+   "spe": 56
+  },
+  "catch_rate": 120,
+  "dex_no": 30,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nidorina",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "nidorino": {
+  "abilities": [
+   "Poison Point",
+   "Rivalry"
+  ],
+  "base_stats": {
+   "atk": 72,
+   "def": 57,
+   "hp": 61,
+   "spa": 55,
+   "spd": 55,
+   "spe": 65
+  },
+  "catch_rate": 120,
+  "dex_no": 33,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nidorino",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "nincada": {
+  "abilities": [
+   "Compoundeyes"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 90,
+   "hp": 31,
+   "spa": 30,
+   "spd": 30,
+   "spe": 40
+  },
+  "catch_rate": 255,
+  "dex_no": 290,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "nincada",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Ground"
+  ]
+ },
+ "ninetales": {
+  "abilities": [
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 76,
+   "def": 75,
+   "hp": 73,
+   "spa": 81,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 75,
+  "dex_no": 38,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [],
+  "name": "ninetales",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "ninjask": {
+  "abilities": [
+   "Speed Boost"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 45,
+   "hp": 61,
+   "spa": 50,
+   "spd": 50,
+   "spe": 160
+  },
+  "catch_rate": 120,
+  "dex_no": 291,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "ninjask",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "noctowl": {
+  "abilities": [
+   "Insomnia",
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 50,
+   "hp": 100,
+   "spa": 76,
+   "spd": 96,
+   "spe": 70
+  },
+  "catch_rate": 90,
+  "dex_no": 164,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "noctowl",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "nosepass": {
+  "abilities": [
+   "Sturdy",
+   "Magnet Pull"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 135,
+   "hp": 30,
+   "spa": 45,
+   "spd": 90,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 299,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nosepass",
+  "source": "rom",
+  "types": [
+   "Rock"
+  ]
+ },
+ "numel": {
+  "abilities": [
+   "Oblivious",
+   "Simple"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 40,
+   "hp": 60,
+   "spa": 65,
+   "spd": 45,
+   "spe": 35
+  },
+  "catch_rate": 255,
+  "dex_no": 322,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "numel",
+  "source": "rom",
+  "types": [
+   "Fire",
+   "Ground"
+  ]
+ },
+ "nuzleaf": {
+  "abilities": [
+   "Chlorophyll",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 40,
+   "hp": 70,
+   "spa": 60,
+   "spd": 40,
+   "spe": 60
+  },
+  "catch_rate": 120,
+  "dex_no": 274,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "nuzleaf",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Dark"
+  ]
+ },
+ "octillery": {
+  "abilities": [
+   "Suction Cups",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 75,
+   "hp": 75,
+   "spa": 105,
+   "spd": 75,
+   "spe": 45
+  },
+  "catch_rate": 75,
+  "dex_no": 224,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "octillery",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "oddish": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 55,
+   "hp": 45,
+   "spa": 75,
+   "spd": 65,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 43,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "oddish",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "omanyte": {
+  "abilities": [
+   "Swift Swim",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 100,
+   "hp": 35,
+   "spa": 90,
+   "spd": 55,
+   "spe": 35
+  },
+  "catch_rate": 45,
+  "dex_no": 138,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "omanyte",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Water"
+  ]
+ },
+ "omastar": {
+  "abilities": [
+   "Swift Swim",
+   "Shell Armor"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 125,
+   "hp": 70,
+   "spa": 115,
+   "spd": 70,
+   "spe": 55
+  },
+  "catch_rate": 45,
+  "dex_no": 139,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "omastar",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Water"
+  ]
+ },
+ "onix": {
+  "abilities": [
+   "Rock Head",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 160,
+   "hp": 35,
+   "spa": 30,
+   "spd": 45,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 95,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "onix",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
+ },
+ "pachirisu": {
+  "abilities": [
+   "Run Away",
+   "Pickup"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 70,
+   "hp": 60,
+   "spa": 45,
+   "spd": 90,
+   "spe": 95
+  },
+  "catch_rate": 200,
+  "dex_no": 417,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "pachirisu",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
  },
  "palkia": {
   "abilities": [
@@ -485,8 +8231,9 @@
    "spd": 120,
    "spe": 100
   },
-  "catch_rate": 3,
+  "catch_rate": 30,
   "dex_no": 484,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Smash",
@@ -495,11 +8242,960 @@
    "Whirlpool"
   ],
   "name": "palkia",
+  "source": "rom",
   "types": [
    "Water",
    "Dragon"
   ],
   "weight_hg": 3360
+ },
+ "paras": {
+  "abilities": [
+   "Effect Spore",
+   "Dry Skin"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 55,
+   "hp": 35,
+   "spa": 45,
+   "spd": 55,
+   "spe": 25
+  },
+  "catch_rate": 190,
+  "dex_no": 46,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "paras",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Grass"
+  ]
+ },
+ "parasect": {
+  "abilities": [
+   "Effect Spore",
+   "Dry Skin"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 80,
+   "hp": 60,
+   "spa": 60,
+   "spd": 80,
+   "spe": 30
+  },
+  "catch_rate": 75,
+  "dex_no": 47,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "parasect",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Grass"
+  ]
+ },
+ "pelipper": {
+  "abilities": [
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 100,
+   "hp": 60,
+   "spa": 85,
+   "spd": 70,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 279,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "pelipper",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ "persian": {
+  "abilities": [
+   "Limber",
+   "Technician"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 60,
+   "hp": 65,
+   "spa": 65,
+   "spd": 65,
+   "spe": 115
+  },
+  "catch_rate": 90,
+  "dex_no": 53,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "persian",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "phanpy": {
+  "abilities": [
+   "Pickup"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 60,
+   "hp": 90,
+   "spa": 40,
+   "spd": 40,
+   "spe": 40
+  },
+  "catch_rate": 120,
+  "dex_no": 231,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "phanpy",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "phione": {
+  "abilities": [
+   "Hydration"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 80,
+   "hp": 80,
+   "spa": 80,
+   "spd": 80,
+   "spe": 80
+  },
+  "catch_rate": 30,
+  "dex_no": 489,
+  "genderless": true,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "phione",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "pichu": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 15,
+   "hp": 20,
+   "spa": 35,
+   "spd": 35,
+   "spe": 60
+  },
+  "catch_rate": 190,
+  "dex_no": 172,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "pichu",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "pidgeot": {
+  "abilities": [
+   "Keen Eye",
+   "Tangled Feet"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 75,
+   "hp": 83,
+   "spa": 70,
+   "spd": 70,
+   "spe": 91
+  },
+  "catch_rate": 45,
+  "dex_no": 18,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "pidgeot",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "pidgeotto": {
+  "abilities": [
+   "Keen Eye",
+   "Tangled Feet"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 55,
+   "hp": 63,
+   "spa": 50,
+   "spd": 50,
+   "spe": 71
+  },
+  "catch_rate": 120,
+  "dex_no": 17,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "pidgeotto",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "pidgey": {
+  "abilities": [
+   "Keen Eye",
+   "Tangled Feet"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 40,
+   "hp": 40,
+   "spa": 35,
+   "spd": 35,
+   "spe": 56
+  },
+  "catch_rate": 255,
+  "dex_no": 16,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "pidgey",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "pikachu": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 30,
+   "hp": 35,
+   "spa": 50,
+   "spd": 40,
+   "spe": 90
+  },
+  "catch_rate": 190,
+  "dex_no": 25,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "pikachu",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "piloswine": {
+  "abilities": [
+   "Oblivious",
+   "Snow Cloak"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 80,
+   "hp": 100,
+   "spa": 60,
+   "spd": 60,
+   "spe": 50
+  },
+  "catch_rate": 75,
+  "dex_no": 221,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "piloswine",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Ground"
+  ]
+ },
+ "pineco": {
+  "abilities": [
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 90,
+   "hp": 50,
+   "spa": 35,
+   "spd": 35,
+   "spe": 15
+  },
+  "catch_rate": 190,
+  "dex_no": 204,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "pineco",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "pinsir": {
+  "abilities": [
+   "Hyper Cutter",
+   "Mold Breaker"
+  ],
+  "base_stats": {
+   "atk": 125,
+   "def": 100,
+   "hp": 65,
+   "spa": 55,
+   "spd": 70,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 127,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "pinsir",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "piplup": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 51,
+   "def": 53,
+   "hp": 53,
+   "spa": 61,
+   "spd": 56,
+   "spe": 40
+  },
+  "catch_rate": 45,
+  "dex_no": 393,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "piplup",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "plusle": {
+  "abilities": [
+   "Plus"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 40,
+   "hp": 60,
+   "spa": 85,
+   "spd": 75,
+   "spe": 95
+  },
+  "catch_rate": 200,
+  "dex_no": 311,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "plusle",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "politoed": {
+  "abilities": [
+   "Water Absorb",
+   "Damp"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 75,
+   "hp": 90,
+   "spa": 90,
+   "spd": 100,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 186,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "politoed",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "poliwag": {
+  "abilities": [
+   "Water Absorb",
+   "Damp"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 40,
+   "hp": 40,
+   "spa": 40,
+   "spd": 40,
+   "spe": 90
+  },
+  "catch_rate": 255,
+  "dex_no": 60,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "poliwag",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "poliwhirl": {
+  "abilities": [
+   "Water Absorb",
+   "Damp"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 65,
+   "hp": 65,
+   "spa": 50,
+   "spd": 50,
+   "spe": 90
+  },
+  "catch_rate": 120,
+  "dex_no": 61,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "poliwhirl",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "poliwrath": {
+  "abilities": [
+   "Water Absorb",
+   "Damp"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 95,
+   "hp": 90,
+   "spa": 70,
+   "spd": 90,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 62,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "poliwrath",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Fighting"
+  ]
+ },
+ "ponyta": {
+  "abilities": [
+   "Run Away",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 55,
+   "hp": 50,
+   "spa": 65,
+   "spd": 65,
+   "spe": 90
+  },
+  "catch_rate": 190,
+  "dex_no": 77,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "ponyta",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "poochyena": {
+  "abilities": [
+   "Run Away",
+   "Quick Feet"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 35,
+   "hp": 35,
+   "spa": 30,
+   "spd": 30,
+   "spe": 35
+  },
+  "catch_rate": 255,
+  "dex_no": 261,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "poochyena",
+  "source": "rom",
+  "types": [
+   "Dark"
+  ]
+ },
+ "porygon": {
+  "abilities": [
+   "Trace",
+   "Download"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 70,
+   "hp": 65,
+   "spa": 85,
+   "spd": 75,
+   "spe": 40
+  },
+  "catch_rate": 45,
+  "dex_no": 137,
+  "genderless": true,
+  "hms": [],
+  "name": "porygon",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "porygon-z": {
+  "abilities": [
+   "Adaptability",
+   "Download"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 70,
+   "hp": 85,
+   "spa": 135,
+   "spd": 75,
+   "spe": 90
+  },
+  "catch_rate": 30,
+  "dex_no": 474,
+  "genderless": true,
+  "hms": [],
+  "name": "porygon-z",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "porygon2": {
+  "abilities": [
+   "Trace",
+   "Download"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 90,
+   "hp": 85,
+   "spa": 105,
+   "spd": 95,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 233,
+  "genderless": true,
+  "hms": [],
+  "name": "porygon2",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "primeape": {
+  "abilities": [
+   "Vital Spirit",
+   "Anger Point"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 60,
+   "hp": 65,
+   "spa": 60,
+   "spd": 70,
+   "spe": 95
+  },
+  "catch_rate": 75,
+  "dex_no": 57,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "primeape",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "prinplup": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 66,
+   "def": 68,
+   "hp": 64,
+   "spa": 81,
+   "spd": 76,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 394,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "prinplup",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "probopass": {
+  "abilities": [
+   "Sturdy",
+   "Magnet Pull"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 145,
+   "hp": 60,
+   "spa": 75,
+   "spd": 150,
+   "spe": 40
+  },
+  "catch_rate": 60,
+  "dex_no": 476,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "probopass",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Steel"
+  ]
+ },
+ "psyduck": {
+  "abilities": [
+   "Damp",
+   "Cloud Nine"
+  ],
+  "base_stats": {
+   "atk": 52,
+   "def": 48,
+   "hp": 50,
+   "spa": 65,
+   "spd": 50,
+   "spe": 55
+  },
+  "catch_rate": 190,
+  "dex_no": 54,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "psyduck",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "pupitar": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 84,
+   "def": 70,
+   "hp": 70,
+   "spa": 65,
+   "spd": 70,
+   "spe": 51
+  },
+  "catch_rate": 45,
+  "dex_no": 247,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "pupitar",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Ground"
+  ]
+ },
+ "purugly": {
+  "abilities": [
+   "Thick Fat",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 82,
+   "def": 64,
+   "hp": 71,
+   "spa": 64,
+   "spd": 59,
+   "spe": 112
+  },
+  "catch_rate": 75,
+  "dex_no": 432,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "purugly",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "quagsire": {
+  "abilities": [
+   "Damp",
+   "Water Absorb"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 85,
+   "hp": 95,
+   "spa": 65,
+   "spd": 65,
+   "spe": 35
+  },
+  "catch_rate": 90,
+  "dex_no": 195,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "quagsire",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "quilava": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 64,
+   "def": 58,
+   "hp": 58,
+   "spa": 80,
+   "spd": 65,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 156,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "quilava",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "qwilfish": {
+  "abilities": [
+   "Poison Point",
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 75,
+   "hp": 65,
+   "spa": 55,
+   "spd": 55,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 211,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "qwilfish",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Poison"
+  ]
+ },
+ "raichu": {
+  "abilities": [
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 55,
+   "hp": 60,
+   "spa": 90,
+   "spd": 80,
+   "spe": 100
+  },
+  "catch_rate": 75,
+  "dex_no": 26,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "raichu",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
  },
  "raikou": {
   "abilities": [
@@ -515,6 +9211,7 @@
   },
   "catch_rate": 3,
   "dex_no": 243,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Climb",
@@ -522,10 +9219,146 @@
    "Strength"
   ],
   "name": "raikou",
+  "source": "rom",
   "types": [
    "Electric"
   ],
   "weight_hg": 1780
+ },
+ "ralts": {
+  "abilities": [
+   "Synchronize",
+   "Trace"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 25,
+   "hp": 28,
+   "spa": 45,
+   "spd": 35,
+   "spe": 40
+  },
+  "catch_rate": 235,
+  "dex_no": 280,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "ralts",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "rampardos": {
+  "abilities": [
+   "Mold Breaker"
+  ],
+  "base_stats": {
+   "atk": 165,
+   "def": 60,
+   "hp": 97,
+   "spa": 65,
+   "spd": 50,
+   "spe": 58
+  },
+  "catch_rate": 45,
+  "dex_no": 409,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "rampardos",
+  "source": "rom",
+  "types": [
+   "Rock"
+  ]
+ },
+ "rapidash": {
+  "abilities": [
+   "Run Away",
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 70,
+   "hp": 65,
+   "spa": 80,
+   "spd": 80,
+   "spe": 105
+  },
+  "catch_rate": 60,
+  "dex_no": 78,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "rapidash",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "raticate": {
+  "abilities": [
+   "Run Away",
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 81,
+   "def": 60,
+   "hp": 55,
+   "spa": 50,
+   "spd": 70,
+   "spe": 97
+  },
+  "catch_rate": 127,
+  "dex_no": 20,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "raticate",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "rattata": {
+  "abilities": [
+   "Run Away",
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 56,
+   "def": 35,
+   "hp": 30,
+   "spa": 25,
+   "spd": 35,
+   "spe": 72
+  },
+  "catch_rate": 255,
+  "dex_no": 19,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "rattata",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
  },
  "rayquaza": {
   "abilities": [
@@ -539,8 +9372,9 @@
    "spd": 90,
    "spe": 95
   },
-  "catch_rate": 45,
+  "catch_rate": 3,
   "dex_no": 384,
+  "genderless": true,
   "hms": [
    "Fly",
    "Rock Smash",
@@ -550,11 +9384,1409 @@
    "Whirlpool"
   ],
   "name": "rayquaza",
+  "source": "rom",
   "types": [
    "Dragon",
    "Flying"
   ],
   "weight_hg": 2065
+ },
+ "regice": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 100,
+   "hp": 80,
+   "spa": 100,
+   "spd": 200,
+   "spe": 50
+  },
+  "catch_rate": 3,
+  "dex_no": 378,
+  "genderless": true,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "regice",
+  "source": "rom",
+  "types": [
+   "Ice"
+  ]
+ },
+ "regigigas": {
+  "abilities": [
+   "Slow Start"
+  ],
+  "base_stats": {
+   "atk": 160,
+   "def": 110,
+   "hp": 110,
+   "spa": 80,
+   "spd": 110,
+   "spe": 100
+  },
+  "catch_rate": 3,
+  "dex_no": 486,
+  "genderless": true,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "regigigas",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "regirock": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 200,
+   "hp": 80,
+   "spa": 50,
+   "spd": 100,
+   "spe": 50
+  },
+  "catch_rate": 3,
+  "dex_no": 377,
+  "genderless": true,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "regirock",
+  "source": "rom",
+  "types": [
+   "Rock"
+  ]
+ },
+ "registeel": {
+  "abilities": [
+   "Clear Body"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 150,
+   "hp": 80,
+   "spa": 75,
+   "spd": 150,
+   "spe": 50
+  },
+  "catch_rate": 3,
+  "dex_no": 379,
+  "genderless": true,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "registeel",
+  "source": "rom",
+  "types": [
+   "Steel"
+  ]
+ },
+ "relicanth": {
+  "abilities": [
+   "Swift Swim",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 130,
+   "hp": 100,
+   "spa": 45,
+   "spd": 65,
+   "spe": 55
+  },
+  "catch_rate": 25,
+  "dex_no": 369,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "relicanth",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Rock"
+  ]
+ },
+ "remoraid": {
+  "abilities": [
+   "Hustle",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 35,
+   "hp": 35,
+   "spa": 65,
+   "spd": 35,
+   "spe": 65
+  },
+  "catch_rate": 190,
+  "dex_no": 223,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "remoraid",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "rhydon": {
+  "abilities": [
+   "Lightningrod",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 120,
+   "hp": 105,
+   "spa": 45,
+   "spd": 45,
+   "spe": 40
+  },
+  "catch_rate": 60,
+  "dex_no": 112,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "rhydon",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Rock"
+  ]
+ },
+ "rhyhorn": {
+  "abilities": [
+   "Lightningrod",
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 95,
+   "hp": 80,
+   "spa": 30,
+   "spd": 30,
+   "spe": 25
+  },
+  "catch_rate": 120,
+  "dex_no": 111,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "rhyhorn",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Rock"
+  ]
+ },
+ "rhyperior": {
+  "abilities": [
+   "Lightningrod",
+   "Solid Rock"
+  ],
+  "base_stats": {
+   "atk": 140,
+   "def": 130,
+   "hp": 115,
+   "spa": 55,
+   "spd": 55,
+   "spe": 40
+  },
+  "catch_rate": 30,
+  "dex_no": 464,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "rhyperior",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Rock"
+  ]
+ },
+ "riolu": {
+  "abilities": [
+   "Steadfast",
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 40,
+   "hp": 40,
+   "spa": 35,
+   "spd": 40,
+   "spe": 60
+  },
+  "catch_rate": 75,
+  "dex_no": 447,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "riolu",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "roselia": {
+  "abilities": [
+   "Natural Cure",
+   "Poison Point"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 45,
+   "hp": 50,
+   "spa": 100,
+   "spd": 80,
+   "spe": 65
+  },
+  "catch_rate": 150,
+  "dex_no": 315,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "roselia",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "roserade": {
+  "abilities": [
+   "Natural Cure",
+   "Poison Point"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 55,
+   "hp": 60,
+   "spa": 125,
+   "spd": 105,
+   "spe": 90
+  },
+  "catch_rate": 75,
+  "dex_no": 407,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "roserade",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "rotom": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 77,
+   "hp": 50,
+   "spa": 95,
+   "spd": 77,
+   "spe": 91
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "genderless": true,
+  "hms": [],
+  "name": "rotom",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ "sableye": {
+  "abilities": [
+   "Keen Eye",
+   "Stall"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 75,
+   "hp": 50,
+   "spa": 65,
+   "spd": 65,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 302,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "sableye",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Ghost"
+  ]
+ },
+ "salamence": {
+  "abilities": [
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 135,
+   "def": 80,
+   "hp": 95,
+   "spa": 110,
+   "spd": 80,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 373,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "salamence",
+  "source": "rom",
+  "types": [
+   "Dragon",
+   "Flying"
+  ]
+ },
+ "sandshrew": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 85,
+   "hp": 50,
+   "spa": 20,
+   "spd": 30,
+   "spe": 40
+  },
+  "catch_rate": 255,
+  "dex_no": 27,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "sandshrew",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "sandslash": {
+  "abilities": [
+   "Sand Veil"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 110,
+   "hp": 75,
+   "spa": 45,
+   "spd": 55,
+   "spe": 65
+  },
+  "catch_rate": 90,
+  "dex_no": 28,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "sandslash",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "sceptile": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 65,
+   "hp": 70,
+   "spa": 105,
+   "spd": 85,
+   "spe": 120
+  },
+  "catch_rate": 45,
+  "dex_no": 254,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "sceptile",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "scizor": {
+  "abilities": [
+   "Swarm",
+   "Technician"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 100,
+   "hp": 70,
+   "spa": 55,
+   "spd": 80,
+   "spe": 65
+  },
+  "catch_rate": 25,
+  "dex_no": 212,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "scizor",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Steel"
+  ]
+ },
+ "scyther": {
+  "abilities": [
+   "Swarm",
+   "Technician"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 80,
+   "hp": 70,
+   "spa": 55,
+   "spd": 80,
+   "spe": 105
+  },
+  "catch_rate": 45,
+  "dex_no": 123,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "scyther",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "seadra": {
+  "abilities": [
+   "Poison Point",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 95,
+   "hp": 55,
+   "spa": 95,
+   "spd": 45,
+   "spe": 85
+  },
+  "catch_rate": 75,
+  "dex_no": 117,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "seadra",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "seaking": {
+  "abilities": [
+   "Swift Swim",
+   "Water Veil"
+  ],
+  "base_stats": {
+   "atk": 92,
+   "def": 65,
+   "hp": 80,
+   "spa": 65,
+   "spd": 80,
+   "spe": 68
+  },
+  "catch_rate": 60,
+  "dex_no": 119,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "seaking",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "sealeo": {
+  "abilities": [
+   "Thick Fat",
+   "Ice Body"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 70,
+   "hp": 90,
+   "spa": 75,
+   "spd": 70,
+   "spe": 45
+  },
+  "catch_rate": 120,
+  "dex_no": 364,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "sealeo",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Water"
+  ]
+ },
+ "seedot": {
+  "abilities": [
+   "Chlorophyll",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 50,
+   "hp": 40,
+   "spa": 30,
+   "spd": 30,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 273,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "seedot",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "seel": {
+  "abilities": [
+   "Thick Fat",
+   "Hydration"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 55,
+   "hp": 65,
+   "spa": 45,
+   "spd": 70,
+   "spe": 45
+  },
+  "catch_rate": 190,
+  "dex_no": 86,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "seel",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "sentret": {
+  "abilities": [
+   "Run Away",
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 46,
+   "def": 34,
+   "hp": 35,
+   "spa": 35,
+   "spd": 45,
+   "spe": 20
+  },
+  "catch_rate": 255,
+  "dex_no": 161,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "sentret",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "seviper": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 60,
+   "hp": 73,
+   "spa": 100,
+   "spd": 60,
+   "spe": 65
+  },
+  "catch_rate": 90,
+  "dex_no": 336,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "seviper",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "sharpedo": {
+  "abilities": [
+   "Rough Skin"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 40,
+   "hp": 70,
+   "spa": 95,
+   "spd": 40,
+   "spe": 95
+  },
+  "catch_rate": 60,
+  "dex_no": 319,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "sharpedo",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Dark"
+  ]
+ },
+ "shaymin": {
+  "abilities": [
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 100,
+   "hp": 100,
+   "spa": 100,
+   "spd": 100,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 492,
+  "genderless": true,
+  "hms": [],
+  "name": "shaymin",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "shedinja": {
+  "abilities": [
+   "Wonder Guard"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 45,
+   "hp": 1,
+   "spa": 30,
+   "spd": 30,
+   "spe": 40
+  },
+  "catch_rate": 45,
+  "dex_no": 292,
+  "genderless": true,
+  "hms": [
+   "Cut"
+  ],
+  "name": "shedinja",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Ghost"
+  ]
+ },
+ "shelgon": {
+  "abilities": [
+   "Rock Head"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 100,
+   "hp": 65,
+   "spa": 60,
+   "spd": 50,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 372,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "shelgon",
+  "source": "rom",
+  "types": [
+   "Dragon"
+  ]
+ },
+ "shellder": {
+  "abilities": [
+   "Shell Armor",
+   "Skill Link"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 100,
+   "hp": 30,
+   "spa": 45,
+   "spd": 25,
+   "spe": 40
+  },
+  "catch_rate": 190,
+  "dex_no": 90,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "shellder",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "shellos": {
+  "abilities": [
+   "Sticky Hold",
+   "Storm Drain"
+  ],
+  "base_stats": {
+   "atk": 48,
+   "def": 48,
+   "hp": 76,
+   "spa": 57,
+   "spd": 62,
+   "spe": 34
+  },
+  "catch_rate": 190,
+  "dex_no": 422,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "shellos",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "shieldon": {
+  "abilities": [
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 42,
+   "def": 118,
+   "hp": 30,
+   "spa": 42,
+   "spd": 88,
+   "spe": 30
+  },
+  "catch_rate": 45,
+  "dex_no": 410,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "shieldon",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Steel"
+  ]
+ },
+ "shiftry": {
+  "abilities": [
+   "Chlorophyll",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 60,
+   "hp": 90,
+   "spa": 90,
+   "spd": 60,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 275,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "shiftry",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Dark"
+  ]
+ },
+ "shinx": {
+  "abilities": [
+   "Rivalry",
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 34,
+   "hp": 45,
+   "spa": 40,
+   "spd": 34,
+   "spe": 45
+  },
+  "catch_rate": 235,
+  "dex_no": 403,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "shinx",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "shroomish": {
+  "abilities": [
+   "Effect Spore",
+   "Poison Heal"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 60,
+   "hp": 60,
+   "spa": 40,
+   "spd": 60,
+   "spe": 35
+  },
+  "catch_rate": 255,
+  "dex_no": 285,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "shroomish",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "shuckle": {
+  "abilities": [
+   "Sturdy",
+   "Gluttony"
+  ],
+  "base_stats": {
+   "atk": 10,
+   "def": 230,
+   "hp": 20,
+   "spa": 10,
+   "spd": 230,
+   "spe": 5
+  },
+  "catch_rate": 190,
+  "dex_no": 213,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "shuckle",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Rock"
+  ]
+ },
+ "shuppet": {
+  "abilities": [
+   "Insomnia",
+   "Frisk"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 35,
+   "hp": 44,
+   "spa": 63,
+   "spd": 33,
+   "spe": 45
+  },
+  "catch_rate": 225,
+  "dex_no": 353,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "shuppet",
+  "source": "rom",
+  "types": [
+   "Ghost"
+  ]
+ },
+ "silcoon": {
+  "abilities": [
+   "Shed Skin"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 55,
+   "hp": 50,
+   "spa": 25,
+   "spd": 25,
+   "spe": 15
+  },
+  "catch_rate": 120,
+  "dex_no": 266,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "silcoon",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "skarmory": {
+  "abilities": [
+   "Keen Eye",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 140,
+   "hp": 65,
+   "spa": 40,
+   "spd": 70,
+   "spe": 70
+  },
+  "catch_rate": 25,
+  "dex_no": 227,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "skarmory",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Flying"
+  ]
+ },
+ "skiploom": {
+  "abilities": [
+   "Chlorophyll",
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 50,
+   "hp": 55,
+   "spa": 45,
+   "spd": 65,
+   "spe": 80
+  },
+  "catch_rate": 120,
+  "dex_no": 188,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "skiploom",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Flying"
+  ]
+ },
+ "skitty": {
+  "abilities": [
+   "Cute Charm",
+   "Normalize"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 45,
+   "hp": 50,
+   "spa": 35,
+   "spd": 35,
+   "spe": 50
+  },
+  "catch_rate": 255,
+  "dex_no": 300,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [],
+  "name": "skitty",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "skorupi": {
+  "abilities": [
+   "Battle Armor",
+   "Sniper"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 90,
+   "hp": 40,
+   "spa": 30,
+   "spd": 55,
+   "spe": 65
+  },
+  "catch_rate": 120,
+  "dex_no": 451,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "skorupi",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Bug"
+  ]
+ },
+ "skuntank": {
+  "abilities": [
+   "Stench",
+   "Aftermath"
+  ],
+  "base_stats": {
+   "atk": 93,
+   "def": 67,
+   "hp": 103,
+   "spa": 71,
+   "spd": 61,
+   "spe": 84
+  },
+  "catch_rate": 60,
+  "dex_no": 435,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "skuntank",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Dark"
+  ]
+ },
+ "slaking": {
+  "abilities": [
+   "Truant"
+  ],
+  "base_stats": {
+   "atk": 160,
+   "def": 100,
+   "hp": 150,
+   "spa": 95,
+   "spd": 65,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 289,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "slaking",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "slakoth": {
+  "abilities": [
+   "Truant"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 60,
+   "hp": 60,
+   "spa": 35,
+   "spd": 35,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 287,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "slakoth",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "slowbro": {
+  "abilities": [
+   "Oblivious",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 110,
+   "hp": 95,
+   "spa": 100,
+   "spd": 80,
+   "spe": 30
+  },
+  "catch_rate": 75,
+  "dex_no": 80,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "slowbro",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ "slowking": {
+  "abilities": [
+   "Oblivious",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 80,
+   "hp": 95,
+   "spa": 100,
+   "spd": 110,
+   "spe": 30
+  },
+  "catch_rate": 70,
+  "dex_no": 199,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "slowking",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ "slowpoke": {
+  "abilities": [
+   "Oblivious",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 65,
+   "hp": 90,
+   "spa": 40,
+   "spd": 40,
+   "spe": 15
+  },
+  "catch_rate": 190,
+  "dex_no": 79,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "slowpoke",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ "slugma": {
+  "abilities": [
+   "Magma Armor",
+   "Flame Body"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 40,
+   "hp": 40,
+   "spa": 70,
+   "spd": 40,
+   "spe": 20
+  },
+  "catch_rate": 190,
+  "dex_no": 218,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "slugma",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
  },
  "smeargle": {
   "abilities": [
@@ -571,12 +10803,71 @@
   },
   "catch_rate": 45,
   "dex_no": 235,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [],
   "name": "smeargle",
+  "source": "rom",
   "types": [
    "Normal"
   ],
   "weight_hg": 580
+ },
+ "smoochum": {
+  "abilities": [
+   "Oblivious",
+   "Forewarn"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 15,
+   "hp": 45,
+   "spa": 85,
+   "spd": 65,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 238,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "smoochum",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Psychic"
+  ]
+ },
+ "sneasel": {
+  "abilities": [
+   "Inner Focus",
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 55,
+   "hp": 55,
+   "spa": 35,
+   "spd": 75,
+   "spe": 115
+  },
+  "catch_rate": 60,
+  "dex_no": 215,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "sneasel",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Ice"
+  ]
  },
  "snorlax": {
   "abilities": [
@@ -593,6 +10884,8 @@
   },
   "catch_rate": 25,
   "dex_no": 143,
+  "female_ratio": 0.125,
+  "genderless": false,
   "hms": [
    "Rock Climb",
    "Rock Smash",
@@ -601,10 +10894,510 @@
    "Whirlpool"
   ],
   "name": "snorlax",
+  "source": "rom",
   "types": [
    "Normal"
   ],
   "weight_hg": 4600
+ },
+ "snorunt": {
+  "abilities": [
+   "Inner Focus",
+   "Ice Body"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 50,
+   "hp": 50,
+   "spa": 50,
+   "spd": 50,
+   "spe": 50
+  },
+  "catch_rate": 190,
+  "dex_no": 361,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "snorunt",
+  "source": "rom",
+  "types": [
+   "Ice"
+  ]
+ },
+ "snover": {
+  "abilities": [
+   "Snow Warning"
+  ],
+  "base_stats": {
+   "atk": 62,
+   "def": 50,
+   "hp": 60,
+   "spa": 62,
+   "spd": 60,
+   "spe": 40
+  },
+  "catch_rate": 120,
+  "dex_no": 459,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "snover",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Ice"
+  ]
+ },
+ "snubbull": {
+  "abilities": [
+   "Intimidate",
+   "Run Away"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 50,
+   "hp": 60,
+   "spa": 40,
+   "spd": 40,
+   "spe": 30
+  },
+  "catch_rate": 190,
+  "dex_no": 209,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "snubbull",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "solrock": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 85,
+   "hp": 70,
+   "spa": 55,
+   "spd": 65,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 338,
+  "genderless": true,
+  "hms": [],
+  "name": "solrock",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Psychic"
+  ]
+ },
+ "spearow": {
+  "abilities": [
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 30,
+   "hp": 40,
+   "spa": 31,
+   "spd": 31,
+   "spe": 70
+  },
+  "catch_rate": 255,
+  "dex_no": 21,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "spearow",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "spheal": {
+  "abilities": [
+   "Thick Fat",
+   "Ice Body"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 50,
+   "hp": 70,
+   "spa": 55,
+   "spd": 50,
+   "spe": 25
+  },
+  "catch_rate": 255,
+  "dex_no": 363,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "spheal",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Water"
+  ]
+ },
+ "spinarak": {
+  "abilities": [
+   "Swarm",
+   "Insomnia"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 40,
+   "hp": 40,
+   "spa": 40,
+   "spd": 40,
+   "spe": 30
+  },
+  "catch_rate": 255,
+  "dex_no": 167,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "spinarak",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "spinda": {
+  "abilities": [
+   "Own Tempo",
+   "Tangled Feet"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 60,
+   "hp": 60,
+   "spa": 60,
+   "spd": 60,
+   "spe": 60
+  },
+  "catch_rate": 255,
+  "dex_no": 327,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "spinda",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "spiritomb": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 92,
+   "def": 108,
+   "hp": 50,
+   "spa": 92,
+   "spd": 108,
+   "spe": 35
+  },
+  "catch_rate": 100,
+  "dex_no": 442,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "spiritomb",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Dark"
+  ]
+ },
+ "spoink": {
+  "abilities": [
+   "Thick Fat",
+   "Own Tempo"
+  ],
+  "base_stats": {
+   "atk": 25,
+   "def": 35,
+   "hp": 60,
+   "spa": 70,
+   "spd": 80,
+   "spe": 60
+  },
+  "catch_rate": 255,
+  "dex_no": 325,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "spoink",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "squirtle": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 48,
+   "def": 65,
+   "hp": 44,
+   "spa": 50,
+   "spd": 64,
+   "spe": 43
+  },
+  "catch_rate": 45,
+  "dex_no": 7,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "squirtle",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "stantler": {
+  "abilities": [
+   "Intimidate",
+   "Frisk"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 62,
+   "hp": 73,
+   "spa": 85,
+   "spd": 65,
+   "spe": 85
+  },
+  "catch_rate": 45,
+  "dex_no": 234,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "stantler",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "staraptor": {
+  "abilities": [
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 70,
+   "hp": 85,
+   "spa": 50,
+   "spd": 50,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 398,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "staraptor",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "staravia": {
+  "abilities": [
+   "Intimidate"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 50,
+   "hp": 55,
+   "spa": 40,
+   "spd": 40,
+   "spe": 80
+  },
+  "catch_rate": 120,
+  "dex_no": 397,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "staravia",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "starly": {
+  "abilities": [
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 30,
+   "hp": 40,
+   "spa": 30,
+   "spd": 30,
+   "spe": 60
+  },
+  "catch_rate": 255,
+  "dex_no": 396,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "starly",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "starmie": {
+  "abilities": [
+   "Illuminate",
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 85,
+   "hp": 60,
+   "spa": 100,
+   "spd": 85,
+   "spe": 115
+  },
+  "catch_rate": 60,
+  "dex_no": 121,
+  "genderless": true,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "starmie",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Psychic"
+  ]
+ },
+ "staryu": {
+  "abilities": [
+   "Illuminate",
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 55,
+   "hp": 30,
+   "spa": 70,
+   "spd": 55,
+   "spe": 85
+  },
+  "catch_rate": 225,
+  "dex_no": 120,
+  "genderless": true,
+  "hms": [
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "staryu",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "steelix": {
+  "abilities": [
+   "Rock Head",
+   "Sturdy"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 200,
+   "hp": 75,
+   "spa": 55,
+   "spd": 65,
+   "spe": 30
+  },
+  "catch_rate": 25,
+  "dex_no": 208,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "steelix",
+  "source": "rom",
+  "types": [
+   "Steel",
+   "Ground"
+  ]
+ },
+ "stunky": {
+  "abilities": [
+   "Stench",
+   "Aftermath"
+  ],
+  "base_stats": {
+   "atk": 63,
+   "def": 47,
+   "hp": 63,
+   "spa": 41,
+   "spd": 41,
+   "spe": 74
+  },
+  "catch_rate": 225,
+  "dex_no": 434,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "stunky",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Dark"
+  ]
  },
  "sudowoodo": {
   "abilities": [
@@ -621,11 +11414,14 @@
   },
   "catch_rate": 65,
   "dex_no": 185,
+  "female_ratio": 0.5,
+  "genderless": false,
   "hms": [
    "Rock Smash",
    "Strength"
   ],
   "name": "sudowoodo",
+  "source": "rom",
   "types": [
    "Rock"
   ],
@@ -645,6 +11441,7 @@
   },
   "catch_rate": 3,
   "dex_no": 245,
+  "genderless": true,
   "hms": [
    "Cut",
    "Rock Climb",
@@ -654,10 +11451,424 @@
    "Whirlpool"
   ],
   "name": "suicune",
+  "source": "rom",
   "types": [
    "Water"
   ],
   "weight_hg": 1870
+ },
+ "sunflora": {
+  "abilities": [
+   "Chlorophyll",
+   "Solar Power"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 55,
+   "hp": 75,
+   "spa": 105,
+   "spd": 85,
+   "spe": 30
+  },
+  "catch_rate": 120,
+  "dex_no": 192,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "sunflora",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "sunkern": {
+  "abilities": [
+   "Chlorophyll",
+   "Solar Power"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 30,
+   "hp": 30,
+   "spa": 30,
+   "spd": 30,
+   "spe": 30
+  },
+  "catch_rate": 235,
+  "dex_no": 191,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "sunkern",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "surskit": {
+  "abilities": [
+   "Swift Swim"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 32,
+   "hp": 40,
+   "spa": 50,
+   "spd": 52,
+   "spe": 65
+  },
+  "catch_rate": 200,
+  "dex_no": 283,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "surskit",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Water"
+  ]
+ },
+ "swablu": {
+  "abilities": [
+   "Natural Cure"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 60,
+   "hp": 45,
+   "spa": 40,
+   "spd": 75,
+   "spe": 50
+  },
+  "catch_rate": 255,
+  "dex_no": 333,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "swablu",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "swalot": {
+  "abilities": [
+   "Liquid Ooze",
+   "Sticky Hold"
+  ],
+  "base_stats": {
+   "atk": 73,
+   "def": 83,
+   "hp": 100,
+   "spa": 73,
+   "spd": 83,
+   "spe": 55
+  },
+  "catch_rate": 75,
+  "dex_no": 317,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "swalot",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "swampert": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 110,
+   "def": 90,
+   "hp": 100,
+   "spa": 85,
+   "spd": 90,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 260,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "swampert",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "swellow": {
+  "abilities": [
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 60,
+   "hp": 60,
+   "spa": 50,
+   "spd": 50,
+   "spe": 125
+  },
+  "catch_rate": 45,
+  "dex_no": 277,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "swellow",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "swinub": {
+  "abilities": [
+   "Oblivious",
+   "Snow Cloak"
+  ],
+  "base_stats": {
+   "atk": 50,
+   "def": 40,
+   "hp": 50,
+   "spa": 30,
+   "spd": 30,
+   "spe": 50
+  },
+  "catch_rate": 225,
+  "dex_no": 220,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "swinub",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Ground"
+  ]
+ },
+ "taillow": {
+  "abilities": [
+   "Guts"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 30,
+   "hp": 40,
+   "spa": 30,
+   "spd": 30,
+   "spe": 85
+  },
+  "catch_rate": 200,
+  "dex_no": 276,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "taillow",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "tangela": {
+  "abilities": [
+   "Chlorophyll",
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 115,
+   "hp": 65,
+   "spa": 100,
+   "spd": 40,
+   "spe": 60
+  },
+  "catch_rate": 45,
+  "dex_no": 114,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash"
+  ],
+  "name": "tangela",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "tangrowth": {
+  "abilities": [
+   "Chlorophyll",
+   "Leaf Guard"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 125,
+   "hp": 100,
+   "spa": 110,
+   "spd": 50,
+   "spe": 50
+  },
+  "catch_rate": 30,
+  "dex_no": 465,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "tangrowth",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "tauros": {
+  "abilities": [
+   "Intimidate",
+   "Anger Point"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 95,
+   "hp": 75,
+   "spa": 40,
+   "spd": 70,
+   "spe": 110
+  },
+  "catch_rate": 45,
+  "dex_no": 128,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "tauros",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "teddiursa": {
+  "abilities": [
+   "Pickup",
+   "Quick Feet"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 50,
+   "hp": 60,
+   "spa": 50,
+   "spd": 50,
+   "spe": 40
+  },
+  "catch_rate": 120,
+  "dex_no": 216,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "teddiursa",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "tentacool": {
+  "abilities": [
+   "Clear Body",
+   "Liquid Ooze"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 35,
+   "hp": 40,
+   "spa": 50,
+   "spd": 100,
+   "spe": 70
+  },
+  "catch_rate": 190,
+  "dex_no": 72,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "tentacool",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Poison"
+  ]
+ },
+ "tentacruel": {
+  "abilities": [
+   "Clear Body",
+   "Liquid Ooze"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 65,
+   "hp": 80,
+   "spa": 80,
+   "spd": 120,
+   "spe": 100
+  },
+  "catch_rate": 60,
+  "dex_no": 73,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "tentacruel",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Poison"
+  ]
  },
  "togekiss": {
   "abilities": [
@@ -674,6 +11885,8 @@
   },
   "catch_rate": 30,
   "dex_no": 468,
+  "female_ratio": 0.125,
+  "genderless": false,
   "hms": [
    "Fly",
    "Rock Smash"
@@ -685,5 +11898,1443 @@
    "Flying"
   ],
   "weight_hg": null
+ },
+ "togepi": {
+  "abilities": [
+   "Hustle",
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 20,
+   "def": 65,
+   "hp": 35,
+   "spa": 40,
+   "spd": 65,
+   "spe": 20
+  },
+  "catch_rate": 190,
+  "dex_no": 175,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash"
+  ],
+  "name": "togepi",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "togetic": {
+  "abilities": [
+   "Hustle",
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 40,
+   "def": 85,
+   "hp": 55,
+   "spa": 80,
+   "spd": 105,
+   "spe": 40
+  },
+  "catch_rate": 75,
+  "dex_no": 176,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "togetic",
+  "source": "rom",
+  "types": [
+   "Normal",
+   "Flying"
+  ]
+ },
+ "torchic": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 60,
+   "def": 40,
+   "hp": 45,
+   "spa": 70,
+   "spd": 50,
+   "spe": 45
+  },
+  "catch_rate": 45,
+  "dex_no": 255,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "torchic",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "torkoal": {
+  "abilities": [
+   "White Smoke"
+  ],
+  "base_stats": {
+   "atk": 85,
+   "def": 140,
+   "hp": 70,
+   "spa": 85,
+   "spd": 70,
+   "spe": 20
+  },
+  "catch_rate": 90,
+  "dex_no": 324,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "torkoal",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "torterra": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 109,
+   "def": 105,
+   "hp": 95,
+   "spa": 75,
+   "spd": 85,
+   "spe": 56
+  },
+  "catch_rate": 45,
+  "dex_no": 389,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "torterra",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Ground"
+  ]
+ },
+ "totodile": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 64,
+   "hp": 50,
+   "spa": 44,
+   "spd": 48,
+   "spe": 43
+  },
+  "catch_rate": 45,
+  "dex_no": 158,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "totodile",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "toxicroak": {
+  "abilities": [
+   "Anticipation",
+   "Dry Skin"
+  ],
+  "base_stats": {
+   "atk": 106,
+   "def": 65,
+   "hp": 83,
+   "spa": 86,
+   "spd": 65,
+   "spe": 85
+  },
+  "catch_rate": 75,
+  "dex_no": 454,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "toxicroak",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Fighting"
+  ]
+ },
+ "trapinch": {
+  "abilities": [
+   "Hyper Cutter",
+   "Arena Trap"
+  ],
+  "base_stats": {
+   "atk": 100,
+   "def": 45,
+   "hp": 45,
+   "spa": 45,
+   "spd": 45,
+   "spe": 10
+  },
+  "catch_rate": 255,
+  "dex_no": 328,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "trapinch",
+  "source": "rom",
+  "types": [
+   "Ground"
+  ]
+ },
+ "treecko": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 35,
+   "hp": 40,
+   "spa": 65,
+   "spd": 55,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 252,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "treecko",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "tropius": {
+  "abilities": [
+   "Chlorophyll",
+   "Solar Power"
+  ],
+  "base_stats": {
+   "atk": 68,
+   "def": 83,
+   "hp": 99,
+   "spa": 72,
+   "spd": 87,
+   "spe": 51
+  },
+  "catch_rate": 200,
+  "dex_no": 357,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "tropius",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Flying"
+  ]
+ },
+ "turtwig": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 68,
+   "def": 64,
+   "hp": 55,
+   "spa": 45,
+   "spd": 55,
+   "spe": 31
+  },
+  "catch_rate": 45,
+  "dex_no": 387,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "turtwig",
+  "source": "rom",
+  "types": [
+   "Grass"
+  ]
+ },
+ "typhlosion": {
+  "abilities": [
+   "Blaze"
+  ],
+  "base_stats": {
+   "atk": 84,
+   "def": 78,
+   "hp": 78,
+   "spa": 109,
+   "spd": 85,
+   "spe": 100
+  },
+  "catch_rate": 45,
+  "dex_no": 157,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "typhlosion",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "tyranitar": {
+  "abilities": [
+   "Sand Stream"
+  ],
+  "base_stats": {
+   "atk": 134,
+   "def": 110,
+   "hp": 100,
+   "spa": 95,
+   "spd": 100,
+   "spe": 61
+  },
+  "catch_rate": 45,
+  "dex_no": 248,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "tyranitar",
+  "source": "rom",
+  "types": [
+   "Rock",
+   "Dark"
+  ]
+ },
+ "tyrogue": {
+  "abilities": [
+   "Guts",
+   "Steadfast"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 35,
+   "hp": 35,
+   "spa": 35,
+   "spd": 35,
+   "spe": 35
+  },
+  "catch_rate": 75,
+  "dex_no": 236,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "tyrogue",
+  "source": "rom",
+  "types": [
+   "Fighting"
+  ]
+ },
+ "umbreon": {
+  "abilities": [
+   "Synchronize"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 110,
+   "hp": 95,
+   "spa": 60,
+   "spd": 130,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 197,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "umbreon",
+  "source": "rom",
+  "types": [
+   "Dark"
+  ]
+ },
+ "unown": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 72,
+   "def": 48,
+   "hp": 48,
+   "spa": 72,
+   "spd": 48,
+   "spe": 48
+  },
+  "catch_rate": 225,
+  "dex_no": 201,
+  "genderless": true,
+  "hms": [],
+  "name": "unown",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "ursaring": {
+  "abilities": [
+   "Guts",
+   "Quick Feet"
+  ],
+  "base_stats": {
+   "atk": 130,
+   "def": 75,
+   "hp": 90,
+   "spa": 75,
+   "spd": 75,
+   "spe": 55
+  },
+  "catch_rate": 60,
+  "dex_no": 217,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "ursaring",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "uxie": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 130,
+   "hp": 75,
+   "spa": 75,
+   "spd": 130,
+   "spe": 95
+  },
+  "catch_rate": 3,
+  "dex_no": 480,
+  "genderless": true,
+  "hms": [],
+  "name": "uxie",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "vaporeon": {
+  "abilities": [
+   "Water Absorb"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 60,
+   "hp": 130,
+   "spa": 110,
+   "spd": 95,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 134,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "vaporeon",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "venomoth": {
+  "abilities": [
+   "Shield Dust",
+   "Tinted Lens"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 60,
+   "hp": 70,
+   "spa": 90,
+   "spd": 75,
+   "spe": 90
+  },
+  "catch_rate": 75,
+  "dex_no": 49,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "venomoth",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "venonat": {
+  "abilities": [
+   "Compoundeyes",
+   "Tinted Lens"
+  ],
+  "base_stats": {
+   "atk": 55,
+   "def": 50,
+   "hp": 60,
+   "spa": 40,
+   "spd": 55,
+   "spe": 45
+  },
+  "catch_rate": 190,
+  "dex_no": 48,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "venonat",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "venusaur": {
+  "abilities": [
+   "Overgrow"
+  ],
+  "base_stats": {
+   "atk": 82,
+   "def": 83,
+   "hp": 80,
+   "spa": 100,
+   "spd": 100,
+   "spe": 80
+  },
+  "catch_rate": 45,
+  "dex_no": 3,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "venusaur",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "vespiquen": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 102,
+   "hp": 70,
+   "spa": 80,
+   "spd": 102,
+   "spe": 40
+  },
+  "catch_rate": 45,
+  "dex_no": 416,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "vespiquen",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "vibrava": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 50,
+   "hp": 50,
+   "spa": 50,
+   "spd": 50,
+   "spe": 70
+  },
+  "catch_rate": 120,
+  "dex_no": 329,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "vibrava",
+  "source": "rom",
+  "types": [
+   "Ground",
+   "Dragon"
+  ]
+ },
+ "victreebel": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 105,
+   "def": 65,
+   "hp": 80,
+   "spa": 100,
+   "spd": 60,
+   "spe": 70
+  },
+  "catch_rate": 45,
+  "dex_no": 71,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "victreebel",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "vigoroth": {
+  "abilities": [
+   "Vital Spirit"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 80,
+   "hp": 80,
+   "spa": 55,
+   "spd": 55,
+   "spe": 90
+  },
+  "catch_rate": 120,
+  "dex_no": 288,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "vigoroth",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "vileplume": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 85,
+   "hp": 75,
+   "spa": 100,
+   "spd": 90,
+   "spe": 50
+  },
+  "catch_rate": 45,
+  "dex_no": 45,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "vileplume",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "volbeat": {
+  "abilities": [
+   "Illuminate",
+   "Swarm"
+  ],
+  "base_stats": {
+   "atk": 73,
+   "def": 55,
+   "hp": 65,
+   "spa": 47,
+   "spd": 75,
+   "spe": 85
+  },
+  "catch_rate": 150,
+  "dex_no": 313,
+  "female_ratio": 0.0,
+  "genderless": false,
+  "hms": [],
+  "name": "volbeat",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "voltorb": {
+  "abilities": [
+   "Soundproof",
+   "Static"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 50,
+   "hp": 40,
+   "spa": 55,
+   "spd": 55,
+   "spe": 100
+  },
+  "catch_rate": 190,
+  "dex_no": 100,
+  "genderless": true,
+  "hms": [],
+  "name": "voltorb",
+  "source": "rom",
+  "types": [
+   "Electric"
+  ]
+ },
+ "vulpix": {
+  "abilities": [
+   "Flash Fire"
+  ],
+  "base_stats": {
+   "atk": 41,
+   "def": 40,
+   "hp": 38,
+   "spa": 50,
+   "spd": 65,
+   "spe": 65
+  },
+  "catch_rate": 190,
+  "dex_no": 37,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [],
+  "name": "vulpix",
+  "source": "rom",
+  "types": [
+   "Fire"
+  ]
+ },
+ "wailmer": {
+  "abilities": [
+   "Water Veil",
+   "Oblivious"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 35,
+   "hp": 130,
+   "spa": 70,
+   "spd": 35,
+   "spe": 60
+  },
+  "catch_rate": 125,
+  "dex_no": 320,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "wailmer",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "wailord": {
+  "abilities": [
+   "Water Veil",
+   "Oblivious"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 45,
+   "hp": 170,
+   "spa": 90,
+   "spd": 45,
+   "spe": 60
+  },
+  "catch_rate": 60,
+  "dex_no": 321,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "wailord",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "walrein": {
+  "abilities": [
+   "Thick Fat",
+   "Ice Body"
+  ],
+  "base_stats": {
+   "atk": 80,
+   "def": 90,
+   "hp": 110,
+   "spa": 95,
+   "spd": 90,
+   "spe": 65
+  },
+  "catch_rate": 45,
+  "dex_no": 365,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "walrein",
+  "source": "rom",
+  "types": [
+   "Ice",
+   "Water"
+  ]
+ },
+ "wartortle": {
+  "abilities": [
+   "Torrent"
+  ],
+  "base_stats": {
+   "atk": 63,
+   "def": 80,
+   "hp": 59,
+   "spa": 65,
+   "spd": 80,
+   "spe": 58
+  },
+  "catch_rate": 45,
+  "dex_no": 8,
+  "female_ratio": 0.125,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "wartortle",
+  "source": "rom",
+  "types": [
+   "Water"
+  ]
+ },
+ "weavile": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 65,
+   "hp": 70,
+   "spa": 45,
+   "spd": 85,
+   "spe": 125
+  },
+  "catch_rate": 45,
+  "dex_no": 461,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "weavile",
+  "source": "rom",
+  "types": [
+   "Dark",
+   "Ice"
+  ]
+ },
+ "weedle": {
+  "abilities": [
+   "Shield Dust"
+  ],
+  "base_stats": {
+   "atk": 35,
+   "def": 30,
+   "hp": 40,
+   "spa": 20,
+   "spd": 20,
+   "spe": 50
+  },
+  "catch_rate": 255,
+  "dex_no": 13,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "weedle",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Poison"
+  ]
+ },
+ "weepinbell": {
+  "abilities": [
+   "Chlorophyll"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 50,
+   "hp": 65,
+   "spa": 85,
+   "spd": 45,
+   "spe": 55
+  },
+  "catch_rate": 120,
+  "dex_no": 70,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut"
+  ],
+  "name": "weepinbell",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Poison"
+  ]
+ },
+ "weezing": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 120,
+   "hp": 65,
+   "spa": 85,
+   "spd": 70,
+   "spe": 60
+  },
+  "catch_rate": 60,
+  "dex_no": 110,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "weezing",
+  "source": "rom",
+  "types": [
+   "Poison"
+  ]
+ },
+ "whiscash": {
+  "abilities": [
+   "Oblivious",
+   "Anticipation"
+  ],
+  "base_stats": {
+   "atk": 78,
+   "def": 73,
+   "hp": 110,
+   "spa": 76,
+   "spd": 71,
+   "spe": 60
+  },
+  "catch_rate": 75,
+  "dex_no": 340,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Strength",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "whiscash",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "whismur": {
+  "abilities": [
+   "Soundproof"
+  ],
+  "base_stats": {
+   "atk": 51,
+   "def": 23,
+   "hp": 64,
+   "spa": 51,
+   "spd": 23,
+   "spe": 28
+  },
+  "catch_rate": 190,
+  "dex_no": 293,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "whismur",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "wigglytuff": {
+  "abilities": [
+   "Cute Charm"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 45,
+   "hp": 140,
+   "spa": 75,
+   "spd": 50,
+   "spe": 45
+  },
+  "catch_rate": 50,
+  "dex_no": 40,
+  "female_ratio": 0.75,
+  "genderless": false,
+  "hms": [
+   "Strength"
+  ],
+  "name": "wigglytuff",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "wingull": {
+  "abilities": [
+   "Keen Eye"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 30,
+   "hp": 40,
+   "spa": 55,
+   "spd": 30,
+   "spe": 85
+  },
+  "catch_rate": 190,
+  "dex_no": 278,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "wingull",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Flying"
+  ]
+ },
+ "wobbuffet": {
+  "abilities": [
+   "Shadow Tag"
+  ],
+  "base_stats": {
+   "atk": 33,
+   "def": 58,
+   "hp": 190,
+   "spa": 33,
+   "spd": 58,
+   "spe": 33
+  },
+  "catch_rate": 45,
+  "dex_no": 202,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "wobbuffet",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "wooper": {
+  "abilities": [
+   "Damp",
+   "Water Absorb"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 45,
+   "hp": 55,
+   "spa": 25,
+   "spd": 25,
+   "spe": 15
+  },
+  "catch_rate": 255,
+  "dex_no": 194,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Smash",
+   "Surf",
+   "Waterfall",
+   "Whirlpool"
+  ],
+  "name": "wooper",
+  "source": "rom",
+  "types": [
+   "Water",
+   "Ground"
+  ]
+ },
+ "wormadam": {
+  "abilities": [
+   "Anticipation"
+  ],
+  "base_stats": {
+   "atk": 59,
+   "def": 85,
+   "hp": 60,
+   "spa": 79,
+   "spd": 105,
+   "spe": 36
+  },
+  "catch_rate": 45,
+  "dex_no": 413,
+  "female_ratio": 1.0,
+  "genderless": false,
+  "hms": [],
+  "name": "wormadam",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Grass"
+  ]
+ },
+ "wurmple": {
+  "abilities": [
+   "Shield Dust"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 35,
+   "hp": 45,
+   "spa": 20,
+   "spd": 30,
+   "spe": 20
+  },
+  "catch_rate": 255,
+  "dex_no": 265,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "wurmple",
+  "source": "rom",
+  "types": [
+   "Bug"
+  ]
+ },
+ "wynaut": {
+  "abilities": [
+   "Shadow Tag"
+  ],
+  "base_stats": {
+   "atk": 23,
+   "def": 48,
+   "hp": 95,
+   "spa": 23,
+   "spd": 48,
+   "spe": 23
+  },
+  "catch_rate": 125,
+  "dex_no": 360,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "wynaut",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "xatu": {
+  "abilities": [
+   "Synchronize",
+   "Early Bird"
+  ],
+  "base_stats": {
+   "atk": 75,
+   "def": 70,
+   "hp": 65,
+   "spa": 95,
+   "spd": 70,
+   "spe": 95
+  },
+  "catch_rate": 75,
+  "dex_no": 178,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "xatu",
+  "source": "rom",
+  "types": [
+   "Psychic",
+   "Flying"
+  ]
+ },
+ "yanma": {
+  "abilities": [
+   "Speed Boost",
+   "Compoundeyes"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 45,
+   "hp": 65,
+   "spa": 75,
+   "spd": 45,
+   "spe": 95
+  },
+  "catch_rate": 75,
+  "dex_no": 193,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "yanma",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "yanmega": {
+  "abilities": [
+   "Speed Boost",
+   "Tinted Lens"
+  ],
+  "base_stats": {
+   "atk": 76,
+   "def": 86,
+   "hp": 86,
+   "spa": 116,
+   "spd": 56,
+   "spe": 95
+  },
+  "catch_rate": 30,
+  "dex_no": 469,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [],
+  "name": "yanmega",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Flying"
+  ]
+ },
+ "zangoose": {
+  "abilities": [
+   "Immunity"
+  ],
+  "base_stats": {
+   "atk": 115,
+   "def": 60,
+   "hp": 73,
+   "spa": 60,
+   "spd": 60,
+   "spe": 90
+  },
+  "catch_rate": 90,
+  "dex_no": 335,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "zangoose",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "zapdos": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 90,
+   "def": 85,
+   "hp": 90,
+   "spa": 125,
+   "spd": 90,
+   "spe": 100
+  },
+  "catch_rate": 3,
+  "dex_no": 145,
+  "genderless": true,
+  "hms": [
+   "Fly",
+   "Rock Smash"
+  ],
+  "name": "zapdos",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Flying"
+  ]
+ },
+ "zigzagoon": {
+  "abilities": [
+   "Pickup",
+   "Gluttony"
+  ],
+  "base_stats": {
+   "atk": 30,
+   "def": 41,
+   "hp": 38,
+   "spa": 30,
+   "spd": 41,
+   "spe": 60
+  },
+  "catch_rate": 255,
+  "dex_no": 263,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Surf",
+   "Whirlpool"
+  ],
+  "name": "zigzagoon",
+  "source": "rom",
+  "types": [
+   "Normal"
+  ]
+ },
+ "zubat": {
+  "abilities": [
+   "Inner Focus"
+  ],
+  "base_stats": {
+   "atk": 45,
+   "def": 35,
+   "hp": 40,
+   "spa": 30,
+   "spd": 40,
+   "spe": 55
+  },
+  "catch_rate": 255,
+  "dex_no": 41,
+  "female_ratio": 0.5,
+  "genderless": false,
+  "hms": [
+   "Fly"
+  ],
+  "name": "zubat",
+  "source": "rom",
+  "types": [
+   "Poison",
+   "Flying"
+  ]
  }
 }

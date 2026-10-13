@@ -122,7 +122,11 @@ class TestBaseStatLookup(unittest.TestCase):
                          {"hp": 100, "atk": 75, "def": 115, "spa": 90, "spd": 115, "spe": 85})
 
     def test_an_unknown_species_is_none_rather_than_a_guess(self):
-        self.assertIsNone(gbr.base_stats_for(1))
+        """Dex 495 (Snivy), not 1. base_stats.json held 26 species when this was written, so
+        Bulbasaur stood in for "not recorded"; it now holds all 493 of Gen 4 (clayton-rp2), so
+        the boundary is Gen 5 -- which this reader will never see from an HGSS battle anyway."""
+        self.assertIsNotNone(gbr.base_stats_for(1), "Bulbasaur is recorded now")
+        self.assertIsNone(gbr.base_stats_for(495))
 
     def test_a_missing_file_is_none_rather_than_an_exception(self):
         """It runs inside GDB; a raising lookup would take the recorder down mid-battle."""

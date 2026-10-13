@@ -128,9 +128,12 @@ class TestAbilitiesAndPressure(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_the_values_match_the_roms_own_table_where_it_is_available(self):
-        """base_stats.json is built from PokeAPI, which reports Gen 9 abilities -- and abilities
-        changed after Gen 4 far more often than stats or types did. These came from the ROM's
-        personal.json instead, so this checks them against it when the decompilation is present.
+        """The whole file is built from the ROM's personal.json now (clayton-rp2), so this is a
+        second, independent reading of it rather than a spot-check on hand-transcribed values.
+
+        Deduped, because the ROM fills both ability slots and repeats the first when a species
+        has only one -- Espeon is ``[SYNCHRONIZE, SYNCHRONIZE]``. None of the original 26 species
+        did that, which is why this test did not need to until the file grew to 493.
         """
         import json
         import pathlib
@@ -141,7 +144,11 @@ class TestAbilitiesAndPressure(unittest.TestCase):
         data = json.loads((pathlib.Path(__file__).resolve().parent.parent / "claytonlib"
                            / "basedata" / "base_stats.json").read_text())
         for key, entry in data.items():
-            expected = [a.replace("ABILITY_", "").title().replace("_", " ")
-                        for a in personal[entry["dex_no"]]["abilities"]
-                        if a != "ABILITY_NONE"]
+            expected: list[str] = []
+            for raw in personal[entry["dex_no"]]["abilities"]:
+                if raw == "ABILITY_NONE":
+                    continue
+                name = raw.replace("ABILITY_", "").title().replace("_", " ")
+                if name not in expected:
+                    expected.append(name)
             self.assertEqual(entry["abilities"], expected, key)
