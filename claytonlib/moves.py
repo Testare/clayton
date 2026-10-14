@@ -122,13 +122,36 @@ def _load_moves() -> list[Move]:
     return _moves_cache
 
 
+#: Built once. `_load_moves` already caches the Move objects, but these two indexes were
+#: REBUILT on every lookup -- and `resolve_move` is on the hottest path in the project.
+#:
+#: Measured: one reported turn against a 6,000-candidate window spent 59,675 `resolve_move`
+#: calls and 28 MILLION `str.lower()` calls rebuilding this dict, ~3s of a ~6s turn. Nothing
+#: about the move table changes at runtime, so the dict is built on first use and kept.
+_by_number_cache: dict[int, Move] | None = None
+_by_name_cache: dict[str, Move] | None = None
+
+
 def _moves_by_number() -> dict[int, Move]:
-    return {m.number: m for m in _load_moves()}
+    global _by_number_cache
+    if _by_number_cache is None:
+        _by_number_cache = {m.number: m for m in _load_moves()}
+    return _by_number_cache
 
 
 def _moves_by_name() -> dict[str, Move]:
-    """Lowercase-normalised name → Move."""
-    return {m.name.lower(): m for m in _load_moves()}
+    """Lowercase-normalised name → Move.
+
+    Keyed on `m.name.lower()` while `resolve_move` looks up `_normalise(text)`, which also maps
+    hyphens and underscores to spaces. That asymmetry is pre-existing and load-bearing: the table
+    spells names with spaces, so normalising the QUERY is what lets "thunder-wave" resolve, and
+    normalising the keys as well would change nothing. Left exactly as it was -- caching is the
+    only change here.
+    """
+    global _by_name_cache
+    if _by_name_cache is None:
+        _by_name_cache = {m.name.lower(): m for m in _load_moves()}
+    return _by_name_cache
 
 
 # ---------------------------------------------------------------------------

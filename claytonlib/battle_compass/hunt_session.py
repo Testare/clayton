@@ -685,6 +685,9 @@ class HuntSession:
         self.target_ivs = dict(target_ivs or {})
         self.config = config
         self.capture_ball = capture_ball
+        #: One list of sentences per reported turn, accumulated at report time. See
+        #: `explain_history` for why this is not derived from the current state.
+        self._explanations: list[list[str]] = []
         # NOT `SolverConfig(danger_floor=...)`. The floor is per-Pokemon -- it reads the
         # DEFENDER's Def and Sp. Def -- and per-stage, so a figure taken here describes the LEAD
         # for the rest of the run. `SolverConfig.danger_floor` is a LOWER bound, so seeding it
@@ -748,6 +751,9 @@ class HuntSession:
         self._moved()
         self._session = self._fresh()
         self.contradiction = None
+        # A widen or an undo changes which turns exist, so the accumulated explanations no longer
+        # line up. Cleared rather than recomputed here; `explain_history` refills it once.
+        self._explanations = []
         # A cached plan belongs to the state it was computed from, and a replay has just moved
         # that state. Dropping it here is what stops `_follow_plan` ticking forward a path that
         # describes a run which no longer exists.
@@ -1103,6 +1109,11 @@ class HuntSession:
                                   "observed": tok.render_turn(tok.normalise(list(tokens)))}
             return self.snapshot()
 
+        # Explained BEFORE the turn is applied, which is the only moment "who was out" is both
+        # live and correct -- and the reason `explain_history` no longer replays the whole run to
+        # recover it. Captured here, appended only if the turn is accepted.
+        explanation = self._explain_one(tokens)
+
         extra = {}
         if item_code is not None:
             extra["item_code"] = item_code
@@ -1134,6 +1145,7 @@ class HuntSession:
                                   survivors_after=len(self._session.survivors),
                                   item_code=item_code, bench_slot=bench_slot,
                                   replacement=replacement))
+        self._explanations.append(explanation)
         if self.phase is Phase.SOLVING:
             # Keep the plan when the turn went to plan; re-solve only on divergence. The path the
             # player is reading off the screen then stops changing under them turn to turn.
@@ -1318,15 +1330,46 @@ class HuntSession:
             capture_ball=self.capture_ball or "capture ball",
             item_name=_item_name, party_name=_party_namer(state))
 
+    def _explain_one(self, tokens) -> list[str]:
+        """One turn explained against the CURRENT state -- i.e. the state it is about to leave.
+
+        Separate from `explain_history` so a turn can be explained once, at the moment it is
+        reported, instead of being recovered by replaying the run.
+        """
+        state = next(iter(self._session.states.values()), None)
+        if state is None:
+            return []
+        return tok.explain_turn(
+            tuple(tokens), ours=state.ours.name, ours_moves=tuple(state.ours.moves),
+            target=state.target.name, target_moves=tuple(state.target.moves),
+            capture_ball=self.capture_ball or "capture ball", item_name=_item_name,
+            party_name=_party_namer(state))
+
     def explain_history(self) -> list[list[str]]:
         """Every reported turn explained, one list of sentences per turn.
 
-        Replayed from the window rather than read off the current state, because a turn played
-        before a switch belongs to a different Pokemon with a different moveset -- naming its
-        moves from whoever is out NOW would confidently describe the wrong move. This is the same
-        hazard that keeps the turn table's action column in codes; replaying is what makes a
-        plain-language version of it safe.
+        **Accumulated as turns are reported, not replayed.** The correctness requirement is
+        unchanged and is the reason this is not simply read off the current state: a turn played
+        before a switch belongs to a different Pokemon with a different moveset, so naming its
+        moves from whoever is out NOW would confidently describe the wrong move. That is the same
+        hazard which keeps the turn table's action column in codes.
+        
+        What changed is WHEN the right state is consulted. A turn's explanation cannot change once
+        the turn is reported -- who was out and what they knew is history -- so it is computed at
+        report time, when that state is live, and kept.
+        
+        It used to rebuild a session over every ORIGINAL candidate and re-observe the whole run,
+        on every snapshot, purely for these tooltips. That is the full identification sweep
+        repeated per turn: measured at **6.2 seconds for one reported turn** against a
+        6,000-candidate window, with 7,456 `simulate_turn` calls, *and the set already narrowed to
+        a single survivor*. The cost tracked the original window rather than what was left, which
+        is why narrowing the pool never made the run feel faster.
+        
+        The replay survives as the rebuild path: `_replay` clears the cache (a widen or an undo
+        genuinely does change which turns exist), and the next call refills it once.
         """
+        if len(self._explanations) == len(self.turns):
+            return list(self._explanations)
         session = self._fresh()
         out: list[list[str]] = []
         for turn in self.turns:
@@ -1337,6 +1380,7 @@ class HuntSession:
                 capture_ball=self.capture_ball or "capture ball", item_name=_item_name,
                 party_name=_party_namer(state)))
             session.observe(turn.action, turn.tokens, **turn.extra)
+        self._explanations = list(out)
         return out
 
     def _candidate_row(self, seed: int) -> dict:
