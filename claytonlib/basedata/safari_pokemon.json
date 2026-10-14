@@ -37,7 +37,7 @@
   "slowbro":      {"catch_rate": 75,  "flee_rate": 60},
   "magnemite":    {"catch_rate": 190, "flee_rate": 90},
   "magneton":     {"catch_rate": 60,  "flee_rate": 60},
-  "farfetch-d":   {"catch_rate": 45,  "flee_rate": 120},
+  "farfetchd":    {"catch_rate": 45,  "flee_rate": 120},
   "doduo":        {"catch_rate": 190, "flee_rate": 90},
   "dodrio":       {"catch_rate": 45,  "flee_rate": 60},
   "grimer":       {"catch_rate": 190, "flee_rate": 60},

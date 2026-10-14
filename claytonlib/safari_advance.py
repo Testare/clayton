@@ -7,6 +7,12 @@ advance frame, then plans a route (chatot flips + a verifiable Elm-call margin) 
 encounter frame — chosen either externally (Pokefinder) or in-house via
 find_in_house_frame (claytonlib.safari_encounters' block-config search).
 
+The route is the same whichever encounter method is used -- chatot flips to get close, then a
+readable Elm-call margin -- but what you DO on the target frame differs: Sweet Scent for grass
+and surf, a rod cast for the three rods (clayton-858). Plans carry their `method` so the guide
+text says the right thing, and `find_in_house_frame` passes it to the encounter search (which,
+for a rod, only offers frames where something actually bites).
+
 Terminology (see notes/safari_calibration_notebook.md):
   * Seed A is the initial RNG state for the overworld stream (encounters, roamer relocation,
     Elm phone calls).
@@ -74,10 +80,13 @@ def advance_context(seed: int, prev_routes: dict, count: int = 128,
 class AdvancePlan:
     """A recipe to reach `encounter_frame` from `current_frame`.
 
-    You Sweet Scent while standing on `scent_frame` (= `encounter_frame`). The bulk of the
-    distance is covered by `chatot_flips` (two advances each; a trailing half-flip = one
-    advance is fine), landing on `land_frame`; from there `elm_before_scent` Elm calls — the
-    verifiable margin — carry you to `scent_frame`.
+    You act (Sweet Scent, or cast the rod — see `action`) while standing on `scent_frame`
+    (= `encounter_frame`). The bulk of the distance is covered by `chatot_flips` (two advances
+    each; a trailing half-flip = one advance is fine), landing on `land_frame`; from there
+    `elm_before_scent` Elm calls — the verifiable margin — carry you to `scent_frame`.
+
+    `scent_frame` keeps its name for every method: the frame you act on is the frame you act
+    on, whether the action is Sweet Scent or a cast.
     """
     current_frame: int
     encounter_frame: int
@@ -88,24 +97,36 @@ class AdvancePlan:
     elm_before_scent: int
     land_frame: int
     margin: int
+    method: str = "grass"
+
+    @property
+    def action(self) -> str:
+        """What to do on `scent_frame` — "Sweet Scent", or "cast the Super Rod"."""
+        from claytonlib.safari_encounters import METHOD_ACTIONS, normalize_method
+        return METHOD_ACTIONS[normalize_method(self.method)]
 
 
 def plan_advances(current_frame: int, encounter_frame: int,
-                  margin: int = DEFAULT_ELM_MARGIN) -> AdvancePlan:
+                  margin: int = DEFAULT_ELM_MARGIN, method: str = "grass") -> AdvancePlan:
     """Plan the advances from `current_frame` to `encounter_frame`.
 
-    You Sweet Scent while standing ON the encounter frame (pressing a frame early misses by
-    one). Raises ValueError if `encounter_frame` is already behind `current_frame` (overshot
-    — you'd need to reset). When more than `margin` advances remain, chatot flips close the
-    gap to `margin` Elm calls short of the scent frame; otherwise the whole (short) distance
-    is Elm calls and no chatot flips are used.
+    You act (Sweet Scent, or cast the rod) while standing ON the encounter frame (acting a
+    frame early misses by one). Raises ValueError if `encounter_frame` is already behind
+    `current_frame` (overshot — you'd need to reset). When more than `margin` advances remain,
+    chatot flips close the gap to `margin` Elm calls short of the scent frame; otherwise the
+    whole (short) distance is Elm calls and no chatot flips are used.
+
+    `method` only labels the plan (see `AdvancePlan.action`); the arithmetic is identical for
+    every method, since each one's encounter fires on the frame you act on.
     """
     scent_frame = encounter_frame
     total = scent_frame - current_frame
     if total < 0:
+        from claytonlib.safari_encounters import METHOD_ACTIONS, normalize_method
         raise ValueError(
-            f"already past the target: on frame {current_frame}, but Sweet Scent "
-            f"for encounter frame {encounter_frame} must fire on frame {scent_frame}")
+            f"already past the target: on frame {current_frame}, but "
+            f"{METHOD_ACTIONS[normalize_method(method)]} for encounter frame "
+            f"{encounter_frame} must fire on frame {scent_frame}")
     elm_before = min(total, margin)
     chatot_advances = total - elm_before
     # A single (or half) chatot flip isn't worth the unverifiable flip — just do those as
@@ -123,6 +144,7 @@ def plan_advances(current_frame: int, encounter_frame: int,
         elm_before_scent=elm_before,
         land_frame=current_frame + chatot_advances,
         margin=margin,
+        method=method,
     )
 
 
@@ -131,8 +153,9 @@ def margin_guide(rng_calls: int, elm: str, plan: AdvancePlan,
     """The Elm-call guide string around the approach, e.g. "PEEEP[KPE]!KEP".
 
     `n_before` calls precede the bracket (in case you land early), the bracket holds the
-    `elm_before_scent` calls you should hear approaching the target, "!" marks where to Sweet
-    Scent (on `scent_frame`), and `n_after` trailing calls follow (in case you overshoot).
+    `elm_before_scent` calls you should hear approaching the target, "!" marks where to act —
+    Sweet Scent, or cast the rod (`plan.action`) — on `scent_frame`, and `n_after` trailing
+    calls follow (in case you overshoot).
     """
     j_land = plan.land_frame - rng_calls
     j_scent = j_land + plan.elm_before_scent
@@ -169,9 +192,10 @@ def margin_ambiguous(rng_calls: int, elm: str, plan: AdvancePlan) -> bool:
 
 def describe_plan(plan: AdvancePlan, guide: str | None = None) -> str:
     """A multi-line, human-readable instruction block."""
+    action = plan.action
     lines = [
         f"On advance frame {plan.current_frame}; want an encounter on frame "
-        f"{plan.encounter_frame} (Sweet Scent while on frame {plan.scent_frame}).",
+        f"{plan.encounter_frame} ({action} while on frame {plan.scent_frame}).",
         f"  Advances to go: {plan.total_advances}",
     ]
     if plan.chatot_advances > 0:
@@ -184,15 +208,17 @@ def describe_plan(plan: AdvancePlan, guide: str | None = None) -> str:
         lines.append("  1. (no chatot flips needed)")
     lines.append(
         f"  2. {plan.elm_before_scent} Elm calls "
-        f"-> frame {plan.scent_frame}, then Sweet Scent.")
+        f"-> frame {plan.scent_frame}, then {action}.")
     if guide is not None:
-        lines.append(f"  Guide: {guide}   (]! = Sweet Scent here)")
+        lines.append(f"  Guide: {guide}   (]! = {action} here)")
     return "\n".join(lines)
 
 
 def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: str, tod,
                         blocks, target: str = "metang", search_margin: int = DEFAULT_ELM_MARGIN,
-                        max_frame: int = 300, aim_advance: int | None = None) -> dict:
+                        max_frame: int = 300, aim_advance: int | None = None,
+                        method: str = "grass", happiness_bonus: int = 0,
+                        suction_cups: bool = False) -> dict:
     """Pick a target-species encounter frame in-house (claytonlib.safari_encounters), instead
     of a Pokefinder handoff — mirrors utils/safari_advance.py's choose_target_frame in-house
     branch (minus its exact-key-seed-hit special case and the Pokefinder prompt itself, which
@@ -203,6 +229,13 @@ def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: 
     picks the candidate CLOSEST to that advance (for calibration data-gathering runs that want
     a specific advance count, not just "as soon as possible") instead of the nearest one to
     `current_frame`.
+
+    `method` selects how the encounter is triggered — "grass"/"surf" (Sweet Scent) or one of
+    the three rods. For a rod, only frames where the nibble check actually hooks something are
+    candidates, which is why `happiness_bonus` and `suction_cups` (both of which raise that
+    check's rate — see claytonlib.safari_encounters.hook_rate) belong here: getting them wrong
+    doesn't shift the slot, it changes WHICH frames are offered at all. A rod in a waterless
+    area raises (from resolve_safari_slots).
 
     Returns {"frame", "level", "skipped_ambiguous" (count), "all_ambiguous" (bool — every
     candidate was ambiguous, so `frame` is just the closest one anyway, use with care)}.
@@ -219,11 +252,13 @@ def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: 
     lo = current_frame + search_margin
     hi = max_frame if aim_advance is None else max(max_frame, aim_advance + search_margin)
     candidates = list(iter_encounter_frames(seed, area, tod, blocks, target,
-                                            min_frame=lo, max_frame=hi))
+                                            min_frame=lo, max_frame=hi, method=method,
+                                            happiness_bonus=happiness_bonus,
+                                            suction_cups=suction_cups))
     if not candidates:
         raise ValueError(
-            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} blocks={blocks} — "
-            f"check the block scores, area, and time of day.")
+            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} via {method} "
+            f"blocks={blocks} — check the block scores, area, time of day and method.")
 
     aim = current_frame if aim_advance is None else aim_advance
     def _distance(frame_level):
@@ -234,7 +269,8 @@ def find_in_house_frame(seed: int, prev_routes: dict, current_frame: int, area: 
 
     def _ambiguous(frame_level):
         return margin_ambiguous(rng_calls, elm,
-                                plan_advances(current_frame, frame_level[0], margin=search_margin))
+                                plan_advances(current_frame, frame_level[0], margin=search_margin,
+                                              method=method))
 
     scored = [(fl, _ambiguous(fl)) for fl in candidates]
     unambiguous = [fl for fl, amb in scored if not amb]

@@ -526,6 +526,15 @@ class Expedition:
     id: str = field(default_factory=_new_id)
     pokemon: str = ""
     safari_area: str = ""
+    # How the encounter is triggered: "grass"/"surf" (Sweet Scent) or "old_rod"/"good_rod"/
+    # "super_rod" (clayton-858). Defaults to grass, which is what every expedition saved
+    # before water methods existed was implicitly hunting.
+    safari_method: str = "grass"
+    # Only meaningful for the rods: the lead's happiness bonus to the hook rate (one of
+    # claytonlib.safari_encounters.HAPPINESS_BONUSES) and whether the lead has Suction Cups.
+    # They don't change which slot a frame draws, but they decide which frames hook at all.
+    fishing_happiness_bonus: int = 0
+    fishing_suction_cups: bool = False
     block_config: dict = field(default_factory=dict)
     key_seed: int | None = None
     key_seed_advances: int | None = None
@@ -556,6 +565,9 @@ class Expedition:
             id=d.get("id") or _new_id(),
             pokemon=d.get("pokemon", ""),
             safari_area=d.get("safari_area", ""),
+            safari_method=d.get("safari_method") or "grass",
+            fishing_happiness_bonus=int(d.get("fishing_happiness_bonus", 0) or 0),
+            fishing_suction_cups=bool(d.get("fishing_suction_cups", False)),
             block_config=dict(d.get("block_config", {})),
             key_seed=d.get("key_seed"),
             key_seed_advances=d.get("key_seed_advances"),

@@ -49,6 +49,13 @@ The main library is `claytonlib/`, which auto-exports all public names via `__in
   pure Python when numba is absent.
 - **`times.py`** — Seed↔datetime mapping. `calculate_seed(datetime, delay) -> int`,
   `generate_times(key_seed)`, `get_times(key_seed)`. Reads `basedata/mdMap.json`.
+- **`species_names.py`** — One spelling per species across the data sets.
+  `canonical_species_name` turns any spelling (`Nidoran♀`, `Farfetch’d`, `Mr. Mime`, a slug)
+  into the slug `base_stats.json`/`safari_pokemon.json` key on; `display_species_name` goes
+  back the other way for the UI. Verified to reproduce veekun's `identifier` column from its
+  display name for all 493 Gen 4 species. **Use it for every species-name lookup** — joining
+  a display name against a slug silently matched nothing and made four species unhuntable
+  (clayton-69n).
 - **`moves.py`** — `Move` data model and loaders over `basedata/moves.json`. Note the JSON
   carries `power`, `priority`, `pp` and `range` that the `Move` class does not yet expose.
 - **`chart/`** — Evaluates seeds across candidate datetimes to find optimal target times.
@@ -78,8 +85,11 @@ The main library is `claytonlib/`, which auto-exports all public names via `__in
 - **`flee_flags.py`** — Straight-line per-candidate flee lookahead for the compass candidate
   table (no search, unlike machete).
 - **`safari_advance.py`** / **`safari_encounters.py`** — Overworld-stream work: advance-frame
-  identification from Elm calls, Sweet-Scent route planning, and in-house encounter slot /
-  species resolution (replaces the Pokefinder handoff).
+  identification from Elm calls, route planning, and in-house encounter slot / species
+  resolution (replaces the Pokefinder handoff). Covers all five encounter **methods** —
+  `grass`/`surf` (Sweet Scent) and `old_rod`/`good_rod`/`super_rod`; surf and the rods exist
+  only in the five areas with water. Every method draws a flat 10-slot table, but a rod rolls
+  a nibble check first, so its slot sits one advance later. See `notes/safari_water.md`.
 - **`calibration.py`** / **`calibration_tools.py`** — The timer-calibration model mapping a
   commanded countdown `M` (ms) to a landing distribution over the battle-seed frame, plus
   the interactive fit and the RNGReporter-style roamer/Elm seed identification.
@@ -125,7 +135,8 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
 
 - `claytonlib/basedata/` — Static game data: `safari_pokemon.json` (catch/flee rates),
   `moves.json`, `mdMap.json` (month-day → seed byte), `safari_zones.json` (encounter
-  tables), `metronome_species.json`, `base_stats.json` (**all 493 Gen 4 species**: base
+  tables, all 12 areas x up to 5 methods; species named by slug, like every other file —
+  see `species_names.py`), `metronome_species.json`, `base_stats.json` (**all 493 Gen 4 species**: base
   stats, types, abilities, catch rate, gender and HM compatibility — needed for targets, whose
   stats are *derived* from entered IVs, and for our own party, whose stats are entered but whose
   TYPES are not). Built by `one-offs/populate_base_stats_from_rom.py` from the decompilation's

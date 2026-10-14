@@ -303,7 +303,13 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => (
   {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 // Species names are stored lowercase (they're the raw claytonlib/basedata key, e.g.
 // "nidoran-f") -- this capitalizes each hyphen-separated part for display.
-const capName = (s) => String(s ?? "").replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
+// Mirrors claytonlib.species_names.DISPLAY_OVERRIDES -- the five of 493 species whose Pokedex
+// spelling dash-capitalising their slug doesn't reach. tests/test_species_names.py asserts this
+// map and the Python one stay in step. (clayton-69n)
+const SPECIES_DISPLAY = {"nidoran-f": "Nidoran\u2640", "nidoran-m": "Nidoran\u2642",
+  "farfetchd": "Farfetch\u2019d", "mr-mime": "Mr. Mime", "mime-jr": "Mime Jr."};
+const capName = (s) => SPECIES_DISPLAY[String(s ?? "")]
+  ?? String(s ?? "").replace(/(^|-)([a-z])/g, (_, sep, c) => sep + c.toUpperCase());
 // Imported runs get a millisecond nudged onto saved_at to keep them in file order without
 // colliding (see app.portability.import_runs_jsonl) -- never shown in the Runs table, which
 // always displays to whole-second precision.
@@ -678,21 +684,38 @@ function _importExpeditionFromListConfirm(){
 
 // existing: an expedition doc when editing, else null (create).
 let _allSafariAreas = [];
+// Every {area, method, label} the chosen Pokemon can be found in (clayton-858) — cached on
+// each Pokemon change so the method and area dropdowns can narrow each other without
+// re-fetching per keystroke. Empty when no Pokemon is chosen yet.
+let _safariLocations = [];
+let _allSafariMethods = [];
 
 async function expeditionForm(existing){
-  const [profiles, areas, pokemonList] = await Promise.all(
-    [api("list_profiles"), api("list_safari_areas"), api("list_safari_pokemon")]);
+  const [profiles, areas, pokemonList, methods] = await Promise.all(
+    [api("list_profiles"), api("list_safari_areas"), api("list_safari_pokemon"),
+     api("list_safari_methods", "")]);
   state.profiles = profiles;
   _allSafariAreas = areas;
+  _allSafariMethods = methods;
   const sel = (val, cur) => val === cur ? " selected" : "";
   const profileOpts = profiles.map(p =>
     `<option value="${esc(p.id)}"${sel(p.id, existing?.profile_id)}>${esc(p.name)}</option>`).join("");
   // Narrowed to the chosen Pokemon's own areas once one is picked (onPokemonChange); starts
   // as every area when creating fresh, or when editing with no Pokemon chosen yet.
+  const curMethod = existing?.safari_method || "grass";
+  _safariLocations = existing?.pokemon
+    ? await api("list_safari_locations_for_pokemon", existing.pokemon) : [];
   const initialAreas = existing?.pokemon
-    ? await api("list_safari_areas_for_pokemon", existing.pokemon) : areas;
+    ? await api("list_safari_areas_for_pokemon", existing.pokemon, curMethod) : areas;
   const areaOpts = `<option value="">—</option>` + initialAreas.map(a =>
     `<option value="${esc(a)}"${sel(a, existing?.safari_area)}>${esc(a)}</option>`).join("");
+  // Narrowed to the methods this Pokemon is actually findable by, same idea as the areas.
+  const methodNames = existing?.pokemon
+    ? [...new Set(_safariLocations.map(l => l.method))] : methods.map(m => m.method);
+  const methodOpts = methodNames.map(m =>
+    `<option value="${esc(m)}"${sel(m, curMethod)}>${esc(methodLabel(m))}</option>`).join("");
+  const happinessOpts = [0, 20, 30, 40, 50].map(h =>
+    `<option value="${h}"${sel(h, existing?.fishing_happiness_bonus ?? 0)}>+${h}</option>`).join("");
   const pokemonOpts = `<option value="">—</option>` + pokemonList.map(n =>
     `<option value="${esc(n)}"${sel(n, existing?.pokemon)}>${esc(capName(n))}</option>`).join("");
   const seedHex = existing?.key_seed != null
@@ -706,7 +729,21 @@ async function expeditionForm(existing){
         <div class="field"><label>Profile</label><select name="profile_id" required>${profileOpts}</select></div>
         <div class="field"><label>Pokémon</label><select name="pokemon" onchange="onExpeditionPokemonChange()">${pokemonOpts}</select>
           <div id="exp-rates" class="hint muted"></div></div>
+        <div class="field"><label>How you'll find it</label>
+          <select name="safari_method" onchange="onExpeditionMethodChange()">${methodOpts}</select></div>
         <div class="field"><label>Safari area</label><select name="safari_area" onchange="updateBlockRequirement()">${areaOpts}</select></div>
+      </div>
+      <div class="grid2" id="exp-fishing-fields" style="display:none">
+        <div class="field"><label>Lead happiness bonus to the hook rate</label>
+          <select name="fishing_happiness_bonus" onchange="updateHookRate()">${happinessOpts}</select>
+          <div id="exp-hook-rate" class="hint muted"></div></div>
+        <div class="field"><label>Lead has Suction Cups</label>
+          <select name="fishing_suction_cups" onchange="updateHookRate()">
+            <option value="0"${sel(false, !!existing?.fishing_suction_cups)}>No</option>
+            <option value="1"${sel(true, !!existing?.fishing_suction_cups)}>Yes (doubles the rate)</option>
+          </select>
+          <div class="hint muted">These don't change which Pokémon a frame yields — they
+            decide which frames hook anything at all.</div></div>
       </div>
       <div class="grid2">
         <div class="field"><label>Key seed</label>
@@ -745,6 +782,57 @@ async function expeditionForm(existing){
     </form>`);
   updateBlockRequirement();
   updatePokemonRates();
+  updateHookRate();
+}
+
+// Mirrors claytonlib.safari_encounters.METHOD_LABELS. The fall-back title-cases the raw
+// name, so this still reads properly on views (the expedition list) that render before the
+// Configure form has ever fetched the labels.
+function methodLabel(method){
+  const m = _allSafariMethods.find(x => x.method === method);
+  if(m) return m.label;
+  return String(method || "").split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+// `is_rod` comes from the facade (claytonlib.safari_encounters.ROD_METHODS), so the three
+// rods are named in exactly one place. The suffix test only covers the window before the
+// Configure form has fetched the method list.
+function isRodMethod(method){
+  const m = _allSafariMethods.find(x => x.method === method);
+  return m ? !!m.is_rod : /rod$/.test(method || "");
+}
+
+// Rebuilds the area dropdown for the current (Pokemon, method) pair and shows or hides the
+// rod-only fields. Shared by the Pokemon and method change handlers.
+async function syncExpeditionAreas(){
+  const f = $("expedition-form");
+  if(!f) return;
+  const pokemon = f.pokemon.value.trim();
+  const method = f.safari_method.value;
+  const areaSel = f.safari_area;
+  const prevArea = areaSel.value;
+  const areas = await api("list_safari_areas_for_pokemon", pokemon, method);
+  areaSel.innerHTML = `<option value="">—</option>` + areas.map(a =>
+    `<option value="${esc(a)}"${a===prevArea?" selected":""}>${esc(a)}</option>`).join("");
+  if(!areas.includes(prevArea)) areaSel.value = "";
+  $("exp-fishing-fields").style.display = isRodMethod(method) ? "" : "none";
+  await updateBlockRequirement();
+  await updateHookRate();
+}
+
+async function onExpeditionMethodChange(){ await syncExpeditionAreas(); }
+
+// "Something bites on N% of casts" — the one number the happiness/Suction Cups pair actually
+// moves, so it's worth showing rather than leaving the player to guess.
+async function updateHookRate(){
+  const f = $("expedition-form");
+  const out = $("exp-hook-rate");
+  if(!f || !out) return;
+  const method = f.safari_method.value;
+  if(!isRodMethod(method)){ out.textContent = ""; return; }
+  const rate = await api("safari_hook_rate", method, Number(f.fishing_happiness_bonus.value) || 0,
+    f.fishing_suction_cups.value === "1");
+  out.textContent = rate == null ? ""
+    : `Something bites on ${Math.min(100, rate)}% of casts${rate > 100 ? " (capped — always bites)" : ""}.`;
 }
 
 // Once a Pokemon is chosen, narrow the Safari area dropdown to areas it can actually
@@ -754,13 +842,18 @@ async function onExpeditionPokemonChange(){
   updatePokemonRates();
   const f = $("expedition-form");
   const pokemon = f.pokemon.value.trim();
-  const areaSel = f.safari_area;
-  const prevArea = areaSel.value;
-  const areas = pokemon ? await api("list_safari_areas_for_pokemon", pokemon) : _allSafariAreas;
-  areaSel.innerHTML = `<option value="">—</option>` + areas.map(a =>
-    `<option value="${esc(a)}"${a===prevArea?" selected":""}>${esc(a)}</option>`).join("");
-  if(!areas.includes(prevArea)) areaSel.value = "";
-  await updateBlockRequirement();
+  // The methods come first: they narrow the areas, not the other way round (a Lapras is a
+  // surf encounter, and only Rocky Beach has it — asking for the area first would offer
+  // eleven areas that can never produce one).
+  _safariLocations = pokemon ? await api("list_safari_locations_for_pokemon", pokemon) : [];
+  const methodSel = f.safari_method;
+  const prevMethod = methodSel.value;
+  const methodNames = pokemon ? [...new Set(_safariLocations.map(l => l.method))]
+    : _allSafariMethods.map(m => m.method);
+  methodSel.innerHTML = methodNames.map(m =>
+    `<option value="${esc(m)}"${m===prevMethod?" selected":""}>${esc(methodLabel(m))}</option>`).join("");
+  if(!methodNames.includes(prevMethod)) methodSel.value = methodNames[0] || "";
+  await syncExpeditionAreas();
 }
 
 // Shows "(required: N)" on whichever block-score field the chosen Pokemon actually needs
@@ -779,7 +872,7 @@ async function updateBlockRequirement(){
     inputs[k].classList.remove("invalid");
   }
   if(!pokemon || !area) return;
-  const req = await api("safari_block_requirement", area, pokemon);
+  const req = await api("safari_block_requirement", area, pokemon, f.safari_method.value);
   if(!req) return;
   const apply = (type, qty) => {
     if(!labels[type]) return;
@@ -801,6 +894,9 @@ async function saveExpedition(ev, existingId){
   const fields = {
     name: f.name.value, profile_id: f.profile_id.value,
     pokemon: f.pokemon.value.trim(), safari_area: f.safari_area.value,
+    safari_method: f.safari_method.value || "grass",
+    fishing_happiness_bonus: Number(f.fishing_happiness_bonus.value) || 0,
+    fishing_suction_cups: f.fishing_suction_cups.value === "1",
     key_seed: parseInt(rawSeed, 16),
     key_seed_advances: Number(f.key_seed_advances.value),
     block_config: { plains: Number(f.block_plains.value) || 0, forest: Number(f.block_forest.value) || 0,
@@ -873,7 +969,7 @@ async function openExpeditionHome(id){
         <button class="btn" onclick="exportExpedition('${esc(id)}')">Export</button>
         <button class="btn" onclick="setView('expeditions')">← All expeditions</button>
       </div></div>
-    <div class="muted">${e.pokemon ? esc(capName(e.pokemon)) : "—"}${e.safari_area ? " · " + esc(e.safari_area) : ""}
+    <div class="muted">${e.pokemon ? esc(capName(e.pokemon)) : "—"}${e.safari_area ? " · " + esc(e.safari_area) : ""}${e.safari_method && e.safari_method !== "grass" ? " · " + esc(methodLabel(e.safari_method)) : ""}
       · Key seed: 0x${(e.key_seed ?? 0).toString(16).toUpperCase()}</div>
     <div class="section-label">Tools</div>
     <div class="tools">${grid}</div>`);
@@ -2776,11 +2872,11 @@ function renderFrameGuideSection(){
   const r = sac.inHouseSearch;
   return `<h3>Seed A advances</h3>
     <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
-    <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, Sweet Scent there.</div>
+    <div class="info-line done">${g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) → frame ${g.encounter_frame}, ${esc(g.action || "Sweet Scent")} there.</div>
     ${r && !r.error ? `<div class="hr-small muted">Found in-house: frame ${r.frame} (L${r.level})
         ${r.all_ambiguous ? `<span class="badge warn">every candidate's Elm margin is ambiguous — verify carefully</span>`
           : r.skipped_ambiguous ? `(skipped ${r.skipped_ambiguous} nearer frame(s) with an ambiguous margin)` : ""}</div>` : ""}
-    <div class="status">Guide: <code>${esc(g.guide)}</code> (Sweet scent at the "!")
+    <div class="status">Guide: <code>${esc(g.guide)}</code> (${esc(g.action || "Sweet Scent")} at the "!")
       ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
     <button class="btn small" onclick="sacReplanFrame()">Change target frame</button>`;
@@ -2826,6 +2922,9 @@ async function sacFindTargetFrame(){
       current_frame: sac.pinnedFrame, area: sac.e.safari_area, tod: timeOfDay(sac.initialTime),
       block_config: sac.e.block_config, pokemon: sac.e.pokemon,
       margin: sac.e.preferences?.elm_calls_after_flips ?? 3,
+      method: sac.e.safari_method || "grass",
+      happiness_bonus: sac.e.fishing_happiness_bonus ?? 0,
+      suction_cups: !!sac.e.fishing_suction_cups,
       aim_advance: aim === "" ? null : Number(aim)});
   }catch(err){
     sac.inHouseSearch = { error: String(err && err.message ? err.message : err) };
@@ -2882,7 +2981,8 @@ async function sacPlanFrameRoute(target){
   sac.frameGuide = await api("safari_compass_plan_frame", {
     seed: sac.seedA.seed, prev_routes: sac.seedAParams.prev_routes,
     current_frame: sac.pinnedFrame, encounter_frame: target,
-    margin: sac.e.preferences?.elm_calls_after_flips ?? 3});
+    margin: sac.e.preferences?.elm_calls_after_flips ?? 3,
+    method: sac.e.safari_method || "grass"});
   renderSafariCompassNewRun();
   // Seed A advances is done -- Seed B's path input just unlocked, so move straight there.
   $("sac-path-new")?.focus();

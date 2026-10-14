@@ -146,6 +146,58 @@ class TestFindInHouseFrame(unittest.TestCase):
         self.assertGreaterEqual(res["frame"], 60)
 
 
+class TestMethodAwarePlanning(unittest.TestCase):
+    """clayton-858: surf and the rods ride the same route, but with a different final action."""
+
+    _SEED = 0x0D0E02BA
+
+    def test_plan_carries_its_method_and_action_verb(self):
+        self.assertEqual(sa.plan_advances(9, 81).action, "Sweet Scent")
+        self.assertEqual(sa.plan_advances(9, 81, method="surf").action, "Sweet Scent")
+        self.assertEqual(sa.plan_advances(9, 81, method="super_rod").action,
+                         "cast the Super Rod")
+        self.assertEqual(sa.plan_advances(9, 81, method="old rod").method, "old rod")
+
+    def test_the_arithmetic_is_identical_across_methods(self):
+        grass = sa.plan_advances(9, 81)
+        rod = sa.plan_advances(9, 81, method="good_rod")
+        for field in ("scent_frame", "total_advances", "chatot_advances", "elm_before_scent",
+                      "land_frame"):
+            self.assertEqual(getattr(grass, field), getattr(rod, field), field)
+
+    def test_describe_plan_uses_the_rod_verb(self):
+        text = sa.describe_plan(sa.plan_advances(9, 81, method="super_rod"), guide="EK[PKE]!PP")
+        self.assertIn("cast the Super Rod", text)
+        self.assertNotIn("Sweet Scent", text)
+
+    def test_overshoot_error_names_the_action(self):
+        with self.assertRaises(ValueError) as ctx:
+            sa.plan_advances(20, 10, method="good_rod")
+        self.assertIn("cast the Good Rod", str(ctx.exception))
+
+    def test_in_house_search_honors_the_method(self):
+        res = sa.find_in_house_frame(self._SEED, {}, 0, "Swamp", "day", {"water": 20},
+                                     target="dragonair", method="super_rod")
+        from claytonlib.safari_encounters import advance_frame_species, rod_hooks
+        self.assertTrue(rod_hooks(self._SEED, res["frame"], "super_rod"))
+        self.assertEqual(advance_frame_species(self._SEED, res["frame"], "Swamp", "day",
+                                               {"water": 20}, "super_rod"),
+                         ("dragonair", res["level"]))
+
+    def test_in_house_search_rejects_a_rod_where_there_is_no_water(self):
+        with self.assertRaises(ValueError) as ctx:
+            sa.find_in_house_frame(self._SEED, {}, 0, "Mountain", "morning", {"peak": 56},
+                                   target="metang", method="super_rod")
+        self.assertIn("no water", str(ctx.exception))
+
+    def test_a_higher_hook_rate_can_only_move_the_frame_earlier(self):
+        kwargs = dict(target="goldeen", method="old_rod")
+        lean = sa.find_in_house_frame(self._SEED, {}, 0, "Swamp", "day", {"water": 99}, **kwargs)
+        rich = sa.find_in_house_frame(self._SEED, {}, 0, "Swamp", "day", {"water": 99},
+                                      happiness_bonus=50, **kwargs)
+        self.assertLessEqual(rich["frame"], lean["frame"])
+
+
 class TestSkippedAmbiguousCounting(unittest.TestCase):
     """clayton-b42.10.6: skipped_ambiguous must count only candidates genuinely NEARER to
     the aim than the chosen frame — an earlier version counted every ambiguous candidate in

@@ -108,6 +108,37 @@ class TestHuntNavigation(unittest.TestCase):
         self.assertNotIn("'expedition','", body,
                          "the shared grid is injecting an owner kind again")
 
+    def test_the_configure_form_asks_for_an_encounter_method(self):
+        """clayton-858: surf and the rods. The method field must come BEFORE the area, since
+        it narrows which areas can appear at all (a Lapras is Rocky Beach surf and nothing
+        else), and it must reach both the area list and the saved document."""
+        body = _function_body("expeditionForm")
+        self.assertLess(body.index('name="safari_method"'), body.index('name="safari_area"'),
+                        "the method must be asked before the area it narrows")
+        self.assertIn('onchange="onExpeditionMethodChange()"', body)
+        save = _function_body("saveExpedition")
+        for field in ("safari_method", "fishing_happiness_bonus", "fishing_suction_cups"):
+            self.assertIn(field, save, f"{field} is never saved")
+
+    def test_the_rod_only_fields_are_hidden_until_a_rod_is_chosen(self):
+        self.assertIn('id="exp-fishing-fields" style="display:none"', _HTML)
+        body = _function_body("syncExpeditionAreas")
+        self.assertIn('isRodMethod(method) ? "" : "none"', body)
+
+    def test_the_frame_guide_never_hardcodes_sweet_scent(self):
+        """The verb follows the method: a rod is cast, not scented. Both the one-line summary
+        and the Elm-margin guide render the plan's own action."""
+        body = _function_body("renderFrameGuideSection")
+        self.assertEqual(body.count('g.action || "Sweet Scent"'), 2)
+
+    def test_the_compass_passes_the_method_to_both_facade_calls(self):
+        for fn in ("sacFindTargetFrame", "sacPlanFrameRoute"):
+            self.assertIn('method: sac.e.safari_method || "grass"', _function_body(fn),
+                          f"{fn} doesn't tell the back end which method this expedition uses")
+        search = _function_body("sacFindTargetFrame")
+        self.assertIn("happiness_bonus: sac.e.fishing_happiness_bonus", search)
+        self.assertIn("suction_cups: !!sac.e.fishing_suction_cups", search)
+
     def test_safari_tools_are_never_handed_an_owner_kind(self):
         """They are expedition-only concepts and take an id, not an owner."""
         for handler in ("chartFindTarget", "chartManageData",

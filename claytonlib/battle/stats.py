@@ -125,8 +125,13 @@ def species(name: str) -> dict:
 
     Only ever needed for *targets*: our own party's stats are entered directly (sec 15.4.1).
     Regenerate or extend the file with `one-offs/populate_base_stats.py`.
+
+    The name is matched through `claytonlib.species_names.canonical_species_name`, so
+    "Mr. Mime" and "Nidoran♀" reach `mr-mime` and `nidoran-f` rather than missing
+    (clayton-69n); FORMS are still resolved by the suffix fallback below, not by spelling.
     """
-    key = name.strip().lower().replace(" ", "-")
+    from claytonlib.species_names import canonical_species_name
+    key = canonical_species_name(name)
     data = _load_species()
     if key in data:
         return data[key]

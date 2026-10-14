@@ -281,6 +281,66 @@ class TestFacade(unittest.TestCase):
                          {"block_type": "peak", "quantity": 56})
         self.assertIsNone(self.api.safari_block_requirement("Plains", "metang"))
 
+    # -- clayton-858: surf and the rods -----------------------------------
+
+    def test_list_safari_methods(self):
+        rows = self.api.list_safari_methods("")
+        self.assertEqual([r["method"] for r in rows],
+                         ["grass", "surf", "old_rod", "good_rod", "super_rod"])
+        self.assertEqual([r["is_rod"] for r in rows], [False, False, True, True, True])
+        self.assertEqual(self.api.list_safari_methods("Mountain"), rows[:1])
+        self.assertEqual(self.api.list_safari_methods("Meadow"), rows)
+
+    def test_method_narrows_the_area_list(self):
+        # Lapras is a Rocky Beach surf encounter and nothing else.
+        self.assertEqual(self.api.list_safari_areas_for_pokemon("lapras"), ["Rocky Beach"])
+        self.assertEqual(self.api.list_safari_areas_for_pokemon("lapras", "surf"),
+                         ["Rocky Beach"])
+        self.assertEqual(self.api.list_safari_areas_for_pokemon("lapras", "grass"), [])
+
+    def test_area_list_with_no_pokemon_still_respects_the_method(self):
+        # Picking a rod before a Pokemon must leave only the five areas with water.
+        self.assertEqual(len(self.api.list_safari_areas_for_pokemon("", "")), 12)
+        self.assertEqual(self.api.list_safari_areas_for_pokemon("", "super_rod"),
+                         ["Meadow", "Rocky Beach", "Wetland", "Swamp", "Marshland"])
+
+    def test_list_safari_locations_for_pokemon(self):
+        self.assertEqual(self.api.list_safari_locations_for_pokemon("dratini"),
+                         [{"area": "Swamp", "method": "good_rod", "label": "Good Rod"},
+                          {"area": "Swamp", "method": "super_rod", "label": "Super Rod"}])
+
+    def test_block_requirement_is_method_scoped(self):
+        self.assertEqual(self.api.safari_block_requirement("Swamp", "dragonair", "super_rod"),
+                         {"block_type": "water", "quantity": 15})
+        self.assertIsNone(self.api.safari_block_requirement("Swamp", "dragonair", "good_rod"))
+        # A water method where there's no water is a label query that can't be answered, not
+        # a crash mid-keystroke.
+        self.assertIsNone(self.api.safari_block_requirement("Mountain", "metang", "super_rod"))
+
+    def test_safari_hook_rate(self):
+        self.assertEqual(self.api.safari_hook_rate("good_rod"), 50)
+        self.assertEqual(self.api.safari_hook_rate("good_rod", 20, True), 140)
+        self.assertIsNone(self.api.safari_hook_rate("grass"))
+        self.assertEqual(self.api.safari_fishing_happiness_bonuses(), [0, 20, 30, 40, 50])
+
+    def test_expedition_round_trips_its_method_and_fishing_config(self):
+        p = self.api.create_profile({"name": "P"})
+        e = self.api.create_expedition({
+            "name": "Dragonair", "profile_id": p["id"], "pokemon": "dragonair",
+            "safari_area": "Swamp", "safari_method": "super_rod",
+            "fishing_happiness_bonus": 30, "fishing_suction_cups": True})
+        got = self.api.get_expedition(e["id"])
+        self.assertEqual(got["safari_method"], "super_rod")
+        self.assertEqual(got["fishing_happiness_bonus"], 30)
+        self.assertIs(got["fishing_suction_cups"], True)
+
+    def test_an_expedition_saved_before_water_methods_existed_reads_as_grass(self):
+        p = self.api.create_profile({"name": "P"})
+        e = self.api.create_expedition({"name": "Metang", "profile_id": p["id"]})
+        self.assertEqual(e["safari_method"], "grass")
+        self.assertEqual(e["fishing_happiness_bonus"], 0)
+        self.assertIs(e["fishing_suction_cups"], False)
+
 
 if __name__ == "__main__":
     unittest.main()

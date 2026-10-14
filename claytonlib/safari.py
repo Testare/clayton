@@ -243,8 +243,23 @@ class SafariContext:
 _safari_pokemon: dict[str, SafariPokemon] | None = None
 
 def safari_pokemon_by_name(name: str) -> SafariPokemon:
+    """The catch/flee rates for a species, by any spelling of its name.
+
+    Names are matched through `claytonlib.species_names.canonical_species_name`, so
+    "Nidoran♀", "nidoran-f" and "NIDORAN F" are one species -- the data sets this is joined
+    against each spell a handful of species differently (clayton-69n).
+    """
+    from claytonlib.species_names import canonical_species_name
     global _safari_pokemon
     if _safari_pokemon is None:
         data = basedata_json("safari_pokemon.json")
-        _safari_pokemon = {n: SafariPokemon(n, entry["catch_rate"], entry["flee_rate"]) for n, entry in data.items()}
-    return _safari_pokemon[name]
+        _safari_pokemon = {canonical_species_name(n): SafariPokemon(n, entry["catch_rate"],
+                                                                    entry["flee_rate"])
+                           for n, entry in data.items()}
+    key = canonical_species_name(name)
+    try:
+        return _safari_pokemon[key]
+    except KeyError:
+        raise KeyError(
+            f"no Safari catch/flee rates for {name!r} (canonically {key!r}); "
+            f"add it to claytonlib/basedata/safari_pokemon.json") from None

@@ -7,9 +7,13 @@ import re
 import unittest
 from pathlib import Path
 
+from claytonlib.safari import advance_rng
 from claytonlib.safari_encounters import (
-    resolve_safari_slots, frame_slot, advance_frame_species, find_encounter_frame, safari_areas,
-    time_of_day, areas_for_species, block_requirement_for,
+    METHODS, ROD_METHODS, WATER_METHODS, resolve_safari_slots, frame_slot,
+    advance_frame_species, find_encounter_frame, iter_encounter_frames, safari_areas,
+    safari_methods, has_water, hook_rate, rod_hooks, locations_for_species,
+    methods_for_species, normalize_method, time_of_day, areas_for_species,
+    block_requirement_for,
 )
 
 SEED = 0x0D0E02D0
@@ -142,6 +146,161 @@ class TestFrameScan(unittest.TestCase):
             self.assertEqual(names[slot], sp, f"species mismatch at advance {n}")
             rows += 1
         self.assertGreater(rows, 100)
+
+
+WATER_AREAS = ["Meadow", "Rocky Beach", "Wetland", "Swamp", "Marshland"]
+
+
+class TestMethods(unittest.TestCase):
+    """clayton-858: surf and the three rods, alongside grass."""
+
+    def test_only_five_areas_have_water(self):
+        self.assertEqual([a for a in safari_areas() if has_water(a)], WATER_AREAS)
+
+    def test_water_areas_offer_every_method_and_the_rest_only_grass(self):
+        for area in safari_areas():
+            expected = list(METHODS) if area in WATER_AREAS else ["grass"]
+            self.assertEqual(safari_methods(area), expected, area)
+
+    def test_method_aliases(self):
+        cases = {"grass": "grass", "Land": "grass", "surf": "surf", "Surfing": "surf",
+                 "old rod": "old_rod", "OLD_ROD": "old_rod", "good-rod": "good_rod",
+                 "super": "super_rod", "SuperRod": "super_rod"}
+        for given, expected in cases.items():
+            self.assertEqual(normalize_method(given), expected, given)
+
+    def test_unknown_method_raises(self):
+        with self.assertRaises(ValueError):
+            normalize_method("headbutt")
+
+    def test_water_method_in_a_waterless_area_raises(self):
+        for method in WATER_METHODS:
+            with self.assertRaises(ValueError) as ctx:
+                resolve_safari_slots("Mountain", "morning", {}, method)
+            self.assertIn("no water", str(ctx.exception))
+
+    def test_every_method_resolves_to_ten_slots(self):
+        # Grass has 10 block-conditionals, surf 3, each rod 2 -- but the resolved table is
+        # always the flat 10 slots the safari branch draws from.
+        for area in WATER_AREAS:
+            for method in METHODS:
+                for tod in ("morning", "day", "night"):
+                    slots = resolve_safari_slots(area, tod, {"water": 99}, method)
+                    self.assertEqual(len(slots), 10, f"{area}/{method}/{tod}")
+
+
+class TestWaterSlotResolution(unittest.TestCase):
+    def test_rocky_beach_surf_lapras_needs_water_10(self):
+        """Rocky Beach's surf conditionals are water 10/14/18, each a Lapras."""
+        self.assertEqual(block_requirement_for("Rocky Beach", "lapras", method="surf"), None)
+        # Lapras is already in the normal table (slots 8/9) -- so no requirement -- but the
+        # conditionals still upgrade the top slots to the high-level ones.
+        without = resolve_safari_slots("Rocky Beach", "day", {"water": 9}, "surf")
+        with_one = resolve_safari_slots("Rocky Beach", "day", {"water": 10}, "surf")
+        self.assertEqual(without[0], ("magikarp", 15))
+        self.assertEqual(with_one[0], ("lapras", 37))
+        self.assertEqual(with_one[1:], without[1:])
+
+    def test_swamp_super_rod_dragonair_needs_water_15(self):
+        req = block_requirement_for("Swamp", "dragonair", method="super_rod")
+        self.assertEqual(req, {"block_type": "water", "quantity": 15})
+        self.assertNotIn("dragonair",
+                         [sp for sp, _ in resolve_safari_slots("Swamp", "day", {"water": 14},
+                                                               "super_rod")])
+        self.assertEqual(resolve_safari_slots("Swamp", "day", {"water": 15}, "super_rod")[0],
+                         ("dragonair", 42))
+
+    def test_a_rods_two_conditionals_fill_only_the_top_two_slots(self):
+        slots = resolve_safari_slots("Swamp", "day", {"water": 99}, "super_rod")
+        self.assertEqual(slots[:2], [("dragonair", 42), ("dragonair", 45)])
+        # Slot 2 onwards is the untouched normal table (Swamp super rod morning/day/night are
+        # the same), so only two slots can ever be replaced.
+        self.assertEqual(slots[2], ("goldeen", 36))
+
+    def test_locations_and_methods_for_species(self):
+        self.assertEqual(locations_for_species("lapras"),
+                         [{"area": "Rocky Beach", "method": "surf"}])
+        self.assertEqual(locations_for_species("dratini"),
+                         [{"area": "Swamp", "method": "good_rod"},
+                          {"area": "Swamp", "method": "super_rod"}])
+        self.assertEqual(methods_for_species("Swamp", "dragonair"), ["super_rod"])
+
+    def test_areas_for_species_spans_methods_by_default(self):
+        # Magikarp is a water-only species: no grass table anywhere carries it.
+        self.assertEqual(areas_for_species("magikarp"), WATER_AREAS)
+        self.assertEqual(areas_for_species("magikarp", method="grass"), [])
+        self.assertEqual(areas_for_species("lapras", method="surf"), ["Rocky Beach"])
+
+
+class TestRodNibbleCheck(unittest.TestCase):
+    """The nibble check is the encounter's FIRST draw, so a rod's slot sits one advance
+    further on than grass/surf's (PokeFinder WildGenerator4::generateMethodK)."""
+
+    def test_base_rates(self):
+        self.assertEqual([hook_rate(m) for m in ROD_METHODS], [25, 50, 75])
+
+    def test_happiness_and_suction_cups(self):
+        self.assertEqual(hook_rate("good_rod", 20), 70)
+        self.assertEqual(hook_rate("good_rod", 0, True), 100)
+        self.assertEqual(hook_rate("good_rod", 20, True), 140)   # may exceed 100: always bites
+
+    def test_non_rod_has_no_nibble_check(self):
+        for method in ("grass", "surf"):
+            with self.assertRaises(ValueError):
+                hook_rate(method)
+
+    def test_slot_draw_offset_by_method(self):
+        for method in ("grass", "surf"):
+            self.assertEqual(frame_slot(SEED, 7, method), frame_slot(SEED, 7, "grass"))
+        for method in ROD_METHODS:
+            # One further on: a rod's slot at frame N is grass's slot at frame N+1.
+            self.assertEqual(frame_slot(SEED, 7, method), frame_slot(SEED, 8, "grass"))
+
+    def test_rod_hooks_matches_the_first_draw(self):
+        for frame in range(20):
+            state = SEED
+            for _ in range(frame + 1):
+                state = advance_rng(state)
+            roll = (state >> 16) % 100
+            for method in ROD_METHODS:
+                self.assertEqual(rod_hooks(SEED, frame, method), roll < hook_rate(method),
+                                 f"{method} frame {frame}")
+
+    def test_no_hook_means_no_encounter(self):
+        frames = [f for f in range(60) if not rod_hooks(SEED, f, "old_rod")]
+        self.assertTrue(frames, "expected at least one failed old-rod cast in 60 frames")
+        for frame in frames:
+            self.assertIsNone(advance_frame_species(SEED, frame, "Swamp", "day", {"water": 99},
+                                                    "old_rod"))
+
+    def test_candidate_frames_exclude_failed_casts(self):
+        args = (SEED, "Swamp", "day", {"water": 99}, "goldeen")
+        candidates = list(iter_encounter_frames(*args, 0, 200, method="old_rod"))
+        self.assertTrue(candidates)
+        for frame, _level in candidates:
+            self.assertTrue(rod_hooks(SEED, frame, "old_rod"), f"frame {frame} doesn't hook")
+            self.assertEqual(advance_frame_species(SEED, frame, "Swamp", "day", {"water": 99},
+                                                   "old_rod")[0], "goldeen")
+
+    def test_a_higher_hook_rate_only_adds_candidates(self):
+        args = (SEED, "Swamp", "day", {"water": 99}, "goldeen")
+        lean = {f for f, _ in iter_encounter_frames(*args, 0, 300, method="old_rod")}
+        rich = {f for f, _ in iter_encounter_frames(*args, 0, 300, method="old_rod",
+                                                    happiness_bonus=50)}
+        self.assertTrue(lean < rich, "a +50 happiness bonus should strictly widen the set")
+
+    def test_iter_agrees_with_per_frame_lookup_for_every_method(self):
+        for area in ("Swamp", "Marshland"):
+            for method in METHODS:
+                blocks = {"water": 99, "peak": 99, "plains": 99, "forest": 99}
+                slots = resolve_safari_slots(area, "day", blocks, method)
+                target = slots[0][0]
+                found = {f for f, _ in iter_encounter_frames(SEED, area, "day", blocks, target,
+                                                             0, 120, method=method)}
+                brute = {f for f in range(121)
+                         if (advance_frame_species(SEED, f, area, "day", blocks, method) or
+                             (None,))[0] == target}
+                self.assertEqual(found, brute, f"{area}/{method}")
 
 
 if __name__ == "__main__":

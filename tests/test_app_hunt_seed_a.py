@@ -448,8 +448,11 @@ class TestSafariCompassIsUntouched(unittest.TestCase):
         self.assertIn('id="sac-target-frame"', self.html)
         self.assertIn("function _sacAimAdvanceField(", self.html)
 
-    def test_its_own_frame_guide_still_says_sweet_scent(self):
-        self.assertIn('(Sweet scent at the "!")', self.html)
+    def test_its_own_frame_guide_still_names_the_action_at_the_bracket(self):
+        # Sweet Scent is no longer hardcoded here: clayton-858 made the verb follow the
+        # expedition's encounter method (a rod is cast, not scented), so the guide renders
+        # the plan's own `action` and falls back to Sweet Scent when one isn't supplied.
+        self.assertIn('${esc(g.action || "Sweet Scent")} at the "!"', self.html)
 
     def test_the_facade_still_exposes_the_search_it_does_not_use_here(self):
         self.assertTrue(callable(getattr(Facade, "safari_compass_find_target_frame", None)))

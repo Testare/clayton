@@ -176,9 +176,10 @@ DEFAULT_ELM_MARGIN = 3
 class AdvancePlan:
     """A recipe to reach ``encounter_frame`` from ``current_frame``.
 
-    You Sweet Scent while standing on ``scent_frame`` -- which is the
-    ``encounter_frame`` itself (verified in-game against Pokefinder: pressing on
-    ``encounter_frame - 1`` lands one frame early).  The bulk of the distance is
+    You act -- Sweet Scent, or cast the rod (``action``, per ``method``) -- while
+    standing on ``scent_frame``, which is the ``encounter_frame`` itself (verified
+    in-game against Pokefinder: pressing on ``encounter_frame - 1`` lands one frame
+    early; the same holds for a cast).  The bulk of the distance is
     covered by ``chatot_flips`` (two advances each; a trailing half-flip = one
     advance is fine), landing on ``land_frame``; from there ``elm_before_scent``
     Elm calls -- the verifiable margin -- carry you to ``scent_frame``.
@@ -192,26 +193,39 @@ class AdvancePlan:
     elm_before_scent: int        # the readable margin (<= margin; = margin when chatot used)
     land_frame: int              # frame after the chatot flips, before the margin calls
     margin: int
+    method: str = "grass"        # grass/surf (Sweet Scent) or old_rod/good_rod/super_rod
+
+    @property
+    def action(self):
+        """What to do on ``scent_frame`` -- "Sweet Scent", or "cast the Super Rod"."""
+        from claytonlib.safari_encounters import METHOD_ACTIONS, normalize_method
+        return METHOD_ACTIONS[normalize_method(self.method)]
 
 
-def plan_advances(current_frame, encounter_frame, margin=DEFAULT_ELM_MARGIN):
+def plan_advances(current_frame, encounter_frame, margin=DEFAULT_ELM_MARGIN, method="grass"):
     """Plan the advances from ``current_frame`` to ``encounter_frame``.
 
     ``encounter_frame`` is the frame whose roll you want (e.g. 81 for the shiny
-    Metang).  You Sweet Scent while standing ON that frame (empirically -- pressing
-    a frame early misses by one).  Raises ValueError if ``encounter_frame`` is
-    already behind ``current_frame`` (overshot -- you'd need to reset).
+    Metang).  You act -- Sweet Scent, or cast the rod -- while standing ON that frame
+    (empirically -- acting a frame early misses by one).  Raises ValueError if
+    ``encounter_frame`` is already behind ``current_frame`` (overshot -- you'd need to
+    reset).
 
     When more than ``margin`` advances remain, chatot flips close the gap to
     ``margin`` Elm calls short of the scent frame; otherwise the whole (short)
     distance is Elm calls and no chatot flips are used.
+
+    ``method`` only labels the plan (see ``AdvancePlan.action``); the arithmetic is the
+    same for every method, since each one's encounter fires on the frame you act on.
     """
-    scent_frame = encounter_frame   # press Sweet Scent standing on the encounter frame
+    scent_frame = encounter_frame   # act standing on the encounter frame itself
     total = scent_frame - current_frame
     if total < 0:
+        from claytonlib.safari_encounters import METHOD_ACTIONS, normalize_method
         raise ValueError(
-            f"already past the target: on frame {current_frame}, but Sweet Scent "
-            f"for encounter frame {encounter_frame} must fire on frame {scent_frame}")
+            f"already past the target: on frame {current_frame}, but "
+            f"{METHOD_ACTIONS[normalize_method(method)]} for encounter frame "
+            f"{encounter_frame} must fire on frame {scent_frame}")
     elm_before = min(total, margin)
     chatot_advances = total - elm_before
     # A single (or half) chatot flip -- 1 or 2 leftover advances -- isn't worth the unverifiable
@@ -230,6 +244,7 @@ def plan_advances(current_frame, encounter_frame, margin=DEFAULT_ELM_MARGIN):
         elm_before_scent=elm_before,
         land_frame=current_frame + chatot_advances,
         margin=margin,
+        method=method,
     )
 
 
@@ -238,7 +253,8 @@ def margin_guide(rng_calls, elm, plan, n_before=5, n_after=3):
 
     ``n_before`` calls precede the bracket (in case you land early), the bracket
     holds the ``elm_before_scent`` calls you should hear approaching the target,
-    ``!`` marks where to Sweet Scent (on ``scent_frame`` = the encounter frame),
+    ``!`` marks where to act -- Sweet Scent, or cast the rod (``plan.action``) -- on
+    ``scent_frame``, which is the encounter frame itself,
     and ``n_after`` trailing calls follow (in case you overshoot).
 
     ``elm[i]`` is the call heard leaving frame ``rng_calls + i``, so the bracket's
@@ -261,9 +277,10 @@ def margin_guide(rng_calls, elm, plan, n_before=5, n_after=3):
 
 def describe_plan(plan, guide=None):
     """A multi-line, human-readable instruction block for the notebook."""
+    action = plan.action
     lines = [
         f"On advance frame {plan.current_frame}; want a Metang encounter on "
-        f"frame {plan.encounter_frame} (Sweet Scent while on frame {plan.scent_frame}).",
+        f"frame {plan.encounter_frame} ({action} while on frame {plan.scent_frame}).",
         f"  Advances to go: {plan.total_advances}",
     ]
     if plan.chatot_advances > 0:
@@ -278,9 +295,9 @@ def describe_plan(plan, guide=None):
         step2 = 2
     lines.append(
         f"  {step2}. {plan.elm_before_scent} Elm calls "
-        f"-> frame {plan.scent_frame}, then Sweet Scent.")
+        f"-> frame {plan.scent_frame}, then {action}.")
     if guide is not None:
-        lines.append(f"  Guide: {guide}   (]! = Sweet Scent here)")
+        lines.append(f"  Guide: {guide}   (]! = {action} here)")
     return "\n".join(lines)
 
 
@@ -308,7 +325,7 @@ def prompt_target_frame(seed, default=DEFAULT_TARGET_FRAME, input_fn=None):
 
 
 def margin_calls(rng_calls, elm, plan):
-    """The Elm calls you'd hear over the plan's margin (the bracketed calls before Sweet Scent)."""
+    """The Elm calls you'd hear over the plan's margin (the bracketed calls before you act)."""
     j_land = plan.land_frame - rng_calls
     return elm[j_land:j_land + plan.elm_before_scent]
 
@@ -346,7 +363,8 @@ def margin_ambiguous(rng_calls, elm, plan):
 
 
 def _inhouse_nearest_to_advance(seed, area, tod, blocks, target, aim_advance, *,
-                                current_frame, lo, max_frame, search_margin, rng_calls, elm):
+                                current_frame, lo, max_frame, search_margin, rng_calls, elm,
+                                method="grass", happiness_bonus=0, suction_cups=False):
     """The in-house ``target`` frame *closest to ``aim_advance``* (calibration data-gathering aim).
 
     Same universe as the default nearest-frame path -- frames in ``[lo, max_frame]`` (extended
@@ -358,11 +376,13 @@ def _inhouse_nearest_to_advance(seed, area, tod, blocks, target, aim_advance, *,
     from claytonlib.safari_encounters import iter_encounter_frames
     hi = max(max_frame, aim_advance + search_margin)
     candidates = list(iter_encounter_frames(seed, area, tod, blocks, target,
-                                            min_frame=lo, max_frame=hi))
+                                            min_frame=lo, max_frame=hi, method=method,
+                                            happiness_bonus=happiness_bonus,
+                                            suction_cups=suction_cups))
     if not candidates:
         raise RuntimeError(
-            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} blocks={blocks} -- "
-            f"check the block scores, area, and time of day.")
+            f"no {target} frame in [{lo}, {hi}] for {area}/{tod} via {method} "
+            f"blocks={blocks} -- check the block scores, area, time of day and method.")
 
     def distance(frame_level):
         frame = frame_level[0]
@@ -371,7 +391,8 @@ def _inhouse_nearest_to_advance(seed, area, tod, blocks, target, aim_advance, *,
     have_margin = rng_calls is not None and elm is not None
     unambiguous = [fl for fl in candidates if not have_margin
                    or not margin_ambiguous(rng_calls, elm,
-                                           plan_advances(current_frame, fl[0], margin=search_margin))]
+                                           plan_advances(current_frame, fl[0], margin=search_margin,
+                                                         method=method))]
     if unambiguous:
         frame, level = min(unambiguous, key=distance)
         if (frame, level) != min(candidates, key=distance):
@@ -391,8 +412,14 @@ def _inhouse_nearest_to_advance(seed, area, tod, blocks, target, aim_advance, *,
 def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
                         area="Mountain", tod="morning", blocks=None, target="metang",
                         current_frame=0, search_margin=DEFAULT_ELM_MARGIN, max_frame=300,
-                        rng_calls=None, elm=None, aim_advance=None, input_fn=None):
-    """Pick the advance frame to Sweet Scent on, honoring the in-house/Pokefinder toggle.
+                        rng_calls=None, elm=None, aim_advance=None, input_fn=None,
+                        method="grass", happiness_bonus=0, suction_cups=False):
+    """Pick the advance frame to act on, honoring the in-house/Pokefinder toggle.
+
+    ``method`` is how the encounter is triggered: "grass"/"surf" (Sweet Scent) or one of
+    "old_rod"/"good_rod"/"super_rod" (clayton-858).  For a rod, ``happiness_bonus`` and
+    ``suction_cups`` feed the nibble check, so only frames that actually hook something are
+    offered (see claytonlib.safari_encounters.hook_rate).
 
     Exact-seed rule (ALWAYS, regardless of ``use_inhouse``): if the loaded ``seed`` is the intended
     ``key_seed`` we hit the target dead-on, so the frame is exactly ``target_advances`` (the
@@ -427,12 +454,15 @@ def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
             return _inhouse_nearest_to_advance(
                 seed, area, tod, blocks, target, aim_advance,
                 current_frame=current_frame, lo=lo, max_frame=max_frame,
-                search_margin=search_margin, rng_calls=rng_calls, elm=elm)
+                search_margin=search_margin, rng_calls=rng_calls, elm=elm,
+                method=method, happiness_bonus=happiness_bonus, suction_cups=suction_cups)
         candidates = iter_encounter_frames(seed, area, tod, blocks, target,
-                                           min_frame=lo, max_frame=max_frame)
+                                           min_frame=lo, max_frame=max_frame, method=method,
+                                           happiness_bonus=happiness_bonus,
+                                           suction_cups=suction_cups)
         first = None
         for frame, level in candidates:
-            plan = plan_advances(current_frame, frame, margin=search_margin)
+            plan = plan_advances(current_frame, frame, margin=search_margin, method=method)
             if first is None:
                 first = (frame, level)
             if rng_calls is None or elm is None or not margin_ambiguous(rng_calls, elm, plan):
@@ -447,6 +477,6 @@ def choose_target_frame(seed, *, key_seed, target_advances, use_inhouse,
                   f"using the nearest, advance frame {frame} (L{level}) -- verify carefully.")
             return frame
         raise RuntimeError(
-            f"no {target} frame in [{lo}, {max_frame}] for {area}/{tod} blocks={blocks} -- "
-            f"check the block scores, area, and time of day.")
+            f"no {target} frame in [{lo}, {max_frame}] for {area}/{tod} via {method} "
+            f"blocks={blocks} -- check the block scores, area, time of day and method.")
     return prompt_target_frame(seed, default=target_advances, input_fn=input_fn)

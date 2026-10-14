@@ -1272,11 +1272,55 @@ class Facade:
         from claytonlib.safari_encounters import safari_areas
         return safari_areas()
 
-    def list_safari_areas_for_pokemon(self, pokemon: str) -> list[str]:
+    def list_safari_areas_for_pokemon(self, pokemon: str, method: str | None = None) -> list[str]:
         """Only the areas where `pokemon` can actually appear — narrows the Safari area
-        dropdown once a Pokemon is chosen (clayton-b42.10.3)."""
-        from claytonlib.safari_encounters import areas_for_species
-        return areas_for_species(pokemon)
+        dropdown once a Pokemon is chosen (clayton-b42.10.3). `method=None` means by any
+        method; pass one to narrow to just that one (clayton-858).
+
+        With no `pokemon` yet (the dropdown's own starting state) this falls back to every
+        area that offers `method` at all — so picking Super Rod before picking a Pokemon still
+        leaves only the five areas with water."""
+        from claytonlib.safari_encounters import areas_for_species, safari_areas, safari_methods
+        if not pokemon:
+            if not method:
+                return safari_areas()
+            from claytonlib.safari_encounters import normalize_method
+            m = normalize_method(method)
+            return [a for a in safari_areas() if m in safari_methods(a)]
+        return areas_for_species(pokemon, method=method or None)
+
+    def list_safari_methods(self, area: str = "") -> list[dict]:
+        """The encounter methods, as ``{"method", "label", "action", "is_rod"}`` rows for the
+        Configure dropdown. Narrowed to what `area` actually offers when one is given — the
+        four water methods exist only in the five areas with water (clayton-858)."""
+        from claytonlib.safari_encounters import (
+            METHODS, METHOD_ACTIONS, METHOD_LABELS, ROD_METHODS, safari_methods,
+        )
+        names = safari_methods(area) if area else list(METHODS)
+        return [{"method": m, "label": METHOD_LABELS[m], "action": METHOD_ACTIONS[m],
+                 "is_rod": m in ROD_METHODS} for m in names]
+
+    def list_safari_locations_for_pokemon(self, pokemon: str) -> list[dict]:
+        """Every ``{"area", "method", "label"}`` where `pokemon` can appear — the "where do I
+        even hunt this" answer now that a species may be reachable several ways (clayton-858).
+        Poliwhirl, for instance, surfaces in Wetland surf AND on all three rods."""
+        from claytonlib.safari_encounters import METHOD_LABELS, locations_for_species
+        return [{**loc, "label": METHOD_LABELS[loc["method"]]}
+                for loc in locations_for_species(pokemon)]
+
+    def safari_fishing_happiness_bonuses(self) -> list[int]:
+        """The lead-happiness bonuses a rod's hook rate can take (0/20/30/40/50)."""
+        from claytonlib.safari_encounters import HAPPINESS_BONUSES
+        return list(HAPPINESS_BONUSES)
+
+    def safari_hook_rate(self, method: str, happiness_bonus: int = 0,
+                         suction_cups: bool = False) -> int | None:
+        """A rod's chance out of 100 that something bites, for the Configure page's own
+        feedback. None for grass/surf, which have no such check."""
+        from claytonlib.safari_encounters import ROD_METHODS, hook_rate, normalize_method
+        if normalize_method(method) not in ROD_METHODS:
+            return None
+        return hook_rate(method, int(happiness_bonus or 0), bool(suction_cups))
 
     def safari_pokemon_rates(self, pokemon_name: str) -> dict | None:
         """Base catch and flee rates for a species, raw and as percentages.
@@ -1297,12 +1341,22 @@ class Facade:
                 "catch_rate": p.base_catch_rate, "catch_percent": p.capture_chance(),
                 "flee_rate": p.base_flee_rate, "flee_percent": p.flee_chance()}
 
-    def safari_block_requirement(self, area: str, pokemon: str) -> dict | None:
-        """The block score `pokemon` needs to appear in `area`, or None if it's already
-        reachable unconditionally there (or doesn't appear in that area at all) — drives
+    def safari_block_requirement(self, area: str, pokemon: str,
+                                 method: str = "grass") -> dict | None:
+        """The block score `pokemon` needs to appear in `area` by `method`, or None if it's
+        already reachable unconditionally there (or doesn't appear that way at all) — drives
         the "(required: N)" label and invalid-styling on the block-score inputs."""
-        from claytonlib.safari_encounters import block_requirement_for
-        return block_requirement_for(area, pokemon)
+        from claytonlib.safari_encounters import (
+            block_requirement_for, normalize_method, safari_methods,
+        )
+        if not area or not pokemon:
+            return None
+        # A water method in a waterless area can't be reached through the UI's own dropdowns,
+        # but this is a label helper: say "no requirement" rather than raising mid-keystroke.
+        # The real search (safari_compass_find_target_frame) explains that case properly.
+        if normalize_method(method or "grass") not in safari_methods(area):
+            return None
+        return block_requirement_for(area, pokemon, method=method or "grass")
 
     # -- Metronome Compass: seed identification ---------------------------
 
@@ -1427,20 +1481,23 @@ class Facade:
 
     def safari_compass_plan_frame(self, params: dict) -> dict:
         """A chatot-flip + Elm-call route from the pinned current frame to a chosen target
-        encounter frame. params: seed, prev_routes, current_frame, encounter_frame, margin."""
+        encounter frame. params: seed, prev_routes, current_frame, encounter_frame, margin,
+        method (grass/surf/old_rod/good_rod/super_rod — decides the guide's verb)."""
         from app import safari_compass
         seed = params["seed"]
         seed = int(seed, 16) if isinstance(seed, str) else int(seed)
         return safari_compass.plan_frame_route(
             seed, params.get("prev_routes") or {},
             int(params["current_frame"]), int(params["encounter_frame"]),
-            margin=int(params.get("margin", 3)))
+            margin=int(params.get("margin", 3)),
+            method=params.get("method") or "grass")
 
     def safari_compass_find_target_frame(self, params: dict) -> dict:
         """In-house target-encounter-frame search (vs. pasting one from Pokefinder).
 
         params: seed, prev_routes, current_frame, area, tod (morning/day/night), block_config,
-        pokemon, margin, max_frame, aim_advance (optional)."""
+        pokemon, margin, max_frame, aim_advance (optional), method (default grass), and for a
+        rod happiness_bonus / suction_cups (which decide WHICH frames hook at all)."""
         from app import safari_compass
         seed = params["seed"]
         seed = int(seed, 16) if isinstance(seed, str) else int(seed)
@@ -1449,7 +1506,10 @@ class Facade:
             seed, params.get("prev_routes") or {}, int(params["current_frame"]),
             params["area"], params["tod"], params.get("block_config") or {}, params["pokemon"],
             margin=int(params.get("margin", 3)), max_frame=int(params.get("max_frame", 300)),
-            aim_advance=int(aim) if aim not in (None, "") else None)
+            aim_advance=int(aim) if aim not in (None, "") else None,
+            method=params.get("method") or "grass",
+            happiness_bonus=int(params.get("happiness_bonus", 0) or 0),
+            suction_cups=bool(params.get("suction_cups", False)))
 
     # -- Runs (profile-scoped) --------------------------------------------
 

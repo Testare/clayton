@@ -404,6 +404,51 @@ class TestFacadeFrameIdentificationAndPlanning(unittest.TestCase):
         self.assertIn("frame", res)
         self.assertFalse(res["all_ambiguous"])
 
+    def test_plan_frame_route_names_the_rod_cast_instead_of_sweet_scent(self):
+        """clayton-858: the route is the same, the final action isn't."""
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        plan = api.safari_compass_plan_frame({
+            "seed": self._SEED, "current_frame": 9, "encounter_frame": 81,
+            "method": "super_rod"})
+        self.assertEqual(plan["action"], "cast the Super Rod")
+        self.assertIn("cast the Super Rod", plan["description"])
+        grass = api.safari_compass_plan_frame({
+            "seed": self._SEED, "current_frame": 9, "encounter_frame": 81})
+        self.assertEqual(grass["action"], "Sweet Scent")
+        self.assertEqual(plan["chatot_flips"], grass["chatot_flips"])
+
+    def test_find_target_frame_for_a_rod_only_offers_frames_that_hook(self):
+        from claytonlib.safari_encounters import advance_frame_species, rod_hooks
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        params = {"seed": self._SEED, "current_frame": 0, "area": "Swamp", "tod": "day",
+                  "block_config": {"water": 20}, "pokemon": "dragonair",
+                  "method": "super_rod"}
+        res = api.safari_compass_find_target_frame(params)
+        self.assertTrue(rod_hooks(self._SEED, res["frame"], "super_rod"))
+        self.assertEqual(advance_frame_species(self._SEED, res["frame"], "Swamp", "day",
+                                               {"water": 20}, "super_rod")[0], "dragonair")
+        # A happiness bonus hooks more casts, so it can only bring the frame forward.
+        richer = api.safari_compass_find_target_frame({**params, "happiness_bonus": 50})
+        self.assertLessEqual(richer["frame"], res["frame"])
+
+    def test_find_target_frame_rejects_a_rod_where_there_is_no_water(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        with self.assertRaises(ValueError) as ctx:
+            api.safari_compass_find_target_frame({
+                "seed": self._SEED, "current_frame": 0, "area": "Mountain", "tod": "morning",
+                "block_config": {"peak": 56}, "pokemon": "metang", "method": "surf"})
+        self.assertIn("no water", str(ctx.exception))
+
+    def test_find_target_frame_block_error_names_the_method(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        with self.assertRaises(ValueError) as ctx:
+            api.safari_compass_find_target_frame({
+                "seed": self._SEED, "current_frame": 0, "area": "Swamp", "tod": "day",
+                "block_config": {"water": 1}, "pokemon": "dragonair", "method": "super_rod"})
+        msg = str(ctx.exception)
+        self.assertIn("water block score of at least 15", msg)
+        self.assertIn("Super Rod", msg)
+
     def test_find_target_frame_accepts_aim_advance_as_string_or_int(self):
         api = Facade(FileStore(tempfile.mkdtemp()))
         by_str = api.safari_compass_find_target_frame({

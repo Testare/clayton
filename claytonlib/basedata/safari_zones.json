@@ -12,12 +12,25 @@
    "day": 1,
    "night": 2
   },
-  "slot_formula": "slot(advance N) = (advance_rng^(N+1)(seedA) >> 16) % 10",
+  "methods": [
+   "grass",
+   "surf",
+   "old_rod",
+   "good_rod",
+   "super_rod"
+  ],
+  "slot_formula": "slot(advance N) = (advance_rng^(N+draws)(seedA) >> 16) % 10, draws=1 for grass/surf and 2 for a rod (the nibble check draws first)",
+  "rod_base_rate": {
+   "old_rod": 25,
+   "good_rod": 50,
+   "super_rod": 75
+  },
   "source": "Admiral-Fish/EncounterTableGenerator hgss/safari NARC; species=veekun EN",
-  "note": "grass (Land) only; block-conditionals fill top slots in order (PokeFinder Encounters4::getHGSSSafari)"
+  "note": "all 5 methods; every method draws a flat 10-slot table, but the number of block-conditionals differs (grass 10, surf 3, rods 2). Block-conditionals fill top slots in order (PokeFinder Encounters4::getHGSSSafari). Surf/rod tables are emitted only for the 5 areas with water."
  },
  "Plains": {
   "location": 149,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
@@ -341,6 +354,7 @@
  },
  "Meadow": {
   "location": 150,
+  "has_water": true,
   "grass": {
    "normal": {
     "morning": [
@@ -660,19 +674,742 @@
      0
     ]
    ]
+  },
+  "surf": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "marill",
+      16
+     ],
+     [
+      "marill",
+      17
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "marill",
+      16
+     ],
+     [
+      "marill",
+      17
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "marill",
+      16
+     ],
+     [
+      "marill",
+      17
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "skiploom",
+      47
+     ],
+     [
+      "masquerain",
+      42
+     ],
+     [
+      "masquerain",
+      46
+     ]
+    ],
+    "day": [
+     [
+      "skiploom",
+      47
+     ],
+     [
+      "masquerain",
+      42
+     ],
+     [
+      "masquerain",
+      46
+     ]
+    ],
+    "night": [
+     [
+      "skiploom",
+      47
+     ],
+     [
+      "masquerain",
+      42
+     ],
+     [
+      "masquerain",
+      46
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     3,
+     0,
+     0
+    ],
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     14,
+     0,
+     0
+    ]
+   ]
+  },
+  "old_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "poliwhirl",
+      15
+     ],
+     [
+      "poliwhirl",
+      16
+     ]
+    ],
+    "day": [
+     [
+      "poliwhirl",
+      15
+     ],
+     [
+      "poliwhirl",
+      16
+     ]
+    ],
+    "night": [
+     [
+      "poliwhirl",
+      15
+     ],
+     [
+      "poliwhirl",
+      16
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     2,
+     0,
+     0
+    ],
+    [
+     4,
+     3,
+     0,
+     0
+    ]
+   ]
+  },
+  "good_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "poliwhirl",
+      27
+     ],
+     [
+      "gyarados",
+      28
+     ]
+    ],
+    "day": [
+     [
+      "poliwhirl",
+      27
+     ],
+     [
+      "gyarados",
+      28
+     ]
+    ],
+    "night": [
+     [
+      "poliwhirl",
+      27
+     ],
+     [
+      "gyarados",
+      28
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     5,
+     0,
+     0
+    ],
+    [
+     4,
+     7,
+     0,
+     0
+    ]
+   ]
+  },
+  "super_rod": {
+   "normal": {
+    "morning": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "gyarados",
+      42
+     ],
+     [
+      "gyarados",
+      45
+     ]
+    ],
+    "day": [
+     [
+      "gyarados",
+      42
+     ],
+     [
+      "gyarados",
+      45
+     ]
+    ],
+    "night": [
+     [
+      "gyarados",
+      42
+     ],
+     [
+      "gyarados",
+      45
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     14,
+     0,
+     0
+    ]
+   ]
   }
  },
  "Savannah": {
   "location": 151,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
      [
-      "nidoran\u2640",
+      "nidoran-f",
       15
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       15
      ],
      [
@@ -680,11 +1417,11 @@
       15
      ],
      [
-      "nidoran\u2640",
+      "nidoran-f",
       16
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       16
      ],
      [
@@ -692,11 +1429,11 @@
       16
      ],
      [
-      "nidoran\u2640",
+      "nidoran-f",
       17
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       17
      ],
      [
@@ -710,11 +1447,11 @@
     ],
     "day": [
      [
-      "nidoran\u2640",
+      "nidoran-f",
       15
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       15
      ],
      [
@@ -722,11 +1459,11 @@
       15
      ],
      [
-      "nidoran\u2640",
+      "nidoran-f",
       16
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       16
      ],
      [
@@ -734,11 +1471,11 @@
       16
      ],
      [
-      "nidoran\u2640",
+      "nidoran-f",
       17
      ],
      [
-      "nidoran\u2642",
+      "nidoran-m",
       17
      ],
      [
@@ -987,6 +1724,7 @@
  },
  "Peak": {
   "location": 152,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
@@ -1310,6 +2048,7 @@
  },
  "Rocky Beach": {
   "location": 153,
+  "has_water": true,
   "grass": {
    "normal": {
     "morning": [
@@ -1629,10 +2368,733 @@
      0
     ]
    ]
+  },
+  "surf": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwhirl",
+      16
+     ],
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "lapras",
+      15
+     ],
+     [
+      "lapras",
+      16
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwhirl",
+      16
+     ],
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "lapras",
+      15
+     ],
+     [
+      "lapras",
+      16
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwhirl",
+      16
+     ],
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "lapras",
+      15
+     ],
+     [
+      "lapras",
+      16
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "lapras",
+      37
+     ],
+     [
+      "lapras",
+      42
+     ],
+     [
+      "lapras",
+      47
+     ]
+    ],
+    "day": [
+     [
+      "lapras",
+      37
+     ],
+     [
+      "lapras",
+      42
+     ],
+     [
+      "lapras",
+      47
+     ]
+    ],
+    "night": [
+     [
+      "lapras",
+      36
+     ],
+     [
+      "lapras",
+      41
+     ],
+     [
+      "lapras",
+      46
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     14,
+     0,
+     0
+    ],
+    [
+     4,
+     18,
+     0,
+     0
+    ]
+   ]
+  },
+  "old_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "goldeen",
+      13
+     ],
+     [
+      "goldeen",
+      14
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "krabby",
+      13
+     ],
+     [
+      "krabby",
+      14
+     ],
+     [
+      "krabby",
+      15
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "goldeen",
+      13
+     ],
+     [
+      "goldeen",
+      14
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "krabby",
+      13
+     ],
+     [
+      "krabby",
+      14
+     ],
+     [
+      "krabby",
+      15
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "goldeen",
+      13
+     ],
+     [
+      "goldeen",
+      14
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "krabby",
+      13
+     ],
+     [
+      "krabby",
+      14
+     ],
+     [
+      "krabby",
+      15
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "krabby",
+      17
+     ],
+     [
+      "krabby",
+      18
+     ]
+    ],
+    "day": [
+     [
+      "krabby",
+      17
+     ],
+     [
+      "krabby",
+      18
+     ]
+    ],
+    "night": [
+     [
+      "krabby",
+      17
+     ],
+     [
+      "krabby",
+      18
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     2,
+     0,
+     0
+    ],
+    [
+     4,
+     3,
+     0,
+     0
+    ]
+   ]
+  },
+  "good_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "krabby",
+      22
+     ],
+     [
+      "krabby",
+      23
+     ],
+     [
+      "krabby",
+      24
+     ],
+     [
+      "krabby",
+      25
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "krabby",
+      22
+     ],
+     [
+      "krabby",
+      23
+     ],
+     [
+      "krabby",
+      24
+     ],
+     [
+      "krabby",
+      25
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "krabby",
+      22
+     ],
+     [
+      "krabby",
+      23
+     ],
+     [
+      "krabby",
+      24
+     ],
+     [
+      "krabby",
+      25
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "kingler",
+      26
+     ],
+     [
+      "kingler",
+      27
+     ]
+    ],
+    "day": [
+     [
+      "kingler",
+      26
+     ],
+     [
+      "kingler",
+      27
+     ]
+    ],
+    "night": [
+     [
+      "kingler",
+      26
+     ],
+     [
+      "kingler",
+      27
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     5,
+     0,
+     0
+    ],
+    [
+     4,
+     8,
+     0,
+     0
+    ]
+   ]
+  },
+  "super_rod": {
+   "normal": {
+    "morning": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "goldeen",
+      38
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "seaking",
+      38
+     ],
+     [
+      "kingler",
+      38
+     ],
+     [
+      "kingler",
+      39
+     ]
+    ],
+    "day": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "goldeen",
+      38
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "seaking",
+      38
+     ],
+     [
+      "kingler",
+      38
+     ],
+     [
+      "kingler",
+      39
+     ]
+    ],
+    "night": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "goldeen",
+      38
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "seaking",
+      38
+     ],
+     [
+      "kingler",
+      38
+     ],
+     [
+      "kingler",
+      39
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "corphish",
+      46
+     ],
+     [
+      "corphish",
+      48
+     ]
+    ],
+    "day": [
+     [
+      "corphish",
+      46
+     ],
+     [
+      "corphish",
+      48
+     ]
+    ],
+    "night": [
+     [
+      "corphish",
+      46
+     ],
+     [
+      "corphish",
+      48
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     15,
+     0,
+     0
+    ],
+    [
+     4,
+     20,
+     0,
+     0
+    ]
+   ]
   }
  },
  "Wetland": {
   "location": 154,
+  "has_water": true,
   "grass": {
    "normal": {
     "morning": [
@@ -1645,7 +3107,7 @@
       15
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       15
      ],
      [
@@ -1657,7 +3119,7 @@
       16
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       16
      ],
      [
@@ -1669,7 +3131,7 @@
       17
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       17
      ],
      [
@@ -1687,7 +3149,7 @@
       15
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       15
      ],
      [
@@ -1699,7 +3161,7 @@
       16
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       16
      ],
      [
@@ -1711,7 +3173,7 @@
       17
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       17
      ],
      [
@@ -1777,7 +3239,7 @@
       47
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       41
      ],
      [
@@ -1819,7 +3281,7 @@
       47
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       41
      ],
      [
@@ -1861,7 +3323,7 @@
       47
      ],
      [
-      "farfetch\u2019d",
+      "farfetchd",
       41
      ],
      [
@@ -1952,10 +3414,733 @@
      0
     ]
    ]
+  },
+  "surf": {
+   "normal": {
+    "morning": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "psyduck",
+      16
+     ],
+     [
+      "psyduck",
+      17
+     ],
+     [
+      "quagsire",
+      16
+     ],
+     [
+      "quagsire",
+      17
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "psyduck",
+      16
+     ],
+     [
+      "psyduck",
+      17
+     ],
+     [
+      "quagsire",
+      16
+     ],
+     [
+      "quagsire",
+      17
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "psyduck",
+      16
+     ],
+     [
+      "psyduck",
+      17
+     ],
+     [
+      "quagsire",
+      16
+     ],
+     [
+      "quagsire",
+      17
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "quagsire",
+      37
+     ],
+     [
+      "golduck",
+      37
+     ],
+     [
+      "golduck",
+      45
+     ]
+    ],
+    "day": [
+     [
+      "quagsire",
+      37
+     ],
+     [
+      "golduck",
+      37
+     ],
+     [
+      "golduck",
+      45
+     ]
+    ],
+    "night": [
+     [
+      "quagsire",
+      37
+     ],
+     [
+      "golduck",
+      37
+     ],
+     [
+      "golduck",
+      45
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     3,
+     0,
+     0
+    ],
+    [
+     4,
+     4,
+     0,
+     0
+    ],
+    [
+     4,
+     6,
+     0,
+     0
+    ]
+   ]
+  },
+  "old_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "poliwhirl",
+      18
+     ]
+    ],
+    "day": [
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "poliwhirl",
+      18
+     ]
+    ],
+    "night": [
+     [
+      "poliwhirl",
+      17
+     ],
+     [
+      "poliwhirl",
+      18
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     2,
+     0,
+     0
+    ],
+    [
+     4,
+     3,
+     0,
+     0
+    ]
+   ]
+  },
+  "good_rod": {
+   "normal": {
+    "morning": [
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      23
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      23
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      22
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      23
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwag",
+      24
+     ],
+     [
+      "poliwhirl",
+      23
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "corphish",
+      26
+     ],
+     [
+      "corphish",
+      28
+     ]
+    ],
+    "day": [
+     [
+      "corphish",
+      26
+     ],
+     [
+      "corphish",
+      28
+     ]
+    ],
+    "night": [
+     [
+      "corphish",
+      26
+     ],
+     [
+      "corphish",
+      28
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     14,
+     0,
+     0
+    ]
+   ]
+  },
+  "super_rod": {
+   "normal": {
+    "morning": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      37
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      37
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      35
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      36
+     ],
+     [
+      "poliwag",
+      37
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "gyarados",
+      45
+     ],
+     [
+      "gyarados",
+      48
+     ]
+    ],
+    "day": [
+     [
+      "gyarados",
+      44
+     ],
+     [
+      "gyarados",
+      47
+     ]
+    ],
+    "night": [
+     [
+      "gyarados",
+      45
+     ],
+     [
+      "gyarados",
+      48
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     6,
+     0,
+     0
+    ],
+    [
+     4,
+     9,
+     0,
+     0
+    ]
+   ]
   }
  },
  "Forest": {
   "location": 155,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
@@ -1980,7 +4165,7 @@
       16
      ],
      [
-      "mr. mime",
+      "mr-mime",
       16
      ],
      [
@@ -1992,7 +4177,7 @@
       17
      ],
      [
-      "mr. mime",
+      "mr-mime",
       17
      ],
      [
@@ -2022,7 +4207,7 @@
       16
      ],
      [
-      "mr. mime",
+      "mr-mime",
       16
      ],
      [
@@ -2034,7 +4219,7 @@
       17
      ],
      [
-      "mr. mime",
+      "mr-mime",
       17
      ],
      [
@@ -2088,7 +4273,7 @@
    "block": {
     "morning": [
      [
-      "mr. mime",
+      "mr-mime",
       45
      ],
      [
@@ -2130,7 +4315,7 @@
     ],
     "day": [
      [
-      "mr. mime",
+      "mr-mime",
       45
      ],
      [
@@ -2172,7 +4357,7 @@
     ],
     "night": [
      [
-      "mr. mime",
+      "mr-mime",
       45
      ],
      [
@@ -2279,6 +4464,7 @@
  },
  "Swamp": {
   "location": 156,
+  "has_water": true,
   "grass": {
    "normal": {
     "morning": [
@@ -2598,10 +4784,733 @@
      0
     ]
    ]
+  },
+  "surf": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      16
+     ],
+     [
+      "goldeen",
+      17
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      16
+     ],
+     [
+      "goldeen",
+      17
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      16
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "magikarp",
+      17
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      15
+     ],
+     [
+      "goldeen",
+      16
+     ],
+     [
+      "goldeen",
+      17
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "seaking",
+      42
+     ],
+     [
+      "murkrow",
+      47
+     ],
+     [
+      "duskull",
+      48
+     ]
+    ],
+    "day": [
+     [
+      "seaking",
+      42
+     ],
+     [
+      "murkrow",
+      47
+     ],
+     [
+      "duskull",
+      48
+     ]
+    ],
+    "night": [
+     [
+      "seaking",
+      42
+     ],
+     [
+      "murkrow",
+      47
+     ],
+     [
+      "duskull",
+      48
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     4,
+     0,
+     0
+    ],
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     35,
+     0,
+     0
+    ]
+   ]
+  },
+  "old_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "magikarp",
+      15
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "goldeen",
+      17
+     ],
+     [
+      "seaking",
+      17
+     ]
+    ],
+    "day": [
+     [
+      "goldeen",
+      17
+     ],
+     [
+      "seaking",
+      17
+     ]
+    ],
+    "night": [
+     [
+      "goldeen",
+      17
+     ],
+     [
+      "seaking",
+      17
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     2,
+     0,
+     0
+    ],
+    [
+     4,
+     3,
+     0,
+     0
+    ]
+   ]
+  },
+  "good_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "goldeen",
+      24
+     ],
+     [
+      "seaking",
+      24
+     ],
+     [
+      "seaking",
+      25
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "goldeen",
+      24
+     ],
+     [
+      "seaking",
+      24
+     ],
+     [
+      "seaking",
+      25
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      22
+     ],
+     [
+      "goldeen",
+      23
+     ],
+     [
+      "goldeen",
+      24
+     ],
+     [
+      "seaking",
+      24
+     ],
+     [
+      "seaking",
+      25
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "seaking",
+      27
+     ],
+     [
+      "dratini",
+      29
+     ]
+    ],
+    "day": [
+     [
+      "seaking",
+      27
+     ],
+     [
+      "dratini",
+      29
+     ]
+    ],
+    "night": [
+     [
+      "seaking",
+      27
+     ],
+     [
+      "dratini",
+      29
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     6,
+     0,
+     0
+    ],
+    [
+     4,
+     10,
+     0,
+     0
+    ]
+   ]
+  },
+  "super_rod": {
+   "normal": {
+    "morning": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "dratini",
+      36
+     ],
+     [
+      "dratini",
+      37
+     ]
+    ],
+    "day": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "dratini",
+      36
+     ],
+     [
+      "dratini",
+      37
+     ]
+    ],
+    "night": [
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      35
+     ],
+     [
+      "goldeen",
+      36
+     ],
+     [
+      "goldeen",
+      37
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      35
+     ],
+     [
+      "seaking",
+      36
+     ],
+     [
+      "seaking",
+      37
+     ],
+     [
+      "dratini",
+      36
+     ],
+     [
+      "dratini",
+      37
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "dragonair",
+      42
+     ],
+     [
+      "dragonair",
+      45
+     ]
+    ],
+    "day": [
+     [
+      "dragonair",
+      42
+     ],
+     [
+      "dragonair",
+      45
+     ]
+    ],
+    "night": [
+     [
+      "dragonair",
+      42
+     ],
+     [
+      "dragonair",
+      45
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     15,
+     0,
+     0
+    ],
+    [
+     4,
+     20,
+     0,
+     0
+    ]
+   ]
   }
  },
  "Marshland": {
   "location": 157,
+  "has_water": true,
   "grass": {
    "normal": {
     "morning": [
@@ -2921,10 +5830,733 @@
      0
     ]
    ]
+  },
+  "surf": {
+   "normal": {
+    "morning": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "grimer",
+      15
+     ],
+     [
+      "grimer",
+      16
+     ],
+     [
+      "grimer",
+      17
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "grimer",
+      15
+     ],
+     [
+      "grimer",
+      16
+     ],
+     [
+      "grimer",
+      17
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      15
+     ],
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      17
+     ],
+     [
+      "wooper",
+      15
+     ],
+     [
+      "wooper",
+      16
+     ],
+     [
+      "wooper",
+      17
+     ],
+     [
+      "grimer",
+      15
+     ],
+     [
+      "grimer",
+      16
+     ],
+     [
+      "grimer",
+      17
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "jumpluff",
+      47
+     ],
+     [
+      "quagsire",
+      43
+     ],
+     [
+      "muk",
+      48
+     ]
+    ],
+    "day": [
+     [
+      "jumpluff",
+      47
+     ],
+     [
+      "quagsire",
+      43
+     ],
+     [
+      "muk",
+      48
+     ]
+    ],
+    "night": [
+     [
+      "jumpluff",
+      47
+     ],
+     [
+      "quagsire",
+      43
+     ],
+     [
+      "muk",
+      48
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     10,
+     0,
+     0
+    ],
+    [
+     4,
+     13,
+     0,
+     0
+    ],
+    [
+     4,
+     16,
+     0,
+     0
+    ]
+   ]
+  },
+  "old_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      12
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      13
+     ],
+     [
+      "magikarp",
+      14
+     ],
+     [
+      "magikarp",
+      15
+     ],
+     [
+      "poliwag",
+      12
+     ],
+     [
+      "poliwag",
+      13
+     ],
+     [
+      "poliwag",
+      14
+     ],
+     [
+      "poliwag",
+      15
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      18
+     ]
+    ],
+    "day": [
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      18
+     ]
+    ],
+    "night": [
+     [
+      "poliwag",
+      16
+     ],
+     [
+      "poliwag",
+      18
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     2,
+     0,
+     0
+    ],
+    [
+     4,
+     3,
+     0,
+     0
+    ]
+   ]
+  },
+  "good_rod": {
+   "normal": {
+    "morning": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "day": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ],
+    "night": [
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      22
+     ],
+     [
+      "magikarp",
+      23
+     ],
+     [
+      "magikarp",
+      24
+     ],
+     [
+      "poliwhirl",
+      22
+     ],
+     [
+      "poliwhirl",
+      22
+     ],
+     [
+      "poliwhirl",
+      23
+     ],
+     [
+      "poliwhirl",
+      23
+     ],
+     [
+      "poliwhirl",
+      24
+     ],
+     [
+      "poliwhirl",
+      25
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "gyarados",
+      26
+     ],
+     [
+      "gyarados",
+      29
+     ]
+    ],
+    "day": [
+     [
+      "gyarados",
+      26
+     ],
+     [
+      "gyarados",
+      29
+     ]
+    ],
+    "night": [
+     [
+      "gyarados",
+      26
+     ],
+     [
+      "gyarados",
+      29
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     3,
+     0,
+     0
+    ],
+    [
+     4,
+     4,
+     0,
+     0
+    ]
+   ]
+  },
+  "super_rod": {
+   "normal": {
+    "morning": [
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ],
+     [
+      "gyarados",
+      36
+     ],
+     [
+      "gyarados",
+      37
+     ]
+    ],
+    "day": [
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ],
+     [
+      "gyarados",
+      36
+     ],
+     [
+      "gyarados",
+      37
+     ]
+    ],
+    "night": [
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      35
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      36
+     ],
+     [
+      "poliwhirl",
+      37
+     ],
+     [
+      "poliwhirl",
+      38
+     ],
+     [
+      "gyarados",
+      36
+     ],
+     [
+      "gyarados",
+      37
+     ]
+    ]
+   },
+   "block": {
+    "morning": [
+     [
+      "barboach",
+      42
+     ],
+     [
+      "barboach",
+      45
+     ]
+    ],
+    "day": [
+     [
+      "barboach",
+      42
+     ],
+     [
+      "barboach",
+      45
+     ]
+    ],
+    "night": [
+     [
+      "barboach",
+      42
+     ],
+     [
+      "barboach",
+      45
+     ]
+    ]
+   },
+   "conditions": [
+    [
+     4,
+     4,
+     0,
+     0
+    ],
+    [
+     4,
+     5,
+     0,
+     0
+    ]
+   ]
   }
  },
  "Wasteland": {
   "location": 158,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
@@ -3248,6 +6880,7 @@
  },
  "Mountain": {
   "location": 159,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [
@@ -3571,6 +7204,7 @@
  },
  "Desert": {
   "location": 160,
+  "has_water": false,
   "grass": {
    "normal": {
     "morning": [

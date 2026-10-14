@@ -238,39 +238,45 @@ def identify_seed_a_frame(seed: int, prev_routes: dict, observed_elm: str,
 
 def find_target_frame(seed: int, prev_routes: dict, current_frame: int, area: str, tod,
                       block_config: dict, pokemon: str, margin: int = 3,
-                      max_frame: int = 300, aim_advance: int | None = None) -> dict:
+                      max_frame: int = 300, aim_advance: int | None = None,
+                      method: str = "grass", happiness_bonus: int = 0,
+                      suction_cups: bool = False) -> dict:
     """In-house target-encounter-frame search (vs. a Pokefinder handoff) — an alternative way
     to pick `encounter_frame` for plan_frame_route below, using the expedition's own Safari
     block scores. See claytonlib.safari_advance.find_in_house_frame for the algorithm.
 
-    Checks the block requirement for THIS specific (area, pokemon, tod) combination before
-    searching, and raises a specific, actionable error if it isn't met — the underlying
+    Checks the block requirement for THIS specific (area, pokemon, tod, method) combination
+    before searching, and raises a specific, actionable error if it isn't met — the underlying
     search would otherwise just fail with a generic "no frame in range" (the target simply
-    never occupies a slot), which doesn't tell the user WHY (clayton-b42.10.3).
+    never occupies a slot), which doesn't tell the user WHY (clayton-b42.10.3). Same idea for
+    a water method in a waterless area, which resolve_safari_slots already explains itself.
     """
     from claytonlib.safari_advance import find_in_house_frame
-    from claytonlib.safari_encounters import block_requirement_for
-    req = block_requirement_for(area, pokemon, tod=tod)
+    from claytonlib.safari_encounters import METHOD_LABELS, block_requirement_for, normalize_method
+    method = normalize_method(method)
+    req = block_requirement_for(area, pokemon, tod=tod, method=method)
     if req is not None:
         have = int(block_config.get(req["block_type"], 0) or 0)
         if have < req["quantity"]:
             raise ValueError(
                 f"{pokemon} needs a {req['block_type']} block score of at least "
-                f"{req['quantity']} in {area} — this expedition is configured with {have}. "
-                f"Update the block scores in Configure.")
+                f"{req['quantity']} in {area} ({METHOD_LABELS[method]}) — this expedition is "
+                f"configured with {have}. Update the block scores in Configure.")
     return find_in_house_frame(seed, prev_routes, current_frame, area, tod, block_config,
                               target=pokemon, search_margin=margin, max_frame=max_frame,
-                              aim_advance=aim_advance)
+                              aim_advance=aim_advance, method=method,
+                              happiness_bonus=happiness_bonus, suction_cups=suction_cups)
 
 
 def plan_frame_route(seed: int, prev_routes: dict, current_frame: int, encounter_frame: int,
-                     margin: int = 3) -> dict:
+                     margin: int = 3, method: str = "grass") -> dict:
     """A chatot-flip + Elm-call route from `current_frame` to `encounter_frame`, however that
-    was chosen (Pokefinder, or the in-house search above)."""
+    was chosen (Pokefinder, or the in-house search above). `method` only decides what the
+    guide tells the player to DO on the target frame (Sweet Scent, or cast a rod)."""
     from claytonlib.safari_advance import (
         advance_context, describe_plan, margin_ambiguous, margin_guide, plan_advances,
     )
-    plan = plan_advances(current_frame, encounter_frame, margin=margin)
+    plan = plan_advances(current_frame, encounter_frame, margin=margin, method=method)
     # Generous enough to cover the whole approach regardless of REL cost.
     rng_calls, elm = advance_context(seed, prev_routes, count=encounter_frame + 20)
     guide, truncated = margin_guide(rng_calls, elm, plan)
@@ -279,6 +285,7 @@ def plan_frame_route(seed: int, prev_routes: dict, current_frame: int, encounter
         "scent_frame": plan.scent_frame, "total_advances": plan.total_advances,
         "chatot_flips": plan.chatot_flips, "chatot_advances": plan.chatot_advances,
         "elm_before_scent": plan.elm_before_scent, "land_frame": plan.land_frame,
+        "method": plan.method, "action": plan.action,
         "guide": guide, "truncated": truncated,
         "ambiguous": margin_ambiguous(rng_calls, elm, plan),
         "description": describe_plan(plan, guide),
