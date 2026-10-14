@@ -736,11 +736,19 @@ class TestPhaseTwoIsEmphasisedAndForceable(unittest.TestCase):
         self.assertTrue("function huntForceSolving(" in self.html)
 
     def test_it_confirms_first(self):
+        """Forcing confirms, then forces. The session call moved into `huntStartSolving` when the
+        two phase buttons became one (clayton-pv0) -- it has to walk past setup on the way, which
+        is what the old "start pinning" button carried -- so the claim is asserted across both
+        rather than by looking for the call inlined here."""
         body = self.html[self.html.index("function huntForceSolving("):]
         body = body[:body.index("\n}") + 2]
         self.assertIn("confirm(", body)
-        self.assertIn("hunt_session_enter_solving", body)
-        self.assertIn("true", body)
+        self.assertIn("huntStartSolving(true)", body)
+
+        starter = self.html[self.html.index("async function huntStartSolving("):]
+        starter = starter[:starter.index("\n}") + 2]
+        self.assertIn("hunt_session_enter_solving", starter)
+        self.assertIn("!!force", starter)
 
     def test_the_facade_accepts_the_force_flag(self):
         import inspect
@@ -1882,3 +1890,113 @@ class TestTheDraftTurnSurvivesNonTurnCalls(unittest.TestCase):
 
     def test_and_the_player_can_still_clear_it_by_hand(self):
         self.assertIn('onclick="hrTurnReset();renderHuntRun()"', self.html)
+
+
+class TestPinningIsNotAButton(unittest.TestCase):
+    """Reported twice. The first fix did not work, and the second attempt is a different shape.
+
+    There used to be two controls: "Target is at 1 HP -> start pinning" and then "Start solving".
+    Pinning the seed is not an action a player takes -- it happens as reported turns narrow the
+    set -- so the first button was asking for a decision nobody had to make.
+
+    My first attempt auto-advanced after `enter_pinning` when `solver_blockers` was empty. That
+    could never fire: "still in setup" is always in the list while in Phase 1, so the shortcut
+    was unreachable and both clicks remained. I verified the mechanism in isolation and never
+    asked whether its precondition was reachable at the moment the button is pressed.
+
+    The fix is `ready_to_solve`, which asks the question ignoring the phase -- because the one
+    remaining click is what clears the phase.
+
+    clayton-pv0.
+    """
+
+    def setUp(self):
+        self.html = INDEX.read_text()
+
+    def test_there_is_no_pinning_button(self):
+        self.assertNotIn("huntStartPinning", self.html)
+        self.assertNotIn("start pinning</button>", self.html)
+
+    def test_the_single_control_is_gated_on_ready_to_solve(self):
+        self.assertIn("const solveReady = s.ready_to_solve;", self.html)
+        self.assertIn('onclick="huntStartSolving()"', self.html)
+
+    def test_it_walks_past_setup_itself(self):
+        """Which is the only thing the removed button carried: the 1 HP declaration."""
+        body = self.html[self.html.index("async function huntStartSolving("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("hunt_session_enter_pinning", body)
+        self.assertIn("hunt_session_enter_solving", body)
+        self.assertIn("phase === 1", body)
+
+    def test_it_stops_if_the_declaration_is_rejected(self):
+        """Otherwise a contradiction on the way past would be followed by a solve against a state
+        the run never reached."""
+        body = self.html[self.html.index("async function huntStartSolving("):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("phase !== 2", body)
+        self.assertIn("return", body)
+
+    def test_both_buttons_show_a_spinner_while_the_solver_runs(self):
+        """Asked for: the solve happens inside the click, and nothing said so."""
+        self.assertEqual(self.html.count('<span class="spin"></span>Solving'), 2)
+        emphasised = self.html[self.html.index("const solveReady = s.ready_to_solve;"):]
+        emphasised = emphasised[:emphasised.index('    : "";')]
+        self.assertIn('${_hrBusy ? "disabled" : ""}', emphasised)
+
+    def test_the_ready_state_is_visually_distinct(self):
+        emphasised = self.html[self.html.index("const solveReady = s.ready_to_solve;"):]
+        emphasised = emphasised[:emphasised.index('    : "";')]
+        self.assertIn("ok-cta", emphasised)
+        self.assertIn("btn primary", emphasised)
+        self.assertIn("ready to solve", emphasised)
+
+    def test_the_not_ready_state_still_offers_the_force_path(self):
+        emphasised = self.html[self.html.index("const solveReady = s.ready_to_solve;"):]
+        emphasised = emphasised[:emphasised.index('    : "";')]
+        self.assertIn("Not ready to solve yet", emphasised)
+        self.assertIn("huntForceSolving()", emphasised)
+        self.assertIn("trust the game", emphasised)
+
+
+class TestReadyToSolveIgnoresThePhase(unittest.TestCase):
+    """The snapshot half. `solver_blockers` used to always report "still in setup" in Phase 1,
+    which is what made a readiness indicator impossible."""
+
+    def test_the_setup_entry_is_droppable(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        session = facade._hunt_sessions.get(sid)
+        with_setup = session.solver_blockers()
+        without = session.solver_blockers(assume_past_setup=True)
+        self.assertTrue(any("still in setup" in b for b in with_setup))
+        self.assertFalse(any("still in setup" in b for b in without))
+
+    def test_the_snapshot_reports_both_the_flag_and_the_real_blockers(self):
+        facade, hunt_id = _ready_hunt()
+        snap = facade.hunt_session_start(hunt_id)["snapshot"]
+        self.assertIn("ready_to_solve", snap)
+        self.assertFalse(snap["ready_to_solve"], "a fresh run is not ready")
+        # And the listed blockers are the ACTIONABLE ones, not the phase.
+        self.assertFalse(any("still in setup" in b for b in snap["solver_blockers"]))
+
+    def test_it_is_false_while_the_target_is_above_one_hp(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        session = facade._hunt_sessions.get(sid)
+        self.assertFalse(session.ready_to_solve)
+        self.assertTrue(any("HP, not 1" in b or "not pinned" in b
+                            for b in session.solver_blockers(assume_past_setup=True)))
+
+    def test_it_is_true_once_the_target_is_at_one_hp_and_the_seed_is_pinned(self):
+        facade, hunt_id = _ready_hunt()
+        sid = facade.hunt_session_start(hunt_id)["session_id"]
+        session = facade._hunt_sessions.get(sid)
+        # Declare 1 HP the way the single click does, and narrow to one seed.
+        session._session.declare_target_at_one_hp()
+        seeds = list(session._session.states)
+        for seed in seeds[1:]:
+            session._session.states.pop(seed)
+        if session.identified is None:
+            self.skipTest("the fixture window did not reduce to a single identified seed")
+        self.assertTrue(session.ready_to_solve, session.solver_blockers(assume_past_setup=True))

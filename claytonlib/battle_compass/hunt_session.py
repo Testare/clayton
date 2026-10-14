@@ -1175,8 +1175,19 @@ class HuntSession:
         self.transitions.append((len(self.turns), Phase.PINNING))
         return self.snapshot()
 
-    def solver_blockers(self) -> list[str]:
-        return self._session.solver_blockers()
+    def solver_blockers(self, *, assume_past_setup: bool = False) -> list[str]:
+        return self._session.solver_blockers(assume_past_setup=assume_past_setup)
+
+    @property
+    def ready_to_solve(self) -> bool:
+        """Whether one click could start solving right now.
+
+        Phrased as "ignoring the phase", because entering Phase 1.5 is no longer something the
+        player does -- the 1 HP declaration rides along with the single "Start solving" click.
+        So the question the page asks is "is the target at 1 HP and the seed pinned", and the
+        setup phase itself is not an obstacle to report.
+        """
+        return not self._session.solver_blockers(assume_past_setup=True)
 
     def enter_solving(self, *, force: bool = False) -> dict:
         """Move to Phase 2 and solve.
@@ -1599,7 +1610,10 @@ class HuntSession:
             # True when advice exists to be fetched but was not computed here.
             "advice_pending": not include_advice and self.identified is None,
             "ambiguity": self._session.ambiguity(),
-            "solver_blockers": self.solver_blockers(),
+            # Ignoring the phase, because one click now clears it: the 1 HP declaration rides
+            # along with "Start solving" instead of being its own button (clayton-pv0).
+            "solver_blockers": self.solver_blockers(assume_past_setup=True),
+            "ready_to_solve": self.ready_to_solve,
             "contradiction": self.contradiction,
             "forced_reason": self.forced_reason,
             "widenings": list(self.widenings),

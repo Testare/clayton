@@ -5753,12 +5753,16 @@ function huntRunObserve(){
 //
 // Deliberately NOT a blind auto-advance: if anything blocks, the blocker panel appears exactly
 // as before, because that panel is a decision the player has to make.
-async function huntStartPinning(){
-  await huntRunDo("hunt_session_enter_pinning");
-  const s = _huntSnap;
-  if (s && s.phase === 2 && !(s.solver_blockers || []).length) {
-    await huntRunDo("hunt_session_enter_solving");
+// Start solving from wherever we are. In Phase 1 that means declaring the target at 1 HP on the
+// way past -- which is what the old "start pinning" button did, and the only information it
+// carried. The solver runs inside the second call, so `_hrBusy` covers both and the button shows
+// a spinner for the whole thing.
+async function huntStartSolving(force){
+  if (_huntSnap && _huntSnap.phase === 1) {
+    await huntRunDo("hunt_session_enter_pinning");
+    if (!_huntSnap || _huntSnap.phase !== 2) return;   // a contradiction stopped us
   }
+  await huntRunDo("hunt_session_enter_solving", !!force);
 }
 
 // Re-applying a whole run's eliminations from a pasted path. For recovery rather than play: a
@@ -5795,7 +5799,7 @@ function huntForceSolving(){
   const blockers = (_huntSnap.solver_blockers || []).join("; ");
   if (!confirm(`Our model says: ${blockers}.\n\nStart solving anyway? Do this only if the game `
              + `itself shows the target at 1 HP.`)) return;
-  huntRunDo("hunt_session_enter_solving", true);
+  huntStartSolving(true);
 }
 
 // Widening replays every accepted turn against the bigger set, so nothing reported is lost --
@@ -6210,32 +6214,42 @@ function renderHuntRun(){
         how close this is.</div></div>`;
   }
 
-  const phaseButtons = s.phase === 1
-    ? `<button class="btn" onclick="huntStartPinning()">
-         Target is at 1 HP → start pinning</button>`
-    : s.phase === 2
-      ? (s.solver_blockers.length
-          // Still offered. The blockers are what the SIMULATION believes, and it can be wrong in
-          // ways the player can see -- an unmodelled damage modifier leaves the simulated target
-          // above 1 HP when the real one is there. Confirm, do not refuse.
-          ? `<div class="panel"><div class="section-label">Ready to solve?</div>
-             <div class="hr-small muted">By our model, not yet:</div>
-             <ul class="hr-small">${s.solver_blockers.map(b =>
-                 `<li>${esc(b)}</li>`).join("")}</ul>
-             <div class="hr-small muted">If the game disagrees, trust the game — our damage model
-               can lag reality.</div>
-             <button class="btn" onclick="huntForceSolving()">Start solving anyway</button></div>`
-          : `<div class="panel ok-cta"><div class="section-label">${esc(s.target.name)} is at
-               1 HP${s.target.status === "none" ? ""
-                     : ` and ${esc(s.target.status)}`}</div>
-             <div class="hr-small muted">Everything the solver needs is in place.${
-               s.target.status === "none"
-                 ? " A status is optional — it raises the catch rate, and the solver can apply"
-                   + " one itself if your moveset can."
-                 : ""}</div>
-             <button class="btn primary"
-               onclick="huntRunDo('hunt_session_enter_solving')">Start solving</button></div>`)
-      : "";
+  // **One button, and it is the one the player wants.** There used to be two: "Target is at 1 HP
+  // -> start pinning" and then "Start solving", which meant two clicks and a transition nobody
+  // had a decision to make about. Pinning the seed is not an action -- it is something that
+  // happens as turns narrow the set -- so the only control left is the one that starts solving,
+  // and the 1 HP declaration rides along with it (clayton-pv0).
+  //
+  // `ready_to_solve` ignores the phase, because this click clears it. A first attempt at this
+  // gated the auto-advance on `solver_blockers` being empty, which it never is while in Phase 1:
+  // "still in setup" is always there, so the shortcut never fired and the two clicks remained.
+  const solveReady = s.ready_to_solve;
+  const phaseButtons = (s.phase === 1 || s.phase === 2)
+    ? (solveReady
+        ? `<div class="panel ok-cta"><div class="section-label">${esc(s.target.name)} is at
+             1 HP${s.target.status === "none" ? "" : ` and ${esc(s.target.status)}`} —
+             ready to solve</div>
+           <div class="hr-small muted">The seed is pinned and nothing is in the way.${
+             s.target.status === "none"
+               ? " A status is optional; it raises the catch rate, and the solver can apply one"
+                 + " itself if your moveset can."
+               : ""}</div>
+           <button class="btn primary" onclick="huntStartSolving()"
+             ${_hrBusy ? "disabled" : ""}>
+             ${_hrBusy ? `<span class="spin"></span>Solving…` : "Start solving"}</button></div>`
+        // Not ready by our model -- but still offered, because the blockers are what the
+        // SIMULATION believes and it can be wrong in ways the player can see. Confirm, never
+        // refuse.
+        : `<div class="panel"><div class="section-label">Not ready to solve yet</div>
+           <div class="hr-small muted">By our model:</div>
+           <ul class="hr-small">${(s.solver_blockers || []).map(b =>
+               `<li>${esc(b)}</li>`).join("")}</ul>
+           <div class="hr-small muted">If the game disagrees, trust the game — our damage model
+             can lag reality.</div>
+           <button class="btn" onclick="huntForceSolving()" ${_hrBusy ? "disabled" : ""}>
+             ${_hrBusy ? `<span class="spin"></span>Solving…` : "Start solving anyway"}</button>
+           </div>`)
+    : "";
 
   // Tooltip per row, from the session's own replay -- so a turn played before a switch is
   // described by whoever was actually out for it, which is why the code column can stay a code.

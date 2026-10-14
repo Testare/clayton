@@ -286,8 +286,14 @@ class Session:
         nxt.target = nxt.target.with_hp(1)
         return nxt
 
-    def solver_blockers(self) -> list[str]:
+    def solver_blockers(self, *, assume_past_setup: bool = False) -> list[str]:
         """Why Phase 2 cannot start yet. Empty means it can.
+
+        `assume_past_setup` drops the "still in setup" entry, which is the one blocker a single
+        click can clear. The run page needs that to answer "is this run READY to solve", because
+        otherwise the answer is always no while in Phase 1 and the readiness indicator could
+        never light up -- which is what left seed pinning a two-click process after the first
+        attempt at fixing it (clayton-pv0).
 
         **The only battle-state requirement is 1 HP.** There is no status precondition, and
         removing it was the last step of a change that had already happened underneath:
@@ -310,7 +316,7 @@ class Session:
         unsimulated and the state is refused instead (`state.HP_TICKING_STATUSES`).
         """
         problems: list[str] = []
-        if self.phase is Phase.SETUP:
+        if self.phase is Phase.SETUP and not assume_past_setup:
             problems.append("still in setup — declare the target at 1 HP to move on")
         if self.identified is None:
             problems.append(f"the seed is not pinned yet ({len(self.states)} candidates remain)")
