@@ -18,7 +18,7 @@
         # wrapGAppsHook3 + gobject-introspection.
         clayton = py.buildPythonApplication {
           pname = "clayton";
-          version = "0.1.0";
+          version = "0.2.0";
           pyproject = true;
           src = ./.;
 

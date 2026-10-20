@@ -42,8 +42,13 @@ def _clean_prev_routes(prev: dict | None) -> dict:
     return out
 
 
-def _target_delay_for_key_seed(key_seed: int, target_time: dt.datetime) -> int:
+def target_delay_for_key_seed(key_seed: int, target_time: dt.datetime) -> int:
     """The delay to search around, derived from the key seed and target_time alone.
+
+    Public because Glass *shows* this number to the player — it is the delay to dial into the
+    timer, and the reason Glass has to pin the year down (``notes/glass.md``). Every other
+    caller only ever uses it to centre a search, which is why it reads as an internal detail
+    everywhere else.
 
     seed_for() masks (delay + year - 2000) & 0xFFFF into a seed's low 16 bits (see its
     docstring). The caller never supplies or sees a delay: given only the key seed
@@ -122,7 +127,7 @@ def seed_a(params: dict) -> dict:
     """
     prev = _clean_prev_routes(params.get("prev_routes"))
     target_time = _parse_time(params["target_time"])
-    target_delay = _target_delay_for_key_seed(int(params["key_seed"]), target_time)
+    target_delay = target_delay_for_key_seed(int(params["key_seed"]), target_time)
     rows = generate_roamer_candidates_near(
         target_time,
         target_delay,
@@ -163,7 +168,7 @@ def key_seed_info(key_seed: int, prev_routes: dict | None) -> dict:
 
 
 def times_on_date(key_seed: int, month: int | None = None, day: int | None = None,
-                  second: int | None = None) -> list[str]:
+                  second: int | None = None, year: int | None = None) -> list[str]:
     """Every valid initial time for `key_seed` (from claytonlib.times.get_times, which is
     itself cached per key seed), optionally filtered to a month (1-12), a day-of-month
     (1-31), and/or a second-of-minute (0-59) — any combination, all independent and
@@ -178,9 +183,21 @@ def times_on_date(key_seed: int, month: int | None = None, day: int | None = Non
     it — the picker says so) — a Feb 29 match is dropped silently if the current year
     isn't a leap year (not a real date to load on this year). With neither set, the
     placeholder year is left as-is.
+
+    `year` makes that re-stamping explicit and unconditional, which is what Glass needs: the
+    year does not change WHICH seed a time produces, but it does change the absolute delay that
+    reaches it (see target_delay_for_key_seed), so a Glass Seed has to store a time carrying the
+    year the player will actually set rather than a placeholder. Feb 29 is dropped for a
+    non-leap `year` exactly as it is for a non-leap current year. Passing no `year` leaves
+    today's behaviour, placeholder included, untouched.
     """
     from claytonlib.times import get_times
-    restamp_year = dt.date.today().year if (month is not None or day is not None) else None
+    if year is not None:
+        restamp_year = int(year)
+    elif month is not None or day is not None:
+        restamp_year = dt.date.today().year
+    else:
+        restamp_year = None
     _delay, times = get_times(int(key_seed))
     out = []
     for t in times:
@@ -246,7 +263,7 @@ def seed_b_center(key_seed: int, target_time: dt.datetime, vector_ms, model):
       `M/1000 + rtc_offset_seconds` (rounded). Derived from REAL time, never from the frame
       counter, which lags across loads (see notes/seed_hitting_process.md).
     """
-    a_delay = _target_delay_for_key_seed(key_seed, target_time)
+    a_delay = target_delay_for_key_seed(key_seed, target_time)
     if model is None or vector_ms in (None, ""):
         raise ValueError(
             "Seed B needs the Vector ms and a calibration model to know where to look — "

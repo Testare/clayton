@@ -60,6 +60,46 @@ class TestApiCallsResolve(unittest.TestCase):
                        "add_party_pokemon", "update_party_pokemon", "remove_party_pokemon"):
             self.assertIn(method, called, f"{method} is never called from the UI")
 
+    def test_glass_methods_are_actually_wired_up(self):
+        """Same guard as Battle Compass: the Glass UI and its facade surface move together."""
+        called = set(_API_CALLS.findall(_HTML))
+        for method in ("list_seeds", "get_seed", "create_seed", "save_seed", "delete_seed",
+                       "seed_readout", "seed_save_seed_a_defaults", "seed_add_history",
+                       "seed_clear_history"):
+            self.assertIn(method, called, f"{method} is never called from the UI")
+
+    def test_glass_reuses_the_shared_seed_a_and_frame_calls(self):
+        """Glass is thin on purpose: identifying Seed A and routing to a frame are the calls
+        the other compasses already make, not new ones (notes/glass.md)."""
+        for fn, call in (("glassGenerateSeedA", "metronome_seed_a"),
+                         ("glassGenerateSeedA", "metronome_key_seed_info"),
+                         ("glassIdentifyFrame", "safari_compass_identify_frame"),
+                         ("glassPlanRoute", "safari_compass_plan_frame")):
+            self.assertIn(f'api("{call}"', _function_body(fn),
+                          f"{fn} should reach {call}")
+
+    def test_glass_never_tells_the_player_to_sweet_scent(self):
+        """A Seed in Glass has no encounter method, so the route guide carries no verb: the
+        facade's `method` only chooses between Sweet Scent and casting a rod."""
+        body = _function_body("glassRouteHtml") + _function_body("glassPlanRoute")
+        for verb in ("Sweet Scent", "cast the", "method:"):
+            self.assertNotIn(verb, body, f"the Glass route guide mentions {verb!r}")
+
+    def test_glass_answers_a_backwards_route_before_the_facade_does(self):
+        """plan_advances' own overshoot message ends in "Sweet Scent", so the page catches the
+        case first -- the ordinary mistake deserves the better message anyway."""
+        body = _function_body("glassPlanRoute")
+        self.assertIn("< _glass.pinnedFrame", body)
+        self.assertIn("behind you", body)
+
+    def test_the_time_picker_asks_for_a_year_only_where_it_matters(self):
+        """Glass shows an absolute delay, which moves with the year; nothing else does, so no
+        other caller may grow a field with no consequence."""
+        opens = re.findall(r"openTimePicker\(([^;]*?)\)", _HTML)
+        with_year = [call for call in opens if "year" in call]
+        self.assertEqual(len(with_year), 1, f"expected exactly one year-mode picker: {with_year}")
+        self.assertIn("glassPickTime", with_year[0])
+
     def test_the_metronome_area_reaches_both_owner_kinds_through_the_facade(self):
         called = set(_API_CALLS.findall(_HTML))
         for method in ("get_hunt", "save_hunt", "get_expedition", "save_expedition"):

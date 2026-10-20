@@ -20,6 +20,10 @@ Battle Compass adds :class:`PartyPokemon` and :class:`Hunt` (see
 ball — while the live encounter runs in Battle Compass and its mid-battle state is not
 persisted.  Party Pokemon live on the **profile** (they are reused across hunts, like metronome
 users); only the per-hunt held item belongs to the hunt.
+
+Glass adds :class:`Seed` — a key seed worth keeping, with an initial time, a frame to route to,
+notes, and a short history of identifications. It owns nothing and belongs to a profile
+(``notes/glass.md``).
 """
 from __future__ import annotations
 
@@ -796,6 +800,75 @@ class Hunt:
             seconds_window=d.get("seconds_window", 2),
             delay_window=d.get("delay_window", 60),
             completed=bool(d.get("completed", False)),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Seed (Glass)
+# ---------------------------------------------------------------------------
+
+#: How many identifications a Seed's recent history keeps. Deliberately small and hard --
+#: Glass's history is a scratchpad for "which seed did I land on just now", not a record, and
+#: nothing fits it either (both calibration fits need a vector ms and a Seed B, which Glass has
+#: neither of -- see notes/glass.md).
+SEED_HISTORY_LIMIT = 10
+
+
+@dataclass
+class Seed:
+    """A key seed worth keeping, and the whole of the Glass page's configuration.
+
+    Smaller than an Expedition or a Hunt on purpose: a Seed is not a quest, it is a seed you
+    want to be able to come back to.  There is no name and no uniqueness rule -- `label` is
+    optional and the hex seed is always displayed beside it, so two Seeds may legitimately share
+    a key seed (the same seed loaded at different times, or kept for different reasons) and the
+    document id stays the only real key, as for a metronome user.
+
+    `seed_a_defaults` exists for the same reason a Hunt has one: the roamers' starting positions
+    are a property of the save file, so retyping them every visit is pure friction.  The live
+    identification is NOT stored -- reopening the page starts clean, like every other compass;
+    `history` is written only by an explicit "Save to history".
+    """
+
+    profile_id: str
+    id: str = field(default_factory=_new_id)
+    label: str = ""
+    key_seed: int | None = None
+    # ISO-8601, and unlike every other tool's initial time this one's YEAR matters: Glass shows
+    # an absolute delay, and seed_for folds (delay + year - 2000) into the seed's low 16 bits.
+    initial_time: str = ""
+    # The advance frame the route planner aims at unless the page is told otherwise.
+    default_frame: int | None = None
+    notes: str = ""
+    seed_a_defaults: dict = field(default_factory=dict)
+    # Newest first, at most SEED_HISTORY_LIMIT entries, repeats included.
+    history: list = field(default_factory=list)
+
+    def add_history(self, entry: dict) -> list:
+        """Record one identification, evicting the oldest past the limit.
+
+        Repeats are kept: identifying the same seed twice is two entries, because "I landed here
+        again" is exactly the thing the history is for.
+        """
+        self.history.insert(0, dict(entry))
+        del self.history[SEED_HISTORY_LIMIT:]
+        return self.history
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Seed":
+        return cls(
+            profile_id=d["profile_id"],
+            id=d.get("id") or _new_id(),
+            label=d.get("label", ""),
+            key_seed=d.get("key_seed"),
+            initial_time=d.get("initial_time", ""),
+            default_frame=d.get("default_frame"),
+            notes=d.get("notes", ""),
+            seed_a_defaults=dict(d.get("seed_a_defaults", {})),
+            history=[dict(h) for h in d.get("history", [])][:SEED_HISTORY_LIMIT],
         )
 
 

@@ -133,7 +133,7 @@ def seed_a_delay(key_seed: int, initial_time: dt.datetime) -> int:
 
     ``calculate_seed`` masks ``delay + year - 2000`` into the low 16 bits, so this inverts that
     for *this* year — which is what makes the frame difference below add on cleanly. Same
-    derivation as ``app.metronome._target_delay_for_key_seed``.
+    derivation as ``app.metronome.target_delay_for_key_seed``.
     """
     return (key_seed & 0xFFFF) - (initial_time.year - 2000)
 

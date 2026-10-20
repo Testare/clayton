@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from app.facade import Facade
-from app.metronome import _rel_predicate, _target_delay_for_key_seed
+from app.metronome import _rel_predicate, target_delay_for_key_seed
 from app.metronome_session import SessionRegistry
 from app.models import Run
 from app.store import FileStore
@@ -27,14 +27,14 @@ _TARGET = {
 
 class TestTargetDelayDerivation(unittest.TestCase):
     def test_round_trips_the_true_delay(self):
-        self.assertEqual(_target_delay_for_key_seed(_KEY_SEED, _TARGET_DT), _TRUE_DELAY)
+        self.assertEqual(target_delay_for_key_seed(_KEY_SEED, _TARGET_DT), _TRUE_DELAY)
 
     def test_derivation_is_year_agnostic(self):
         # The exact regression this fixes: entering a DIFFERENT calendar year for
         # target_time (as the app previously mishandled) must still reconstruct a
         # delay whose seed_for() low-16 field matches the key seed's -- no drift.
         other_year_time = _TARGET_DT.replace(year=2030)
-        derived = _target_delay_for_key_seed(_KEY_SEED, other_year_time)
+        derived = target_delay_for_key_seed(_KEY_SEED, other_year_time)
         reconstructed = seed_for(other_year_time, derived)
         self.assertEqual(reconstructed & 0xFFFF, _KEY_SEED & 0xFFFF)
 
@@ -210,7 +210,7 @@ class TestSeedBIsCenteredOnThePrediction(unittest.TestCase):
     """Seed B is the BATTLE seed, generated Vector ms after Seed A — so a Seed B search has
     to be centered where the calibration model says it lands, not on the key seed.
 
-    The original code searched around `_target_delay_for_key_seed(key_seed, target_time)` and
+    The original code searched around `target_delay_for_key_seed(key_seed, target_time)` and
     `target_time` — i.e. Seed A's own delay and second — which for a typical 300 s countdown
     is off by ~17,700 delays AND ~305 seconds. No realistic window could reach it.
     """
@@ -222,10 +222,10 @@ class TestSeedBIsCenteredOnThePrediction(unittest.TestCase):
 
     def test_center_is_seed_a_plus_the_predicted_df(self):
         import datetime as dt
-        from app.metronome import _target_delay_for_key_seed, seed_b_center
+        from app.metronome import target_delay_for_key_seed, seed_b_center
         t0 = dt.datetime(2025, 7, 24, 14, 45, 56)
         M = 300000
-        a_delay = _target_delay_for_key_seed(_KEY_SEED, t0)
+        a_delay = target_delay_for_key_seed(_KEY_SEED, t0)
         b_time, b_delay = seed_b_center(_KEY_SEED, t0, M, self.model)
 
         base_low16 = _KEY_SEED & 0xFFFF

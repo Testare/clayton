@@ -276,6 +276,7 @@
   <nav id="nav">
     <button data-view="expeditions">⛺ Expeditions</button>
     <button data-view="hunts">🎯 Hunts</button>
+    <button data-view="glass">🔍 Glass</button>
     <button data-view="profiles">🎮 Profiles</button>
   </nav>
   <main><div class="wrap" id="main">Loading…</div></main>
@@ -565,21 +566,35 @@ let _timePickerOnPick = null;
 let _timePickerLastMonth = "";
 let _timePickerLastDay = "";
 let _timePickerLastSecond = "";
+// Glass alone asks for a year, and only because the absolute delay it prints depends on it.
+// Null for every other caller, which is also what keeps times_on_date's placeholder-year
+// behaviour (and therefore every other page) exactly as it was.
+let _timePickerYear = null;
 const _MONTH_NAMES = ["January","February","March","April","May","June","July","August",
   "September","October","November","December"];
 
-function openTimePicker(keySeed, onPick){
+// `opts.year` turns on the year field (Glass only; see notes/glass.md): for every other caller
+// the year genuinely does not matter, so asking for one would be a field with no consequence.
+function openTimePicker(keySeed, onPick, opts){
   if(keySeed == null){ toast("Set a key seed first."); return; }
   _timePickerKeySeed = keySeed;
   _timePickerOnPick = onPick;
+  const wantYear = !!(opts && opts.year);
+  _timePickerYear = wantYear ? String((opts && opts.defaultYear) || new Date().getFullYear()) : null;
   // Month/day are plain number fields, not a native <input type=date> — that requires a
   // full date and its browser calendar popup steals focus from the field you just clicked.
   // Separate fields also let you filter by month alone, which a single date input can't do.
   const monthOpts = `<option value="">Any</option>` + _MONTH_NAMES.map((m, i) =>
     `<option value="${i+1}"${String(i+1)===_timePickerLastMonth?" selected":""}>${m}</option>`).join("");
   openModal(`<h3>Pick initial time for key seed</h3>
-    <div class="hint muted" style="margin-bottom:8px">Pick a valid time for the key seed —
-      year does not matter.</div>
+    <div class="hint muted" style="margin-bottom:8px">${wantYear
+      ? `Pick a valid time for the key seed. The year does not change which seed a time
+         produces — but it does change the <b>delay</b> that reaches it, so set the year you
+         will actually put on the DS clock.`
+      : `Pick a valid time for the key seed — year does not matter.`}</div>
+    ${wantYear ? `<div class="field"><label>Year (the one you'll set on the DS)</label>
+      <input id="tp-year" type="number" min="2000" max="2099"
+        value="${esc(_timePickerYear)}"></div>` : ""}
     <div class="grid3">
       <div class="field"><label>Month (optional)</label>
         <select id="tp-month">${monthOpts}</select></div>
@@ -601,7 +616,10 @@ async function _timePickerLoad(){
   const month = monthStr === "" ? null : Number(monthStr);
   const day = dayStr === "" ? null : Number(dayStr);
   const second = secondStr === "" ? null : Number(secondStr);
-  const times = await api("times_on_date", _timePickerKeySeed, month, day, second);
+  const yearStr = $("tp-year") ? $("tp-year").value.trim() : "";
+  if($("tp-year")) _timePickerYear = yearStr;
+  const times = await api("times_on_date", _timePickerKeySeed, month, day, second,
+                          yearStr === "" ? null : Number(yearStr));
   const box = $("tp-results");
   box.innerHTML = !times.length
     ? `<div class="empty">No valid times match those filters for this key seed.</div>`
@@ -623,6 +641,7 @@ function setView(view){
     b.classList.toggle("active", b.dataset.view === view));
   if(view === "expeditions") renderExpeditions();
   else if(view === "hunts") renderHunts();
+  else if(view === "glass") renderGlass();
   else if(view === "profiles") renderProfiles();
 }
 document.querySelectorAll("#nav button").forEach(b =>
@@ -6725,6 +6744,651 @@ async function deleteHuntConfirmed(){
   closeModal();
   await api("delete_hunt", id);
   setView("hunts");
+}
+
+// --- Glass: seeds worth keeping ---------------------------------------------
+// The smallest tool in the app, and deliberately not a novel one: identifying Seed A here is
+// the same pair of facade calls every other compass makes (metronome_seed_a /
+// metronome_key_seed_info), pinning the advance frame and routing to one is the same pair
+// Safari and Battle Compass share (safari_compass_identify_frame / safari_compass_plan_frame),
+// and the candidate table is renderCandA unchanged.
+//
+// What IS Glass's own is the absolute delay -- the number you dial into the timer -- and
+// therefore the year, because seed_for folds (delay + year - 2000) into the seed's low 16 bits.
+// Every other page shows only the delta from the search centre for exactly that reason. See
+// notes/glass.md.
+
+// A key seed's hour is bits 16-23 of the seed itself, so the bucket is known from the SEED --
+// before any initial time is picked, and the same for every time that can produce it.
+const TOD_EMOJI = {morning: "🌅", day: "☀️", night: "🌙"};
+const TOD_LABEL = {morning: "morning, 4:00–9:59", day: "day, 10:00–19:59",
+  night: "night, 20:00–3:59"};
+
+let _glass = null;            // the open seed's whole page state
+let _glassSaveTimer = null;   // the page saves as you type, debounced
+let _glassReadTimer = null;
+let _glassPlanTimer = null;
+
+// --- the list -------------------------------------------------------------
+
+async function renderGlass(){
+  const [seeds, profiles] = await Promise.all([api("list_seeds"), api("list_profiles")]);
+  state.profiles = profiles;
+  const byId = Object.fromEntries(profiles.map(p => [p.id, p.name]));
+  let body;
+  if(profiles.length === 0){
+    body = `<div class="empty">You need a <b>profile</b> (your console/cartridge) before
+      keeping a seed.<br><br>
+      <button class="btn primary" onclick="setView('profiles')">Go to Profiles</button></div>`;
+  } else if(seeds.length === 0){
+    body = `<div class="empty">No seeds yet. A <b>seed</b> here is just one you want to come
+      back to — the key seed, a time to load it at, a frame you usually want to reach, and
+      whatever you need to remember about it. Glass identifies which Seed A you actually
+      landed on and routes you to a frame on it.</div>`;
+  } else {
+    body = `<div class="row-list">` + seeds.map(s => glassRow(s, byId)).join("") + `</div>`;
+  }
+  mount(`<div class="head"><h2>Glass</h2>
+      <button class="btn primary" ${profiles.length?"":"disabled"} onclick="seedForm()">New</button>
+    </div>${body}`);
+}
+
+function glassRow(s, byId){
+  const emoji = s.time_of_day ? `${TOD_EMOJI[s.time_of_day]} ` : "";
+  const hex = s.key_seed_hex || "no key seed";
+  const bits = [];
+  if(s.label) bits.push(hex);
+  if(s.delay != null) bits.push(`delay ${s.delay}`);
+  if(s.initial_time) bits.push(esc(s.initial_time.replace("T", " ")));
+  if(s.default_frame != null) bits.push(`frame ${s.default_frame}`);
+  bits.push(`profile: ${esc(byId[s.profile_id] || "unknown")}`);
+  if(s.history_count) bits.push(`${s.history_count} in history`);
+  return `<div class="card clickable" onclick="openSeedPage('${esc(s.id)}')">
+      <div><div class="title">${emoji}${esc(s.label || hex)}</div>
+        <div class="sub">${bits.join(" · ")}</div>
+        ${s.notes_line ? `<div class="sub muted">${esc(s.notes_line)}</div>` : ""}</div>
+      <span class="muted">Open →</span>
+    </div>`;
+}
+
+function seedForm(){
+  const profileOpts = state.profiles.map(p =>
+    `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  openModal(`<h3>New seed</h3>
+    <div class="field"><label>Label (optional)</label>
+      <input id="sf-label" placeholder="Shiny Metang approach" autofocus></div>
+    <div class="field"><label>Profile</label><select id="sf-profile">${profileOpts}</select></div>
+    <div class="hr-small muted">Everything else — the key seed, the time to load it at, the
+      frame and your notes — is set up on the seed's own page.</div>
+    <div class="actions">
+      <button class="btn primary" onclick="seedFormSubmit()">Create</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+async function seedFormSubmit(){
+  const label = $("sf-label").value.trim();
+  const profile_id = $("sf-profile").value;
+  closeModal();
+  try {
+    const seed = await api("create_seed", {label, profile_id});
+    openSeedPage(seed.id);
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+// --- the page -------------------------------------------------------------
+
+async function openSeedPage(id){
+  try {
+    const doc = await api("get_seed", id);
+    const profile = await api("get_profile", doc.profile_id);
+    const d = doc.seed_a_defaults || {};
+    _glass = {
+      id: doc.id,
+      profileName: profile.name,
+      readout: doc.readout,
+      history: doc.history || [],
+      historyOpen: true,
+      // The editable fields are kept as TEXT, separate from the saved document: a half-typed
+      // key seed ("0x1234") is not an int yet, and turning it into one on every keystroke
+      // would fight whoever is typing it.
+      form: {
+        label: doc.label || "",
+        key_seed: doc.key_seed == null ? "" : "0x" + doc.key_seed.toString(16).toUpperCase(),
+        initial_time: doc.initial_time || "",
+        default_frame: doc.default_frame == null ? "" : String(doc.default_frame),
+        notes: doc.notes || "",
+      },
+      startrel: d.startrel || "",
+      secondsWindow: d.seconds_window ?? 2,
+      delayWindow: d.delay_window ?? 10,
+      matchParity: !!d.match_parity,
+      seedAParams: null, candidates: null, seedA: null, editing: false, keyInfo: null,
+      // Seed A's advance frame is a different question from which seed it is, and the live
+      // answers to both are deliberately NOT persisted -- reopening the page starts clean,
+      // like every other compass. Only "Save to history" writes anything.
+      frameObservedElm: "", frameElmPrefill: "", frameCandidates: null, pinnedFrame: null,
+      routeTo: doc.default_frame == null ? "" : String(doc.default_frame),
+      frameGuide: null, frameProblem: "",
+    };
+    renderSeedPage();
+    $("gl-keyseed")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+// Live field values back into the state we render FROM, so a re-render never reverts something
+// typed but not yet saved. The same guard the hunt run page needs (huntCaptureTargeting), and a
+// no-op before the fields exist.
+function glassCapture(){
+  if (!_glass || !$("gl-keyseed")) return;
+  const f = _glass.form;
+  f.label = $("gl-label").value;
+  f.key_seed = $("gl-keyseed").value;
+  f.initial_time = $("gl-time").value;
+  f.default_frame = $("gl-frame").value;
+  f.notes = $("gl-notes").value;
+}
+
+// Normalised "0x…" hex, "" for empty, or null for text that is not a key seed. Normalising
+// matters because the facade reads bare text as HEX while int(x, 0) would read it as decimal --
+// the field accepts both spellings and exactly one of them reaches the facade.
+function glassKeySeedText(){
+  const raw = (_glass?.form.key_seed || "").trim();
+  if (!raw) return "";
+  const m = /^(?:0[xX])?([0-9a-fA-F]{1,8})$/.exec(raw);
+  return m ? "0x" + m[1] : null;
+}
+function glassKeySeedValue(){
+  const t = glassKeySeedText();
+  return t ? parseInt(t.slice(2), 16) : null;
+}
+function glassFrameValue(){
+  const raw = (_glass?.form.default_frame || "").trim();
+  return /^\d+$/.test(raw) ? Number(raw) : (raw === "" ? "" : null);
+}
+
+function glassFieldInput(){
+  glassCapture();
+  const keyText = glassKeySeedText();
+  $("gl-keyseed")?.classList.toggle("invalid", keyText === null);
+  $("gl-frame")?.classList.toggle("invalid", glassFrameValue() === null);
+  clearTimeout(_glassReadTimer);
+  _glassReadTimer = setTimeout(glassRefreshReadout, 200);
+  clearTimeout(_glassSaveTimer);
+  _glassSaveTimer = setTimeout(glassSave, 500);
+}
+
+// Only the fields that currently parse are sent: a key seed mid-type ("0x") or a frame that is
+// not a number would be rejected by the facade, and a toast per keystroke is worse than simply
+// not saving that field until it means something.
+async function glassSave(){
+  if (!_glass) return;
+  const f = _glass.form;
+  const payload = {label: f.label, initial_time: f.initial_time.trim(), notes: f.notes};
+  const keyText = glassKeySeedText();
+  if (keyText !== null) payload.key_seed = keyText;
+  const frame = glassFrameValue();
+  if (frame !== null) payload.default_frame = frame;
+  try {
+    const doc = await api("save_seed", _glass.id, payload);
+    _glass.readout = doc.readout;
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function glassRefreshReadout(){
+  if (!_glass) return;
+  const keyText = glassKeySeedText();
+  try {
+    _glass.readout = await api("seed_readout", keyText === null ? "" : keyText,
+                               _glass.form.initial_time.trim());
+  } catch (e) { _glass.readout = {problem: String(e.message || e)}; }
+  const box = $("gl-readout");
+  if (box) box.innerHTML = glassReadoutHtml();
+}
+
+// The one thing Glass says that no other page does: the delay to aim the timer at. It is
+// (key_seed & 0xFFFF) - (year - 2000), so it moves with the year on the DS clock -- which is why
+// the line names the year it assumed rather than just printing a number.
+function glassReadoutHtml(){
+  const r = _glass.readout || {};
+  if (r.delay == null)
+    return `<span class="muted">Delay —</span>${r.problem
+      ? ` <span class="muted">· ${esc(r.problem)}</span>` : ""}`;
+  const tod = r.time_of_day
+    ? ` · ${TOD_EMOJI[r.time_of_day]} <span title="${esc(TOD_LABEL[r.time_of_day])}">${esc(r.time_of_day)}</span>` : "";
+  return `<b>Delay ${r.delay}</b> — aim the timer here, for a DS clock set to
+    <b>${r.year}</b>${tod}
+    <span class="muted">· change the year and this changes with it</span>`;
+}
+
+function glassOpenTimePicker(){
+  const keySeed = glassKeySeedValue();
+  if (keySeed == null){ toast("Enter the key seed first."); return; }
+  if ((_glass.readout || {}).hour == null && (_glass.readout || {}).problem){
+    toast(_glass.readout.problem); return;
+  }
+  const current = Number((_glass.form.initial_time.match(/^(\d{4})-/) || [])[1]);
+  openTimePicker(keySeed, glassPickTime,
+                 {year: true, defaultYear: current || new Date().getFullYear()});
+}
+
+function glassPickTime(t){
+  const el = $("gl-time");
+  if (el) el.value = t; else _glass.form.initial_time = t;
+  closeModal();
+  glassCapture();
+  glassSave();
+  glassRefreshReadout();
+}
+
+function renderSeedPage(){
+  glassCapture();
+  if (!_glass) return;
+  const f = _glass.form;
+  const title = f.label.trim() || _glass.readout?.key_seed_hex || "New seed";
+  mount(`<div class="head"><h2>🔍 ${esc(title)}</h2>
+      <div style="display:flex;gap:10px">
+        <button class="btn danger" onclick="confirmDeleteSeed()">Delete</button>
+        <button class="btn" onclick="setView('glass')">← All seeds</button>
+      </div></div>
+    <div class="muted">profile: ${esc(_glass.profileName)}</div>
+    <div class="nr-stack">
+      <form class="panel panel-tight" onsubmit="return false">
+        <div class="grid2">
+          <div class="field"><label>Label (optional)</label>
+            <input id="gl-label" value="${esc(f.label)}" placeholder="what this seed is for"
+              oninput="glassFieldInput()"></div>
+          <div class="field"><label>Key seed</label>
+            <input id="gl-keyseed" value="${esc(f.key_seed)}" placeholder="0x…"
+              oninput="glassFieldInput()"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Initial time</label>
+            <input id="gl-time" value="${esc(f.initial_time)}"
+              placeholder="2026-01-01T12:00:00" oninput="glassFieldInput()"></div>
+          <div class="field">${helpLabel('Default frame', 'The advance frame the route planner aims at unless you give it another one. Leave it empty if you only want to know which frame you are on.')}
+            <input id="gl-frame" value="${esc(f.default_frame)}" placeholder="e.g. 73"
+              oninput="glassFieldInput()"></div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn small" type="button" onclick="glassOpenTimePicker()">Pick time</button>
+        </div>
+        <div class="info-line" id="gl-readout">${glassReadoutHtml()}</div>
+        <div class="field"><label>Notes</label>
+          <textarea id="gl-notes" rows="3" placeholder="anything you need to remember about this seed"
+            oninput="glassFieldInput()">${esc(f.notes)}</textarea></div>
+        <div class="hr-small muted">Saved as you type.</div>
+      </form>
+      <div class="panel" id="gl-seeda">${renderGlassSeedA()}</div>
+      <div class="panel ${_glass.seedA ? "" : "locked"}" id="gl-frame-panel">${renderGlassFrame()}</div>
+      <div class="panel" id="gl-history">${renderGlassHistory()}</div>
+    </div>`);
+  glassValidateStartRel();
+}
+
+function confirmDeleteSeed(){
+  openModal(`<h3>Delete this seed?</h3>
+    <p class="muted">Only the seed record goes — nothing else references it.</p>
+    <div class="actions">
+      <button class="btn danger" onclick="deleteSeedConfirmed()">Delete</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+async function deleteSeedConfirmed(){
+  const id = _glass.id;
+  closeModal();
+  try { await api("delete_seed", id); _glass = null; setView("glass"); }
+  catch (e) { toast(String(e.message || e)); }
+}
+
+// --- Seed A, exactly as every other compass does it -----------------------
+
+function glassValidateStartRel(){
+  const el = $("gl-startrel");
+  if (el) el.classList.toggle("invalid", !_startRelValid(el.value));
+}
+function glassSeedAKey(ev){ if (ev.key === "Enter"){ ev.preventDefault(); glassGenerateSeedA(); } }
+function glassObsRelKey(ev){ if (ev.key === "Enter"){ ev.preventDefault(); $("gl-elm")?.focus(); } }
+function glassElmKey(ev){
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  const c = _glass.candidates?.candidates;
+  if (c && c.length === 1) glassPickSeedA(c[0].seed);
+}
+
+async function glassGenerateSeedA(){
+  const keySeed = glassKeySeedValue();
+  const time = _glass.form.initial_time.trim();
+  if (keySeed == null){ toast("Enter the key seed first — Seed A is searched around it."); return; }
+  if (!time){ toast("Pick an initial time first."); return; }
+  // A delay the readout cannot derive is a search that would come back empty without saying
+  // why: generate_roamer_candidates_near skips negative delays, and an impossible hour byte
+  // means no clock can produce this seed at all.
+  if (_glass.readout?.delay == null){
+    toast(_glass.readout?.problem || "this key seed and time cannot produce a delay"); return;
+  }
+  try {
+    _glass.startrel = $("gl-startrel").value;
+    const prev = parseStartRel(_glass.startrel);
+    _glass.secondsWindow = Number($("gl-secwin").value);
+    _glass.delayWindow = Number($("gl-delaywin").value);
+    _glass.matchParity = $("gl-parity").checked;
+    _glass.seedAParams = {
+      target_time: time, key_seed: keySeed, prev_routes: prev,
+      seconds_window: _glass.secondsWindow, delay_window: _glass.delayWindow,
+      match_parity: _glass.matchParity};
+    _glass.candidates = await api("metronome_seed_a", _glass.seedAParams);
+    _glass.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
+    // The roamers' starting positions belong to the save file, not the visit.
+    await api("seed_save_seed_a_defaults", _glass.id, {
+      startrel: _glass.startrel, seconds_window: _glass.secondsWindow,
+      delay_window: _glass.delayWindow, match_parity: _glass.matchParity});
+    renderSeedPage();
+    $("gl-obsrel")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function glassNarrowSeedA(){
+  try {
+    const params = {..._glass.seedAParams,
+      rel_observed: $("gl-obsrel").value, elm_observed: $("gl-elm").value};
+    _glass.candidates = await api("metronome_seed_a", params);
+    $("gl-obsrel").classList.toggle("invalid", _glass.candidates.rel_valid === false);
+    $("gl-candA").innerHTML = renderCandA(_glass.candidates, "glassPickSeedA");
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function glassPickSeedA(seed){
+  const picked = _glass.candidates.candidates.find(c => c.seed === seed);
+  if (!picked) return;
+  const changed = _glass.seedA && _glass.seedA.seed !== picked.seed;
+  _glass.seedA = picked;
+  _glass.editing = false;
+  // The Elm calls typed to narrow Seed A ARE the calls heard since it loaded, so they are the
+  // start of the frame identification -- prefilled rather than applied, so a mistyped call can
+  // be corrected first. The same handoff Safari and Battle Compass make.
+  const elmHeard = $("gl-elm")?.value || "";
+  if (changed){
+    // A different Seed A is a different stream: the frame pinned on the old one, and the route
+    // planned from it, describe nothing here.
+    _glass.frameObservedElm = ""; _glass.frameCandidates = null;
+    _glass.pinnedFrame = null; _glass.frameGuide = null; _glass.frameProblem = "";
+  }
+  _glass.frameElmPrefill = elmHeard;
+  renderSeedPage();
+  $("gl-frame-elm-new")?.focus();
+}
+function glassChangeSeedA(){ _glass.editing = true; renderSeedPage(); }
+function glassKeepSeedA(){ _glass.editing = false; renderSeedPage(); }
+
+function glassSeedAIsKeySeed(){
+  return !!_glass?.seedA && glassKeySeedValue() === _glass.seedA.seed;
+}
+
+function renderGlassSeedA(){
+  if (_glass.seedA && !_glass.editing){
+    const key = glassSeedAIsKeySeed();
+    return `<h3>Seed A — identified</h3>
+      <div class="info-line done">${_seedASummary(_glass.seedA)}</div>
+      <div class="hr-small muted" style="margin:6px 0">${key
+        ? `This is the key seed — you hit what you aimed at.`
+        : `Not the key seed: you landed ${_glass.seedA.delay_delta >= 0 ? "+" : ""}${_glass.seedA.delay_delta}
+           delays and ${_glass.seedA.sec_delta >= 0 ? "+" : ""}${_glass.seedA.sec_delta} second(s)
+           from it. Everything below is about the seed you are actually on.`}</div>
+      <button class="btn small" onclick="glassChangeSeedA()">Change Seed A</button>`;
+  }
+  const hasCand = !!_glass.candidates;
+  const keepBar = _glass.seedA
+    ? `<div class="info-line">Currently: ${_seedASummary(_glass.seedA)}</div>
+       <button class="btn small" onclick="glassKeepSeedA()">Keep this Seed A</button>` : "";
+  return `<h3>Seed A — ${_glass.seedA ? "change" : "initial"} seed</h3>
+    ${keepBar}
+    <div class="rel-row">
+      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
+        <input id="gl-startrel" value="${esc(_glass.startrel || "")}" placeholder="31 30 7  (- = not roaming)"
+          oninput="glassValidateStartRel()" onkeydown="glassSeedAKey(event)"></div>
+      <div class="field"><label>± seconds</label><input id="gl-secwin" type="number" min="0"
+        value="${_glass.secondsWindow}" onkeydown="glassSeedAKey(event)"></div>
+      <div class="field"><label>± delays</label><input id="gl-delaywin" type="number" min="0"
+        value="${_glass.delayWindow}" onkeydown="glassSeedAKey(event)"></div>
+      <button class="btn primary" onclick="glassGenerateSeedA()">Generate</button>
+    </div>
+    <div class="field check"><input type="checkbox" id="gl-parity" ${_glass.matchParity?"checked":""}>
+      <label for="gl-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
+    <div class="info-line" id="gl-keyinfo">${_glass.keyInfo
+      ? `key seed: R${_glass.keyInfo.r_route??"·"} E${_glass.keyInfo.e_route??"·"} L${_glass.keyInfo.l_route??"·"} · elm ${esc(_glass.keyInfo.elm)}`
+      : "key seed: —"}</div>
+    <div class="grid2">
+      <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
+        <input id="gl-obsrel" placeholder="38 42 11  (. = any)" oninput="glassNarrowSeedA()"
+          onkeydown="glassObsRelKey(event)" ${hasCand?"":"disabled"}></div>
+      <div class="field"><label>Elm calls heard</label>
+        <input id="gl-elm" placeholder="EKP…" oninput="glassNarrowSeedA()"
+          onkeydown="glassElmKey(event)" ${hasCand?"":"disabled"}></div>
+    </div>
+    <div id="gl-candA">${hasCand ? renderCandA(_glass.candidates, "glassPickSeedA")
+      : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
+}
+
+// --- Seed A advances: pin the frame, then route to one --------------------
+// The same two facade calls Safari and Battle Compass use, neither of which takes anything
+// Safari-specific. Two differences from Battle Compass: there is no key-seed gate (a Seed's
+// default frame is a frame on whatever stream you are on, so a route is always worth planning),
+// and the destination is editable, re-planning as you type without touching the stored default.
+
+async function glassIdentifyFrame(){
+  try {
+    const res = await api("safari_compass_identify_frame", {
+      seed: _glass.seedA.seed, prev_routes: _glass.seedAParams.prev_routes,
+      observed_elm: _glass.frameObservedElm});
+    _glass.frameCandidates = res.frames;
+    if (res.pinned){
+      _glass.pinnedFrame = res.frame;
+      renderSeedPage();
+      await glassPlanRoute();
+      $("gl-routeto")?.focus();
+      return;
+    }
+    renderSeedPage();
+    // The re-render replaces the input with a fresh node, so focus has to be put back or
+    // Enter-to-apply drops it on every call.
+    $("gl-frame-elm-new")?.focus();
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function glassAppendFrameElm(){
+  const add = ($("gl-frame-elm-new")?.value || "").trim();
+  if (!add) return;
+  _glass.frameObservedElm = (_glass.frameObservedElm || "") + add;
+  _glass.frameElmPrefill = "";
+  await glassIdentifyFrame();
+}
+
+function glassChangeFrameElm(){
+  // Move what was heard back into the input rather than discarding it: the usual reason to come
+  // back here is one mistyped call in an otherwise correct sequence.
+  const moved = _glass.frameObservedElm || "";
+  _glass.frameObservedElm = ""; _glass.frameCandidates = null;
+  _glass.pinnedFrame = null; _glass.frameGuide = null; _glass.frameProblem = "";
+  _glass.frameElmPrefill = moved;
+  renderSeedPage();
+  $("gl-frame-elm-new")?.focus();
+}
+
+// Debounced, and it repaints ONLY the result box -- re-rendering the page on each keystroke
+// would take the caret out of the field being typed into.
+function glassRouteInput(){
+  _glass.routeTo = $("gl-routeto").value;
+  clearTimeout(_glassPlanTimer);
+  _glassPlanTimer = setTimeout(glassPlanRoute, 300);
+}
+
+async function glassPlanRoute(){
+  if (!_glass || _glass.pinnedFrame == null) return;
+  const raw = (_glass.routeTo || "").trim();
+  _glass.frameGuide = null; _glass.frameProblem = "";
+  if (raw === ""){ glassRenderRoute(); return; }
+  if (!/^\d+$/.test(raw)){
+    _glass.frameProblem = "a frame is a whole number of advances";
+    glassRenderRoute(); return;
+  }
+  // Answered here rather than by plan_advances, whose overshoot message ends in a Safari
+  // encounter verb -- true for an expedition, meaningless for a Seed. The better message for
+  // the ordinary mistake happens to be the one that avoids it.
+  if (Number(raw) < _glass.pinnedFrame){
+    _glass.frameProblem = `Frame ${raw} is behind you — you are on frame `
+      + `${_glass.pinnedFrame}, and advances only go forwards. Re-pin the frame if that is `
+      + `wrong, or reload the seed to start from the beginning.`;
+    glassRenderRoute(); return;
+  }
+  try {
+    _glass.frameGuide = await api("safari_compass_plan_frame", {
+      seed: _glass.seedA.seed, prev_routes: _glass.seedAParams.prev_routes,
+      current_frame: _glass.pinnedFrame, encounter_frame: Number(raw)});
+  } catch (e) {
+    // Whatever else the planner refuses belongs in the panel, not in a toast that fades while
+    // you are still looking at the number you typed.
+    _glass.frameProblem = String(e.message || e);
+  }
+  glassRenderRoute();
+}
+
+function glassRenderRoute(){
+  const box = $("gl-route-result");
+  if (box) box.innerHTML = glassRouteHtml();
+}
+
+// Deliberately no encounter verb. plan_frame_route's `method` only decides whether the guide
+// ends on "Sweet Scent" or "cast the Super Rod", and a Seed in Glass is not necessarily either
+// -- so the guide says where the frame IS and leaves what to do there to the player.
+function glassRouteHtml(){
+  if (_glass.frameProblem) return `<div class="notice warn">${esc(_glass.frameProblem)}</div>`;
+  const g = _glass.frameGuide;
+  if (!g) return `<div class="status">Enter a frame to route to.</div>`;
+  const steps = (g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : "")
+    + `${g.elm_before_scent} Elm call(s)`;
+  return `<div class="info-line done">${steps} → frame <b>${g.encounter_frame}</b>${
+      g.total_advances === 0 ? " — you are already on it" : ""}</div>
+    <div class="status">Guide: <code>${esc(g.guide)}</code> — the “!” is frame
+      ${g.encounter_frame}, so act there
+      ${g.truncated ? ` <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
+      ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>`;
+}
+
+function renderGlassFrame(){
+  if (!_glass.seedA)
+    return `<h3>Seed A advances</h3><div class="status">Identify Seed A first.</div>`;
+
+  if (_glass.pinnedFrame == null){
+    const cand = !_glass.frameCandidates ? ""
+      : _glass.frameCandidates.length === 0
+        ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check
+             what you entered.</div>`
+        : `<div class="status">${_glass.frameCandidates.length} possible frame(s):
+             ${_glass.frameCandidates.join(", ")} — keep listening.</div>`;
+    return `<h3>Seed A advances</h3>
+      <div class="hint muted" style="margin-bottom:8px">Type the Elm calls you have heard since
+        this seed loaded and Glass works out which advance frame you are on. From there it can
+        route you to any frame ahead of you.</div>
+      ${_glass.frameObservedElm ? `<div class="hr-small muted">Elm calls so far:
+        <code>${esc(_glass.frameObservedElm)}</code>
+        <button class="btn small" type="button" onclick="glassChangeFrameElm()">Change</button>
+        </div>` : ""}
+      <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
+        <input id="gl-frame-elm-new" value="${esc(_glass.frameElmPrefill || "")}"
+          placeholder="PEKE…" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();glassAppendFrameElm();}">
+        </div>
+      ${cand}
+      <button class="btn small" onclick="glassAppendFrameElm()">Apply</button>`;
+  }
+
+  const def = glassFrameValue();
+  return `<h3>Seed A advances</h3>
+    <div class="info-line done">Current advance frame: <b>${_glass.pinnedFrame}</b></div>
+    <div class="rel-row" style="margin-top:8px">
+      <div class="field">${helpLabel('Navigate to frame', 'Where to route to. Starts at this seed\'s default frame and changing it here plans a new route without touching that default — edit the Default frame field above to change what it starts at.')}
+        <input id="gl-routeto" value="${esc(_glass.routeTo || "")}"
+          placeholder="${def === "" || def === null ? "e.g. 73" : esc(String(def))}"
+          oninput="glassRouteInput()"></div>
+      <button class="btn small" onclick="glassChangeFrameElm()">Re-pin the frame</button>
+    </div>
+    <div id="gl-route-result">${glassRouteHtml()}</div>`;
+}
+
+// --- Recent history -------------------------------------------------------
+// A scratchpad, not a record: nothing here can feed calibration (both fits need a vector ms and
+// a Seed B, and Glass has neither), and nothing is saved unless the button is pressed.
+
+function glassCanSaveHistory(){ return !!_glass?.seedA; }
+
+async function glassSaveHistory(){
+  if (!glassCanSaveHistory()) return;
+  const a = _glass.seedA;
+  try {
+    _glass.history = await api("seed_add_history", _glass.id, {
+      seed: a.seed, seed_hex: a.seed_hex, time: a.time, delay: a.delay,
+      delay_delta: a.delay_delta, sec_delta: a.sec_delta,
+      elm_heard: _glass.frameObservedElm, frame: _glass.pinnedFrame,
+      routed_to: _glass.frameGuide ? _glass.frameGuide.encounter_frame : null});
+    _glass.historyOpen = true;
+    renderSeedPage();
+    toast("Saved to history.");
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+function glassToggleHistory(){ _glass.historyOpen = !_glass.historyOpen; renderSeedPage(); }
+
+function glassConfirmClearHistory(){
+  openModal(`<h3>Clear this seed's history?</h3>
+    <p class="muted">The seed itself and its configuration are untouched.</p>
+    <div class="actions">
+      <button class="btn danger" onclick="glassClearHistory()">Clear</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+async function glassClearHistory(){
+  closeModal();
+  try { _glass.history = await api("seed_clear_history", _glass.id); renderSeedPage(); }
+  catch (e) { toast(String(e.message || e)); }
+}
+
+function renderGlassHistory(){
+  const h = _glass.history || [];
+  const head = `<h3>Recent history
+      <span class="muted" style="font-weight:400">${h.length}/10</span></h3>
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn small" onclick="glassSaveHistory()"
+        ${glassCanSaveHistory() ? "" : `disabled title="Identify Seed A first"`}>Save to history</button>
+      ${h.length ? `<button class="btn small" onclick="glassToggleHistory()">${
+        _glass.historyOpen ? "Hide" : "Show"}</button>
+        <button class="btn small" onclick="glassConfirmClearHistory()">Clear</button>` : ""}
+    </div>`;
+  if (!h.length)
+    return head + `<div class="status">Nothing saved yet. This keeps the last 10
+      identifications — repeats included — so you can see which seeds you have been landing on.
+      It is a scratchpad: it never feeds calibration.</div>`;
+  if (!_glass.historyOpen) return head;
+  const rows = h.map(e => `<tr>
+      <td>${esc((e.saved_at || "").replace("T", " "))}</td>
+      <td>${esc(e.seed_hex || "")}</td>
+      <td>${e.delay ?? "·"}</td>
+      <td>${e.delay_delta == null ? "·" : (e.delay_delta >= 0 ? "+" : "") + e.delay_delta}</td>
+      <td>${e.sec_delta == null ? "·" : (e.sec_delta >= 0 ? "+" : "") + e.sec_delta}</td>
+      <td>${e.frame ?? "·"}</td><td>${e.routed_to ?? "·"}</td>
+      <td>${esc(e.elm_heard || "")}</td></tr>`).join("");
+  return head + `<div class="candtable"><table><thead><tr>
+      <th title="When this identification was saved.">saved</th>
+      <th title="The Seed A identified.">seed</th>
+      <th title="That seed's absolute delay, for the year in its time.">delay</th>
+      <th title="How far its delay sat from the one you aimed for.">Δdelay</th>
+      <th title="How far its RTC second sat from the one you aimed for.">Δsecond</th>
+      <th title="The advance frame pinned at the time, if any.">frame</th>
+      <th title="The frame the route was planned to, if any.">routed to</th>
+      <th title="The Elm calls heard while pinning the frame.">elm</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
 }
 
 // --- Profiles -------------------------------------------------------------

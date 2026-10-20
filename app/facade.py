@@ -16,7 +16,7 @@ from app import chart as chart_lib
 from app import metronome
 from app.models import (
     CalibrationModelDoc, Chart, Expedition, Hunt, MetronomeUser, PartyPokemon,
-    Profile, Run, Target, _default_preferences,
+    Profile, Run, Seed, Target, _default_preferences,
 )
 from app.store import FileStore, Store
 
@@ -27,6 +27,7 @@ _CHARTS = "charts"
 _TARGETS = "targets"
 _CALIBRATION_MODELS = "calibration_models"
 _HUNTS = "hunts"
+_SEEDS = "seeds"
 
 
 
@@ -1169,6 +1170,162 @@ class Facade:
             return []
         return survivability_warnings(party, target)
 
+    # -- seeds (Glass) ----------------------------------------------------
+    #
+    # A Seed is the smallest entity in the app: a key seed worth keeping, an initial time to
+    # load it at, a frame to route to, and notes. It owns nothing, has no name and no
+    # uniqueness rule, and gates no tool -- so this is the hunt CRUD above with every
+    # validation that does not apply removed, rather than a new pattern. See notes/glass.md.
+
+    def _load_seed(self, seed_id: str) -> Seed:
+        doc = self._store.read(_SEEDS, seed_id)
+        if doc is None:
+            raise ValueError(f"no seed with id {seed_id}")
+        return Seed.from_dict(doc)
+
+    @staticmethod
+    def _parse_key_seed(value) -> int | None:
+        """A key seed as the UI sends it: an int, or hex text with or without "0x".
+
+        int(x, 0) would read a bare "12345" as decimal where every key-seed field in this app
+        means hex, so bare text is parsed base 16 explicitly (the UI normalises to an explicit
+        0x as well, but the facade is the one that must not be fooled).
+        """
+        if value in (None, ""):
+            return None
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        if text.lower().startswith("0x"):
+            return int(text[2:], 16)
+        return int(text, 16)
+
+    def _seed_row(self, s: Seed) -> dict:
+        """One row of the Glass list: what it shows, already derived.
+
+        The readout is server-side so the list does not have to make a call per row -- and the
+        time-of-day bucket comes from the KEY SEED rather than the time, because the seed's hour
+        byte (bits 16-23) fixes the hour of every initial time that can produce it, so the
+        bucket is known before any time is picked.
+        """
+        from app import glass
+        read = glass.readout(s.key_seed, s.initial_time)
+        notes = (s.notes or "").strip().splitlines()
+        return {
+            "id": s.id,
+            "profile_id": s.profile_id,
+            "label": s.label,
+            "key_seed": s.key_seed,
+            "key_seed_hex": read["key_seed_hex"],
+            "initial_time": s.initial_time,
+            "default_frame": s.default_frame,
+            "delay": read["delay"],
+            "time_of_day": read["time_of_day"],
+            "problem": read["problem"],
+            "notes_line": notes[0] if notes else "",
+            "history_count": len(s.history),
+        }
+
+    def list_seeds(self, profile_id: str | None = None) -> list[dict]:
+        out = []
+        for sid in self._store.list_ids(_SEEDS):
+            doc = self._store.read(_SEEDS, sid)
+            if doc is None:
+                continue
+            s = Seed.from_dict(doc)
+            if profile_id is not None and s.profile_id != profile_id:
+                continue
+            out.append(self._seed_row(s))
+        # Labelled seeds first, alphabetically, then the unlabelled ones by seed -- so a seed
+        # someone bothered to name never sorts below one they didn't.
+        out.sort(key=lambda d: (not d["label"], (d["label"] or "").lower(), d["key_seed"] or 0))
+        return out
+
+    def get_seed(self, seed_id: str) -> dict:
+        """The full seed document, plus the derived readout the page prints beside the time."""
+        from app import glass
+        s = self._load_seed(seed_id)
+        doc = s.to_dict()
+        doc["readout"] = glass.readout(s.key_seed, s.initial_time)
+        return doc
+
+    def create_seed(self, fields: dict) -> dict:
+        """A new seed. Only a profile is required -- everything else is filled in on the page."""
+        profile_id = fields.get("profile_id")
+        if not profile_id:
+            raise ValueError("a seed must reference a profile")
+        self._load_profile(profile_id)  # validate the reference
+        s = Seed.from_dict({
+            **fields,
+            "profile_id": profile_id,
+            "key_seed": self._parse_key_seed(fields.get("key_seed")),
+            "label": (fields.get("label") or "").strip(),
+        })
+        self._store.write(_SEEDS, s.id, s.to_dict())
+        return s.to_dict()
+
+    def save_seed(self, seed_id: str, fields: dict) -> dict:
+        """Update the editable configuration, leaving the history alone.
+
+        Field-wise rather than whole-document on purpose: the page saves as you type, and a
+        whole-document upsert from a page that has never loaded the history would quietly
+        delete it. Passing a field as "" clears it; omitting it leaves it untouched.
+        """
+        from app import glass
+        s = self._load_seed(seed_id)
+        if "label" in fields:
+            s.label = (fields.get("label") or "").strip()
+        if "key_seed" in fields:
+            s.key_seed = self._parse_key_seed(fields.get("key_seed"))
+        if "initial_time" in fields:
+            s.initial_time = (fields.get("initial_time") or "").strip()
+        if "default_frame" in fields:
+            frame = fields.get("default_frame")
+            s.default_frame = None if frame in (None, "") else int(frame)
+        if "notes" in fields:
+            s.notes = fields.get("notes") or ""
+        self._store.write(_SEEDS, s.id, s.to_dict())
+        doc = s.to_dict()
+        doc["readout"] = glass.readout(s.key_seed, s.initial_time)
+        return doc
+
+    def delete_seed(self, seed_id: str) -> bool:
+        return self._store.delete(_SEEDS, seed_id)
+
+    def seed_save_seed_a_defaults(self, seed_id: str, defaults: dict) -> dict:
+        """Remember the roamer starting positions and window sizes, as a Hunt does."""
+        s = self._load_seed(seed_id)
+        s.seed_a_defaults = {**(s.seed_a_defaults or {}), **(defaults or {})}
+        self._store.write(_SEEDS, s.id, s.to_dict())
+        return dict(s.seed_a_defaults)
+
+    def seed_readout(self, key_seed, initial_time: str = "") -> dict:
+        """The hour, time-of-day bucket and ABSOLUTE delay for a key seed + initial time.
+
+        Unsaved values, straight from the page's fields -- so the delay updates as the year in
+        the time is edited, before anything is stored.
+        """
+        from app import glass
+        return glass.readout(self._parse_key_seed(key_seed), initial_time)
+
+    def seed_add_history(self, seed_id: str, entry: dict) -> list:
+        """Append one identification to the seed's recent history (newest first, capped).
+
+        Explicitly NOT a run: both calibration fits need a vector ms and a Seed B, and Glass has
+        neither, so nothing here can reach the model (see app/calibration.py and notes/glass.md).
+        """
+        from app import glass
+        s = self._load_seed(seed_id)
+        s.add_history(glass.history_entry(entry))
+        self._store.write(_SEEDS, s.id, s.to_dict())
+        return list(s.history)
+
+    def seed_clear_history(self, seed_id: str) -> list:
+        s = self._load_seed(seed_id)
+        s.history = []
+        self._store.write(_SEEDS, s.id, s.to_dict())
+        return []
+
     # -- expeditions ------------------------------------------------------
 
     def list_expeditions(self, profile_id: str | None = None) -> list[dict]:
@@ -1369,12 +1526,18 @@ class Facade:
         return metronome.key_seed_info(key_seed, prev_routes)
 
     def times_on_date(self, key_seed: int, month: int | None = None, day: int | None = None,
-                      second: int | None = None) -> list[str]:
+                      second: int | None = None, year: int | None = None) -> list[str]:
         """Every valid initial time for `key_seed`, optionally filtered to a month (1-12),
         a day-of-month (1-31), and/or a second-of-minute value — powers the calendar/
         date-picker flow for Initial-time fields. All filters are optional and independent
-        (a month alone, or month+day, etc.); with none, every valid time comes back."""
-        return metronome.times_on_date(key_seed, month, day, second)
+        (a month alone, or month+day, etc.); with none, every valid time comes back.
+
+        `year` stamps every returned time with that year. Only Glass passes it, because only
+        Glass shows an absolute delay and therefore has to store a time carrying the year the
+        player will set (see app/glass.py); omitting it leaves the placeholder-year behaviour
+        every other caller already relies on."""
+        return metronome.times_on_date(key_seed, month, day, second,
+                                       None if year in (None, "") else int(year))
 
     def _metronome_model(self, params: dict):
         """The calibration model a metronome Seed B search should be centered on.

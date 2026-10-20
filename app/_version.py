@@ -6,11 +6,11 @@ header, the release tag — is expected to agree with that file.
 """
 from __future__ import annotations
 
-_FALLBACK = "0.1.0"
+_FALLBACK = "0.2.0"
 
 
 def version() -> str:
-    """The current version string, e.g. "0.1.0".
+    """The current version string, e.g. "0.2.0".
 
     Read from the packaged VERSION resource, falling back to a literal if it is missing —
     a version number is cosmetic and must never be the reason the app fails to start.

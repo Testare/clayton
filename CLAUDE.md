@@ -102,6 +102,13 @@ A pywebview shell over a single-page front end (`app/web/index.html`). `facade.p
 only surface the UI calls; `store.py` handles persistence and `models.py` the data model.
 Keep business logic in `claytonlib/` — the app layer should stay a thin facade.
 
+Four nav tabs: **Expeditions** (a quest — chart, Safari Compass, Metronome Compass),
+**Hunts** (one Battle Compass capture attempt), **Glass** (`app/glass.py` — *Seeds*: a key
+seed worth keeping, its initial time, a frame to route to and notes; identifies Seed A and
+routes to a frame, nothing else) and **Profiles**. Glass is the only page that shows an
+**absolute delay**, which is why it is the only one that pins the year down — see
+`notes/glass.md`.
+
 ### Key conventions
 
 - **Terminology**: "Delays" are the fundamental unit — the delay counter increments once per
@@ -170,6 +177,8 @@ Keep business logic in `claytonlib/` — the app layer should stay a thin facade
   therefore identical to Suicune, the two simulator bugs the plan surfaced (the accuracy stage
   is a ROM *table*, not the fraction; the high-crit stage), and the measured finding that Flash
   is an identification tool rather than only damage mitigation.
+- `notes/glass.md` — Glass (the Seeds tab): why the absolute delay depends on the year on the
+  DS clock, and the "As built" list of where the implementation differs from the design.
 - `notes/battle_compass.md` — **Design document** for Battle Compass: extending
   compass/machete to ordinary battles, v1 target being Suicune in a Fast Ball. Design only,
   nothing implemented; claims are tagged [verified]/[derived]/[illustrative]/[needs gdb].

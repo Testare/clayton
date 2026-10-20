@@ -1315,12 +1315,16 @@ class TestTheConfigureTabHasATimePicker(unittest.TestCase):
         self.assertIn("closeModal()", body)
 
     def test_it_reuses_the_shared_picker(self):
-        """Rather than a second implementation that could drift from `times_on_date`."""
-        self.assertIn("function openTimePicker(keySeed, onPick){", self.html)
+        """Rather than a second implementation that could drift from `times_on_date`.
+
+        The third parameter is Glass's year mode (notes/glass.md); this caller passes nothing
+        for it, which is what keeps the picker looking exactly as it did here.
+        """
+        self.assertIn("function openTimePicker(keySeed, onPick, opts){", self.html)
 
     def test_the_picker_handles_a_missing_key_seed_itself(self):
         """So the button needs no guard of its own -- openTimePicker toasts and returns."""
-        body = self.html[self.html.index("function openTimePicker(keySeed, onPick){"):]
+        body = self.html[self.html.index("function openTimePicker(keySeed, onPick, opts){"):]
         body = body[:body.index("\n}") + 2]
         self.assertIn("Set a key seed first.", body)
 
