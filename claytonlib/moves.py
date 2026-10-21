@@ -25,16 +25,53 @@ TYPE_NAMES: dict[int, str] = {
 # Damage category, as moves.json stores it.
 CATEGORY_PHYSICAL, CATEGORY_SPECIAL, CATEGORY_STATUS = 0, 1, 2
 
+# Move range, as moves.json's `range` stores it. Flag values rather than an index, with
+# SINGLE_TARGET as the zero: verified by decoding all 467 rows, which land on exactly these
+# twelve and nothing else (Surf is ALL_ADJACENT, Spikes OPPONENT_SIDE, Mist and Light Screen
+# USER_SIDE, Haze and Rain Dance FIELD, Helping Hand ALLY, Acupressure USER_OR_ALLY, Me First
+# its own). Names from the decomp's generated/move_ranges.txt.
+RANGE_SINGLE_TARGET = 0
+RANGE_SINGLE_TARGET_SPECIAL = 1
+RANGE_RANDOM_OPPONENT = 2
+RANGE_ADJACENT_OPPONENTS = 4
+RANGE_ALL_ADJACENT = 8
+RANGE_USER = 16
+RANGE_USER_SIDE = 32
+RANGE_FIELD = 64
+RANGE_OPPONENT_SIDE = 128
+RANGE_ALLY = 256
+RANGE_USER_OR_ALLY = 512
+RANGE_SINGLE_TARGET_ME_FIRST = 1024
+
+#: Ranges for which the ROM sets ``defender = attacker`` -- the move is aimed at its own user, or
+#: at its own side, or at the field, and never at the Pokemon across from it.
+#:
+#: Straight out of `BattleSystem_GetDefender` (src/battle/battle_lib.c:1664-1683):
+#:
+#:     } else if (range == RANGE_USER                    // e.g., Swords Dance
+#:         || range == RANGE_USER_SIDE                   // e.g., Light Screen, Reflect
+#:         || range == RANGE_SINGLE_TARGET_SPECIAL       // e.g., Counter, Mirror Coat
+#:         || range == RANGE_FIELD) {                    // e.g., Sunny Day
+#:         defender = attacker;
+#:
+#: RANGE_ALLY and RANGE_USER_OR_ALLY land on the attacker too outside doubles, which is every
+#: battle this project simulates.
+_SELF_AIMED_RANGES = frozenset({
+    RANGE_SINGLE_TARGET_SPECIAL, RANGE_USER, RANGE_USER_SIDE, RANGE_FIELD,
+    RANGE_ALLY, RANGE_USER_OR_ALLY,
+})
+
 
 class Move:
     """Move metadata loaded from moves.json."""
     __slots__ = ('number', 'name', 'metronome_usable', 'effect', 'effect_chance', 'accuracy',
-                 'type_id', 'category', 'power', 'priority', 'pp', 'flags')
+                 'type_id', 'category', 'power', 'priority', 'pp', 'flags', 'range_id')
 
     def __init__(self, number: int, name: str, metronome_usable: bool,
                  effect: int = 0, effect_chance: int = 0, accuracy: int = 0,
                  type_id: int = 0, category: int = CATEGORY_STATUS,
-                 power: int = 0, priority: int = 0, pp: int = 0, flags: int = 0):
+                 power: int = 0, priority: int = 0, pp: int = 0, flags: int = 0,
+                 range_id: int = RANGE_SINGLE_TARGET):
         self.number = number
         self.name = name
         self.metronome_usable = metronome_usable
@@ -53,6 +90,9 @@ class Move:
         # The ROM's move flag byte (`unkB` in the decomp, `unk_b` in moves.json). Only bit 0
         # is read so far -- see `makes_contact`.
         self.flags = flags
+        # Who the move is aimed at -- see `RANGE_*` and `reaches_opponent`. Named `range_id` for
+        # the same reason `type_id` is: `range` is a builtin.
+        self.range_id = range_id
 
     @property
     def makes_contact(self) -> bool:
@@ -68,6 +108,23 @@ class Move:
         Swipe make contact; Sacred Fire, Ancient Power, Air Slash and Discharge do not.
         """
         return bool(self.flags & 1)
+
+    @property
+    def reaches_opponent(self) -> bool:
+        """Whether this move is aimed at the Pokemon across from its user.
+
+        False for a move the ROM points back at its own user -- see `_SELF_AIMED_RANGES`.
+
+        **What reads it is the semi-invulnerability check.** A Pokemon away mid-Shadow Force
+        cannot be reached, but a move that was never aimed at it is unaffected: Light Screen,
+        Reflect, Mist, Safeguard, Rain Dance, Haze, Double Team, Nasty Plot, Amnesia and Refresh
+        all go off exactly as usual while Giratina is gone. Before this existed every one of them
+        rendered as a MISS instead -- so a Light Screen used on the charge turn both failed to put
+        the screen up and cost the turn its two post-successful-move advances, which is a desync
+        rather than a mispredicted number. Magneton carries Light Screen in the configured party,
+        so that was reachable.
+        """
+        return self.range_id not in _SELF_AIMED_RANGES
 
     @property
     def is_physical(self) -> bool:
@@ -116,6 +173,7 @@ def _load_moves() -> list[Move]:
                 priority=m["priority"],
                 pp=m["pp"],
                 flags=m.get("unk_b", 0),
+                range_id=m.get("range", RANGE_SINGLE_TARGET),
             )
             for m in data
         ]

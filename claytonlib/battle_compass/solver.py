@@ -390,6 +390,63 @@ def ends_the_run(move) -> bool:
     return move is not None and move.effect in RUN_ENDING_EFFECTS
 
 
+#: Stages that are in OUR favour, as ``(whose, field, the sign that helps us)``.
+#:
+#: Haze resets every stage on both sides, so whether it helps or hurts is entirely a question of
+#: which of these are currently nonzero. Spelled out rather than inferred because the direction
+#: differs per stage and getting one backwards would refuse Haze exactly when it is wanted: the
+#: target's lowered ACCURACY helps us, its raised EVASION hurts us, and those are adjacent fields
+#: on the same object.
+_STAGES_IN_OUR_FAVOUR: tuple[tuple[str, str, int], ...] = (
+    # The target's, lowered: six Flashes are the biggest accuracy investment a run makes, and
+    # permanent, because a wild target never switches out.
+    ("target", "accuracy_stage", -1),
+    # Ours, raised: X Sp. Def is `choose_item`'s preferred filler, so after one filler turn this
+    # is nonzero in most plans -- which is why the solver stops planning Haze almost immediately.
+    ("ours", "spdef_stage", +1),
+    ("ours", "atk_stage", +1),
+    ("ours", "def_stage", +1),
+    ("ours", "spatk_stage", +1),
+    ("ours", "speed_stage", +1),
+    ("ours", "accuracy_stage", +1),
+    ("ours", "evasion_stage", +1),
+)
+
+
+def undoes_our_own_work(move, state: BattleState) -> str | None:
+    """Why the solver must not PLAN `move` from this state, or None if it may.
+
+    Haze, and only Haze. The move itself spends no rolls, so a Haze turn costs 2 -- just the
+    post-successful-move block -- against Flash's 3 and Taunt's 4, which makes it the cheapest
+    move in the alphabet and Dijkstra's favourite. And it resets **both** sides' stages. Left unchecked the solver plans it as free filler and silently throws away the Flash
+    accuracy work and the X Sp. Def stacks it spent earlier turns building, which is incoherent:
+    a plan that undoes its own earlier moves.
+
+    **A solver refusal, not a `sim.unselectable_reason` one**, and the distinction is the point.
+    `unselectable_reason` is for moves the simulator would MIS-PREDICT, and it also disables the
+    move in the interview and reports it as a coverage gap. Haze is modelled exactly; it is
+    merely self-defeating as *filler*. There are real states where losing the accuracy work is
+    the right trade -- a Giratina at +6 from Ancient Power, an Azelf two Nasty Plots in -- and
+    those are the player's call to make on the turn, which is why this refuses the PLAN and
+    leaves the move fully available to the interview.
+
+    State-dependent rather than a blanket ban, because from a state with no stages in play Haze
+    genuinely is harmless zero-cost filler and there is no reason to forbid it. In practice
+    `choose_item` stacks X Sp. Def from the first filler turn onward, so this refuses it from
+    turn two of most plans.
+    """
+    from claytonlib.battle_compass.sim import EFFECT_HAZE
+
+    if move is None or move.effect != EFFECT_HAZE:
+        return None
+    lost = [f"{whose} {field}" for whose, field, helpful in _STAGES_IN_OUR_FAVOUR
+            if getattr(getattr(state, whose), field) * helpful > 0]
+    if not lost:
+        return None
+    return (f"{move.name} would reset every stage on both sides, including "
+            f"{', '.join(lost)}, which earlier turns spent to get.")
+
+
 def can_faint_target(move, ours, target, *, field=None) -> bool:
     """Whether `move` could knock the target out -- on any roll, crit included.
 
@@ -507,6 +564,10 @@ def _legal_actions(state: BattleState, config: SolverConfig,
         # a caller that forgets gets the safe behaviour, and a caller that deliberately widens
         # `allowed_moves` still cannot reach a move the simulator would mis-predict.
         if unselectable_reason(move, state.target) is not None:
+            continue
+        # Soundly modelled but self-defeating as filler -- see `undoes_our_own_work`, and note
+        # this deliberately does NOT reach the interview.
+        if undoes_our_own_work(move, state) is not None:
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:

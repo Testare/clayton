@@ -1421,3 +1421,88 @@ Future Sight's 90% check doing it.
   got the unhalved sleep clock, and the sentence naming the carrier could never fire. The run path
   has always passed it, so the simulation was right and only the advice was wrong — found by
   pointing the Honchkrow kit at it.
+
+## 17. As built — Haze, and the move range nobody had read (clayton-4wr.1.1)
+
+`effect_script_0025.s` is one line — `MOVE_SIDE_EFFECT_ON_HIT|MOVE_SUBSCRIPT_PTR_RESET_ALL_STAT_STAGES`
+— and `subscript_reset_all_stat_stages.s` is `ResetAllStatChanges` plus "All stat changes were
+eliminated!". No Random anywhere, and Haze's accuracy is 0, so **the move spends no rolls at all**
+[verified].
+
+That is not a free turn. Haze succeeds, so the turn still spends the two post-successful-move
+advances, which puts it at **2** against Flash's 3 and Taunt's 4: the cheapest *move* in the
+alphabet, and dearer than a bag action's nothing. Worth stating precisely because the first draft
+of this work called it "level with an item" in three places, and a test caught it.
+
+`BtlCmd_ResetAllStatChanges` (`battle_script.c:3535-3549`) loops **every battler** and sets every
+one of its `statBoosts` to neutral, then clears Focus Energy. It touches nothing else: not status,
+not the other volatiles, not field conditions. And there is no "already hazed" check, so a second
+Haze succeeds and costs the same — unlike Mist, Safeguard, Water Sport and both screens, all of
+which fail when re-used.
+
+### 17.1 It undoes our own work, so the solver is kept off it
+
+Both sides, which is the whole difficulty. The same move that wipes a Giratina at +6 from Ancient
+Power also wipes:
+
+* **the target's lowered accuracy** — six Flashes, the biggest accuracy investment a run makes,
+  and permanent because a wild target never switches out;
+* **our own X Sp. Def stacks** — `choose_item`'s preferred filler, so nonzero from the first
+  filler turn of most plans.
+
+At 2 advances it is Dijkstra's favourite action, so left unchecked the solver plans it as filler
+and silently throws away what earlier turns of its own plan spent to get. `solver.undoes_our_own_work`
+refuses it, and three things about that refusal are deliberate:
+
+* **It is a solver refusal, not a `sim.unselectable_reason` one.** `unselectable_reason` is for
+  moves the simulator would MIS-PREDICT; it also disables the move in the interview and reports it
+  as a coverage gap. Haze is modelled exactly — it is merely self-defeating as *filler*, and
+  whether to spend it is the player's call on the turn.
+* **It is state-dependent, not a blanket ban.** From a state with no stages in play Haze genuinely
+  is harmless cheap filler. In practice the X Sp. Def stack means the refusal bites from turn two.
+* **The direction is spelled out per stage** (`_STAGES_IN_OUR_FAVOUR`) rather than inferred. The
+  target's lowered *accuracy* helps us and its raised *evasion* hurts us, and those are adjacent
+  fields on the same object; getting one backwards would refuse Haze exactly when it is wanted.
+
+`STAGE_FIELD_NAMES` names the seven stage fields once, so a Haze and a send-out cannot clear
+different sets — a field added to `Battler` and forgotten in one of them would be a stage that
+survives a switch, silently. A test pins it against the dataclass and against
+`hunt_session.STAGE_FIELDS`, which is the same seven paired with UI labels.
+
+### 17.2 And a pre-existing bug: self-aimed moves were missing a vanished target
+
+Haze is `range: 64` = **RANGE_FIELD**, and the ROM points a field-, side- or self-range move back
+at its own user:
+
+```c
+} else if (range == RANGE_USER                 // e.g., Swords Dance
+    || range == RANGE_USER_SIDE                // e.g., Light Screen, Reflect
+    || range == RANGE_SINGLE_TARGET_SPECIAL    // e.g., Counter, Mirror Coat
+    || range == RANGE_FIELD) {                 // e.g., Sunny Day
+    defender = attacker;
+```
+`BattleSystem_GetDefender`, `battle_lib.c:1664-1683` [verified].
+
+So there is nothing out of reach while Giratina is away mid-Shadow Force — and `execute_move` was
+gating the semi-invulnerability check on nothing but the defender's state, so **every self-aimed
+move of ours rendered as a MISS and set nothing**. A Light Screen used on the charge turn put no
+screen up *and* cost the turn its two post-successful-move advances: a desync, not a mispredicted
+number. Reachable, because Magneton carries Light Screen in the configured party, and Shadow Force
+is in the same moveset as the Ancient Power boosts Haze is carried for.
+
+`Move` now exposes `range_id` with a `reaches_opponent` property, and both branches of
+`execute_move` gate on it. The flag values were decoded by running all 467 rows of moves.json
+against the decomp's `generated/move_ranges.txt` — they land on exactly twelve named values and
+nothing else, with Surf as ALL_ADJACENT, Spikes as OPPONENT_SIDE, Mist and Light Screen as
+USER_SIDE, Haze and Rain Dance as FIELD, Helping Hand as ALLY and Acupressure as USER_OR_ALLY. It
+fixes Light Screen, Reflect, Mist, Safeguard, Rain Dance, Refresh, Double Team, Nasty Plot and
+Amnesia at a stroke; Flash and every damaging move still miss, which is the control.
+
+### 17.3 Where the kit stands
+
+With Haze and Taunt both modelled, the Honchkrow kit is fully simulable: **Insomnia** blanks
+Darkrai's Hypnosis → Nightmare → Bad Dreams chain and Uxie's Yawn, **Taunt** shuts Uxie's Yawn and
+Amnesia, Azelf's Nasty Plot and both of Heatran's two-stage drops, and **Haze** answers the one
+thing neither of those can — a Giratina that has already boosted. Against Giratina specifically,
+note §15.6's caution still stands: Ancient Power is Rock vs Dark/Flying = ×2 into base Sp. Def 52,
+so Haze undoes the boosts but not the hit that applied them.

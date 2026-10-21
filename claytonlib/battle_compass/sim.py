@@ -171,6 +171,9 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # Taunt, and it is listed as modelled only because `usable_slots` narrows the selection rather
     # than something pretending to refuse the move afterwards. See `EFFECT_TAUNT`.
     175: "Taunt: the 3-5 turn lock, and the selection modulus it narrows",
+    # Haze, and it spends nothing. Listed for OUR side only: no configured target has it, and the
+    # `act_target` mirror is wired for symmetry.
+    25: "Haze: every stat stage on BOTH sides back to neutral, for no rolls at all",
     149: "double power vs airborne, which never applies in a single battle on the ground",
     # Surf, and it is in here for exactly the reason 149 above is. Effect 257 is
     # `MOVE_EFFECT_DOUBLE_DAMAGE_DIVE` (include/constants/move_effects.h:255), the mirror of
@@ -410,6 +413,9 @@ class MoveOutcome:
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
+    #: Haze: every stat stage on BOTH sides goes back to neutral. A flag rather than a list of
+    #: fields, because the ROM's own loop is over every battler and every stage without exception.
+    resets_all_stages: bool = False
     #: Turns of Taunt this move just rolled for its VICTIM, or 0. Ours to inflict; the mirror in
     #: `act_target` is wired for symmetry and no configured target has the move.
     starts_taunt: int = 0
@@ -938,6 +944,23 @@ EFFECT_FUTURE_SIGHT = 148
 #: every turn, and it lands on reaching zero -- so a Future Sight used on turn T hits at the end
 #: of turn T+2.
 FUTURE_SIGHT_TURNS = 3
+
+#: Haze (BATTLE_EFFECT_HAZE). **The move itself spends no rolls at all** -- accuracy 0, so no
+#: accuracy roll, and `subscript_reset_all_stat_stages.s` is `ResetAllStatChanges` plus a message
+#: with no Random anywhere.
+#:
+#: Which is not the same as a free TURN: it succeeds, so the turn still spends the two
+#: post-successful-move advances. That makes it cost 2 against Flash's 3 and Taunt's 4 -- the
+#: cheapest move in the action alphabet, and dearer than a bag action's nothing.
+#:
+#: `BtlCmd_ResetAllStatChanges` (battle_script.c:3535-3549) loops EVERY battler and sets every one
+#: of its `statBoosts` back to neutral, then clears Focus Energy. It touches nothing else: not
+#: status, not the other volatiles, not field conditions. And there is no "already hazed" check,
+#: so a second Haze succeeds and costs the same nothing.
+#:
+#: Which means it resets OUR stages too, and that is the trap rather than a detail -- see
+#: `solver.undoes_our_own_work`.
+EFFECT_HAZE = 25
 
 #: Taunt (BATTLE_EFFECT_TAUNT), and the first move of OURS that changes what the target's turn
 #: costs rather than only what it does.
@@ -1591,7 +1614,14 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # instead of it: `CheckMoveHitAccuracy` spends the accuracy roll and the semi-invulnerable
         # verdict is layered on by `CheckMoveHitOverrides` afterwards
         # [battle_controller_player.c:219-220]. So the cost is an ordinary miss's.
-        if hit and is_semi_invulnerable(defender):
+        #
+        # **Only for a move that was aimed at it.** The ROM points a self-, side- or field-range
+        # move back at its own user (`defender = attacker`), so there is nothing out of reach:
+        # Light Screen, Mist, Safeguard, Rain Dance, Haze, Double Team and Refresh all go off as
+        # usual while Giratina is away. Without `reaches_opponent` every one of them rendered as a
+        # MISS and set nothing -- a desync, not a mispredicted number, and reachable, because
+        # Magneton carries Light Screen.
+        if hit and move.reaches_opponent and is_semi_invulnerable(defender):
             hit = False
         if not hit:
             parts.append(tok.MISS)
@@ -1641,6 +1671,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                           if move.effect in SCREEN_EFFECTS else 0),
             sets_nightmare=move.effect == EFFECT_NIGHTMARE,
             sets_drowsy=move.effect == EFFECT_YAWN,
+            resets_all_stages=move.effect == EFFECT_HAZE,
             # Double Team, Nasty Plot, Amnesia. Mist does not guard against any of them -- Mist
             # blocks REDUCTIONS to its own side, and this is the user raising its own stage.
             self_stat_raise=PRIMARY_SELF_RAISES.get(move.effect),
@@ -1662,8 +1693,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             move, net_stage, attacker=attacker, defender=defender)
     # As in the status branch: the rolls are spent first, the invulnerability decides afterwards.
     # An accuracy-0 move is not exempt -- Faint Attack spends no accuracy roll and still cannot
-    # reach something that is not there.
-    if is_semi_invulnerable(defender):
+    # reach something that is not there. A move that never aimed at it is exempt, and the gate
+    # reads the same way on both branches; no damaging move in any configured moveset has a
+    # self-aimed range, so this half is for symmetry.
+    if move.reaches_opponent and is_semi_invulnerable(defender):
         hit = False
     if not hit:
         parts.append(tok.MISS)
@@ -1889,8 +1922,7 @@ def sent_out(battler: Battler) -> Battler:
     still burned. That is also why a revived one comes back clean (clayton-957.10.14), so the two
     rules are the same rule read from both ends.
     """
-    return replace(battler, atk_stage=0, def_stage=0, spatk_stage=0, spdef_stage=0,
-                   speed_stage=0, accuracy_stage=0, evasion_stage=0,
+    return replace(reset_stages(battler),
                    # `moveEffectsMask` and `statusVolatile` are zeroed by the same fresh
                    # BattleMon, so a Yawn shaken off by switching really is shaken off and an
                    # Uproar cannot be carried onto the field by somebody else. Which is the
@@ -1902,6 +1934,27 @@ def sent_out(battler: Battler) -> Battler:
                    # left alone rather than changed in passing because the advance counts around
                    # Darkrai were all fitted with it as it is (clayton-6xu.7.2).
                    drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0)
+
+
+#: Every stage field on a `Battler`: what Haze resets, and what a send-out resets. Named once so
+#: the two cannot drift -- a field added to `Battler` and forgotten in one of them would be a
+#: stage that survives a Haze or a switch, silently.
+#:
+#: Not to be confused with `hunt_session.STAGE_FIELDS`, which is the same seven paired with their
+#: UI labels. That one keeps its own name because the labels are a presentation concern this
+#: module should not carry; a test pins the two against each other.
+STAGE_FIELD_NAMES = ("atk_stage", "def_stage", "spatk_stage", "spdef_stage", "speed_stage",
+                     "accuracy_stage", "evasion_stage")
+
+
+def reset_stages(battler: Battler) -> Battler:
+    """`battler` with every stat stage back to neutral.
+
+    `BtlCmd_ResetAllStatChanges` loops `BATTLE_STAT_HP` to `BATTLE_STAT_MAX`, i.e. all of them,
+    with no exceptions -- so this is deliberately not selective. Focus Energy is cleared in the
+    same loop and is not modelled on either side; nothing in any configured moveset sets it.
+    """
+    return replace(battler, **{field: 0 for field in STAGE_FIELD_NAMES})
 
 
 def _all_stats_up(battler: Battler) -> Battler:
@@ -2572,6 +2625,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # they read. Note what it would mean if it were reachable: our own Uproar would make
             # the target unsleepable too, which is the opposite of what a plan wants.
             new.ours = replace(new.ours, uproar_turns=outcome.starts_uproar, uproar_slot=slot)
+        if outcome.resets_all_stages:
+            # Haze, and it really does hit BOTH sides -- `BtlCmd_ResetAllStatChanges` loops every
+            # battler. Which is the whole difficulty with the move: it undoes the target's Ancient
+            # Power boosts and our own Flashes and X Sp. Defs in the same breath. The solver is
+            # kept off it where that costs us (`solver.undoes_our_own_work`); the player is not,
+            # because there are states where losing the accuracy work is the right trade.
+            new.ours = reset_stages(new.ours)
+            new.target = reset_stages(new.target)
         if outcome.starts_taunt:
             # Ours to inflict, and the live one: from here the target picks only from the slots
             # `usable_slots` still offers it, which is a narrower modulus rather than a refused
@@ -2704,6 +2765,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # spends no PP until the counter runs out (`select_target_move`).
             new.target = replace(new.target, uproar_turns=outcome.starts_uproar,
                                  uproar_slot=target_slot)
+        if outcome.resets_all_stages:
+            # Symmetric, and unreachable: no configured target has Haze. Worth noting what it
+            # would mean if one did -- it would wipe our Flash investment on its own turn, with
+            # nothing we could do about it.
+            new.ours = reset_stages(new.ours)
+            new.target = reset_stages(new.target)
         if outcome.starts_taunt:
             # Unreachable: Taunt is in no configured target's moveset. Wired for the same reason
             # Nightmare's mirror is -- the two halves of a turn are meant to differ only in which
