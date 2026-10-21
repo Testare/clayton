@@ -187,6 +187,29 @@ class Battler:
     #: one of its other three moves is a plan the game will not accept.
     choice_locked_slot: int | None = None
 
+    #: Turns of Uproar left to run, and the slot it is locked into. Nonzero only on a battler
+    #: mid-Uproar; Azelf is the one encounter that has the move.
+    #:
+    #: **Not `charging_slot`**, though the two share the half that matters most -- the ROM's
+    #: `Battler_CanPickCommand` returns FALSE for either, so neither spends the move-selection
+    #: roll and neither spends PP (battle_lib.c:6224-6236, battle_controller_player.c:334-336).
+    #: They part company on everything else. A charge turn fires nothing and makes its user
+    #: unhittable; an Uproar turn deals damage every single turn, and `execute_move`'s
+    #: `ends_charge` would clear a shared field on the first of them. Two fields, because one
+    #: would have to mean two things.
+    uproar_turns: int = 0
+    uproar_slot: int | None = None
+    #: Yawn's countdown. Set to `YAWN_DROWSY_TURNS` by a Yawn aimed at this battler, decremented
+    #: at the end of every turn, and sleep lands the turn it reaches zero -- so a Yawn on turn T
+    #: puts its victim to sleep at the end of turn T+1 (`BtlCmd_TryYawn`, battle_script.c:6580,
+    #: and `MON_COND_CHECK_STATE_YAWN`, battle_controller_player.c:1684).
+    #:
+    #: Uxie's, and it lives on the Battler rather than on the state because the ROM keeps it in
+    #: `moveEffectsMask`, which a freshly sent-out BattleMon zeroes -- so switching out really
+    #: does shake it off. That is the opposite of a pending Future Sight; see
+    #: `BattleState.future_sight_turns` for why that one does not travel.
+    drowsy_turns: int = 0
+
     def __post_init__(self):
         if self.hp is None:
             object.__setattr__(self, "hp", self.stats.get("hp", 0))
@@ -283,12 +306,15 @@ class Battler:
         """
         landed = max(0, min(hp, self.max_hp))
         if landed == 0 and (self.status is not Status.NONE or self.nightmare
-                            or self.charging_slot is not None):
-            # The volatiles go too. `statusVolatile` is cleared wholesale when a Pokemon leaves
-            # the field, and a fainted one always does -- so a Revive cannot bring back something
-            # that is still locked in a nightmare.
+                            or self.charging_slot is not None
+                            or self.uproar_turns or self.drowsy_turns):
+            # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
+            # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
+            # bring back something that is still locked in a nightmare, still mid-Uproar, or still
+            # drowsy from a Yawn it will never now fall asleep from.
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
-                           charging_slot=None)
+                           charging_slot=None, uproar_turns=0, uproar_slot=None,
+                           drowsy_turns=0)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
@@ -375,6 +401,26 @@ class BattleState:
     #: on the state rather than on `Battler` for exactly that reason.
     reflect_turns: int = 0
     light_screen_turns: int = 0
+    #: A Future Sight already in the air, aimed at OUR slot: turns until it lands, and the damage
+    #: it banked at the moment it was used.
+    #:
+    #: **On the state and not on `Battler`, which is what makes a switch no escape.** The ROM
+    #: keeps it in `fieldConditions.futureSightTurns[battler]` -- indexed by battler POSITION, not
+    #: by the Pokemon standing there -- and `BtlCmd_TryFutureSight` banks the number at setup
+    #: time (battle_script.c:6066). So the hit lands on whoever is out two turns later, for the
+    #: damage computed against whoever was out when it was used. Switching a Smeargle out for a
+    #: wall does not reduce it; it just changes who takes it.
+    #:
+    #: Only the TARGET's side can set one: Future Sight is Uxie's and Azelf's, and nothing in a
+    #: party may carry it (`sim.MODELLED_OUR_EFFECTS`).
+    future_sight_turns: int = 0
+    future_sight_damage: int = 0
+    #: Which move banked it, by name, because the hit check two turns later uses that move's
+    #: accuracy. Mirrors the ROM's `fieldConditions.futureSightMove[battler]`, and it is a stored
+    #: value for the same reason the damage is: Future Sight is 90 and Doom Desire 85, and the
+    #: two share effect 148, so reading the accuracy off "whatever effect-148 move the target
+    #: has" would be right by luck rather than by construction.
+    future_sight_move: str = ""
     #: How many of our Pokemon have gone down. Needed because a faint no longer leaves a trace
     #: in `ours`: the replacement switches in at the end of the turn, so ``ours.fainted`` is
     #: False again by the time anyone inspects the result. The solver prunes on this -- a path
@@ -436,6 +482,9 @@ class BattleState:
             safeguard_turns=self.safeguard_turns,
             target_water_sport=self.target_water_sport,
             reflect_turns=self.reflect_turns, light_screen_turns=self.light_screen_turns,
+            future_sight_turns=self.future_sight_turns,
+            future_sight_damage=self.future_sight_damage,
+            future_sight_move=self.future_sight_move,
             faints=self.faints,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,

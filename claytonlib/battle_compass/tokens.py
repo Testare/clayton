@@ -7,7 +7,7 @@ bug reports, not the primary path (sec 13.1).
 
 Shape: an uppercase prefix opens an action, everything after it until the next prefix is that
 action's detail, and tokens appear **in the order the events occur**.  The prefixes are
-``I C M P S E HP``, which is prefix-free because ``H`` alone is not an action.
+``I C M P S E F HP``, which is prefix-free because ``H`` alone is not an action.
 
 One rule earns its keep more than the others: an ``HP###`` token is present exactly when our HP
 changed, for *any* reason — damage, a healing item, a burn or poison tick, a confusion self-hit.
@@ -55,10 +55,24 @@ SECONDARY = "~"
 #: indistinguishable from an ability trigger.
 STATIC = "*"
 
+#: A Future Sight landing, two turns after the move that banked it. ``Fh`` hit, ``F-`` missed.
+#:
+#: The only token in the grammar that belongs to no actor's move, which is why it needs a prefix
+#: of its own rather than an ``E`` detail: by the time it lands, the turn that chose it is two
+#: turns gone, and the ``E`` slot of THIS turn is whatever the target did instead. Attaching it
+#: to ``E`` would claim the target spent its turn on it.
+#:
+#: It has to be reportable because its accuracy roll is a real 90% check made at the end of the
+#: turn (`subscript_future_sight_damage.s` opens with `CheckMoveHit`) -- an observable verdict,
+#: and the only sub-100 event in either Uxie's or Azelf's whole set. Unreportable would mean
+#: unfilterable on the one roll those two targets offer for separating RTC-second siblings
+#: (notes/seed_separation.md).
+FUTURE_SIGHT = "F"
+
 #: Uppercase action prefixes, longest-match, so LONGER ONES MUST COME FIRST. Prefix-free apart
 #: from that: "H" alone is deliberately not one, which is what lets "HP" be two characters, and
 #: "XX" has to be tried before "X" or a wipe would tokenise as two separate faints.
-ACTION_PREFIXES = ("HP", "XX", "I", "C", "M", "P", "R", "S", "X", "E")
+ACTION_PREFIXES = ("HP", "XX", "I", "C", "M", "P", "R", "S", "X", "E", "F")
 
 #: We fainted and nobody is left. Terminal, like ``C`` and ``Pc``.
 WIPED = "XX"
@@ -193,6 +207,16 @@ def revive_token(party_slot: int) -> str:
     return f"R{party_slot}"
 
 
+def future_sight_token(hit: bool) -> str:
+    """``Fh`` / ``F-`` — a Future Sight landed on us, or missed.
+
+    No slot and no HP of its own: the HP token at the end of the turn reports the damage, as it
+    does for everything else that moved our HP. A hit therefore *requires* one
+    (:func:`turn_requires_hp`), and a miss must not produce one.
+    """
+    return f"{FUTURE_SIGHT}{HIT if hit else MISS}"
+
+
 def render_turn(tokens: list[str] | tuple[str, ...]) -> str:
     """One turn's tokens, concatenated with no delimiter."""
     return "".join(tokens)
@@ -281,6 +305,12 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
             if entry is not None and entry.heals:
                 return True
             continue
+        # A Future Sight landing. Not an ``E`` token, and deliberately so -- the move that banked
+        # it was used two turns ago -- so the loop below would never have seen it.
+        if token.startswith(FUTURE_SIGHT):
+            if HIT in token:
+                return True
+            continue
         if not token.startswith("E"):
             continue
         # The target's move landing on us is the only other thing in scope that can damage us.
@@ -323,6 +353,15 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
                     problems.append(f"{token!r} prevented the move, so no slot may follow "
                                     f"{marker!r}")
                 break
+            continue
+        if token[0] == FUTURE_SIGHT:
+            # Hit or miss and nothing else. Checked explicitly for the reason the ball tokens are:
+            # a malformed one is still a well-formed *token*, so it would sit there matching no
+            # candidate's prediction with nothing to say why.
+            if token not in (future_sight_token(True), future_sight_token(False)):
+                problems.append(
+                    f"{token!r} is not a Future Sight outcome; expected "
+                    f"{future_sight_token(True)!r} or {future_sight_token(False)!r}")
             continue
         if token[0] == "X":
             if token != WIPED and not (len(token) == 2 and token[1] in "123456"):
@@ -453,6 +492,9 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
             out.append(_explain_actor(detail, active, ours_moves, defender=target))
         elif prefix == "E":
             out.append(_explain_actor(detail, target, target_moves, defender=active))
+        elif prefix == FUTURE_SIGHT:
+            out.append(f"The Future Sight hit {active}" if detail == HIT
+                       else f"The Future Sight missed {active}")
         elif prefix == "I":
             name = item_name(detail) if callable(item_name) else detail
             out.append(f"You used {name}")

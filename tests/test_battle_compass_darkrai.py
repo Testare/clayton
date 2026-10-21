@@ -26,7 +26,7 @@ from dataclasses import replace
 
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle_compass.hunt_session import (
-    MAX_SLEEP_RESIDUAL_TURNS, survivability_warnings,
+    MAX_SLEEP_RESIDUAL_TURNS, max_sleep_turns_lost, survivability_warnings,
 )
 from claytonlib.battle_compass.sim import (
     BAD_DREAMS_DIVISOR, EFFECT_BYPASS_ACCURACY, EFFECT_EVASION_UP, EFFECT_NIGHTMARE,
@@ -413,6 +413,163 @@ class TestTheSleepClock(unittest.TestCase):
             with self.subTest(hp=hp):
                 warnings = survivability_warnings([_ours(hp=hp)], no_nightmare)
                 self.assertEqual([w for w in warnings if "asleep" in w], [])
+
+
+class TestOneAbilityBlanksTheWholeChain(unittest.TestCase):
+    """clayton-4wr.1.3. Insomnia against Darkrai, which is the best thing our side can do to any
+    configured target -- and which nothing pinned.
+
+    The chain is Hypnosis -> Nightmare -> Bad Dreams, and all three are *conditional on the sleep*
+    rather than being three separate threats. So one ability takes out all three, and what is left
+    is a Dark-type Faint Attack at x0.5 into a Dark/Flying carrier plus Double Team's evasion.
+    Each link is tested separately here, because each fails for a DIFFERENT reason and a
+    regression in any one of them would leave the other two looking fine.
+    """
+
+    def _awake(self, ability: str) -> Battler:
+        return _ours(ability=ability)
+
+    def test_hypnosis_is_refused_at_the_top_of_the_sleep_script(self):
+        """Insomnia and Vital Spirit are the first two checks in `subscript_fall_asleep`, above
+        everything else it tests."""
+        for ability in ("Insomnia", "Vital Spirit"):
+            with self.subTest(ability):
+                self.assertTrue(immune_to_status(self._awake(ability), Status.SLEEP))
+                self.assertTrue(will_fail(resolve_move("Hypnosis"), self._awake(ability)))
+        self.assertFalse(will_fail(resolve_move("Hypnosis"), _ours()))
+
+    def test_it_spends_the_accuracy_roll_and_not_the_duration_roll(self):
+        """The cost has to be right as well as the outcome. Hypnosis is 60 accuracy, so the
+        accuracy roll is spent; the `Random 3, 2` sits past the Insomnia check, so it is not.
+
+        Swept rather than asserted at one seed, because Hypnosis misses 40% of the time and an
+        ordinary victim then spends one roll too -- so a single seed proves nothing either way.
+        """
+        hypnosis = resolve_move("Hypnosis")
+        landed_costs = set()
+        for rng in range(0x0C0E0200, 0x0C0E0240):
+            _, blocked = execute_move(rng, hypnosis, _darkrai(),
+                                      self._awake("Insomnia"), actor="E", slot=0)
+            # Never more than the accuracy roll, at any seed, hit or miss.
+            self.assertEqual(blocked.rolls, 1)
+            self.assertFalse(blocked.successful)
+            self.assertIsNone(blocked.applied_status)
+            _, landed = execute_move(rng, hypnosis, _darkrai(), _ours(), actor="E", slot=0)
+            landed_costs.add(landed.rolls)
+        # And an ordinary victim does pay the second roll when the move connects.
+        self.assertEqual(landed_costs, {1, 2})
+
+    def test_nightmare_then_fails_for_a_second_reason(self):
+        """Not because of the ability -- because `will_fail` refuses it against anything not
+        asleep, and an Insomnia holder never is. Two independent refusals, which is why the chain
+        cannot be half-broken."""
+        self.assertTrue(will_fail(resolve_move("Nightmare"), self._awake("Insomnia")))
+        self.assertTrue(will_fail(resolve_move("Nightmare"), _ours()))        # also awake
+        self.assertFalse(will_fail(resolve_move("Nightmare"),
+                                   _ours(status=Status.SLEEP, sleep_turns=3)))
+
+    def test_bad_dreams_goes_for_free_because_it_needs_us_asleep(self):
+        """No refusal anywhere: the tick simply reads the status. Which is the point -- the
+        ability was never aimed at Bad Dreams and takes it out anyway."""
+        awake = self._awake("Insomnia")
+        self.assertEqual(bad_dreams_tick(awake, opponent_has_bad_dreams=True), 0)
+        asleep = _ours(status=Status.SLEEP, sleep_turns=3)
+        self.assertGreater(bad_dreams_tick(asleep, opponent_has_bad_dreams=True), 0)
+
+    def test_the_whole_moveset_run_against_an_insomnia_holder_never_sleeps_it(self):
+        """End to end rather than per rule, because the three above are checked in three
+        different places and only a run exercises all of them in order."""
+        config = _config()
+        for seed in range(0x0C0E0200, 0x0C0E0260):
+            state = BattleState(ours=self._awake("Insomnia"), target=_darkrai(),
+                                rng=opening_rng(seed, config))
+            for _ in range(8):
+                state = simulate_turn(state, Action.MOVE_1, config)
+                self.assertIsNot(state.ours.status, Status.SLEEP)
+                self.assertFalse(state.ours.nightmare)
+                if state.over:
+                    break
+
+    def test_an_ordinary_party_member_really_does_get_slept_in_the_same_sweep(self):
+        """The control. Without it the test above passes against a simulator that never sleeps
+        anybody."""
+        config = _config()
+        for seed in range(0x0C0E0200, 0x0C0E0260):
+            state = BattleState(ours=_ours(), target=_darkrai(), rng=opening_rng(seed, config))
+            for _ in range(8):
+                state = simulate_turn(state, Action.MOVE_1, config)
+                if state.ours.status is Status.SLEEP:
+                    return
+                if state.over:
+                    break
+        self.fail("no Hypnosis landed in 96 seeds, so the Insomnia sweep proves nothing")
+
+    def test_the_warning_names_the_carrier_instead_of_repeating_the_advice(self):
+        """"Insomnia or Vital Spirit refuses it" is useful to somebody picking a party and useless
+        to somebody who has brought the carrier. What they need then is WHICH Pokemon."""
+        honchkrow = Battler(name="Honchkrow", level=55, types=("Dark", "Flying"),
+                            ability="Insomnia",
+                            stats={"hp": 200, "atk": 150, "def": 90,
+                                   "spa": 120, "spd": 95, "spe": 110})
+        alone = " ".join(survivability_warnings([_ours(hp=153)], _darkrai()))
+        self.assertIn("Keep it awake or heal every turn", alone)
+        withit = " ".join(survivability_warnings([_ours(hp=153), honchkrow], _darkrai()))
+        self.assertIn("Honchkrow (Insomnia) is immune to it", withit)
+        self.assertNotIn("Keep it awake or heal every turn", withit)
+
+    def test_the_carrier_is_never_offered_as_its_own_answer(self):
+        """An immune Pokemon produces no warning to append this to, so it cannot happen in
+        practice -- but the two callers reach `_sleep_answer` by different routes."""
+        from claytonlib.battle_compass.hunt_session import _sleep_answer
+
+        honchkrow = Battler(name="Honchkrow", level=55, types=("Dark", "Flying"),
+                            ability="Insomnia", stats={"hp": 200})
+        self.assertEqual(_sleep_answer([honchkrow], honchkrow), "")
+        self.assertIn("Honchkrow", _sleep_answer([honchkrow], _ours()))
+
+
+class TestEarlyBirdHalvesTheClock(unittest.TestCase):
+    """The third ability, and the one whose figure the warnings were getting wrong."""
+
+    def test_the_worst_case_is_two_turns_rather_than_four(self):
+        """Worked through `tick_sleep` with a decrement of two: a rolled 2 costs nothing at all,
+        3 and 4 cost one turn, 5 costs two."""
+        plain = _ours()
+        early = _ours(ability="Early Bird")
+        self.assertEqual(max_sleep_turns_lost(plain), MAX_SLEEP_RESIDUAL_TURNS)
+        self.assertEqual(max_sleep_turns_lost(early), MAX_SLEEP_RESIDUAL_TURNS // 2)
+
+    def test_the_counter_really_does_behave_that_way(self):
+        """Pinned against `tick_sleep` rather than asserted, so the figure above cannot drift from
+        the mechanic it summarises."""
+        for duration, expected_lost in ((2, 0), (3, 1), (4, 1), (5, 2)):
+            mon = _ours(ability="Early Bird", status=Status.SLEEP, sleep_turns=duration)
+            lost = 0
+            while True:
+                mon, acts = mon.tick_sleep()
+                if acts:
+                    break
+                lost += 1
+            with self.subTest(duration=duration):
+                self.assertEqual(lost, expected_lost)
+
+    def test_the_clock_warning_quotes_the_holders_own_figure(self):
+        """It quoted four at an Early Bird holder, which overstated the danger twofold -- and for a
+        residual priced per turn that is the difference between "bring a healer" and "this is
+        fine"."""
+        early = _ours(hp=240, ability="Early Bird")
+        self.assertEqual(survivability_warnings([early], _darkrai()), [])
+        plain = _ours(hp=240)
+        self.assertTrue(any("can last 4" in w for w in survivability_warnings([plain], _darkrai())))
+
+    def test_it_is_offered_as_a_partial_answer_when_nothing_is_immune(self):
+        """Named separately and last, because it HALVES the sleep rather than refusing it -- a
+        reader who stops after the first clause must not come away thinking it is immune."""
+        xatu = Battler(name="Xatu", level=55, types=("Psychic", "Flying"), ability="Early Bird",
+                       stats={"hp": 160, "atk": 80, "def": 80, "spa": 110, "spd": 100, "spe": 120})
+        warnings = " ".join(survivability_warnings([_ours(hp=153), xatu], _darkrai()))
+        self.assertIn("Xatu's Early Bird halves the counter", warnings)
+        self.assertNotIn("immune", warnings)
 
 
 class TestItRunsEndToEnd(unittest.TestCase):

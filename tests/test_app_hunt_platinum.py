@@ -320,6 +320,67 @@ class TestADarkraiHuntConfigures(HuntPlatinumCase):
         self.assertIn("Lv50 encounter, not Lv40", errors)
 
 
+class TestAHeatranHuntConfigures(HuntPlatinumCase):
+    """Stark Mountain, Lv50, and the Fire move a party must not bring (clayton-6xu.6)."""
+
+    SMEARGLE = TestADarkraiHuntConfigures.SMEARGLE
+    #: A party member carrying exactly the move Flash Fire eats.
+    TORCHER = dict(
+        name="Rapidash", species="rapidash", level=70, ability="Flash Fire",
+        stats={"hp": 200, "atk": 160, "def": 120, "spa": 150, "spd": 130, "spe": 210},
+        moveset=["Flamethrower", "False Swipe"], max_pp={"1": 15, "2": 40},
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.smeargle = self.api.add_party_pokemon(self.platinum, self.SMEARGLE)["pokemon_id"]
+
+    def _heatran_hunt(self, **fields):
+        doc = {"capture_ball": "Dusk Ball",
+               "party": [{"pokemon_id": self.smeargle}],
+               "target": _target("heatran", 50)}
+        doc.update(fields)
+        return self._hunt(self.platinum, name="Hunt heatran", **doc)
+
+    def test_it_passes_readiness(self):
+        readiness = self.api.hunt_readiness(self._heatran_hunt()["id"])
+        self.assertEqual(readiness["hard_errors"], [], readiness["hard_errors"])
+
+    def test_the_session_carries_flash_fire_rather_than_pressure(self):
+        started = self.api.hunt_session_start(self._heatran_hunt()["id"])
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.assertEqual(session.target.ability, "Flash Fire")
+        self.assertFalse(session.config.target_has_pressure)
+        self.assertFalse(session.config.target_has_bad_dreams)
+
+    def test_a_fire_move_in_the_party_is_reported_before_the_run(self):
+        """Not refused -- the Pokemon is a legitimate party member and `move_coverage` is advice,
+        the same split the Whirlpool mule gets. What must not happen is the solver planning it or
+        the interview offering it."""
+        torcher = self.api.add_party_pokemon(self.platinum, self.TORCHER)["pokemon_id"]
+        hunt = self._heatran_hunt(party=[{"pokemon_id": self.smeargle},
+                                         {"pokemon_id": torcher}])
+        readiness = self.api.hunt_readiness(hunt["id"])
+        self.assertEqual(readiness["hard_errors"], [], readiness["hard_errors"])
+        absorbed = [row for row in readiness["move_coverage"]
+                    if row["move"] == "Flamethrower"]
+        self.assertTrue(absorbed, readiness["move_coverage"])
+        self.assertIn("Flash Fire", absorbed[0]["reason"])
+
+    def test_the_same_party_against_a_different_target_is_fine(self):
+        """The refusal is about the PAIRING. Darkrai has no Flash Fire, so the same Flamethrower
+        is a perfectly good move there."""
+        torcher = self.api.add_party_pokemon(self.platinum, self.TORCHER)["pokemon_id"]
+        hunt = self._hunt(self.platinum, name="Hunt darkrai too", capture_ball="Dusk Ball",
+                          party=[{"pokemon_id": torcher}], target=_target("darkrai", 50))
+        coverage = self.api.hunt_readiness(hunt["id"])["move_coverage"]
+        self.assertEqual([row for row in coverage if row["move"] == "Flamethrower"], [])
+
+    def test_the_advice_warns_about_what_it_does_to_our_defences(self):
+        readiness = self.api.hunt_readiness(self._heatran_hunt()["id"])
+        self.assertTrue(readiness["survivability"], "nothing said about a one-shot Lava Plume")
+
+
 class TestAGiratinaHuntConfigures(HuntPlatinumCase):
     """Both venues, through the facade. The forme is what the player names (clayton-6xu.3.4)."""
 

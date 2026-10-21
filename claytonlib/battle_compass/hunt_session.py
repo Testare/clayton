@@ -46,8 +46,9 @@ from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
     ABILITY_BAD_DREAMS, EFFECT_NIGHTMARE, FLINCH_EFFECTS, HuntConfig, SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
-    can_flinch, can_inflict, can_miss, is_semi_invulnerable,
-    effective_speed, nightmare_tick, primary_stat_drop, secondary_description, secondary_status,
+    can_flinch, can_inflict, can_miss, is_semi_invulnerable, pending_future_sight,
+    effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
+    secondary_status,
     simulate_turn,
     status_applied_by, unselectable_reason, variable_base_power, weather_of,
     will_fail,
@@ -117,11 +118,26 @@ def reachable_attack_stages(target: Battler) -> tuple[int, ...]:
     Attack, so an Intimidated target still crits at full power and the floor must not fall below
     the current stage's crit. What Intimidate and Charm lower is the figure at the CURRENT stage,
     which is read straight off the Battler.
-    """
-    from claytonlib.battle_compass.sim import EFFECT_ALL_STATS_UP, STAT_STAGE_CEILING
 
-    boosts = any((m := target.move(slot)) is not None and m.effect == EFFECT_ALL_STATS_UP
-                 for slot in range(len(target.moves)))
+    **Two families of booster count, not one.** It used to ask only about Ancient Power's
+    all-stats secondary, so Azelf's Nasty Plot went unseen -- and that one is worse than Ancient
+    Power's in every respect: it is +2 rather than +1, it is a primary effect rather than a 10%
+    secondary, and it raises the stat Azelf actually attacks off. At +2 its Swift roughly doubles,
+    which is the difference between a party member surviving the chip phase and not.
+    """
+    from claytonlib.battle_compass.sim import (
+        EFFECT_ALL_STATS_UP, PRIMARY_SELF_RAISES, STAT_STAGE_CEILING,
+    )
+
+    #: The two offensive stages. A self-raise of either is a booster here; Amnesia's Sp. Def and
+    #: Double Team's evasion are not, because neither changes what the target DEALS -- they
+    #: belong to `reachable_defensive_drops`'s question and to accuracy's respectively.
+    offensive = ("atk_stage", "spatk_stage")
+    boosts = any(
+        (m := target.move(slot)) is not None
+        and (m.effect == EFFECT_ALL_STATS_UP
+             or (PRIMARY_SELF_RAISES.get(m.effect) or ("", 0))[0] in offensive)
+        for slot in range(len(target.moves)))
     start = max(target.atk_stage, target.spatk_stage)
     if not boosts:
         return (start,)
@@ -149,6 +165,9 @@ def _worst_hit_key(ours: Battler, target: Battler, field) -> tuple:
     """
     return (
         ours.stats["def"], ours.stats["spd"], ours.types,
+        # OUR defensive stages, which the figure reads and the key used not to. A memo keyed
+        # without them served the stage-0 answer for the rest of the run after one Metal Sound.
+        ours.def_stage, ours.spdef_stage,
         target.level, target.stats["atk"], target.stats["spa"], target.types,
         target.ability, target.held_item, target.moves,
         target.atk_stage, target.spatk_stage,
@@ -185,12 +204,21 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
     What the solver does with a lethal hit is explained in `solver._legal_actions`.
     """
     out: list[str] = []
+    ban = _sleep_ban_warning(target)
+    if ban:
+        out.append(ban)
     for mon in party:
         if not mon.stats:
             continue
-        clock = _sleep_clock_warning(mon, target)
+        clock = _sleep_clock_warning(mon, target, party)
         if clock:
             out.append(clock)
+        else:
+            # Only when the sleep is not already the worse warning. A Darkrai sleep that kills
+            # outright does not also need "and it costs you turns".
+            cost = _sleep_turn_cost_warning(mon, target, party)
+            if cost:
+                out.append(cost)
         # `any_reachable_weather` on BOTH, because this is pre-hunt advice: the question is
         # "what can this battle ever do to me", and a Lugia that has not used Rain Dance yet
         # certainly will. The live indicator is the one that reads the current field
@@ -201,12 +229,12 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
         move = _worst_move_name(mon, target)
         if now >= mon.max_hp:
             out.append(
-                f"{mon.name} ({mon.max_hp} HP) dies to a critical {move}, up to {now}. The "
+                f"{mon.name} ({mon.max_hp} HP) dies to a {move}, up to {now}. The "
                 f"solver avoids lethal turns but cannot heal out of range.")
         elif boosted >= mon.max_hp:
             out.append(
-                f"{mon.name} ({mon.max_hp} HP) survives a critical {move} at {now} now, but "
-                f"{boosted} once the target has boosted.")
+                f"{mon.name} ({mon.max_hp} HP) survives a {move} at {now} now, but "
+                f"{boosted} once the target has worked on you.")
     return out
 
 
@@ -216,7 +244,8 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
 MAX_SLEEP_RESIDUAL_TURNS = SLEEP_DURATION_MIN + SLEEP_DURATION_SPAN - 2
 
 
-def _sleep_clock_warning(mon: Battler, target: Battler) -> str:
+def _sleep_clock_warning(mon: Battler, target: Battler,
+                         party: "list[Battler] | None" = None) -> str:
     """Whether falling asleep is lethal to `mon`, as a sentence, or "".
 
     **A different shape of danger from every other warning here, and the reason this function
@@ -234,8 +263,15 @@ def _sleep_clock_warning(mon: Battler, target: Battler) -> str:
     Reads the target's own ability and moveset rather than taking flags, so a target that has
     one mechanism and not the other (a sleep move but no Bad Dreams, or the reverse) gets a
     figure that is actually its own.
+
+    **And it reads OUR ability too**, which it did not: a Noctowl cannot be put to sleep at all,
+    so "keep it awake or heal every turn" was advice about a state it can never enter. Noticed
+    because `_sleep_turn_cost_warning` is silent for the same Pokemon for the same reason, and
+    the two sitting in one list would have contradicted each other.
     """
     if not can_inflict(target, Status.SLEEP):
+        return ""
+    if immune_to_status(mon, Status.SLEEP):
         return ""
     has_nightmare = any(
         (move := resolve_move(name)) is not None and move.effect == EFFECT_NIGHTMARE
@@ -250,17 +286,164 @@ def _sleep_clock_warning(mon: Battler, target: Battler) -> str:
     sources = " and ".join(
         [s for s in ("Nightmare" if has_nightmare else "",
                      "Bad Dreams" if _has_bad_dreams(target) else "") if s])
-    if survivable >= MAX_SLEEP_RESIDUAL_TURNS:
+    # The holder's OWN figure, not the generic one: an Early Bird sleeper loses at most two turns,
+    # so quoting four at it overstated the danger twofold (`max_sleep_turns_lost`).
+    worst = max_sleep_turns_lost(mon)
+    if survivable >= worst:
         return ""
+    answer = _sleep_answer(party or [], mon)
     return (
         f"{mon.name} ({mon.max_hp} HP) loses {per_turn} a turn to {sources} while asleep, so it "
-        f"survives {survivable} of a sleep that can last {MAX_SLEEP_RESIDUAL_TURNS}. Keep it "
-        f"awake or heal every turn.")
+        f"survives {survivable} of a sleep that can last {worst}."
+        + (answer if answer else " Keep it awake or heal every turn."))
+
+
+def max_sleep_turns_lost(mon: Battler) -> int:
+    """The most turns a sleep can cost `mon`, reading its OWN ability.
+
+    `MAX_SLEEP_RESIDUAL_TURNS` is the figure for an ordinary Pokemon: a rolled duration of d
+    leaves the sleeper acting on the turn the counter reaches 1, so it loses d-1 turns and the
+    worst roll of 5 costs 4.
+
+    **Early Bird halves it**, and the warnings were quoting the ordinary figure at an Early Bird
+    holder. The counter drops by TWO (`state.SLEEP_DECREMENT_EARLY_BIRD`), so working the four
+    rolls through `Battler.tick_sleep`: d=2 costs nothing at all, d=3 and d=4 cost one turn, and
+    d=5 costs two. So the worst case is two, and telling a Xatu it "survives 2 of a sleep that
+    can last 4" overstated the danger by a factor of two -- which for a residual that is priced
+    per turn is the difference between "bring a healer" and "this is fine".
+    """
+    if mon.has_early_bird:
+        return MAX_SLEEP_RESIDUAL_TURNS // 2
+    return MAX_SLEEP_RESIDUAL_TURNS
+
+
+def _sleep_answer(party: "list[Battler]", exclude: Battler) -> str:
+    """"Honchkrow (Insomnia) is immune to it" for the first party member that is, or "".
+
+    The one POSITIVE sentence in this table, and it replaces advice the player may already have
+    taken. "Insomnia or Vital Spirit refuses it" is useful to somebody picking a party and useless
+    to somebody who has picked one and brought the carrier -- what they need then is which
+    Pokemon it is, so they can lead with it or switch to it when the sleep move comes out.
+
+    `exclude` is the Pokemon the warning is ABOUT, so a Noctowl is never offered as its own
+    answer. It cannot be, in practice -- an immune Pokemon produces no warning to append this to
+    -- but the filter is here rather than relied upon, because the two callers reach it by
+    different routes and only one of them has already checked.
+
+    First match rather than a list: this is appended to a one-line warning, and naming three
+    candidates would turn it into the paragraph `survivability_warnings` is explicitly not.
+    Early Bird is named separately and last, because it HALVES the sleep rather than refusing it,
+    and a reader who stops after the first clause should not come away thinking it is immune.
+    """
+    from claytonlib.battle_compass.sim import SLEEP_BLOCKING_ABILITIES
+
+    def named(mon: Battler) -> str:
+        return (mon.ability or "").strip().title()
+
+    immune = next((mon for mon in party
+                   if mon is not exclude and mon.stats
+                   and (mon.ability or "").strip().lower() in SLEEP_BLOCKING_ABILITIES), None)
+    if immune is not None:
+        return (f" {immune.name} ({named(immune)}) is immune to it \u2014 lead with it or switch "
+                f"when the move comes out.")
+    early = next((mon for mon in party
+                  if mon is not exclude and mon.stats and mon.has_early_bird), None)
+    if early is not None:
+        return (f" {early.name}'s Early Bird halves the counter, so it loses at most "
+                f"{MAX_SLEEP_RESIDUAL_TURNS // 2}.")
+    return ""
+
+
+def _sleep_turn_cost_warning(mon: Battler, target: Battler,
+                             party: "list[Battler] | None" = None) -> str:
+    """Whether this target can cost `mon` turns by sleeping it, as a sentence, or "".
+
+    The third shape of danger in this table, after "one hit kills" and "the sleep itself kills".
+    Uxie poses it: there is no Nightmare and no Bad Dreams, so a sleep costs no HP at all and
+    `_sleep_clock_warning` correctly says nothing -- but it costs **turns**, and Phase 2 runs a
+    precomputed path, so a turn lost is a plan re-solved. A table that priced only HP called that
+    free.
+
+    Named in turns, and it names the three abilities that change the figure, because that is the
+    only part a player can act on before the encounter: Insomnia and Vital Spirit refuse the
+    sleep outright (`sim.SLEEP_BLOCKING_ABILITIES`), and Early Bird halves the counter, so a
+    rolled 2 costs no turn at all (`state.SLEEP_DECREMENT_EARLY_BIRD`).
+
+    Silent for a Pokemon that already has one of them, and silent for a target that cannot sleep
+    us -- which for Uxie means Yawn, so `can_inflict` had to learn about it first.
+    """
+    from claytonlib.battle_compass.sim import SLEEP_BLOCKING_ABILITIES
+
+    if not can_inflict(target, Status.SLEEP):
+        return ""
+    ability = (mon.ability or "").strip().lower()
+    if ability in SLEEP_BLOCKING_ABILITIES:
+        return ""
+    if mon.has_early_bird:
+        # Halved rather than refused, so it is still a cost -- but two turns against a target that
+        # does no residual damage is not worth a line on every readiness check, and saying so
+        # would crowd out the warnings that are.
+        return ""
+    answer = _sleep_answer(party or [], mon)
+    return (
+        f"{target.name} can put {mon.name} to sleep for up to {max_sleep_turns_lost(mon)} turns, "
+        f"and nothing it holds resists that. The cost is turns rather than HP, so the plan "
+        f"re-solves each time."
+        + (answer if answer
+           else " Insomnia or Vital Spirit refuses it; Early Bird halves it."))
+
+
+def _sleep_ban_warning(target: Battler) -> str:
+    """Whether this target can REFUSE to be slept, as a sentence, or "".
+
+    About the target rather than about any one party member, which is why it is appended once
+    instead of per Pokemon. Azelf is the case and Uproar is the mechanism: while it runs -- 3 to
+    6 turns, and it re-picks it roughly one turn in four -- no sleep move of ours can land at all
+    (`sim.will_fail`), and anything already asleep is woken. So a plan that uses SLEEP as its
+    holding status is not merely risky against this target; the game refuses it.
+
+    The counter is worth saying in the same breath, because it is cheap and total: Uproar is one
+    of the twelve sound moves, so a Soundproof party member blanks the move whole -- damage, lock
+    and ban together (`sim.soundproofed`).
+    """
+    from claytonlib.battle_compass.sim import EFFECT_UPROAR
+
+    banner = next((move.name for slot in range(len(target.moves))
+                   if (move := target.move(slot)) is not None
+                   and move.effect == EFFECT_UPROAR), None)
+    if banner is None:
+        return ""
+    return (
+        f"{target.name}'s {banner} forbids sleep for 3-6 turns at a time and wakes anything "
+        f"already asleep, so paralysis is the only holding status this target reliably allows. A "
+        f"Soundproof party member blocks {banner} outright, lock and all.")
 
 
 def _has_bad_dreams(target: Battler) -> bool:
     """Read off the target's own ability, which the facade now sets from the encounter row."""
     return (target.ability or "").strip().lower() == ABILITY_BAD_DREAMS
+
+
+def banked_hit(move) -> bool:
+    """Whether this move's damage is BANKED rather than dealt on the turn it is used.
+
+    Future Sight, and it is the whole of the family. Pricing one as an ordinary hit overstates it
+    by a factor of three against a neutral defender -- 2x for a critical it can never take, and
+    1.5x for a STAB it never gets -- which is not a conservative error in a figure the solver uses
+    as its heal threshold: it is a floor above every party member's max HP, so `in_danger` is
+    permanently true and no plan can ever be reached (the shape of clayton-957.10.1's collapse).
+
+    Both halves come from `BtlCmd_TryFutureSight`: it passes a critical multiplier of 1, and its
+    effect script sets `SYSCTL_IGNORE_IMMUNITIES` so that `CheckTypeChart` -- which holds STAB,
+    effectiveness and Levitate alike -- is skipped. See `sim._future_sight_damage`.
+
+    Our Light Screen is the one modifier that DOES apply, and it is not a free discount either:
+    with no crit to discard it, the halving is real, and `_worst_hit_key` already keys the memo
+    on whether a screen is up.
+    """
+    from claytonlib.battle_compass.sim import EFFECT_FUTURE_SIGHT
+
+    return move.effect == EFFECT_FUTURE_SIGHT
 
 
 def _worst_move_name(ours: Battler, target: Battler) -> str:
@@ -276,7 +459,7 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
     from claytonlib.battle.damage import unsupported_reason
     from claytonlib.battle_compass.sim import variable_base_power
 
-    best, name, worst_weather = -1, "hit", WEATHER_NONE
+    best, name, worst_weather = -1, "critical hit", WEATHER_NONE
     defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
                         types=ours.types)
     for slot in range(len(target.moves)):
@@ -291,11 +474,18 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
                             attack_stage=target.atk_stage,
                             special_attack_stage=target.spatk_stage,
                             ability=target.ability, held_item=target.held_item)
+        banked = banked_hit(move)
         for weather in reachable_weathers(target):
-            _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
-                                   base_power=base_power)
+            _, high = damage_range(move, attacker, defender, critical=not banked,
+                                   weather=weather, base_power=base_power,
+                                   type_chart=not banked)
             if high > best:
-                best, name, worst_weather = high, move.name, weather
+                # The word "critical" travels WITH the move rather than sitting in the warning
+                # template, because it is not true of all of them: a Future Sight cannot crit, so
+                # "dies to a critical Future Sight" named a hit that does not exist and quoted a
+                # number three times too big.
+                best, worst_weather = high, weather
+                name = move.name if banked else f"critical {move.name}"
     if worst_weather == WEATHER_RAIN:
         return f"{name} in its own rain"
     if worst_weather == WEATHER_SUN:
@@ -310,6 +500,11 @@ def _worst_move_name(ours: Battler, target: Battler) -> str:
 #: "whose" is the side the condition belongs to, which matters for reading it: Mist and Safeguard
 #: are the TARGET's and work against us, while Reflect and Light Screen are ours.
 FIELD_CONDITIONS: tuple[tuple[str, str, str], ...] = (
+    # First, because it is the only one of these that will take HP off us on a turn we can name.
+    # A pending Future Sight is incoming damage already decided -- banked when the move was used,
+    # so nothing we do between now and then changes the number -- and the player has no other way
+    # to know it is coming: the turn that set it rendered as a bare `E3` with no hit marker.
+    ("future_sight_turns", "Future Sight", "target"),
     ("rain_turns", "Rain", "field"),
     ("safeguard_turns", "Safeguard", "target"),
     ("mist_turns", "Mist", "target"),
@@ -323,6 +518,23 @@ FIELD_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("target_water_sport", "Water Sport", "target"),
 )
 
+#: Counters that live on a BATTLER rather than on the state, and still belong in this banner.
+#:
+#: ``(side, attribute, label)``. Sleep is the counter that does NOT appear here -- both sides
+#: already render a status chip for it, so a second row would report it twice. These two have no
+#: chip and no other way of being seen, and each one changes what the next turn can be:
+#:
+#: * **Uproar** is the target refusing to pick a move. While it runs it spends no selection roll,
+#:   it attacks every turn, and no sleep move of ours can land at all -- so "3 turns of Uproar
+#:   left" is also "3 turns before paralysis is your only option again".
+#: * **Drowsy** is a Yawn already landed. The sleep is not avoidable by anything except switching
+#:   the Pokemon out, and a player who cannot see the counter finds out by losing a turn.
+BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
+    ("target", "uproar_turns", "Uproar"),
+    ("ours", "drowsy_turns", "Drowsy"),
+    ("target", "drowsy_turns", "Drowsy"),
+)
+
 
 def field_conditions(state) -> list[dict]:
     """What is currently up, newest-relevant first: ``{name, turns, whose}``.
@@ -333,13 +545,18 @@ def field_conditions(state) -> list[dict]:
 
     Sleep is deliberately not here even though it is a counter: it belongs to a Pokemon rather
     than the field, and both sides already render their own status chip. Putting it in a field
-    banner would report it twice and in the wrong place.
+    banner would report it twice and in the wrong place. Uproar and Drowsy are counters on a
+    Pokemon too and ARE here, because neither has a chip -- see `BATTLER_CONDITIONS`.
     """
     out: list[dict] = []
     for attr, label, whose in FIELD_CONDITIONS:
         turns = getattr(state, attr, 0) or 0
         if turns > 0:
             out.append({"name": label, "turns": turns, "whose": whose})
+    for side, attr, label in BATTLER_CONDITIONS:
+        turns = getattr(getattr(state, side, None), attr, 0) or 0
+        if turns > 0:
+            out.append({"name": label, "turns": turns, "whose": side})
     for attr, label, whose in FIELD_FLAGS:
         if getattr(state, attr, False):
             out.append({"name": label, "turns": None, "whose": whose})
@@ -395,6 +612,41 @@ def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
     raise ValueError(f"{first!r} is not one of our actions")
 
 
+def reachable_defensive_drops(ours: Battler, target: Battler) -> tuple[int, int]:
+    """The ``(def_stage, spdef_stage)`` worth pricing OUR side at, given what the target can do.
+
+    The defensive mirror of `reachable_attack_stages`, and it closes the same hole on the other
+    side: a floor computed at the stages we hold *now* is not a floor at all against a target
+    that lowers them. Heatran is the case that forced it -- Metal Sound takes **two** Sp. Def
+    stages at a time, and at -2 its Lava Plume one-shots a full-HP Smeargle where at 0 it does
+    not. Latios's Luster Purge has had the same shape for longer, one stage at a time.
+
+    Only the EXTREME is returned rather than every stage between, because the damage is monotone
+    in each: a lower defence can only mean a bigger hit. And only downward, for the reason
+    `reachable_attack_stages` gives for only going upward -- a crit discards a stage that would
+    reduce its damage, so our raised defences cannot lower the floor and our lowered ones must
+    raise it.
+
+    Reads the target's moveset for drops aimed at `def` and `spd` specifically. The other three
+    stages change what we DEAL, not what we take, so they belong to a different question.
+    """
+    from claytonlib.battle_compass.sim import (
+        PRIMARY_STAT_DROPS, SECONDARY_STAT_DROPS, STAT_STAGE_FLOOR,
+    )
+
+    fields = set()
+    for slot in range(len(target.moves)):
+        move = target.move(slot)
+        if move is None:
+            continue
+        for table in (PRIMARY_STAT_DROPS, SECONDARY_STAT_DROPS):
+            drop = table.get(move.effect)
+            if drop is not None and drop[0] in ("def_stage", "spdef_stage"):
+                fields.add(drop[0])
+    return (STAT_STAGE_FLOOR if "def_stage" in fields else ours.def_stage,
+            STAT_STAGE_FLOOR if "spdef_stage" in fields else ours.spdef_stage)
+
+
 def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
                        any_reachable_stage: bool = False,
                        any_reachable_weather: bool = False) -> int:
@@ -433,8 +685,27 @@ def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
         return cached
 
     worst = 0
+    # **Our own defensive stages are part of this**, and were missing. The figure was computed at
+    # stage 0 whatever had been done to us, so every hit after a drop was under-predicted -- and
+    # this figure IS the solver's heal threshold, so under-predicting it is how a run faints at a
+    # number the plan called safe.
+    #
+    # Latios's Luster Purge has been able to drop our Sp. Def for as long as it has been a
+    # configured target; `act_target` was fixed to apply the drop (clayton-957.26.1) while the
+    # floor went on ignoring it. Heatran is what made it acute: Metal Sound is TWO stages at
+    # once, and at -2 its Lava Plume one-shots a full-HP Smeargle (clayton-6xu.6).
+    #
+    # A crit ignores stages that would REDUCE its damage and respects those that raise it, which
+    # is exactly the asymmetry we want here -- and `damage` already enforces it, so passing the
+    # stages is safe for the critical hit this function measures.
+    # `any_reachable_stage` means "every stage this battle can reach", and it used to look only
+    # at the target's offensive ones -- so the question it answers was half-asked. Ours are the
+    # other half, and against Heatran they are the bigger half.
+    def_stage, spdef_stage = (reachable_defensive_drops(ours, target) if any_reachable_stage
+                              else (ours.def_stage, ours.spdef_stage))
     defender = Defender(defence=ours.stats["def"], special_defence=ours.stats["spd"],
-                        types=ours.types)
+                        types=ours.types, defence_stage=def_stage,
+                        special_defence_stage=spdef_stage)
     weathers = (reachable_weathers(target) if any_reachable_weather
                 else (weather_of(field),))
     # **The target's CURRENT stages by default, not every stage it could ever reach.**
@@ -482,9 +753,13 @@ def worst_incoming_hit(ours: Battler, target: Battler, *, field=None,
                     special_attack=target.stats["spa"], types=target.types,
                     attack_stage=stage, special_attack_stage=stage,
                     ability=target.ability, held_item=target.held_item)
-                _, high = damage_range(move, attacker, defender, critical=True, weather=weather,
+                # A banked hit takes neither the crit nor the type chart -- see `banked_hit`,
+                # which is also why the warning text stops calling it "critical".
+                banked = banked_hit(move)
+                _, high = damage_range(move, attacker, defender, critical=not banked,
+                                       weather=weather,
                                        base_power=base_power, reflect=reflect,
-                                       light_screen=light_screen)
+                                       light_screen=light_screen, type_chart=not banked)
                 worst = max(worst, high)
     _WORST_HIT_CACHE[key] = worst
     return worst
@@ -620,7 +895,13 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             "slot": slot,
             "name": move.name,
             "known": True,
-            "damaging": move.category != CATEGORY_STATUS,
+            # A BANKED move is not "damaging" for the purpose this flag serves -- which is
+            # "does the turn it is used render a hit marker". Future Sight is a special move by
+            # category and renders the bare slot, because on its use turn it neither hits nor
+            # misses nor crits: the damage is banked and the accuracy check is deferred two turns
+            # (`banked_hit`). Reporting it as damaging put "Hit us" and "Critical hit" in the
+            # interview for a turn that can render neither.
+            "damaging": move.category != CATEGORY_STATUS and not banked_hit(move),
             # Stage-dependent: a 100%-accuracy move becomes missable under an accuracy drop or
             # a raised evasion, so this is computed against the real defender, not assumed.
             # The HELD ITEMS go in too, not just the stage: a Brightpowder on the defender makes
@@ -680,7 +961,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # Reported rather than omitted, so the page can show it disabled with the reason: a
             # move that silently vanishes from the chip row reads as a bug, and a mule is
             # carrying Whirlpool on purpose (`targets.ENCOUNTER_ACCESS`).
-            "unselectable_reason": unselectable_reason(move),
+            "unselectable_reason": unselectable_reason(move, defender),
         })
     return out
 
@@ -897,8 +1178,14 @@ class HuntSession:
         state = next(iter(self._session.states.values()), None)
         if state is None:
             return worst_incoming_hit(self.ours, self.target)
+        # A banked Future Sight is ADDED, not maxed in, and it is added HERE as well as in the
+        # solver's figure -- which is the opposite of how the weather is treated two paragraphs
+        # up. The difference is that it is not a hypothesis: the hit lands at the end of THIS turn
+        # for a number the target fixed two turns ago, so a live indicator that left it out would
+        # understate what the turn can cost (clayton-6xu.7.3).
         return max(self.solver_config.danger_floor,
-                   worst_incoming_hit(state.ours, state.target, field=state))
+                   worst_incoming_hit(state.ours, state.target,
+                                      field=state)) + pending_future_sight(state)
 
     @property
     def danger_floor_if_weather(self) -> int:
@@ -1620,6 +1907,20 @@ class HuntSession:
             # rather than remembering. Built from the state rather than from the turn log so it
             # cannot drift from what the simulation believes (clayton-gni).
             "field": field_conditions(state),
+            # Whether a banked Future Sight lands at the END of this turn, which makes its hit
+            # check a question the interview has to ask: it is a real 90% roll and its verdict is
+            # the only sub-100 event either Uxie's or Azelf's moveset produces, so an unasked one
+            # is an unfilterable one on the single roll those targets offer
+            # (notes/seed_separation.md).
+            #
+            # Deliberately not "is one pending": the counter reaching 1 is what means "this
+            # turn". Asking a turn early would invite a report of something the player has not
+            # seen yet, which is how a candidate set gets filtered on a guess.
+            #
+            # It can still fail to fire -- a capture ends the turn before the end-of-turn block
+            # runs, and a faint from any cause stops it (`sim._roll_future_sight`) -- so the page
+            # drops the question in both cases rather than this flag trying to predict them.
+            "future_sight_due": state.future_sight_turns == 1,
             # `slot` is the BENCH index, which is what every call back into the session takes;
             # `party_slot` is the stable number the player sees in-game and the one the S/X/R
             # tokens name. Both, because they are not the same once anybody has switched.

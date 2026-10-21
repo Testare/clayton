@@ -447,7 +447,8 @@ def _apply_weather(value: int, move: Move, weather: str) -> int:
 def damage(move: Move, attacker: Attacker, defender: Defender, *,
            roll: int = 100, critical: bool = False,
            weather: str = WEATHER_NONE, base_power: int | None = None,
-           reflect: bool = False, light_screen: bool = False) -> int:
+           reflect: bool = False, light_screen: bool = False,
+           type_chart: bool = True) -> int:
     """Damage for one hit, in HP.
 
     `roll` is the 85..100 damage roll.  Flooring happens at each step exactly as the game does;
@@ -461,6 +462,19 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     `reflect` and `light_screen` are the DEFENDER's side conditions. Each halves its own category
     and **both are ignored on a critical hit** -- see the screens section above. Callers pass them
     unconditionally; the crit gate is applied here so no caller has to remember it.
+
+    `type_chart=False` stops after the damage range: **no STAB, no type effectiveness and no
+    Levitate immunity.** It exists for exactly one move family and is not a tuning knob. STAB,
+    effectiveness and Levitate all live in one ROM function, `BattleSystem_ApplyTypeChart`
+    (battle_lib.c:2560 -- "Levitate is included in the type-effectiveness chart as a functional
+    immunity to Ground-type attacks"), which is called from `CheckTypeChart` during TRY_MOVE.
+    Future Sight's effect script sets `SYSCTL_IGNORE_IMMUNITIES` *before* TRY_MOVE runs, which
+    skips that call outright -- and it has already banked its damage by then
+    (`BtlCmd_TryFutureSight`, battle_script.c:6066, which calls `CalcMoveDamage` then
+    `CalcDamageVariance` and stores the result). The fire turn two turns later applies the stored
+    number directly. So a Future Sight is neither resisted nor super-effective nor blocked by an
+    immunity, and it loses its own STAB as well -- which makes it weaker than its 80 base power
+    reads against a neutral target and stronger than it reads against a Dark type.
     """
     reason = unsupported_reason(move, power_known=base_power is not None)
     if reason:
@@ -469,7 +483,7 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
         raise ValueError(f"damage roll must be 85..100, got {roll}")
     if weather not in WEATHERS:
         raise ValueError(f"unknown weather {weather!r}; expected one of {WEATHERS}")
-    if _levitates(defender, move):
+    if type_chart and _levitates(defender, move):
         # Immune, which is a real answer rather than a refusal: Levitate's whole effect in Gen 4
         # is "Ground moves do not hit me". Returned here rather than folded into the type chart
         # because the chart is about types and this is about an ability.
@@ -521,6 +535,11 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     # results is not the same, because each step truncates -- verified against
     # data/battle_logs/test1.jsonl, where the two orders disagree on the third of five hits.
     value = _apply_damage_range(value, roll)
+    if not type_chart:
+        # Future Sight banks its damage before the type-chart stage runs at all. Stopping here
+        # rather than multiplying by 1.0 twice: the two steps truncate, so "a multiplier of one"
+        # and "the step did not happen" are the same number only by luck.
+        return value
     value = _apply_stab(value, move, attacker)
     value = _apply_effectiveness(value, move, defender)
     return value
@@ -571,15 +590,21 @@ def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
 def damage_spread(move: Move, attacker: Attacker, defender: Defender, *,
                   critical: bool = False, weather: str = WEATHER_NONE,
                   base_power: int | None = None,
-                  reflect: bool = False, light_screen: bool = False) -> dict[int, int]:
+                  reflect: bool = False, light_screen: bool = False,
+                  type_chart: bool = True) -> dict[int, int]:
     """`roll` -> damage, for all sixteen rolls.
 
     This is what makes the sec 3.1 filter work: an observed HP change identifies the set of
     rolls consistent with it, and therefore constrains the RNG state.
+
+    `type_chart` is passed straight through; see `damage`. Future Sight is the move that needs
+    it, and it needs it here too -- a danger floor that priced a Future Sight with STAB and a
+    crit it cannot have reported three times the real number.
     """
     return {roll: damage(move, attacker, defender, roll=roll, critical=critical,
                          weather=weather, base_power=base_power,
-                         reflect=reflect, light_screen=light_screen)
+                         reflect=reflect, light_screen=light_screen,
+                         type_chart=type_chart)
             for roll in DAMAGE_ROLLS}
 
 
@@ -600,9 +625,11 @@ def rolls_for_damage(observed: int, move: Move, attacker: Attacker, defender: De
 def damage_range(move: Move, attacker: Attacker, defender: Defender, *,
                  critical: bool = False, weather: str = WEATHER_NONE,
                  base_power: int | None = None,
-                 reflect: bool = False, light_screen: bool = False) -> tuple[int, int]:
+                 reflect: bool = False, light_screen: bool = False,
+                 type_chart: bool = True) -> tuple[int, int]:
     """(minimum, maximum) over the sixteen rolls."""
     values = damage_spread(move, attacker, defender, critical=critical,
                            weather=weather, base_power=base_power,
-                           reflect=reflect, light_screen=light_screen).values()
+                           reflect=reflect, light_screen=light_screen,
+                           type_chart=type_chart).values()
     return min(values), max(values)

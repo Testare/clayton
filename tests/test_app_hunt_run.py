@@ -808,10 +808,18 @@ class TestGuaranteedFailureIsNotAsked(unittest.TestCase):
         self.assertNotIn("info.can_miss && !info.guaranteed_fail", self.html)
 
     def test_a_doomed_move_is_still_asked_about_when_it_can_miss(self):
-        """The branch that makes the two cases differ, on both sides of the battle."""
-        self.assertGreaterEqual(self.html.count("} else if (info.guaranteed_fail){"), 2)
-        self.assertGreaterEqual(self.html.count("if (info.can_miss)\n"
-                                                "      opts2.push(hrChip(\"It failed\""), 0)
+        """The branch that makes the two cases differ, on both sides of the battle.
+
+        It is now tested FIRST on both sides, ahead of `info.damaging`, and that order is itself
+        the rule: **a move can be both.** Azelf's Uproar is the first damaging move any target
+        has that a party can blank outright -- Soundproof blocks it, every roll is still spent,
+        and the turn renders as the bare slot. Tested the other way round, the page offered
+        "Hit us" and "Critical hit" as the only answers to a turn that can render neither.
+        """
+        self.assertGreaterEqual(self.html.count("if (info.guaranteed_fail){"), 2)
+        self.assertNotIn("} else if (info.guaranteed_fail){", self.html)
+        # And the auto-answer has to read the same way, or a blanked Uproar auto-answers "h".
+        self.assertIn("(info.damaging && !info.guaranteed_fail)", self.html)
         self.assertIn('hrChip("It failed"', self.html)
 
     def test_it_is_checked_on_both_sides(self):

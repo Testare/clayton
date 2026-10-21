@@ -14,7 +14,7 @@ clayton-gni.
 import unittest
 
 from claytonlib.battle_compass.hunt_session import (
-    FIELD_CONDITIONS, FIELD_FLAGS, field_conditions,
+    BATTLER_CONDITIONS, FIELD_CONDITIONS, FIELD_FLAGS, field_conditions,
 )
 from claytonlib.battle_compass.state import BattleState, Battler, Status
 
@@ -93,6 +93,42 @@ class TestItCoversWhatTheSimulatorTracks(unittest.TestCase):
         state = _state()
         on_state = {name for name in vars(state) if name.endswith("_turns")}
         self.assertEqual(on_state - reported - excluded, set())
+
+    def test_no_turn_counter_on_a_BATTLER_is_left_out_either(self):
+        """The same completeness rule for the counters that live on a Pokemon.
+
+        Uproar and Drowsy are both on `Battler` and both belong in this banner -- neither has a
+        status chip, and each one changes what the next turn can be. Sleep is the one exclusion,
+        and it is excluded because it DOES have a chip.
+        """
+        reported = {attr for _, attr, _ in BATTLER_CONDITIONS}
+        excluded = {"sleep_turns"}
+        on_battler = {name for name in vars(_state().ours) if name.endswith("_turns")}
+        self.assertEqual(on_battler - reported - excluded, set())
+
+    def test_a_pending_future_sight_is_reported_first(self):
+        """Ahead of the weather, because it is the only row here that will take HP off us on a
+        turn we can name -- and the turn that set it rendered as a bare slot token with no hit
+        marker, so there is no other way to know it is coming."""
+        conditions = field_conditions(_state(future_sight_turns=2, rain_turns=3))
+        self.assertEqual(conditions[0],
+                         {"name": "Future Sight", "turns": 2, "whose": "target"})
+
+    def test_an_uproar_is_reported_off_the_target(self):
+        from dataclasses import replace
+
+        state = _state()
+        state.target = replace(state.target, uproar_turns=3, uproar_slot=1)
+        (uproar,) = field_conditions(state)
+        self.assertEqual(uproar, {"name": "Uproar", "turns": 3, "whose": "target"})
+
+    def test_a_drowse_is_reported_off_whoever_is_drowsy(self):
+        from dataclasses import replace
+
+        state = _state()
+        state.ours = replace(state.ours, drowsy_turns=1)
+        (drowsy,) = field_conditions(state)
+        self.assertEqual(drowsy, {"name": "Drowsy", "turns": 1, "whose": "ours"})
 
     def test_sleep_is_deliberately_not_in_the_banner(self):
         state = _state()

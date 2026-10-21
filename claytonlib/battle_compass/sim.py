@@ -87,6 +87,13 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # SELECTION roll, and while it is away everything we throw at it misses -- after spending
     # its rolls (see `execute_move`).
     272: "Shadow Force: the charge turn, the move lock, and the turn it cannot be hit",
+    # Heatran's three. 60 and 62 are TWO-stage drops on us, which is what makes this target
+    # different in kind from the others: Scary Face can flip turn order, and the no-speed-tie
+    # guarantee is what keeps ties out of the search entirely.
+    60: "Scary Face: two Speed stages off US, which can flip turn order",
+    62: "Metal Sound: two Sp. Def stages off us, raising every special hit after it",
+    69: "Crunch: damage plus a 20% Defence drop on us (`SECONDARY_STAT_DROPS`)",
+    70: "Rock Tomb and friends: damage plus a Speed drop, the same table",
     # Gust's effect is "double power against a Flying target"; against a grounded Pokemon in a
     # single battle it is plain damage, and it is in the emulator-verified Suicune fixture.
     149: "double power vs airborne, which never applies here",
@@ -107,6 +114,14 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     193: "Refresh: fails against an unstatused user",
     210: "Water Sport: a per-battler volatile flag, so a second one fails",
     245: "Punishment: power computed from our positive stages (`punishment_power`)",
+    # Uxie's and Azelf's. Three of the five are the first of their kind on either side, and the
+    # two end-of-turn ones are the only entries in this table whose roll POSITION is derived
+    # rather than measured -- see `_END_OF_TURN_RESIDUAL_ANCHOR`, which says what is still owed.
+    53: "Nasty Plot: Sp. Atk +2 on the target itself, which doubles its special damage",
+    54: "Amnesia: Sp. Def +2 on the target itself, which halves what our special moves do",
+    148: "Future Sight: one roll at use, the banked damage, and the hit check two turns later",
+    159: "Uproar: the 3-6 turn lock, the selection roll it skips, and the sleep it forbids",
+    187: "Yawn: the two-turn drowse, and the sleep (and its duration roll) that follows it",
 }
 
 
@@ -136,6 +151,12 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # Nothing in the planned parties uses one, but `crit_stage_of` reads the move rather than the
     # side, so a Sketched Night Slash or Psycho Cut simulates correctly and may as well say so.
     43: "high crit ratio: one crit stage up, so `% 8` rather than `% 16`",
+    # Nasty Plot and Amnesia. Reached through `PRIMARY_SELF_RAISES` on both halves of the turn, so
+    # a party member carrying either is modelled for free -- unlike Uproar, Yawn and Future Sight,
+    # which are deliberately NOT listed: each needs state only the target's side maintains, and
+    # nothing a party can carry has them.
+    53: "Nasty Plot: our own Sp. Atk +2, which raises the special damage WE deal",
+    54: "Amnesia: our own Sp. Def +2, which lowers every special hit we take",
     58: "lowers the target's Attack by two (Charm)",
     59: "lowers the target's Defence by two (Screech)",
     60: "lowers the target's Speed by two (Scary Face)",
@@ -162,7 +183,7 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
 }
 
 
-def unselectable_reason(move: Move) -> str | None:
+def unselectable_reason(move: Move, defender: "Battler | None" = None) -> str | None:
     """Why the interview must not let us pick `move` this turn, or None if it may.
 
     **Carrying a move and being able to report a turn that used it are different things**, and
@@ -191,6 +212,13 @@ def unselectable_reason(move: Move) -> str | None:
     """
     if move.effect in RUN_ENDING_EFFECTS:
         return f"{move.name} would end the battle with the target uncaught."
+    if defender is not None and absorbs(defender, move):
+        # A third family, and it is about the PAIRING rather than the move: the same Flamethrower
+        # is fine against anything without Flash Fire. See `ABSORBED_MOVE_TYPES` for why it is
+        # refused instead of simulated as a failure -- the absorb raises the holder's own Fire
+        # power, so the next Lava Plume would hit harder than any candidate predicted.
+        return (f"{defender.name}'s {defender.ability} absorbs {move.name} and gets something "
+                f"for it, which is not modelled.")
     if move.effect not in MODELLED_OUR_EFFECTS:
         # The two failure modes are different, and saying "changed nothing" for a damaging move
         # was both wrong and reassuring in the wrong direction. An unknown STATUS move is treated
@@ -205,7 +233,8 @@ def unselectable_reason(move: Move) -> str | None:
     return None
 
 
-def unsupported_our_moves(moves) -> tuple[tuple[str, str], ...]:
+def unsupported_our_moves(moves, defender: "Battler | None" = None
+                          ) -> tuple[tuple[str, str], ...]:
     """``((move name, why), ...)`` for each of OUR moves the simulator cannot fully model.
 
     Advisory at CONFIGURATION time, unlike `targets.unsupported_moves` -- see
@@ -231,7 +260,7 @@ def unsupported_our_moves(moves) -> tuple[tuple[str, str], ...]:
         if move is None:
             problems.append((str(entry), "is not in the move table at all"))
             continue
-        reason = unselectable_reason(move)
+        reason = unselectable_reason(move, defender)
         if reason is not None:
             problems.append((move.name, reason))
     return tuple(problems)
@@ -378,6 +407,16 @@ class MoveOutcome:
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
+    #: Turns of Uproar this move just rolled for its user, or 0. Azelf's, and the value is the
+    #: TOTAL including the turn it was used on (`UPROAR_TURNS_MIN`..+span).
+    starts_uproar: int = 0
+    #: Yawn made its victim drowsy. A flag rather than a count, because the count is a constant
+    #: (`YAWN_DROWSY_TURNS`) and the victim is whichever side `simulate_turn` aimed the move at.
+    sets_drowsy: bool = False
+    #: Damage a Future Sight just banked against its victim, or None if this was not one. Zero is
+    #: a possible banked value, so the sentinel has to be None rather than 0 -- an immune or
+    #: hopelessly outclassed attacker still puts a Future Sight in the air.
+    banked_future_sight: int | None = None
 
 
 def move_roll_cost(move: Move) -> int:
@@ -392,12 +431,23 @@ def move_roll_cost(move: Move) -> int:
     advance an RNG stream. Cross-validated against ``metronome_compass.effects`` for all nine
     fixture moves (tests/test_battle_compass_effects_parity.py).
     """
+    # Future Sight is the one move whose cost is not built from the usual parts at all: its effect
+    # script banks the damage with a single roll and then switches the accuracy check off, so the
+    # turn it is used costs exactly one. The hit check it defers is an END-OF-TURN roll two turns
+    # later and belongs to no move's cost (`_fire_future_sight`).
+    if move.effect == EFFECT_FUTURE_SIGHT:
+        return 1
     rolls = 1 if move.accuracy > 0 else 0
     if move.category != CATEGORY_STATUS:
         rolls += 2
     if move.effect_chance > 0:
         rolls += 1
     if status_applied_by(move) is Status.SLEEP:
+        rolls += 1
+    if move.effect == EFFECT_UPROAR:
+        # The duration roll, spent only when the Uproar actually STARTS -- a continuation turn
+        # re-runs the effect script, finds the volatile already set and jumps straight to
+        # CalcCrit/CalcDamage (`effect_script_0159.s`). An upper bound, like the sleep line above.
         rolls += 1
     return rolls
 
@@ -411,7 +461,7 @@ def accuracy_net_stage(attacker: "Battler", defender: "Battler") -> int:
 
 
 def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
-                        defender=None) -> int:
+                        defender=None, deferred_check: bool = False) -> int:
     """Accuracy after the combined accuracy/evasion stage.
 
     0 means the move bypasses the check entirely. `net_stage` is the attacker's accuracy stage
@@ -432,6 +482,14 @@ def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
     """
     if move.accuracy == 0:
         return 0
+    if move.effect == EFFECT_FUTURE_SIGHT and not deferred_check:
+        # The accuracy check does not happen on the turn this move is USED: the effect script
+        # sets `SYSCTL_NONSTANDARD_ACC_CHECK` and `CheckMoveHitAccuracy` returns 0
+        # (battle_controller_player.c:2912-2915). The real 90% roll is made at the end of the
+        # turn it lands, two turns later -- `_roll_future_sight`, which is the one caller that
+        # passes `deferred_check=True`. Answering 90 here put "Missed" in the interview's options
+        # for a turn whose only grammatical rendering is the bare slot.
+        return 0
     accuracy = apply_accuracy_stage(move.accuracy, net_stage)
     return apply_accuracy_items(
         accuracy,
@@ -451,6 +509,11 @@ def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None) ->
     It is also ITEM-dependent, which is the newer half: a Brightpowder on the target makes a
     100-accuracy Spore missable at a neutral stage, so an interview that did not know about the
     item would refuse to let the player report a miss that really happened.
+
+    **Future Sight answers False**, despite its accuracy of 90, and that is the right answer to
+    the question this function is actually asked: it is asked about the turn a move is USED, and
+    a Future Sight cannot miss on that turn. Its check is deferred to the end of the turn it
+    lands, where the verdict gets a token of its own (`tokens.FUTURE_SIGHT`).
     """
     return 0 < _effective_accuracy(move, net_stage, attacker=attacker, defender=defender) < 100
 
@@ -458,7 +521,7 @@ def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None) ->
 def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None) -> bool:
     """Whether this move is certain to do nothing, from state alone.
 
-    Five families now, all costing the turn its two post-successful-move advances when they fire
+    Eight families now, all costing the turn its two post-successful-move advances when they fire
     -- which is exactly how the emulator log diverged from this simulator on turn 3, so each
     addition here is a bug avoided rather than a nicety:
 
@@ -476,6 +539,21 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
       ``metronome_compass.effects._eff_water_sport``, which returns False when `user_water_sport`
       is already set.
 
+    * **Any sleep move, and Yawn, while an Uproar is running.** The one family here that is
+      about the FIELD rather than about either Pokemon, and it is the reason Azelf cannot be
+      slept through its own Uproar: `subscript_fall_asleep`'s ``_292``/``_311`` branches refuse
+      the status outright ("But {0} can't sleep in an uproar!"), and `subscript_yawn`'s ``_077``
+      does the same to Yawn. The duration roll is INSIDE the branch they skip, so a refused
+      sleep spends no roll -- which is what makes this a `will_fail` entry rather than a
+      post-hoc correction.
+    * **Yawn against a victim that cannot take it** -- already statused, already drowsy, or
+      holding Insomnia or Vital Spirit (`subscript_yawn.s`, read top to bottom). Yawn inflicts
+      nothing at the moment it is used, so `status_applied_by` returns None for it and none of
+      the generic status families above fires.
+    * **Future Sight with one already in the air.** `BtlCmd_TryFutureSight` jumps to the
+      "But it failed!" branch, having spent nothing at all -- so this failure is cheaper than
+      every other one here by the one roll the move would otherwise have cost.
+
     `actor` is keyword-only and optional so that callers which only care about the
     defender-facing families -- `hunt_session.move_info`, which asks "can this move of OURS do
     nothing to the target" -- need not pretend to know who is acting.
@@ -491,23 +569,51 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     # a move -- which is what keeps the target catchable through it.
     if status is not None and field is not None and getattr(field, "safeguard_turns", 0) > 0:
         return True
+    if soundproofed(defender, move):
+        # Blocked outright, and it lands on the same "no more work" flag as the other
+        # defender-side refusals -- so it costs what those cost. Heatran's Metal Sound against a
+        # Soundproof party member is the live case.
+        return True
     if status is not None and immune_to_status(defender, status):
         # Insomnia and Vital Spirit, checked at the very top of `subscript_fall_asleep` and
         # landing on the same no-more-work flag as "is already asleep" -- so the cost is the
         # same as that verified failure's.
         return True
+    if status is Status.SLEEP and uproar_active(field):
+        # "But {0} can't sleep in an uproar!" -- and the sleep DURATION roll sits past this
+        # branch, so refusing here is also what keeps the roll count right.
+        return True
+    if move.effect == EFFECT_YAWN:
+        # Read in `subscript_yawn.s`'s own order. Insomnia and Vital Spirit come first (they
+        # print an ability message instead), then an Uproar, then any existing status, then a
+        # second Yawn. Our side's Safeguard would block it too and is deliberately absent:
+        # `safeguard_turns` is the TARGET's side condition and nothing in any party can set one,
+        # so a row for it could never fire.
+        return (immune_to_status(defender, Status.SLEEP)
+                or uproar_active(field)
+                or defender.status is not Status.NONE
+                or defender.drowsy_turns > 0)
+    if move.effect == EFFECT_FUTURE_SIGHT:
+        # Keyed on the FIELD, because the ROM keys it on the victim's battler position rather
+        # than on the move's user: `futureSightTurns[defender]`. One can be in the air per side.
+        return field is not None and getattr(field, "future_sight_turns", 0) > 0
     if move.effect == EFFECT_NIGHTMARE:
         # Fails against anything not asleep, and against a second application
         # [effect_script_0107.s]. The first half is the one that fires in a real run: Darkrai
         # cannot sequence its own moves, so it throws Nightmare at a wide-awake party member
         # roughly a quarter of the turns it acts.
         return defender.status is not Status.SLEEP or defender.nightmare
-    if move.effect == EFFECT_EVASION_UP:
+    if (raise_ := PRIMARY_SELF_RAISES.get(move.effect)) is not None:
         # A stat already at +6 cannot go higher, and the move fails outright rather than landing
         # for nothing -- which is an advance difference, not a cosmetic one.
         # Self-targeting, so it reads `actor` the way Refresh does -- and no actor means "cannot
         # tell" rather than a guess about the defender's stages.
-        return actor is not None and actor.evasion_stage >= STAT_STAGE_CEILING
+        #
+        # Read off `PRIMARY_SELF_RAISES` rather than naming Double Team, so Nasty Plot and
+        # Amnesia got this for nothing: an Azelf that has already Nasty Plotted three times
+        # spends two fewer advances on the fourth, and a simulator that missed that would
+        # desynchronise from the one turn in four Azelf wastes on it.
+        return actor is not None and getattr(actor, raise_[0]) >= STAT_STAGE_CEILING
     if move.effect == EFFECT_REFRESH:
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
@@ -543,14 +649,12 @@ EFFECT_RAIN_DANCE = 136
 EFFECT_MIST = 46
 EFFECT_MEAN_LOOK = 106
 EFFECT_LOWER_EVASION = 24
-#: Aurora Beam's Attack drop and Mist Ball's Sp. Atk drop. Separate, because the stats are: one
-#: figure used to stand for both, so an Attack drop lowered Sp. Atk as well.
-EFFECT_LOWER_ATTACK = 68
-EFFECT_LOWER_SPATK = 71
-#: Luster Purge drops Sp. DEF, which is not the same thing at all: our Sp. Def is what the
-#: target's special attacks are divided by, so a drop raises every later special hit. Mist Ball's
-#: Sp. Atk drop is the one that only touches damage we deal.
-EFFECT_LOWER_SPDEF = 72
+#: Aurora Beam's Attack, Mist Ball's Sp. Atk and Luster Purge's Sp. Def all live in
+#: `SECONDARY_STAT_DROPS` now, which is why they no longer have a constant apiece. The three they
+#: had were there to keep the stats straight -- one figure used to stand for Attack and Sp. Atk
+#: both, and Sp. Def is a third thing again: ours is what the target's special attacks are
+#: divided by, so a drop there raises every later special hit rather than lowering what we deal.
+#: The table keeps them straight by construction instead.
 #: Burn halves the holder's physical Attack [Gen 4]. Applied to the stat before the stage, which
 #: is where `CalcMoveDamage` reads it.
 BURN_ATTACK_DIVISOR = 2
@@ -624,6 +728,150 @@ ABILITY_BAD_DREAMS = "bad dreams"
 #: Leaf Guard is deliberately absent: it blocks sleep only in sunshine, and nothing in any
 #: configured moveset can set sun, so a row for it could never fire.
 SLEEP_BLOCKING_ABILITIES = frozenset({"insomnia", "vital spirit"})
+#: Abilities that ABSORB a whole move type, and the type each one eats. Transcribed from
+#: `BattleSystem_TriggerImmunityAbility` (pokeplatinum src/battle/battle_lib.c:3488-3545), which
+#: runs at `TRY_MOVE_STATE_TRIGGER_IMMUNITY_ABILITIES` -- i.e. after the accuracy roll and after
+#: the type chart, so the rolls are spent either way.
+#:
+#: **Not modelled, and deliberately refused rather than approximated.** Each one does something
+#: extra on top of the immunity -- Volt/Water Absorb and Dry Skin heal a quarter of max HP, Motor
+#: Drive raises Speed, and Flash Fire raises the holder's own Fire power by half -- so a Fire move
+#: thrown at Heatran would not merely fail, it would make the Lava Plume that follows hit harder
+#: than anything predicted. That is unsound, not imprecise.
+#:
+#: Lightning Rod is absent on purpose: in Gen 4 it redirects in doubles and grants no immunity at
+#: all, so a holder is simply hit. Levitate is absent for the opposite reason -- it IS modelled,
+#: as the Ground immunity it is (`battle.damage._levitates`).
+ABSORBED_MOVE_TYPES: dict[str, str] = {
+    "volt absorb": "Electric",
+    "water absorb": "Water",
+    "flash fire": "Fire",
+    "motor drive": "Electric",
+    "dry skin": "Water",
+}
+
+#: Soundproof blocks these TWELVE MOVES BY NAME, not a type -- `sSoundMoves`
+#: (src/battle/battle_lib.c:3473-3486). Heatran's Metal Sound is one of them, which is why this
+#: is here: an Electrode or a Whismur in the party would have Metal Sound blocked outright, and
+#: the simulator would otherwise apply two Sp. Def stages the game never applied and mis-predict
+#: every special hit afterwards.
+SOUND_MOVES = frozenset({
+    "growl", "roar", "sing", "supersonic", "screech", "snore", "uproar", "metal sound",
+    "grass whistle", "hyper voice", "bug buzz", "chatter",
+})
+ABILITY_SOUNDPROOF = "soundproof"
+
+
+def absorbs(battler: "Battler", move: Move) -> bool:
+    """Whether this defender's ability eats `move` whole, with a side effect we do not model."""
+    eaten = ABSORBED_MOVE_TYPES.get((battler.ability or "").strip().lower())
+    return eaten is not None and move.type_name == eaten and bool(move.power)
+
+
+def soundproofed(battler: "Battler", move: Move) -> bool:
+    """Whether Soundproof blocks `move` for this defender. By NAME, as the ROM lists it."""
+    return ((battler.ability or "").strip().lower() == ABILITY_SOUNDPROOF
+            and move.name.strip().lower() in SOUND_MOVES)
+
+
+def pending_future_sight(field) -> int:
+    """Damage a banked Future Sight will take off us at the END of this turn, or 0.
+
+    **The only incoming damage in this simulator that is already decided.** Every other figure a
+    danger floor is built from is a worst case over moves the target has not picked yet; this one
+    was computed and stored two turns ago by `_future_sight_damage`, and nothing between then and
+    now changes it -- not a switch, not a Light Screen, not an Amnesia.
+
+    Which makes it the one thing that **stacks**: on the turn it lands, the target still takes its
+    ordinary turn, so the HP we can lose is the worst single hit *plus* this. A floor that priced
+    only the larger of the two is the "faints at a number the plan called safe" shape
+    (cf. clayton-6xu.6, where the floor ignored our own Sp. Def drops).
+
+    Keyed on the counter reaching **1**, not on one merely being in the air. At 2 or 3 the hit is
+    turns away and the floor is recomputed every turn anyway, so pre-paying for it would tighten
+    the heal gate for no reason -- which is clayton-957.10.1's collapse approached from the other
+    side.
+
+    Deliberately the FULL figure even though the hit can miss: its check is a real 90% roll
+    (`_roll_future_sight`), so this is conservative rather than exact, and conservative is the
+    correct direction for a gate that decides whether to heal. Do not scale it by the accuracy.
+    """
+    if getattr(field, "future_sight_turns", 0) != 1:
+        return 0
+    return getattr(field, "future_sight_damage", 0) or 0
+
+
+def uproar_active(field) -> bool:
+    """Whether an Uproar is running anywhere on the field.
+
+    A FIELD question, not a per-battler one: the ROM sets a bit in `fieldConditionsMask` as well
+    as the user's own volatile (`subscript_uproar.s`), and it is the field bit that sleep and
+    Yawn consult. So "can we put the target to sleep" has one answer for the whole battle while
+    anything is uproaring, and `will_fail` reads it through here.
+
+    **Soundproof is not applied here.** The ROM checks it per battler at each use site -- a
+    Soundproof Pokemon can sleep through an Uproar, and is not woken by one
+    (`subscript_fall_asleep` ``_036``/``_118``, `MON_COND_CHECK_STATE_UPROAR`) -- so folding it
+    into a field-wide answer would give the wrong result for exactly one of the two sides.
+    Callers that care about one battler pair it with `soundproofed` themselves; see
+    `_wake_for_uproar`.
+
+    `field` may be None, which is "we were not told" and answers False: every caller that cannot
+    see the field is asking about a move in isolation, where assuming an Uproar would suppress a
+    question the interview must still ask.
+    """
+    if field is None:
+        return False
+    return any(getattr(getattr(field, side, None), "uproar_turns", 0) > 0
+               for side in ("ours", "target"))
+
+
+def _wake_for_uproar(battler: Battler, field) -> Battler:
+    """`battler` woken if an Uproar is keeping it awake, unchanged otherwise. Costs no rolls.
+
+    The ROM wakes a sleeper in two places and spends nothing in either: at the end of every turn
+    while any Uproar is running (`MON_COND_CHECK_STATE_UPROAR`, which loops over all battlers and
+    runs `subscript_wake_up` for the first sleeping one) and again when a sleeping battler tries
+    to act (`CHECK_STATUS_STATE_SLEEP`, battle_controller_player.c:2433-2440). Both are applied
+    here, which is why it is called from the two act functions AND from the end-of-turn block.
+
+    **Soundproof is the exemption, and both sites check it**, which is the reason this is not
+    folded into `uproar_active`: a Soundproof Pokemon sleeps straight through an Uproar.
+
+    Not a cure in the ordinary sense -- it is the same wake-up the sleep counter would eventually
+    have produced, arriving early -- so there is no token. The Pokemon acting at all is what says
+    it is awake, exactly as a sleep running out is.
+    """
+    if battler.status is not Status.SLEEP or not uproar_active(field):
+        return battler
+    if (battler.ability or "").strip().lower() == ABILITY_SOUNDPROOF:
+        return battler
+    return battler.with_status(Status.NONE)
+#: How many of the end-of-turn advances fall BEFORE the conditional end-of-turn rolls -- Yawn's
+#: sleep duration and a Future Sight's hit check.
+#:
+#: **This is the one figure in this module that is derived rather than measured, and it is owed a
+#: gdb capture** (clayton-957: "verified advance counts are sacred"). What is known:
+#:
+#: * `turn_costs.END_OF_TURN_ADVANCES = 4` is measured, on turns where none of these fired.
+#: * `metronome_compass` measured a rampage-end confusion-duration roll landing after TWO of
+#:   those four ("the confusion roll lands between END[1] and END[2] in the actual game",
+#:   metronome_compass/__init__.py:245-248). That roll is `MON_COND_CHECK_STATE_THRASH`, state
+#:   **15** of the end-of-turn condition walk.
+#: * Yawn is state **24** of the same walk, and Future Sight is in the walk AFTER it
+#:   (`SIDE_COND_CHECK_STATE_FUTURE_SIGHT`, which `BattleControllerPlayer_CheckSideConditions`
+#:   runs once `CheckMonConditions` is done). So both are at or after the measured anchor, and
+#:   Yawn is before Future Sight.
+#:
+#: What is NOT known is where the remaining two advances sit relative to states 15-24 and the
+#: side-condition walk. Anchoring at 2 puts both rolls where the measured neighbour is; the
+#: residual uncertainty is two advances, and it matters because both verdicts are observable --
+#: a wrong roll means a wrong sleep length or a wrong Future Sight hit, which eliminates the true
+#: seed rather than merely mispredicting a number. Uxie is the target that makes it load-bearing:
+#: both of its end-of-turn rolls are in its own moveset and the target picks its own moves, so a
+#: run cannot route around them.
+_END_OF_TURN_RESIDUAL_ANCHOR = 2
+
 #: Shadow Force. A two-turn move: turn 1 vanishes and spends NOTHING, turn 2 is an ordinary
 #: damaging move [res/battle/scripts/effects/effect_script_0272.s].
 EFFECT_SHADOW_FORCE = 272
@@ -631,6 +879,66 @@ EFFECT_SHADOW_FORCE = 272
 #: moveset; Fly (19), Dig (39) and Dive (256) belong here the day a target has one, and the ROM
 #: tests all four in the same condition (`CheckMoveHitOverrides`).
 SEMI_INVULNERABLE_EFFECTS = frozenset({EFFECT_SHADOW_FORCE})
+
+#: Uproar (BATTLE_EFFECT_UPROAR). Azelf's, and the first move either side has that locks its user
+#: into attacking for several turns in a row.
+#:
+#: `subscript_uproar.s` is `Random 3, 3` -- and `BtlCmd_Random` reads that as
+#: ``(rand % (3 + 1)) + 3`` (battle_script.c:3201-3208), so the counter is **3 to 6 and the move
+#: is used on that many turns in total**. The end-of-turn check decrements it and re-locks while
+#: it is nonzero (`MON_COND_CHECK_STATE_UPROAR`, battle_controller_player.c:1506-1536), so a
+#: rolled 3 means two continuation turns after the one that started it.
+#:
+#: Cross-checked against `metronome_compass.effects._eff_uproar`, which rolls 2-5 EXTRA turns --
+#: the same distribution counted from the other end, which is the corroboration worth having
+#: because the commonly quoted figure for Gen 4 Uproar is "2-5 turns" and that is the extras.
+EFFECT_UPROAR = 159
+UPROAR_TURNS_MIN = 3
+UPROAR_TURNS_SPAN = 4
+
+#: Yawn (BATTLE_EFFECT_YAWN). Accuracy 0, so no accuracy roll, and `subscript_yawn.s` spends no
+#: roll of its own either: `BtlCmd_TryYawn` just sets the counter (battle_script.c:6580-6592).
+#: The roll comes two turns later, when the sleep actually lands.
+EFFECT_YAWN = 187
+#: What `BtlCmd_TryYawn` sets: ``moveEffectsMask |= 1 << (YAWN_SHIFT + 1)``, i.e. 2. The
+#: end-of-turn check decrements first and applies sleep on reaching zero, so a Yawn used on turn
+#: T puts its victim to sleep at the END of turn T+1 -- the first turn it costs is T+2.
+YAWN_DROWSY_TURNS = 2
+
+#: Future Sight (BATTLE_EFFECT_HIT_IN_3_TURNS), in both Uxie's and Azelf's sets.
+#:
+#: Unlike every other damaging move this spends **exactly one roll on the turn it is used** and
+#: nothing else: `effect_script_0148.s` runs `TryFutureSight` -- which banks
+#: ``CalcMoveDamage`` through ``CalcDamageVariance``, one roll -- and then sets
+#: `SYSCTL_NONSTANDARD_ACC_CHECK`, which makes `CheckMoveHitAccuracy` return 0 and spend no
+#: accuracy roll (battle_controller_player.c:2912-2915). No crit roll either: the effect script
+#: never reaches `CalcCrit`, and `TryFutureSight` passes a critical multiplier of 1.
+#:
+#: The effect script runs BEFORE the accuracy check, which is what makes that work -- the move's
+#: script is loaded at the end of `BEFORE_MOVE` with `commandNext = TRY_MOVE`
+#: (battle_controller_player.c:3215-3220). The same ordering is why `SYSCTL_IGNORE_IMMUNITIES`
+#: skips the type chart entirely; see `battle.damage.damage`'s ``type_chart`` argument.
+EFFECT_FUTURE_SIGHT = 148
+#: The counter `BtlCmd_TryFutureSight` sets (battle_script.c:6074). Decremented at the end of
+#: every turn, and it lands on reaching zero -- so a Future Sight used on turn T hits at the end
+#: of turn T+2.
+FUTURE_SIGHT_TURNS = 3
+
+#: Stat raises a move puts on its OWN USER, by effect -- the mirror of `PRIMARY_STAT_DROPS`.
+#:
+#: A table rather than a branch per effect because Uxie and Azelf would each have added one:
+#: Amnesia is Sp. Def +2 and Nasty Plot Sp. Atk +2, both reached through exactly the machinery
+#: Double Team's evasion already used. Each is its effect script's whole content -- a single
+#: `MOVE_SIDE_EFFECT_TO_ATTACKER` subscript pointer -- so none of them spends a roll, and all
+#: three moves have accuracy 0 and so spend no accuracy roll either.
+#:
+#: Mist does not guard against these: Mist blocks REDUCTIONS to its own side, and this is the
+#: user raising its own stage.
+PRIMARY_SELF_RAISES: dict[int, tuple[str, int]] = {
+    16: ("evasion_stage", 1),            # Double Team -- Darkrai's
+    53: ("spatk_stage", 2),              # Nasty Plot -- Azelf's, and it DOUBLES its special damage
+    54: ("spdef_stage", 2),              # Amnesia -- Uxie's
+}
 
 
 #: The non-volatile status a move's SECONDARY inflicts on its victim, by effect.
@@ -649,9 +957,15 @@ SECONDARY_STATUSES: dict[int, Status] = {
 def can_inflict(battler: "Battler", status: Status) -> bool:
     """Whether `battler` has any way to put `status` on the other side.
 
-    Three routes, all of them real for some configured target: a move whose PRIMARY effect is
-    the status (Thunder Wave, Spore), a move whose SECONDARY is (Discharge, Sacred Fire), and
-    the holder's own ability firing on contact (Static).
+    Four routes, all of them real for some configured target: a move whose PRIMARY effect is
+    the status (Thunder Wave, Spore), a move whose SECONDARY is (Discharge, Sacred Fire), the
+    holder's own ability firing on contact (Static), and -- Uxie's -- a move that leads to the
+    status on a LATER turn.
+
+    That fourth one is Yawn, and it had to be named rather than derived: `status_applied_by`
+    returns None for it, because Yawn inflicts nothing at the moment it is used. So a Uxie
+    answered False to "can this put us to sleep", which is the wrong answer to every question
+    that asks it.
 
     Written for the speed checks. `speed_checks` enumerates our Pokemon both healthy and
     paralyzed because paralysis quarters our Speed and can flip an order that looked safe -- but
@@ -668,6 +982,8 @@ def can_inflict(battler: "Battler", status: Status) -> bool:
         if move is None:
             continue
         if status_applied_by(move) is status or secondary_status(move) is status:
+            return True
+        if status is Status.SLEEP and move.effect == EFFECT_YAWN:
             return True
     return _ability_inflicts(battler.ability, status)
 
@@ -690,6 +1006,9 @@ _INERT_ABILITIES = frozenset({
     # sleeping turn (`bad_dreams_tick`). It belongs here because this set is only about CONTACT:
     # touching a Darkrai inflicts nothing, which is the one question `can_inflict` asks.
     "bad dreams",
+    # Heatran's, and the same reasoning: Flash Fire eats a Fire move aimed AT it
+    # (`ABSORBED_MOVE_TYPES`) and does nothing to whoever touches it.
+    "flash fire",
 })
 
 
@@ -732,6 +1051,8 @@ SECONDARY_DESCRIPTIONS: dict[int, tuple[str, str]] = {
     68: ("victim", "{who}'s Attack fell"),
     71: ("victim", "{who}'s Sp. Atk fell"),
     72: ("victim", "{who}'s Sp. Def fell"),
+    69: ("victim", "{who}'s Defence fell"),
+    70: ("victim", "{who}'s Speed fell"),
     EFFECT_ALL_STATS_UP: ("attacker", "{who}'s stats all rose"),
     **{effect: ("victim", "{who} flinched") for effect in FLINCH_EFFECTS},
 }
@@ -792,9 +1113,8 @@ VARIABLE_POWER_EFFECTS = frozenset({EFFECT_PUNISHMENT})
 # accuracy roll spent correctly and the verdict wrong, which eliminates the true seed rather than
 # merely blurring it.
 #
-# Distinct from the three SECONDARY drops (effects 68, 71, 72), which ride on a damaging move and
-# are applied off `outcome.secondary`. These are the move's whole purpose, so they land whenever
-# it succeeds.
+# Distinct from the SECONDARY drops below, which ride on a damaging move and are applied off
+# `outcome.secondary`. These are the move's whole purpose, so they land whenever it succeeds.
 #: effect id -> (`Battler` stage field, how many stages it drops)
 PRIMARY_STAT_DROPS: dict[int, tuple[str, int]] = {
     18: ("atk_stage", 1),        # Growl
@@ -806,6 +1126,24 @@ PRIMARY_STAT_DROPS: dict[int, tuple[str, int]] = {
     59: ("def_stage", 2),        # Screech
     60: ("speed_stage", 2),      # Scary Face
     62: ("spdef_stage", 2),      # Fake Tears, Metal Sound
+}
+
+#: effect id -> the stage a DAMAGING move drops on its victim when its secondary procs.
+#:
+#: A table because it was three hand-written branches in `simulate_turn` -- one per effect, on
+#: each side -- and Heatran's Crunch would have been a fourth. Each branch was a separate chance
+#: to apply the drop to the wrong side or to forget the clamp, and two of the three only existed
+#: on the target's half of the turn (clayton-6xu.6).
+#:
+#: **Crunch (69) drops DEFENCE in Gen 4.** It dropped Sp. Def in Gen 3 and the change is exactly
+#: the kind of thing a modern reference gets wrong for this project -- taken from
+#: `effect_script_0069.s`, whose subscript is `MOVE_SUBSCRIPT_PTR_DEFENSE_DOWN_1_STAGE`.
+SECONDARY_STAT_DROPS: dict[int, tuple[str, int]] = {
+    68: ("atk_stage", 1),        # Aurora Beam
+    69: ("def_stage", 1),        # Crunch
+    70: ("speed_stage", 1),      # Rock Tomb, Icy Wind, Bubble
+    71: ("spatk_stage", 1),      # Mist Ball
+    72: ("spdef_stage", 1),      # Luster Purge, Shadow Ball
 }
 STAT_STAGE_FLOOR = -6
 STAT_STAGE_CEILING = 6
@@ -1091,6 +1429,74 @@ def screen_turns_for(held_item: str) -> int:
     return screen_turns(held_item)
 
 
+def _attacker_side(battler: Battler) -> Attacker:
+    """`battler` as `battle.damage` wants the attacking side.
+
+    Pulled out of `execute_move` so that Future Sight, which banks its damage through a different
+    path, cannot drift from the live calculation. Atk and SpA stages are read SEPARATELY -- one
+    figure passed as both silently applied an Aurora Beam Attack drop to Sp. Atk as well -- and
+    the attacker's own Battler is what reaches the call, which is how the TARGET's boosts
+    (Ancient Power's, and now Nasty Plot's) reach the damage it deals us.
+
+    Burn halves the holder's physical Attack, and that matters in both directions: it is also how
+    many more False Swipes a burned Smeargle needs before the target reaches 1 HP.
+    """
+    attack = battler.stats["atk"]
+    if battler.status is Status.BURN:
+        attack = max(1, attack // BURN_ATTACK_DIVISOR)
+    return Attacker(
+        level=battler.level, attack=attack,
+        special_attack=battler.stats["spa"], types=battler.types,
+        attack_stage=battler.atk_stage, special_attack_stage=battler.spatk_stage,
+        ability=battler.ability, held_item=battler.held_item)
+
+
+def _defender_side(battler: Battler) -> Defender:
+    """`battler` as `battle.damage` wants the defending side.
+
+    Only Levitate is read off the ability, and only as a Ground immunity. It reaches the
+    calculation at all because the target's Battler carries its encounter's ability, and Giratina
+    Origin's is Levitate.
+    """
+    return Defender(
+        defence=battler.stats["def"], special_defence=battler.stats["spd"],
+        types=battler.types, defence_stage=battler.def_stage,
+        special_defence_stage=battler.spdef_stage, ability=battler.ability)
+
+
+def _future_sight_damage(move: Move, attacker: Battler, defender: Battler, *,
+                         damage_roll: int, field=None) -> int:
+    """The damage a Future Sight banks at the moment it is used.
+
+    Three things make it different from every other hit in this module, and all three come from
+    `BtlCmd_TryFutureSight` (battle_script.c:6066-6096) rather than from inference:
+
+    * **No crit.** It passes a critical multiplier of 1, and the effect script never reaches
+      `CalcCrit` -- so no crit roll is spent and none could apply.
+    * **No STAB and no type effectiveness**, because `SYSCTL_IGNORE_IMMUNITIES` makes
+      `CheckTypeChart` skip the one function that holds all of it. See `damage`'s ``type_chart``.
+    * **Banked against the Pokemon standing there NOW**, at this turn's stages and screens. Two
+      turns later it is applied as a stored number, so nothing in between -- a switch, a Light
+      Screen, an Amnesia -- changes it.
+
+    Our Light Screen and the weather DO apply, because both are read inside `CalcMoveDamage`
+    itself: `TryFutureSight` passes the defender's side conditions and the field conditions
+    straight through. Light Screen is the one that can matter, Future Sight being special;
+    Psychic appears in no weather table, so rain is along for completeness.
+    """
+    attacker_side = _attacker_side(attacker)
+    if (unsupported_reason(move, power_known=False) is not None
+            or unsupported_attacker_reason(attacker_side) is not None):
+        return 0
+    return damage(
+        move, attacker_side, _defender_side(defender),
+        roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
+        critical=False,
+        weather=weather_of(field),
+        light_screen=getattr(field, "light_screen_turns", 0) > 0,
+        type_chart=False)
+
+
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
                  field=None) -> tuple[int, MoveOutcome]:
@@ -1125,6 +1531,25 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # Pokemon holds one, so that branch is not modelled.
         return rng, MoveOutcome(rolls=0, tokens=tuple(parts), successful=True,
                                 starts_charge=slot)
+
+    if move.effect == EFFECT_FUTURE_SIGHT:
+        # Its own branch because it fits neither of the two below. It is a SPECIAL move by
+        # category, but on the turn it is used it neither hits nor misses nor crits: the effect
+        # script banks the damage with one roll and switches the accuracy check off before
+        # `TRY_MOVE` ever runs. So the turn renders as the bare slot token, exactly as a
+        # successful status move does.
+        if will_fail(move, defender, field, actor=attacker):
+            # One already in the air. `TryFutureSight` jumps straight to "But it failed!" without
+            # reaching `CalcMoveDamage`, so this costs NOTHING -- the only zero-roll failure in
+            # the whole function, and the reason the check has to come before the roll below
+            # rather than after it.
+            return rng, MoveOutcome(rolls=0, tokens=tuple(parts), successful=False)
+        rng, damage_roll = advance(rng)
+        used += 1
+        return rng, MoveOutcome(
+            rolls=used, tokens=tuple(parts), successful=True,
+            banked_future_sight=_future_sight_damage(move, attacker, defender,
+                                                     damage_roll=damage_roll, field=field))
 
     if move.category == CATEGORY_STATUS:
         hit = True
@@ -1178,9 +1603,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             screen_turns=(screen_turns_for(attacker.held_item)
                           if move.effect in SCREEN_EFFECTS else 0),
             sets_nightmare=move.effect == EFFECT_NIGHTMARE,
-            # Double Team. Mist does not guard against it -- Mist blocks REDUCTIONS to its own
-            # side, and this is the user raising its own stage.
-            self_stat_raise=(("evasion_stage", 1) if move.effect == EFFECT_EVASION_UP else None),
+            sets_drowsy=move.effect == EFFECT_YAWN,
+            # Double Team, Nasty Plot, Amnesia. Mist does not guard against any of them -- Mist
+            # blocks REDUCTIONS to its own side, and this is the user raising its own stage.
+            self_stat_raise=PRIMARY_SELF_RAISES.get(move.effect),
             blocked_by_mist=blocked)
 
     # Damaging.
@@ -1208,7 +1634,41 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # through to from the fire branch, and the hit verdict is decided after the script runs.
         return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False,
                                 ends_charge=attacker.charging_slot == slot)
+    if soundproofed(defender, move):
+        # The immunity-ability stage, and it is the reason this check cannot live in `will_fail`
+        # alone: `will_fail` is consulted only on the status branch, and Uproar is the first
+        # DAMAGING sound move any target has had. Metal Sound got here for free; Uproar would
+        # have dealt damage and started its lock against an Electrode.
+        #
+        # Every roll is still spent. `BattleSystem_TriggerImmunityAbility` runs at
+        # `TRY_MOVE_STATE_TRIGGER_IMMUNITY_ABILITIES` (battle_lib.c:3523-3530) -- after the effect
+        # script's CalcCrit/CalcDamage and after the accuracy check -- so crit, damage and
+        # accuracy are all behind us by the time the move is refused.
+        #
+        # And `subscript_blocked_by_soundproof` REPLACES `USE_MOVE`, which is where a
+        # MOVE_SIDE_EFFECT_ON_HIT subscript would have run. So Uproar's duration roll is not
+        # spent and no lock is set: a Soundproof party member blanks the move whole, and with it
+        # the field-wide ban on sleep that an Uproar would have brought.
+        #
+        # Neither a hit nor a miss: the token is the bare slot, as every other blocked move's is.
+        return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False,
+                                ends_charge=attacker.charging_slot == slot)
     parts.append(tok.CRIT if critical else tok.HIT)
+
+    starts_uproar = 0
+    if move.effect == EFFECT_UPROAR and not attacker.uproar_turns:
+        # The lock's duration, rolled by `subscript_uproar.s` -- a MOVE_SIDE_EFFECT_ON_HIT
+        # subscript, so it runs during `subscript_use_move` and only when the move connected.
+        #
+        # Placed here, after the accuracy roll and before the secondary and contact-ability
+        # rolls below, because that is the order the ROM's command states run in: the side-effect
+        # subscript is part of `USE_MOVE`, while `CheckAbilityEffectOnHit` is a later state
+        # (`TRIGGER_AFTER_HIT_EFFECTS`). No move can reach both this and the secondary roll --
+        # Uproar's `effect_chance` is 0 -- and Uproar is not a contact move, so Static cannot
+        # fire on it either. The order is therefore unobservable today and transcribed anyway.
+        rng, duration_roll = advance(rng)
+        used += 1
+        starts_uproar = UPROAR_TURNS_MIN + duration_roll % UPROAR_TURNS_SPAN
 
     dealt = 0
     # Atk and SpA stages read off the attacker SEPARATELY. One figure used to be passed as both,
@@ -1218,29 +1678,14 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     #
     # Burn halves the holder's physical Attack, and that matters in both directions: it is also
     # how many more False Swipes a burned Smeargle needs before the target reaches 1 HP.
-    attack_stage = attacker.atk_stage
-    attack = attacker.stats["atk"]
-    if attacker.status is Status.BURN:
-        attack = max(1, attack // BURN_ATTACK_DIVISOR)
-    attacker_side = Attacker(
-        level=attacker.level, attack=attack,
-        special_attack=attacker.stats["spa"], types=attacker.types,
-        attack_stage=attack_stage, special_attack_stage=attacker.spatk_stage,
-        ability=attacker.ability, held_item=attacker.held_item)
+    attacker_side = _attacker_side(attacker)
     base_power = variable_base_power(move, defender)
     if (unsupported_reason(move, power_known=base_power is not None) is None
             and unsupported_attacker_reason(attacker_side) is None):
-        physical = move.category != 1
         dealt = damage(
             move,
             attacker_side,
-            Defender(defence=defender.stats["def"], special_defence=defender.stats["spd"],
-                     types=defender.types, defence_stage=defender.def_stage,
-                     special_defence_stage=defender.spdef_stage,
-                     # Only Levitate is read, and only as a Ground immunity. It reaches the
-                     # calculation at all because the target's Battler now carries its encounter's
-                     # ability, and Giratina Origin's is Levitate.
-                     ability=defender.ability),
+            _defender_side(defender),
             base_power=base_power,
             roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
             critical=critical,
@@ -1290,6 +1735,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
                             damage=dealt, secondary=secondary,
                             attacker_status=attacker_status,
+                            starts_uproar=starts_uproar,
                             # The charged move has fired, so the lock and the vanish come off
                             # (`_055` in the effect script). True for every other move too, where
                             # there is nothing to clear.
@@ -1407,7 +1853,18 @@ def sent_out(battler: Battler) -> Battler:
     rules are the same rule read from both ends.
     """
     return replace(battler, atk_stage=0, def_stage=0, spatk_stage=0, spdef_stage=0,
-                   speed_stage=0, accuracy_stage=0, evasion_stage=0)
+                   speed_stage=0, accuracy_stage=0, evasion_stage=0,
+                   # `moveEffectsMask` and `statusVolatile` are zeroed by the same fresh
+                   # BattleMon, so a Yawn shaken off by switching really is shaken off and an
+                   # Uproar cannot be carried onto the field by somebody else. Which is the
+                   # OPPOSITE of a pending Future Sight: that one is a field condition indexed by
+                   # battler position, so the newcomer takes it (`BattleState.future_sight_turns`).
+                   #
+                   # `nightmare` and `charging_slot` live in those same two ROM fields and are
+                   # NOT reset here. That is a pre-existing gap rather than a decision, and it is
+                   # left alone rather than changed in passing because the advance counts around
+                   # Darkrai were all fitted with it as it is (clayton-6xu.7.2).
+                   drowsy_turns=0, uproar_turns=0, uproar_slot=None)
 
 
 def _all_stats_up(battler: Battler) -> Battler:
@@ -1451,8 +1908,8 @@ def party_order(bench: tuple[Battler, ...]) -> tuple[Battler, ...]:
 def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     """The wild move-selection roll: ``RANDOM % (moves with PP)``, indexing the survivors.
 
-    One roll per turn **except while the target is locked into a multi-turn move**, and the
-    modulus shrinks as PP runs out — so its entropy decays from 2.00
+    One roll per turn **except while the target is locked into a multi-turn move or an Uproar**,
+    and the modulus shrinks as PP runs out — so its entropy decays from 2.00
     bits to 1.58 to 1.00 and then to nothing (sec 5.2 R4, verified). Returns (rng, slot), with
     slot None when nothing is usable and the target would have to Struggle.
 
@@ -1468,6 +1925,14 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
         # [src/battle/battle_controller_player.c:334-338]. **One advance fewer on that turn**,
         # and getting it wrong would desynchronise every turn after Giratina's Shadow Force.
         return rng, target.charging_slot
+    if target.uproar_turns and target.uproar_slot is not None:
+        # Mid-Uproar, and the same branch of `Battler_CanPickCommand` is what skips the roll --
+        # `VOLATILE_CONDITION_UPROAR` sits beside `THRASH` and `MOVE_LOCKED` in the same
+        # condition (battle_lib.c:6224-6236). So an Azelf three turns into an Uproar has spent
+        # three fewer selection rolls than a candidate that thought the Uproar had ended, which
+        # is the sharpest separation any configured target offers: it is a divergence in roll
+        # COUNT rather than in one roll's verdict.
+        return rng, target.uproar_slot
     usable = target.usable_slots()
     if not usable:
         return rng, None
@@ -1680,6 +2145,131 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
     return effective_speed(state.ours) > effective_speed(state.target)
 
 
+def _tick_uproar(state: BattleState) -> None:
+    """The Uproar end-of-turn check, state 14 of the condition walk. Costs no rolls.
+
+    Two things happen here and the order between them is the whole content of
+    `MON_COND_CHECK_STATE_UPROAR` (battle_controller_player.c:1506-1536):
+
+    1. **It wakes sleepers first**, looping every battler for one that is asleep, alive and not
+       Soundproof -- and if it finds one it runs `subscript_wake_up` and **breaks out before the
+       countdown**. So an Uproar that woke somebody lasts one turn longer than its rolled length.
+    2. Otherwise it decrements, and the lock comes off on the turn the counter reaches zero.
+
+    Point 1 is unreachable against either configured Uproar user as things stand: only Azelf has
+    the move, nothing in its set can sleep us, and `will_fail` refuses a sleep move of ours while
+    an Uproar is up -- so by the time this runs nobody is asleep. Transcribed anyway, because the
+    alternative is a silent off-by-one the day anything changes, and because the two act functions
+    already call `_wake_for_uproar` for the mid-turn half of the same rule.
+    """
+    for side in ("ours", "target"):
+        battler = getattr(state, side)
+        if not battler.uproar_turns:
+            continue
+        woke = False
+        for victim_side in ("ours", "target"):
+            victim = getattr(state, victim_side)
+            awakened = _wake_for_uproar(victim, state)
+            if awakened is not victim:
+                setattr(state, victim_side, awakened)
+                woke = True
+                break                    # the ROM breaks on the FIRST sleeper it finds
+        if woke:
+            continue                     # ...and skips the countdown entirely
+        left = battler.uproar_turns - 1
+        setattr(state, side, replace(battler, uproar_turns=left,
+                                     uproar_slot=battler.uproar_slot if left else None))
+
+
+def _tick_drowsy(rng: int, state: BattleState) -> tuple[int, int, int]:
+    """Yawn's countdown, state 24 of the condition walk.
+
+    Returns ``(rng, rolls spent, rolled sleep turns for OUR side)``.
+
+    The counter is decremented first and `subscript_fall_asleep` runs when it reaches zero; that
+    script then re-checks everything -- Insomnia and Vital Spirit, an Uproar, an existing status
+    -- and bails *before* its ``Random 3, 2``. So **the duration roll is spent only when the
+    sleep actually lands**, and a drowse that expires onto an already-paralyzed Pokemon costs
+    nothing at all. The counter is consumed either way: the ROM decrements unconditionally.
+
+    Our side's duration is RETURNED rather than applied, because the status has to land after the
+    HP residuals (states 9 and 12 come before state 24, so Nightmare and Bad Dreams tick on a
+    victim that is still awake). The target's is applied here and now -- the target's residuals
+    are deliberately not simulated at all (`state.HP_TICKING_STATUSES`), so there is nothing for
+    it to be ordered against. Reachable only through a Yawn of ours, which
+    `MODELLED_OUR_EFFECTS` does not list; it is ticked rather than left to rot so that the
+    counter cannot be set by a path that never clears it.
+    """
+    spent = 0
+    ours_turns = 0
+    for side in ("ours", "target"):
+        battler = getattr(state, side)
+        if not battler.drowsy_turns:
+            continue
+        battler = replace(battler, drowsy_turns=battler.drowsy_turns - 1)
+        setattr(state, side, battler)
+        if battler.drowsy_turns:
+            continue
+        if (battler.status is not Status.NONE
+                or immune_to_status(battler, Status.SLEEP)
+                or uproar_active(state)):
+            continue                     # bailed before the Random; nothing spent
+        rng, duration_roll = advance(rng)
+        spent += 1
+        turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
+        if side == "ours":
+            ours_turns = turns
+        else:
+            setattr(state, side, battler.with_status(Status.SLEEP, sleep_turns=turns))
+    return rng, spent, ours_turns
+
+
+def _roll_future_sight(rng: int, state: BattleState) -> tuple[int, int, bool | None]:
+    """A pending Future Sight's countdown and its hit check.
+
+    Returns ``(rng, rolls spent, hit)``, with `hit` None when nothing landed this turn.
+
+    The ROM is one condition (`SIDE_COND_CHECK_STATE_FUTURE_SIGHT`,
+    battle_controller_player.c:1768-1771)::
+
+        if (futureSightTurns[battler] && --futureSightTurns[battler] == FALSE
+                && battleMons[battler].curHP) { ...PrepareSubroutineSequence(subscript_future_sight_damage) }
+
+    **The decrement is inside the condition and the HP check is after it**, which is the detail
+    worth transcribing: a Future Sight whose turn comes up while its victim is fainted still
+    counts down to zero and then simply never fires. No subscript, so no roll -- and the damage
+    is lost rather than deferred.
+
+    When it does fire, `subscript_future_sight_damage.s` opens with `CheckMoveHit`: one ordinary
+    accuracy roll, at the BANKED move's accuracy, with this turn's accuracy and evasion stages.
+    `SYSCTL_NONSTANDARD_ACC_CHECK` was set on the turn the move was used and does not survive it,
+    so the check really happens -- 90 for Future Sight, which makes it the only sub-100 event in
+    either Uxie's or Azelf's moveset.
+    """
+    if not state.future_sight_turns:
+        return rng, 0, None
+    state.future_sight_turns -= 1
+    if state.future_sight_turns or state.ours.fainted:
+        return rng, 0, None
+    # Imported here rather than at module scope on purpose: `claytonlib.moves.resolve_move` looks
+    # a Move up by NAME, and a module-level import would shadow it into this module's namespace --
+    # which is the exact confusion `execute_move` is named the way it is to avoid, and which
+    # tests/test_claytonlib_exports.py asserts against.
+    from claytonlib.moves import resolve_move as move_by_name
+
+    move = move_by_name(state.future_sight_move)
+    if move is None:                     # a state built by hand, or a move table gap
+        return rng, 0, None
+    rng, hit_roll = advance(rng)
+    # The attacker is the target: Future Sight is in no party moveset, and `act_ours` refuses to
+    # bank one. So the accuracy stage read is the TARGET's and the evasion stage OURS, which is
+    # what `accuracy_net_stage` does with these two arguments in this order.
+    net_stage = accuracy_net_stage(state.target, state.ours)
+    hit = hit_roll % 100 < _effective_accuracy(
+        move, net_stage, attacker=state.target, defender=state.ours, deferred_check=True)
+    return rng, 1, hit
+
+
 def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                   item_code: str | None = None,
                   bench_slot: int | None = None,
@@ -1871,6 +2461,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             return False
         # sleep -> flinch -> paralysis, which is metronome_compass's verified turn order.
         # A sleeping or flinched turn spends no roll; the paralysis CHECK does.
+        # An Uproar ends our sleep before the counter would -- and before the counter is read, so
+        # the turns it had left are simply gone.
+        new.ours = _wake_for_uproar(new.ours, new)
         new.ours, awake = new.ours.tick_sleep()
         if not awake:
             parts.append(tok.prevented_token("M", "slp"))
@@ -1915,6 +2508,24 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # `act_target`, where it is Darkrai's, so that a party move would need a moveset row
             # and nothing else.
             new.target = replace(new.target, nightmare=True)
+        if outcome.starts_uproar:
+            # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 159, so
+            # `unselectable_reason` refuses an Uproar of ours at the point of use and the solver
+            # never offers it. Wired for the same reason Nightmare's mirror is: the asymmetry is
+            # the trap, since the two halves of a turn are meant to differ only in which side
+            # they read. Note what it would mean if it were reachable: our own Uproar would make
+            # the target unsleepable too, which is the opposite of what a plan wants.
+            new.ours = replace(new.ours, uproar_turns=outcome.starts_uproar, uproar_slot=slot)
+        if outcome.sets_drowsy:
+            new.target = replace(new.target, drowsy_turns=YAWN_DROWSY_TURNS)
+        if outcome.banked_future_sight is not None:
+            # A Future Sight of ours would be aimed at the TARGET, so it would need its own pair
+            # of counters on the state rather than this pair. Refused rather than half-wired:
+            # effect 148 is absent from `MODELLED_OUR_EFFECTS`, so this cannot be reached, and
+            # pretending otherwise would bank damage against a target we are trying not to kill.
+            raise NotImplementedError(
+                "Future Sight on our side is not modelled; it is refused by "
+                "unselectable_reason, so reaching here means that check was bypassed")
         if outcome.self_stat_raise is not None:
             new.ours = apply_stat_raise(new.ours, outcome.self_stat_raise)
         if outcome.attacker_status is not None:
@@ -1936,6 +2547,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                                 and new.target.status is Status.NONE)
             if secondary_landed:
                 new.target = new.target.with_status(sec)
+        if outcome.secondary and (drop := SECONDARY_STAT_DROPS.get(move.effect)):
+            # The mirror of the same lookup in `act_target`, and it did not exist: a secondary
+            # drop from one of OUR moves was applied nowhere. Nothing in a planned party has one,
+            # so it cost nothing -- but the asymmetry was a trap, since the two halves of a turn
+            # are meant to differ only in which side they read.
+            new.target = apply_stat_drop(new.target, drop)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
             new.target = _all_stats_up(new.target)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
@@ -1958,6 +2575,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         nonlocal rng
         if target_slot is None:
             return False
+        # Symmetric with our side, and reachable: nothing in a party can start an Uproar
+        # (`MODELLED_OUR_EFFECTS` omits it), but the target's OWN Uproar wakes the target too if
+        # we ever slept it and it then started one -- which `will_fail` makes impossible in the
+        # other order.
+        new.target = _wake_for_uproar(new.target, new)
         new.target, awake = new.target.tick_sleep()
         if not awake:
             parts.append(tok.prevented_token("E", "slp"))
@@ -1975,6 +2597,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if move is None:
             return False
         was_charging = new.target.charging_slot == target_slot
+        # An Uproar continuation turn is the same case as a charge turn and for the same reason:
+        # `Battler_CanPickCommand` is FALSE, so `ppDecremented` is set TRUE at command selection
+        # and the move goes off free. Spending PP on all 3-6 turns would empty a 10-PP Uproar in
+        # two uses, shrink `usable_slots` early and change the selection modulus -- a desync.
+        was_locked = was_charging or (new.target.uproar_turns > 0
+                                      and new.target.uproar_slot == target_slot)
         rng, outcome = execute_move(
             rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new)
         new.rng_offset += outcome.rolls
@@ -1983,7 +2611,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # Shadow Force fires costs no PP. Spending it twice would empty a 5-PP move in two uses,
         # shrink `usable_slots` early and change the selection modulus -- a desync, not a
         # rounding error.
-        if not was_charging:
+        if not was_locked:
             new.target = new.target.spend_pp(target_slot, 1)
         if outcome.starts_charge is not None:
             new.target = replace(new.target, charging_slot=outcome.starts_charge)
@@ -1992,14 +2620,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         apply_field(outcome)
         if outcome.damage:
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
-        if outcome.secondary and move.effect == EFFECT_LOWER_ATTACK:
-            # Aurora Beam: our ATTACK only. Held on the Battler now, so it reaches the damage
-            # calculation the same way every other stage does.
-            new.ours = replace(new.ours, atk_stage=max(-6, new.ours.atk_stage - 1))
-        if outcome.secondary and move.effect == EFFECT_LOWER_SPATK:
-            # Mist Ball drops Sp. Atk, which is not inert: our special damage is what some
-            # parties use to bring the target down.
-            new.ours = replace(new.ours, spatk_stage=max(-6, new.ours.spatk_stage - 1))
+        if outcome.secondary and (drop := SECONDARY_STAT_DROPS.get(move.effect)):
+            # Aurora Beam's Attack, Mist Ball's Sp. Atk, Luster Purge's Sp. Def, Crunch's
+            # Defence. One lookup where there were three branches in two places: each drop
+            # reaches the damage calculation the same way every other stage does, and none of
+            # them is inert -- our own damage is what brings the target to 1 HP.
+            new.ours = apply_stat_drop(new.ours, drop)
         if outcome.applied_status is not None:
             # Hypnosis. **This branch did not exist before Darkrai**, and its absence was the
             # exact failure `MODELLED_TARGET_EFFECTS` guards against: the duration roll was spent
@@ -2011,6 +2637,21 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                                             sleep_turns=outcome.sleep_turns)
         if outcome.sets_nightmare:
             new.ours = replace(new.ours, nightmare=True)
+        if outcome.starts_uproar:
+            # The lock goes on the TARGET -- it is the user. From here it picks no move and
+            # spends no PP until the counter runs out (`select_target_move`).
+            new.target = replace(new.target, uproar_turns=outcome.starts_uproar,
+                                 uproar_slot=target_slot)
+        if outcome.sets_drowsy:
+            # Uxie's Yawn, aimed at us. `will_fail` has already refused every case the ROM
+            # refuses, so reaching here means the counter really is being set.
+            new.ours = replace(new.ours, drowsy_turns=YAWN_DROWSY_TURNS)
+        if outcome.banked_future_sight is not None:
+            # On the STATE, not on us: the ROM indexes it by battler position, so switching
+            # somebody else in does not dodge it -- see `BattleState.future_sight_turns`.
+            new.future_sight_turns = FUTURE_SIGHT_TURNS
+            new.future_sight_damage = outcome.banked_future_sight
+            new.future_sight_move = move.name
         if outcome.self_stat_raise is not None:
             # Double Team raises the TARGET's own evasion, which is why this reads
             # `new.target`: it degrades our accuracy for the rest of the battle, and permanently
@@ -2026,11 +2667,6 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # paralyzed for it -- an unplanned route to the Phase 2 precondition, and the reason
             # the roll has to be spent in the right places and nowhere else.
             new.target = new.target.with_status(outcome.attacker_status)
-        if outcome.secondary and move.effect == EFFECT_LOWER_SPDEF:
-            # Luster Purge drops our Sp. DEF, raising every later special hit we take. Latios
-            # was already a configured target with this unmodelled, so the model under-predicted
-            # incoming damage from the first proc (clayton-957.26.1).
-            new.ours = replace(new.ours, spdef_stage=max(-6, new.ours.spdef_stage - 1))
         secondary_landed = True
         if outcome.secondary and (sec := secondary_status(move)) is not None:
             # Sacred Fire's burn is the live case, and the one that made this worth getting right:
@@ -2086,28 +2722,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 rng = advance_rng(rng)
             new.rng_offset += turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES
 
-    if not battle_halted():
-        # The end-of-turn block shrinks when a MOVE faints us: 4 -> 3 before we moved, 4 -> 2
-        # after. Getting this wrong would not show up on the faint turn, which the X token
-        # explains on its own -- it would desynchronise every turn after it.
-        if not new.ours.fainted:
-            end_of_turn = turn_costs.END_OF_TURN_ADVANCES
-        elif fainted_before_moving:
-            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_BEFORE_MOVING
-        else:
-            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_AFTER_MOVING
-        for _ in range(end_of_turn):
-            rng = advance_rng(rng)
-        new.rng_offset += end_of_turn
-
-    # Durations tick at end of turn: rain set this turn shows "Rain continues to fall" on the
-    # same turn and stops four turns later [verified: test1.jsonl].
-    if not battle_halted():
-        new.rain_turns = max(0, new.rain_turns - 1)
-        new.mist_turns = max(0, new.mist_turns - 1)
-        new.safeguard_turns = max(0, new.safeguard_turns - 1)
-        new.reflect_turns = max(0, new.reflect_turns - 1)
-        new.light_screen_turns = max(0, new.light_screen_turns - 1)
+    #: Whether a MOVE put us down, as opposed to an end-of-turn residual. The distinction decides
+    #: how much the end-of-turn block costs -- a move-faint shortens it, a residual faint does not
+    #: (`turn_costs.END_OF_TURN_ADVANCES_FAINTED_BY_RESIDUAL`) -- and it has to be captured here
+    #: because the residual block now runs FIRST and would otherwise answer for both.
+    fainted_by_move = new.ours.fainted
 
     # Burn's residual, which is a RESIDUAL in the sense that matters here: deterministic, free of
     # RNG, and therefore not reported. `hp_before` is deliberately NOT moved by it, so the HP
@@ -2147,6 +2766,75 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if dreams:
             new.ours = new.ours.with_hp(new.ours.hp - dreams)
         residual = hp_at_block - new.ours.hp
+
+    #: Rolled sleep duration when Yawn's counter expired into sleep this turn, else 0. The roll
+    #: is spent inside the end-of-turn block below, and the status is applied after it -- Yawn is
+    #: state 24 of the condition walk and Nightmare and Bad Dreams are states 9 and 12, so both
+    #: of those have already ticked on a victim that was still awake.
+    drowsy_sleep_turns = 0
+    #: Whether a Future Sight landed, missed, or was not in the air at all (None).
+    future_sight_hit: bool | None = None
+    if not battle_halted():
+        # The end-of-turn block shrinks when a MOVE faints us: 4 -> 3 before we moved, 4 -> 2
+        # after. Getting this wrong would not show up on the faint turn, which the X token
+        # explains on its own -- it would desynchronise every turn after it. A faint to a
+        # RESIDUAL spends the full four, which is why the test is `fainted_by_move`.
+        if not fainted_by_move:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES
+        elif fainted_before_moving:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_BEFORE_MOVING
+        else:
+            end_of_turn = turn_costs.END_OF_TURN_ADVANCES_FAINTED_AFTER_MOVING
+        # Split around the conditional rolls rather than spent in one run, because two of the
+        # end-of-turn condition states can spend a roll of their own -- see
+        # `_END_OF_TURN_RESIDUAL_ANCHOR` for what is measured here and what is still owed.
+        # `min` rather than the constant so a faint-shortened block degrades instead of
+        # over-advancing.
+        head = min(_END_OF_TURN_RESIDUAL_ANCHOR, end_of_turn)
+        for _ in range(head):
+            rng = advance_rng(rng)
+        new.rng_offset += head
+        # Uproar, state 14: it wakes before it counts down, and a turn on which it woke somebody
+        # does not count down at all.
+        _tick_uproar(new)
+        # Yawn, state 24.
+        rng, spent, drowsy_sleep_turns = _tick_drowsy(rng, new)
+        new.rng_offset += spent
+        # Future Sight, the first state of the side-condition walk that follows. It is checked
+        # against our HP *after* the residual block above, which is the ROM's order and the
+        # reason that block was moved here: `--futureSightTurns[battler] == FALSE &&
+        # battleMons[battler].curHP` means a burn tick that faints us stops the Future Sight
+        # firing at all, so the roll is not spent and the token is not emitted.
+        rng, spent, future_sight_hit = _roll_future_sight(rng, new)
+        new.rng_offset += spent
+        for _ in range(end_of_turn - head):
+            rng = advance_rng(rng)
+        new.rng_offset += end_of_turn - head
+
+    # Durations tick at end of turn: rain set this turn shows "Rain continues to fall" on the
+    # same turn and stops four turns later [verified: test1.jsonl].
+    if not battle_halted():
+        new.rain_turns = max(0, new.rain_turns - 1)
+        new.mist_turns = max(0, new.mist_turns - 1)
+        new.safeguard_turns = max(0, new.safeguard_turns - 1)
+        new.reflect_turns = max(0, new.reflect_turns - 1)
+        new.light_screen_turns = max(0, new.light_screen_turns - 1)
+
+
+    # Yawn's sleep lands here, after every HP residual, because state 24 comes after states 9 and
+    # 12 -- so the Nightmare and Bad Dreams ticks above ran against a victim that was still
+    # awake, and the first turn this sleep costs is the next one. The roll was already spent.
+    if drowsy_sleep_turns and not battle_halted() and not new.ours.fainted:
+        new.ours = new.ours.with_status(Status.SLEEP, sleep_turns=drowsy_sleep_turns)
+
+    # The Future Sight, last of all, and NOT folded into `residual`: its hit check is a real
+    # random verdict, so the HP it takes has to show up as a change the HP token reports. Folding
+    # it in would hide the one observable event either of these targets offers.
+    if future_sight_hit is not None:
+        parts.append(tok.future_sight_token(future_sight_hit))
+        if future_sight_hit and not new.ours.fainted:
+            new.ours = new.ours.with_hp(new.ours.hp - new.future_sight_damage)
+        new.future_sight_damage = 0
 
     # HP, then the faint. A faint turn carries no HP token at all: zero is implied by the X, and
     # once the replacement is out the number would describe a different Pokemon.

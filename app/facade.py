@@ -620,6 +620,28 @@ class Facade:
         return (0,)
 
     @staticmethod
+    def _target_ability_probe(hunt, profile):
+        """A `Battler` carrying the target's name and ability, or None if it has no row yet.
+
+        Deliberately minimal. Everything that asks "what would this target's ability do to our
+        move" reads those two fields and nothing else, and building the real Battler needs a
+        level, a nature and a full IV spread -- none of which a half-configured hunt has. So the
+        advice is available from the moment a species is typed.
+        """
+        from claytonlib.battle_compass.state import Battler
+        from claytonlib.battle_compass.targets import target_ability
+
+        species_name = (hunt.target.species or "").strip()
+        if not species_name:
+            return None
+        try:
+            ability = target_ability(species_name, profile.game if profile else "")
+        except KeyError:
+            return None
+        return Battler(name=species_name, level=1, types=("Normal",), stats={"hp": 1},
+                       ability=ability)
+
+    @staticmethod
     def _target_can_paralyze_us(target) -> bool:
         """Whether this target has any way to paralyze our Pokemon.
 
@@ -1209,6 +1231,14 @@ class Facade:
             "ball": self._ball_readout(h),
         }
 
+        # A probe standing in for the target, carrying only its NAME and ABILITY -- which is all
+        # `unselectable_reason` reads to answer "would this target absorb that move of ours".
+        # Heatran is the case: Flash Fire eats a Fire move AND raises its own Fire power, so a
+        # Flamethrower in the party has to be reported before the run rather than refused in the
+        # middle of one. A probe rather than the real Battler because this runs on a
+        # half-configured hunt, where the stats a Battler needs may not exist yet.
+        target_probe = self._target_ability_probe(h, profile)
+
         movesets: dict[str, list] = {}
         #: The same party, as move NAMES, for the field-move check. Taken from the resolved Move
         #: where resolution worked, so that whatever spelling the player typed is normalised to
@@ -1234,7 +1264,7 @@ class Facade:
             # Species as well as moves, so the field-move warning can name who COULD carry a
             # missing HM -- and say plainly when nobody can, which is the Lugia party's answer.
             party_species[pokemon.name] = pokemon.species or ""
-            for name, why in unsupported_our_moves(pokemon.moveset):
+            for name, why in unsupported_our_moves(pokemon.moveset, target_probe):
                 result["move_coverage"].append(
                     {"pokemon": pokemon.name, "move": name, "reason": why})
             if pokemon.speed is not None:

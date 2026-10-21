@@ -1024,3 +1024,307 @@ against a Smeargle lead, Giratina has two live moves rather than four, and two o
 are free. The immunity is the type chart's, so it was already modelled — it is recorded here
 because it changes how the fight reads: the danger is Ancient Power and Dragon Claw, and Ancient
 Power is also the one that can raise every stat it has.
+
+## 14. As built — Heatran (clayton-6xu.6)
+
+`StartLegendaryBattle SPECIES_HEATRAN, 50`
+(`res/field/scripts/scripts_stark_mountain_room_3.s:83`) [verified]. Catch rate 3, Fire/Steel,
+**Flash Fire**, base 91/90/106/77/130/106 — and a gender, 50/50, which makes it the first
+configured target that has one at all. Nothing reads that: the Love Ball is the only mechanic
+that would, and Platinum has no apricorn balls.
+
+Moveset at Lv50 from its own `learnset.by_level`: **Metal Sound(25) / Crunch(33) / Scary Face(41)
+/ Lava Plume(49)** [verified]. The level window is kind twice over — Fire Fang(17) is effect 273
+and unmodelled, so it would have refused the target outright, and Ancient Power(1) is the
+all-stats boost that makes Ho-Oh's Speed a problem. Both are learned *before* the four it keeps,
+so both are pushed out.
+
+### 14.1 Two stages at a time, and one of them is Speed
+
+Every earlier target's drops were a single stage. Metal Sound is **−2 Sp. Def** and Scary Face
+**−2 Speed** (`PRIMARY_STAT_DROPS` already had both; they only needed listing as modelled for a
+target, and `act_target` already applied a primary drop to our side — Heatran is simply the first
+target that has one).
+
+Scary Face is the one that changes the shape of the fight: our lead outspeeds Heatran about 2:1,
+and **two Scary Faces put it in front**. The no-speed-tie guarantee is what keeps ties out of the
+solver's search, and who moves first decides what our move can still reach. The drops are also
+permanent — a wild target never switches out and neither do we on a one-Pokémon plan, so the ROM's
+stat reset never runs.
+
+Both are also **missable** (85 and 90), which makes this target self-separating on the
+RTC-second axis the way Lugia is and Suicune cannot be (`notes/seed_separation.md`).
+
+### 14.2 The secondary drops became a table
+
+Crunch is effect 69, a 20% Defence drop riding on damage. It would have been the **fourth**
+hand-written `if outcome.secondary and move.effect == ...` branch in `simulate_turn`, and two of
+the existing three lived only on the target's half of the turn — so a secondary drop from one of
+*our* moves was applied nowhere at all. `SECONDARY_STAT_DROPS` replaces all four with one lookup
+used on both sides.
+
+> **Crunch drops DEFENCE in Gen 4.** It dropped Sp. Def in Gen 3, and that is exactly the class of
+> fact a modern reference gets wrong for this project. From `effect_script_0069.s`, whose
+> subscript is `MOVE_SUBSCRIPT_PTR_DEFENSE_DOWN_1_STAGE` [verified].
+
+Effect 70 (Rock Tomb, Icy Wind) comes along for free: the same shape, read off
+`effect_script_0070.s`, so a future target with one needs no edit.
+
+### 14.3 The danger floor was blind to our own stages — a pre-existing bug
+
+`worst_incoming_hit` built its `Defender` with **no stat stages at all**, so the figure was
+computed at stage 0 whatever had been done to us. That figure *is* the solver's heal threshold, so
+under-predicting it is how a run faints at a number the plan called safe.
+
+Not new, and not Platinum's: **Latios's Luster Purge** has been able to drop our Sp. Def for as
+long as it has been a configured target, and `act_target` was fixed to apply that drop
+(clayton-957.26.1) while the floor went on ignoring it. Heatran is what made it acute — Metal Sound
+is two stages at once, and at −2 its Lava Plume **one-shots a full-HP Smeargle** where at 0 it does
+not. Measured: 210 at stage 0, 420 at −2.
+
+Two fixes:
+
+* the stages are passed to the `Defender`, and added to the memo key — a key without them served
+  the stage-0 answer for the rest of the run once the first call had cached it. A crit ignores
+  stages that would *reduce* its damage and respects those that raise it, which is the asymmetry
+  wanted here, and `damage` already enforces it.
+* `any_reachable_stage` now means what it says. It enumerated only the target's *offensive*
+  stages, which is half the question; `reachable_defensive_drops` is the other half, read off the
+  target's moveset. Only the extreme is priced, because damage is monotone in each stage, and only
+  downward, for the same reason the offensive side only goes upward.
+
+The second tier of advice is therefore reworded from "once the target has boosted" to "once the
+target has **worked on you**", and it stays selective: a Blissey that survives 178 now and 700
+after is warned, while Suicune — which cannot touch our defences — produces no warning at all.
+
+### 14.4 Flash Fire is about our party, not about the fight
+
+`BattleSystem_TriggerImmunityAbility` (`src/battle/battle_lib.c:3488-3545`) [verified] runs at
+`TRY_MOVE_STATE_TRIGGER_IMMUNITY_ABILITIES` — after the accuracy roll and after the type chart, so
+the rolls are spent either way. Six abilities absorb a whole move type, and **every one of them
+does something extra on top of the immunity**: Volt Absorb, Water Absorb and Dry Skin heal a
+quarter of max HP, Motor Drive raises Speed, and Flash Fire raises the holder's own Fire power by
+half. So a Flamethrower thrown at Heatran would not merely fail — it would make the **Lava Plume
+afterwards hit harder than anything predicted**. Unsound, not imprecise.
+
+`ABSORBED_MOVE_TYPES` therefore *refuses* the move rather than approximating it, and the refusal is
+about the **pairing**: `unselectable_reason` now takes the defender, so the same Flamethrower is
+fine against Darkrai. The solver will not plan it, the interview will not offer it, and
+`hunt_readiness` reports it before the run from a two-field probe of the target — so the advice is
+available from the moment a species is typed, before a spread exists.
+
+Lightning Rod is deliberately absent: in Gen 4 it redirects in doubles and grants no immunity at
+all. Levitate is absent for the opposite reason — it *is* modelled (§13.4).
+
+### 14.5 And the mirror: Soundproof blocks Metal Sound
+
+`sSoundMoves` (`src/battle/battle_lib.c:3473-3486`) is a list of **twelve moves by name**, not a
+type, and Metal Sound is on it [verified]. So an Electrode or a Whismur in the party blocks Metal
+Sound outright — and without modelling it the simulator would apply two Sp. Def stages the game
+never applied and mis-predict every special hit afterwards. Handled as a `will_fail` case, which
+lands on the same no-more-work flag as the other defender-side refusals, so it costs what those
+cost.
+
+## 15. As built — Uxie and Azelf (clayton-6xu.7)
+
+`StartLegendaryBattle SPECIES_UXIE, 50` (`res/field/scripts/scripts_acuity_cavern.s:33`) and
+`SPECIES_AZELF, 50` (`scripts_valor_cavern.s:47`) [verified]. Both pure Psychic, **Levitate**,
+catch rate 3 and genderless — so Phase 2's catch maths is Suicune's and Giratina's unchanged.
+
+**Mesprit has no row and cannot have one.** Platinum makes it a *roamer*
+(`RoamingPokemon_...` / `field_roamer`), so it is never met through a legendary-battle script;
+`scripts_verity_cavern.s` only plays its cry and starts the roam. Two thirds of the lake trio is
+all Battle Compass's static-encounter model can cover.
+
+They share a stat line's *shape* and nothing else about it: Uxie is **75/75/130/75/130/95** and
+Azelf **75/125/70/125/70/115**. Uxie is the gentlest target on the list and Azelf one of the
+nastiest, and the plan for one is not the plan for the other.
+
+Movesets are the last four learnable at 50 from each one's own `learnset.by_level`, in learn
+order [verified]:
+
+| | Uxie | Azelf |
+|---|---|---|
+| E1 | Swift (21) | Swift (21) |
+| E2 | **Yawn** (31) | **Uproar** (31) |
+| E3 | **Future Sight** (36) | **Future Sight** (36) |
+| E4 | Amnesia (46) | Nasty Plot (46) |
+
+The level window is kind twice over again, and in both directions this time. **Rest(1)** and
+Confusion(1) are pushed out from below — Rest would heal off every False Swipe and make the chip
+phase unwinnable — and **Explosion(76)**, Last Resort(61), Flail(61) and Extrasensory(51) from
+above. An Explosion against a 1 HP target we are trying to catch ends the run.
+
+Swift is effect 17, which Darkrai's Faint Attack already modelled: accuracy 0, so it never misses
+and spends no accuracy roll. Note it is **special** in Gen 4, which is what makes Nasty Plot
+matter to it.
+
+### 15.1 Yawn — the first delayed status on either side
+
+Accuracy 0 and **no roll of its own**: `subscript_yawn.s` only calls `BtlCmd_TryYawn`
+(`battle_script.c:6580`), which sets `moveEffectsMask |= 1 << (YAWN_SHIFT + 1)`, i.e. 2
+[verified]. `MON_COND_CHECK_STATE_YAWN` (state 24 of the end-of-turn condition walk) decrements
+first and runs `subscript_fall_asleep` on reaching zero — so **a Yawn on turn T puts its victim
+to sleep at the end of turn T+1**, and the first turn it costs is T+2.
+
+The duration roll (`Random 3, 2` → 2–5 turns) is spent **then**, not at use, and only when the
+sleep actually lands: the script re-checks Insomnia, Vital Spirit, an Uproar and any existing
+status and bails *before* the `Random`. So a drowse that expires onto an already-paralyzed
+Pokémon costs nothing at all, while the counter is consumed either way.
+
+`will_fail` gained the whole of `subscript_yawn.s`'s own order: Insomnia and Vital Spirit first
+(they print an ability message instead), then an Uproar, then any existing status, then a second
+Yawn. Our side's Safeguard would block it too and is deliberately absent — `safeguard_turns` is
+the *target's* side condition and nothing in any party can set one, so a row for it could never
+fire.
+
+Switching **does** shake a drowse off (`moveEffectsMask` is zeroed by the fresh `BattleMon` a
+send-out builds), which is the opposite of a pending Future Sight. `sent_out` now says so.
+
+### 15.2 Future Sight — the first move whose damage is banked
+
+`effect_script_0148.s` runs `TryFutureSight` and then sets `SYSCTL_NONSTANDARD_ACC_CHECK` and
+`SYSCTL_IGNORE_IMMUNITIES`. The ordering that makes all of this work is that **the effect script
+runs before `TRY_MOVE`**: `BEFORE_MOVE` ends with `BattleSystem_LoadScript(..., moveCur)` and
+`commandNext = BATTLE_CONTROL_TRY_MOVE` (`battle_controller_player.c:3215-3220`) [verified].
+
+So the turn it is used spends **exactly one roll** — `BtlCmd_TryFutureSight`'s
+`CalcMoveDamage` → `CalcDamageVariance` (`battle_script.c:6066-6096`) — and nothing else. No crit
+roll (the script never reaches `CalcCrit`, and it passes a critical multiplier of 1) and no
+accuracy roll (`CheckMoveHitAccuracy` returns 0 under the nonstandard flag). The token is the
+bare slot: it neither hits nor misses nor crits.
+
+Three consequences, all of them load-bearing:
+
+* **No STAB and no type effectiveness.** Both live in `BattleSystem_ApplyTypeChart`
+  (`battle_lib.c:2560`), called from `CheckTypeChart` during `TRY_MOVE` — which
+  `SYSCTL_IGNORE_IMMUNITIES` skips outright, and the damage is already banked by then. So a
+  Future Sight is **neither resisted nor super-effective nor blocked by an immunity**: a Dark
+  type, which an ordinary Psychic move cannot touch at all, still takes it in full. It also loses
+  its own ×1.5, which makes it weaker than its 80 base power reads against a neutral defender.
+  `battle.damage.damage` gained a `type_chart` argument for exactly this one family, and the
+  danger floor had been pricing it as an ordinary crit — **3× too high**, which is not a
+  conservative error in the solver's heal threshold but a floor above every party member's max HP
+  (the shape of clayton-957.10.1's collapse).
+* **A switch does not dodge it.** `fieldConditions.futureSightTurns[defender]` is indexed by
+  battler *position*, not by the Pokémon standing there, so the hit lands on whoever is out two
+  turns later for the damage computed against whoever was out when it was used. It lives on
+  `BattleState`, not on `Battler`.
+* **Its accuracy check is a real 90% roll at end of turn.** `subscript_future_sight_damage.s`
+  opens with `CheckMoveHit` [verified], and the nonstandard flag does not survive the turn it was
+  set on. That verdict is observable, so it needed a token of its own: **`F`** — `Fh` hit, `F-`
+  missed. It belongs to no actor's move (the turn that chose it is two turns gone), so attaching
+  it to `E` would have claimed the target spent its turn on it.
+
+The ROM's guard `--futureSightTurns[battler] == FALSE && battleMons[battler].curHP` is why the
+HP-residual block in `simulate_turn` now runs *before* the end-of-turn advances: a burn tick that
+faints us stops the Future Sight firing at all, so no roll is spent and no token is emitted. Which
+is also why **a faint turn never carries an `F` token, whatever put us down**.
+
+### 15.3 Uproar — a lock that attacks on every turn of it
+
+`subscript_uproar.s` is `Random 3, 3`, and `BtlCmd_Random` reads that as `(rand % (3+1)) + 3`
+(`battle_script.c:3201-3208`) — so the counter is **3 to 6, and the move is used on that many
+turns in total** [verified]. `metronome_compass` rolls the same distribution counted as 2–5
+*extra* turns, which is where the commonly quoted "Uproar lasts 2–5 turns" comes from;
+corroboration, not coincidence.
+
+While it runs, `Battler_CanPickCommand` is FALSE (`battle_lib.c:6224-6236`, where the Uproar
+volatile sits beside `THRASH` and `MOVE_LOCKED` in one condition), so Azelf spends **no
+move-selection roll and no PP** — the same two savings a Shadow Force charge turn gets, and the
+reason `uproar_turns`/`uproar_slot` are their own fields rather than `charging_slot`: an Uproar
+turn deals damage every turn, and `execute_move`'s `ends_charge` would clear a shared field on the
+first of them.
+
+It also **forbids sleep outright** while it runs. `subscript_fall_asleep`'s `_292`/`_311` branches
+refuse the status ("But {0} can't sleep in an uproar!") and `MON_COND_CHECK_STATE_UPROAR` wakes
+anything already asleep — looping every battler and *breaking out before the countdown*, so an
+Uproar that woke somebody lasts one turn longer than its rolled length. The duration roll sits
+past the refusal, so blocking it in `will_fail` is also what keeps the roll count right.
+
+> **Uproar is the first *damaging* sound move any target has had**, and that needed code rather
+> than a table row. `will_fail` is consulted only on the status branch, so Heatran's Metal Sound
+> got Soundproof for free while Uproar would have dealt damage and started its lock against an
+> Electrode. The check now sits in the damaging branch at the ROM's own position —
+> `BattleSystem_TriggerImmunityAbility` runs after the effect script's CalcCrit/CalcDamage and
+> after the accuracy check, so all three rolls are spent and then nothing happens; and
+> `subscript_blocked_by_soundproof` *replaces* `USE_MOVE`, where the on-hit side effect would have
+> run, so the duration roll is not spent and no lock is set. A Soundproof party member blanks the
+> move whole — damage, lock and sleep ban together.
+
+### 15.4 Nasty Plot and Amnesia — one table, not two branches
+
+Both are +2 self-raises whose effect script is a single `MOVE_SIDE_EFFECT_TO_ATTACKER` subscript
+pointer, so neither spends a roll, and both have accuracy 0. They would have been a branch each in
+`execute_move`; `PRIMARY_SELF_RAISES` replaces Double Team's hardcoded `("evasion_stage", 1)` with
+a lookup, and `will_fail`'s +6 ceiling check reads the same table — so an Azelf that has already
+Nasty Plotted three times spends two fewer advances on the fourth, which nobody had to notice.
+
+**Amnesia is nearly harmless** against a physical chipper: it raises Sp. Def, and False Swipe is
+physical, so Uxie spends roughly one turn in four on a move that does not slow the chip phase at
+all. **Nasty Plot doubles Azelf's special attack**, and off base 125 that is the difference between
+a party member surviving the chip phase and not — a critical Swift is 100 against a Lv58 Smeargle's
+153 HP at +0 and 390 once it has stacked. `reachable_attack_stages` asked only about Ancient
+Power's all-stats secondary and so could not see it; it now reads `PRIMARY_SELF_RAISES` for the
+two *offensive* stages as well.
+
+### 15.5 The one derived advance position (clayton-6xu.7.1)
+
+Two of the end-of-turn condition states can now spend a roll: Yawn's sleep duration (state 24) and
+a Future Sight's hit check (the first state of the side-condition walk that follows). Where they
+sit inside the measured four end-of-turn advances is **derived, not measured**, and it is the only
+such figure in `battle_compass/sim.py`.
+
+What is known: `END_OF_TURN_ADVANCES = 4` is measured on turns where neither fires;
+`metronome_compass` measured a rampage-end confusion-duration roll landing *after two of those
+four* ("between END[1] and END[2]"), and that roll is `MON_COND_CHECK_STATE_THRASH` — **state 15**;
+Yawn is state 24 and Future Sight is a whole phase later. So both are at or after the anchor and
+Yawn is before Future Sight. `_END_OF_TURN_RESIDUAL_ANCHOR = 2` places them there.
+
+What is not known is where the remaining two advances sit relative to states 15–24 and the
+side-condition walk. **It matters because both verdicts are observable**: a wrong roll means a
+wrong sleep length or a wrong Future Sight hit, which eliminates the true seed rather than merely
+mispredicting a number. Uxie is the target that makes it load-bearing — both rolls are in its own
+moveset and the target picks its own moves, so a run cannot route around them. [needs gdb]
+
+### 15.6 Strategy — and the finding that is the opposite of the natural guess
+
+**Neither target separates two seeds one RTC second apart.** Both have exactly one sub-100 check,
+Future Sight's 90, and it fires on about one turn in four and lands two turns after it is chosen.
+Everything else either of them rolls is *permanently* blind between siblings, by
+`notes/seed_separation.md`'s rule that a check is blind iff its modulus divides 256:
+
+| check | modulus | verdict flips between siblings |
+|---|---|---|
+| move choice, paralysis | `% 4` | **0%** |
+| crit, damage | `% 16` | **0%** |
+| **Uproar length, sleep length** | `% 4` | **0%** |
+| Future Sight hit | `% 100` at 90 | 17.9% |
+| *our* Sing, for comparison | `% 100` at 55 | 49.5% |
+| *a ball's shake check* | threshold | 44.5% |
+
+(Computed by the same method as the memory note, which it reproduces to the decimal: 49.45% for
+accuracy 55 and 44.45% for the shake check.) So **Uproar gives the run no information at all** —
+the natural guess is that a 3–6 turn length is a rich signal, and it is the same length for both
+siblings every time. What it does instead is take information *away*: no selection roll for 3–6
+turns, and no sleep move to probe with.
+
+Both of these are therefore **Suicune's case, not Lugia's**: the second axis has to come from our
+own side — an early standard-ball probe, or a sub-100 move of ours.
+
+Four concrete planning notes, all now surfaced by `hunt_readiness`:
+
+1. **Azelf: paralysis, not sleep.** Uproar refuses sleep for 3–6 turns at a time and re-picks
+   itself roughly one turn in four, so sleep is not a holding status this target reliably allows.
+   A **Soundproof** party member (Electrode, Whismur line, Mr. Mime) removes the problem entirely.
+2. **Azelf: the Nasty Plot clock.** It is permanent and +2 at a time. A Lv58 Smeargle survives an
+   unboosted critical Swift and nothing after two stacks, so either reach the capture window early
+   or bring something bulkier than the chipper to stand in front.
+3. **Uxie: Yawn costs turns, not HP.** There is no Nightmare and no Bad Dreams, so the sleep-clock
+   warning is silent and correctly so — but 2–5 turns asleep is 2–5 turns of a precomputed path
+   re-solved. **Insomnia or Vital Spirit** refuses it (Noctowl, Hypno, Honchkrow, Ariados) and
+   **Early Bird** halves the counter, so a rolled 2 costs no turn at all.
+4. **A failing sleep move is still a probe.** `execute_move` spends the accuracy roll *before*
+   `will_fail` decides, which is the ROM's order — so a Sing thrown at an uproaring Azelf or an
+   already-paralyzed Uxie still rolls its 55, and the miss-versus-failed distinction is still the
+   sharpest separator in the run (`notes/seed_separation.md`). Do not stop throwing it.

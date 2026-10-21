@@ -116,9 +116,13 @@ class TestTheTwoRows(unittest.TestCase):
         self.assertIn("Turnback Cave", message)
 
     def test_both_are_platinum_only(self):
-        self.assertEqual(set(supported("platinum")),
-                         {"darkrai", "giratina-origin", "giratina-altered"})
-        self.assertEqual(supported("heartgold"), ("latios", "suicune"))
+        """Asserted per row rather than by pinning the whole Platinum set, so adding a target
+        does not fail a file about Giratina."""
+        for key in ("giratina-origin", "giratina-altered"):
+            with self.subTest(key):
+                self.assertIn(key, supported("platinum"))
+                self.assertNotIn(key, supported("heartgold"))
+                self.assertNotIn(key, supported("soulsilver"))
 
     def test_nothing_in_the_set_is_unmodelled(self):
         self.assertEqual(unsupported_moves("giratina-origin"), ((), None))

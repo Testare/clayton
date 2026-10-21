@@ -39,7 +39,7 @@ from claytonlib.battle import turn as turn_costs
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.sim import (
-    HuntConfig, advance, simulate_turn, unselectable_reason,
+    HuntConfig, advance, pending_future_sight, simulate_turn, unselectable_reason,
 )
 from claytonlib.battle_compass.state import (
     HP_TICKING_STATUSES, Action, BattleState, Status,
@@ -355,12 +355,22 @@ def danger_floor_for(state: BattleState, config: SolverConfig) -> int:
     the search walking into a KO is the exact per-action faint test in `solve`. The LIVE
     indicator must not do this, because a Rain Dance the target has not used is not a hit it can
     land this turn (clayton-5rz).
+
+    **One term is not a worst case at all**, and it is the only one: a banked Future Sight landing
+    at the end of this turn is damage already decided, and it stacks on top of whatever the target
+    does with its turn. So it is ADDED rather than maxed in, and the live indicator adds it too --
+    unlike the weather, there is nothing hypothetical about it (`sim.pending_future_sight`).
     """
     from claytonlib.battle_compass.hunt_session import worst_incoming_hit
 
+    # A banked Future Sight ADDS to the floor rather than competing with it. The target still
+    # takes its ordinary turn on the turn the Future Sight lands, so the HP one turn can cost is
+    # the worst single hit PLUS the stored figure -- and `max` priced only the larger of the two
+    # (clayton-6xu.7.3). See `pending_future_sight` for why it is the full figure and why it is
+    # keyed on the counter reaching 1.
     return max(config.danger_floor,
                worst_incoming_hit(state.ours, state.target, field=state,
-                                  any_reachable_weather=True))
+                                  any_reachable_weather=True)) + pending_future_sight(state)
 
 
 def ends_the_run(move) -> bool:
@@ -496,7 +506,7 @@ def _legal_actions(state: BattleState, config: SolverConfig,
         # Enforced here rather than left to `allowed_moves` for the same reason `ends_the_run` is:
         # a caller that forgets gets the safe behaviour, and a caller that deliberately widens
         # `allowed_moves` still cannot reach a move the simulator would mis-predict.
-        if unselectable_reason(move) is not None:
+        if unselectable_reason(move, state.target) is not None:
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
     if config.allow_standard_balls:

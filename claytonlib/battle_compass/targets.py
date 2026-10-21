@@ -139,6 +139,97 @@ ENCOUNTERS: dict[str, Encounter] = {
     "darkrai": Encounter(
         "darkrai", 50, ("Hypnosis", "Faint Attack", "Nightmare", "Double Team"),
         games=("platinum",), where="Newmoon Island"),
+    # Platinum, Stark Mountain's innermost room, after Buck takes the Magma Stone:
+    # `StartLegendaryBattle SPECIES_HEATRAN, 50` (res/field/scripts/scripts_stark_mountain_room_3.s:83).
+    #
+    # Catch rate 3, Fire/Steel, Flash Fire, base 91/90/106/77/130/106 -- and a GENDER, 50/50,
+    # which makes it the first configured target that has one at all. Nothing reads that yet:
+    # the Love Ball is the only mechanic that would, and Platinum has no apricorn balls.
+    #
+    # Moveset at Lv50 from its own `learnset.by_level`: Metal Sound(25), Crunch(33), Scary
+    # Face(41), Lava Plume(49). Three of its earlier moves are pushed out, and two of those are
+    # strokes of luck -- Fire Fang(17) is effect 273 and unmodelled, and Ancient Power(1) would
+    # have given it the all-stats boost that makes Ho-Oh's Speed a problem.
+    #
+    # Two things make this target different in kind from the others. **Its drops are two stages
+    # at a time**: Scary Face takes two Speed stages off US, which can flip turn order outright,
+    # and the no-speed-tie guarantee is what keeps ties out of the search. And **half its
+    # moveset can miss** -- Metal Sound at 85 and Scary Face at 90 -- so it separates RTC-second
+    # siblings on its own, the way Lugia does and Suicune cannot.
+    #
+    # Flash Fire is the hazard, and it is about OUR party rather than about the fight: a Fire
+    # move thrown at it is absorbed AND raises its own Fire power by half, so the Lava Plume
+    # afterwards hits harder than anything predicted. `sim.ABSORBED_MOVE_TYPES` refuses the move
+    # rather than approximating it. The mirror is worth knowing too: Metal Sound is one of the
+    # twelve SOUND moves, so a Soundproof party member (an Electrode, a Whismur) blocks it
+    # outright -- `sim.SOUND_MOVES`.
+    "heatran": Encounter(
+        "heatran", 50, ("Metal Sound", "Crunch", "Scary Face", "Lava Plume"),
+        games=("platinum",), where="Stark Mountain"),
+    # Platinum's lake trio, two thirds of it: `StartLegendaryBattle SPECIES_UXIE, 50`
+    # (res/field/scripts/scripts_acuity_cavern.s:33) and `SPECIES_AZELF, 50`
+    # (scripts_valor_cavern.s:47). **Mesprit has no row and cannot have one** -- Platinum makes it
+    # a ROAMER, so it is met through `field_roamer` and never through a legendary-battle script,
+    # which is why only two of the three are here.
+    #
+    # Both are Lv50, pure Psychic, Levitate, catch rate 3 and genderless, so the Phase 2 catch
+    # maths is Suicune's and Giratina's unchanged. They differ in exactly one way that matters,
+    # and it is their stat spreads: Uxie is 75/75/130/75/130/95 and Azelf 75/125/70/125/70/115.
+    # Uxie is the gentlest target on this list and Azelf one of the nastiest.
+    #
+    # The two movesets are the last four learnable at 50 from each one's own `learnset.by_level`,
+    # in learn order. They share two slots:
+    #
+    #   Uxie   Swift(21), Yawn(31), Future Sight(36), Amnesia(46)
+    #   Azelf  Swift(21), Uproar(31), Future Sight(36), Nasty Plot(46)
+    #
+    # Five effects had to be modelled before either row could exist, and three of them are firsts:
+    #
+    # * **Yawn (187)** is the first delayed status either way round -- it makes US drowsy and the
+    #   sleep lands at the end of the turn AFTER it, with its duration roll spent then rather than
+    #   at use (`sim._tick_drowsy`).
+    # * **Future Sight (148)** is the first move whose damage is BANKED. One roll at use, nothing
+    #   else -- no crit, no accuracy -- and the hit check comes two turns later at end of turn.
+    #   Three consequences worth knowing: it is neither resisted nor super-effective nor blocked
+    #   by an immunity and gets no STAB either (`battle.damage.damage`'s ``type_chart``); a switch
+    #   does not dodge it, because the ROM keys it to the battler POSITION; and its 90 accuracy is
+    #   the only sub-100 event in either moveset, which makes it the ONLY thing either target
+    #   offers for separating RTC-second siblings -- and not much of one. Measured by
+    #   notes/seed_separation.md's method, a 90-accuracy check flips its verdict between siblings
+    #   17.9% of the time, against 49.5% for a Sing of ours and 44.5% for a ball's shake check;
+    #   and it only fires on about one turn in four. So both of these targets are Suicune's case
+    #   rather than Lugia's: the second axis has to come from our own side.
+    # * **Uproar (159)** is the first multi-turn lock that attacks every turn. It runs 3-6 turns,
+    #   and while it runs Azelf spends no move-selection roll at all. It **forbids sleep
+    #   outright** for its duration and wakes anything already asleep, so a sleep-based plan
+    #   against Azelf is not merely risky, it is refused by the game -- and a Soundproof party
+    #   member (an Electrode, a Whismur) blanks the move whole, lock included, which takes that
+    #   ban away with it.
+    #
+    #   It gives the RUN no information, which is worth stating because the opposite is the
+    #   natural guess: its duration roll is ``% 4`` and 4 divides 256, so two seeds one RTC
+    #   second apart roll the SAME length every time (notes/seed_separation.md's blindness rule).
+    #   What it does instead is take information away -- no selection roll for 3-6 turns, and no
+    #   sleep move to probe with.
+    # * **Nasty Plot (53)** and **Amnesia (54)** are plain self-raises of +2, reached through
+    #   `sim.PRIMARY_SELF_RAISES` alongside Double Team's evasion. Amnesia is close to harmless
+    #   against a physical chipper; Nasty Plot DOUBLES Azelf's special attack, and off base 125
+    #   that turns a 60-power Swift into a real threat.
+    #
+    # Swift is effect 17, which Darkrai's Faint Attack already modelled: accuracy 0, so it never
+    # misses and spends no accuracy roll. Note it is SPECIAL in Gen 4.
+    #
+    # Two strokes of luck in the level window, both on the moves it pushes out: Extrasensory(51)
+    # just misses on both, and so do Uxie's Flail(61) and Azelf's Last Resort(61) and
+    # Explosion(76) -- an Explosion against a 1 HP target we are trying to catch would end the
+    # run. Rest(1) and Confusion(1) are pushed out from below, and Rest is the one that matters:
+    # it would heal off every False Swipe and make the chip phase unwinnable.
+    "uxie": Encounter(
+        "uxie", 50, ("Swift", "Yawn", "Future Sight", "Amnesia"),
+        games=("platinum",), where="Acuity Cavern"),
+    "azelf": Encounter(
+        "azelf", 50, ("Swift", "Uproar", "Future Sight", "Nasty Plot"),
+        games=("platinum",), where="Valor Cavern"),
     # Platinum's Giratina, met TWICE, which is the case this table's key exists for. Both at
     # **Lv47**, so the level cross-check cannot tell them apart at all -- and they differ in
     # forme, ability and base stats, not merely in moveset:

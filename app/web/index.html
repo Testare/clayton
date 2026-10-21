@@ -4901,7 +4901,12 @@ function hrTurnReset(){
               // Whether `hp` is OUR arithmetic rather than the player's observation -- see
               // hrInferredHp. An inferred value is ours to withdraw when the turn changes under
               // it; a typed one never is.
-              hpInferred: false };
+              hpInferred: false,
+              // "h" or "-" once a due Future Sight has been reported, undefined while the
+              // question is outstanding. Unanswered rather than defaulted, unlike the faint:
+              // both outcomes are common and the verdict is the sharpest filter the turn has,
+              // so a default would be a guess applied to the candidate set.
+              future_sight: undefined };
 }
 
 const HR_PREVENTED = [
@@ -5054,6 +5059,21 @@ function hrSecondaryMark(side){
 
 // Whether this turn did anything that could have taken us down. Not "did it", which only the
 // player knows -- just whether the question is worth asking at all.
+// Whether a banked Future Sight lands at the END of this turn, so its hit check is a question.
+//
+// Two ways it does not fire even when the counter is due, and the page has to mirror both or it
+// builds a token no candidate renders: a capture stops the turn before the end-of-turn block
+// runs at all, and a faint from ANY cause -- the target's move or a burn tick -- fails the ROM's
+// `&& battleMons[battler].curHP` test (`sim._roll_future_sight`). So a faint turn never carries
+// an F token, whatever put us down.
+function hrFutureSightDue(){
+  const s = _huntSnap, t = _hrTurn;
+  if (!s || !s.future_sight_due) return false;
+  if ((t.action === "C" || t.action === "P") && t.ours?.result === "c") return false;
+  if (hrFainted()) return false;
+  return true;
+}
+
 function hrCanFaint(){
   const t = _hrTurn, s = _huntSnap;
   if (t.action === "X") return true;                       // that IS the report
@@ -5067,6 +5087,10 @@ function hrCanFaint(){
   // resolves before any move. Read off the lead, this asked whether the Pokemon coming IN had
   // fainted to a burn the one going out was carrying (clayton-957.10.16).
   if (hrActive().burn_tick > 0) return true;
+  // A Future Sight landing is the same shape of danger as the burn tick: it arrives at the end
+  // of the turn with no move attached, so on a turn where nothing else reached us it would
+  // otherwise have no faint question to hang off.
+  if (t.future_sight === "h") return true;
   return hrLanded(t.target);
 }
 
@@ -5259,6 +5283,9 @@ function hrTokens(){
   }
   const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
                                  : targetParts.concat(ourParts);
+  // After both halves and before the HP: it resolves in the end-of-turn block, which is where
+  // `sim.simulate_turn` appends it too.
+  if (hrFutureSightDue() && t.future_sight) ordered.push("F" + t.future_sight);
   // Gated on the RULE, not merely on the field being filled in. Changing the target's move from
   // Gust to Rain Dance leaves an HP value that is no longer part of the turn, and emitting it
   // produced a token the simulator would never render.
@@ -5301,6 +5328,7 @@ function hrTurnComplete(){
       if (hrStaticPossibleOnTarget() && t.target.static === undefined) return false;
     }
   }
+  if (hrFutureSightDue() && !t.future_sight) return false;
   if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
   // The faint question answers itself -- it defaults to no -- so there is nothing to wait for
   // here. Who came in, when the answer IS yes, there very much is.
@@ -5321,6 +5349,9 @@ function hrNeedsHp(){
   // rejects a turn carrying both, so this is the gate that keeps the page from building one.
   if (hrFainted()) return false;
   if (t.ours && t.ours.prevented === "cfz") return true;
+  // A Future Sight that landed takes HP with no E token in sight, exactly as
+  // `tokens.turn_requires_hp` says -- the move that banked it was used two turns ago.
+  if (t.future_sight === "h") return true;
   if ((t.action === "I" || t.action === "Ic") && t.ours && t.ours.item){
     const entry = (s.items || []).find(i => i.code === t.ours.item);
     if (entry && entry.heals) return true;
@@ -5333,9 +5364,11 @@ function hrSet(path, value){
   if (path === "action"){
     if (t.action === value) return;      // re-clicking the same action must not wipe answers
     t.action = value; t.ours = null; t.target = null; t.hp = "";
+    t.future_sight = undefined;
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
   else if (path === "hp"){ t.hp = value; }
+  else if (path === "future_sight"){ t.future_sight = value; }
   else if (path === "fainted"){
     t.fainted = value;
     if (!value) t.replacement = undefined;   // no faint, nobody came in
@@ -5344,6 +5377,9 @@ function hrSet(path, value){
   // Dropping a value the turn no longer needs: changing the target's move from Gust to Rain
   // Dance leaves an HP number that is not part of the turn any more, and showing it reads as the
   // report being wrong rather than the answer having changed.
+  // The Future Sight answer goes the same way: report a faint or a capture and it is no longer
+  // part of the turn, so a stale "it hit" must not survive into the token.
+  if (path !== "future_sight" && !hrFutureSightDue()) t.future_sight = undefined;
   if (path !== "hp" && !hrNeedsHp()) t.hp = "";
   // Same rule for the faint: change the target's move to one that cannot touch us and the faint
   // answer is no longer part of the turn either.
@@ -5451,10 +5487,9 @@ function hrOurOutcomeBlock(){
     return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
         is away — ${esc(info.name)} could not reach it, so it missed.</div></div>`;
   }
-  if (info.damaging){
-    opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
-    opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
-  } else if (info.guaranteed_fail){
+  // `guaranteed_fail` before `damaging`, the same way round as the target's block and for the
+  // same reason: the two are not exclusive. See `hrTargetBlocks`.
+  if (info.guaranteed_fail){
     // Doomed to do nothing -- but that only removes the QUESTION when the move also cannot
     // miss. A missable move still rolls accuracy first (verified: BattleSystem_CheckMoveHit
     // fires before "But it failed!" in data/battle_logs/test2.jsonl), and the two outcomes
@@ -5467,6 +5502,9 @@ function hrOurOutcomeBlock(){
                        t.ours && t.ours.result === "" && !t.ours.prevented,
                        `It went ahead and did nothing — ${_huntSnap.target.name} is already `
                        + `${_huntSnap.target.status}.`));
+  } else if (info.damaging){
+    opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
+    opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
   } else {
     opts.push(hrChip("It worked", `hrSet('ours',{result:''})`,
                      t.ours && t.ours.result === "" && !t.ours.prevented));
@@ -5576,11 +5614,13 @@ function hrTargetBlocks(){
     const info = s.target.move_info[t.target.slot];
     const base = `{slot:${t.target.slot}`;
     const opts2 = [];
-    if (info.damaging){
-      opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
-      opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
-                        t.target.result === "!"));
-    } else if (info.guaranteed_fail){
+    // `guaranteed_fail` is tested BEFORE `damaging`, and that order is the fix rather than a
+    // tidy-up: a move can be both. Azelf's Uproar is the first DAMAGING move any target has that
+    // something in a party can blank outright -- Soundproof blocks it, and the ROM's
+    // immunity-ability stage spends every roll and then deals nothing, so the turn renders as the
+    // bare slot. Asked the other way round, this offered "Hit us" and "Critical hit" as the only
+    // answers to a turn that can render neither.
+    if (info.guaranteed_fail){
       // Same rule as our own side: a doomed move that can still MISS has two distinguishable
       // outcomes. Nothing in Suicune's moveset is both (Mist and Rain Dance bypass the
       // accuracy check), so this branch is dormant for the v1 fixture -- but it is the same
@@ -5588,6 +5628,10 @@ function hrTargetBlocks(){
       if (hrTargetCanMiss(info))
         opts2.push(hrChip("It failed", `hrSet('target',${base},result:''})`,
                           t.target.result === ""));
+    } else if (info.damaging){
+      opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
+      opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
+                        t.target.result === "!"));
     } else {
       opts2.push(hrChip("It worked", `hrSet('target',${base},result:''})`,
                         t.target.result === ""));
@@ -5598,8 +5642,11 @@ function hrTargetBlocks(){
       opts2.push(hrChip("Missed", `hrSet('target',${base},result:'-'})`,
                         t.target.result === "-"));
     // Rain Dance cannot miss and deals no damage, so there is nothing to ask.
+    // A move that is BOTH damaging and doomed renders the bare slot, so the auto-answer has to
+    // read the same way the options above do -- otherwise a blanked Uproar auto-answered "h".
     if (!hrAutoAnswer(opts2, () => {
-          t.target = {slot: t.target.slot, result: info.damaging ? "h" : ""};
+          t.target = {slot: t.target.slot,
+                      result: (info.damaging && !info.guaranteed_fail) ? "h" : ""};
         })) out.push(hrChips(`What happened to ${info.name}?`, opts2));
 
     // A flinch is the exception: it is announced on the victim's turn, so a flinching move that
@@ -5768,6 +5815,17 @@ function hrInterview(){
         if (sec){ blocks.push(sec); if (hrOurSecondaryPending()) return blocks.join(""); }
       }
     }
+  }
+
+  // 3a. The Future Sight banked two turns ago, which lands now. Asked after both halves and
+  // before the faint, which is the order it resolves in -- and before the faint for a second
+  // reason: it can be what put us down.
+  if (hrFutureSightDue()){
+    blocks.push(hrChips(`Did the Future Sight hit ${hrActive().name}?`, [
+      hrChip("Hit", "hrSet('future_sight','h')", t.future_sight === "h"),
+      hrChip("Missed", "hrSet('future_sight','-')", t.future_sight === "-"),
+    ], "90% accuracy — the one roll this target offers for telling two candidate seeds apart"));
+    if (!t.future_sight) return blocks.join("");
   }
 
   // 3b. Did we go down? Asked before HP, because a faint REPLACES the HP token rather than
