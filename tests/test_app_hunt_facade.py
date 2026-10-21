@@ -187,6 +187,33 @@ class TestHuntReadiness(HuntFacadeCase):
         self.assertLessEqual(alphabet["reachability_percent"], 99)
         self.assertIn("Thunder Wave", " ".join(alphabet["costs_by_action"]))
 
+    def test_the_party_battlers_carry_their_ABILITY(self):
+        """A regression test for a one-field omission with a wide blast radius.
+
+        `_survivability_warnings` built every party Battler without `ability`, so the readiness
+        advice judged the whole party ability-less: an Insomnia holder was told a target could
+        sleep it, an Early Bird holder got the unhalved sleep clock, and the sentence naming the
+        carrier could never fire because `_sleep_answer` had nothing to find. The RUN path has
+        always passed it (`hunt_run_setup`'s `battler_for`), so the simulation was right and only
+        the pre-hunt advice was wrong -- which is exactly the kind of bug a test on the facade
+        catches and a test on `survivability_warnings` cannot (clayton-4wr.1.3).
+
+        Darkrai rather than Suicune, because Suicune cannot sleep anybody and the warning that
+        reads the ability would not fire either way.
+        """
+        noctowl = self.api.add_party_pokemon(self.profile["id"], {
+            "name": "Noctowl", "species": "noctowl", "level": 50, "ability": "Insomnia",
+            "stats": {"hp": 180, "atk": 70, "def": 60,
+                      "spa": 86, "spd": 96, "spe": 80}})["pokemon_id"]
+        hunt = self._hunt(
+            target={"species": "darkrai", "level": 50, "nature": "Timid",
+                    "ivs": dict(PERFECT_IVS)},
+            party=[{"pokemon_id": self.ids["Smeargle"]}, {"pokemon_id": noctowl}])
+        warnings = " ".join(self.api.hunt_readiness(hunt["id"])["survivability"])
+        self.assertIn("Noctowl (Insomnia) is immune to it", warnings)
+        # And the carrier itself is no longer warned about a state it cannot enter.
+        self.assertNotIn("Noctowl (180 HP) loses", warnings)
+
     def test_a_party_pokemon_removed_from_the_profile_becomes_a_hard_error(self):
         hunt = self._hunt()
         self.api.remove_party_pokemon(self.profile["id"], self.ids["Smeargle"])

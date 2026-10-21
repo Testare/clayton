@@ -527,10 +527,18 @@ FIELD_FLAGS: tuple[tuple[str, str, str], ...] = (
 #: * **Uproar** is the target refusing to pick a move. While it runs it spends no selection roll,
 #:   it attacks every turn, and no sleep move of ours can land at all -- so "3 turns of Uproar
 #:   left" is also "3 turns before paralysis is your only option again".
+#: * **Taunt** is the mirror of Uproar and ours to inflict: while it runs the target cannot select
+#:   a move with no power at all, so the counter says how many more turns its Yawn, Amnesia,
+#:   Nasty Plot or Metal Sound stays shut -- and when the modulus widens back out.
 #: * **Drowsy** is a Yawn already landed. The sleep is not avoidable by anything except switching
 #:   the Pokemon out, and a player who cannot see the counter finds out by losing a turn.
 BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
     ("target", "uproar_turns", "Uproar"),
+    # Next to Uproar because they answer the same question -- what can the target pick next turn
+    # -- from opposite directions. A Taunt we landed narrows it to the damaging moves, so the
+    # remaining turns are exactly how long the status half of its moveset stays shut.
+    ("target", "taunted_turns", "Taunt"),
+    ("ours", "taunted_turns", "Taunt"),
     ("ours", "drowsy_turns", "Drowsy"),
     ("target", "drowsy_turns", "Drowsy"),
 )
@@ -874,6 +882,11 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
       renders as the bare slot rather than as a miss. Spore against an already-paralyzed Suicune
       is the case: statuses are mutually exclusive, so it rolls accuracy and then fails.
 
+    * ``selectable`` -- whether this battler could PICK the move at all right now: PP, a Choice
+      lock, and Taunt narrowing a target to its damaging moves. The interview must filter on it,
+      because an answer the game could not have produced eliminates every candidate rather than
+      contradicting one.
+
     And a third that stops it offering the move at all: ``unselectable_reason``. Note how
     differently that sits from `guaranteed_fail` -- a guaranteed failure is a perfectly good turn
     to report, and a failing Sing is one of the best identification probes there is, whereas an
@@ -884,6 +897,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
         move = battler.move(slot)
         if move is None:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
+                        "selectable": False,
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
@@ -895,6 +909,16 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             "slot": slot,
             "name": move.name,
             "known": True,
+            # Whether this battler could actually PICK this move right now, which is a different
+            # question from whether the move would do anything (`guaranteed_fail`) or whether we
+            # can model it (`unselectable_reason`). Read off `usable_slots`, the one function that
+            # knows -- so it covers PP, a Choice lock and, newly, Taunt narrowing the target's
+            # selection to its damaging moves.
+            #
+            # The interview has to filter on it or it offers an answer no candidate can render: a
+            # taunted Uxie cannot pick Yawn, so reporting Yawn would eliminate every seed. The
+            # 0-PP case was already wrong in the same way and is fixed by the same flag.
+            "selectable": slot in battler.usable_slots(),
             # A BANKED move is not "damaging" for the purpose this flag serves -- which is
             # "does the turn it is used render a hit marker". Future Sight is a special move by
             # category and renders the bare slot, because on its use turn it neither hits nor

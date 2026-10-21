@@ -168,6 +168,9 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     106: "Mean Look: traps, and a second one fails",
     125: "may burn -- as effect 4",
     136: "Rain Dance: field condition and the weather term",
+    # Taunt, and it is listed as modelled only because `usable_slots` narrows the selection rather
+    # than something pretending to refuse the move afterwards. See `EFFECT_TAUNT`.
+    175: "Taunt: the 3-5 turn lock, and the selection modulus it narrows",
     149: "double power vs airborne, which never applies in a single battle on the ground",
     # Surf, and it is in here for exactly the reason 149 above is. Effect 257 is
     # `MOVE_EFFECT_DOUBLE_DAMAGE_DIVE` (include/constants/move_effects.h:255), the mirror of
@@ -407,6 +410,9 @@ class MoveOutcome:
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
+    #: Turns of Taunt this move just rolled for its VICTIM, or 0. Ours to inflict; the mirror in
+    #: `act_target` is wired for symmetry and no configured target has the move.
+    starts_taunt: int = 0
     #: Turns of Uproar this move just rolled for its user, or 0. Azelf's, and the value is the
     #: TOTAL including the turn it was used on (`UPROAR_TURNS_MIN`..+span).
     starts_uproar: int = 0
@@ -443,6 +449,10 @@ def move_roll_cost(move: Move) -> int:
     if move.effect_chance > 0:
         rolls += 1
     if status_applied_by(move) is Status.SLEEP:
+        rolls += 1
+    if move.effect == EFFECT_TAUNT:
+        # Its hidden duration, spent only when the Taunt actually lands -- a second one against an
+        # already-taunted target fails before the Random. An upper bound, like the sleep line.
         rolls += 1
     if move.effect == EFFECT_UPROAR:
         # The duration roll, spent only when the Uproar actually STARTS -- a continuation turn
@@ -593,6 +603,11 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
                 or uproar_active(field)
                 or defender.status is not Status.NONE
                 or defender.drowsy_turns > 0)
+    if move.effect == EFFECT_TAUNT:
+        # A second Taunt fails, and fails FREE of the duration roll -- `subscript_taunt_start.s`
+        # tests `BATTLEMON_TAUNTED_TURNS != 0` before reaching its Random. The accuracy roll is
+        # still spent, as it is for every other failure in this function.
+        return defender.taunted_turns > 0
     if move.effect == EFFECT_FUTURE_SIGHT:
         # Keyed on the FIELD, because the ROM keys it on the victim's battler position rather
         # than on the move's user: `futureSightTurns[defender]`. One can be in the air per side.
@@ -923,6 +938,20 @@ EFFECT_FUTURE_SIGHT = 148
 #: every turn, and it lands on reaching zero -- so a Future Sight used on turn T hits at the end
 #: of turn T+2.
 FUTURE_SIGHT_TURNS = 3
+
+#: Taunt (BATTLE_EFFECT_TAUNT), and the first move of OURS that changes what the target's turn
+#: costs rather than only what it does.
+#:
+#: `subscript_taunt_start.s` fails free if the defender is already taunted or the move missed, and
+#: otherwise rolls ``Random 2, 3`` -- ``(rand % (2 + 1)) + 3``, so **3 to 5 turns**, one roll. The
+#: move's accuracy is 100, so the accuracy roll is spent too: two rolls when it lands, one when it
+#: fails.
+#:
+#: What it DOES is narrow the target's move-selection modulus; see `Battler.usable_slots`, which
+#: is also where the reasoning behind that lives. Nothing here refuses a move after the fact.
+EFFECT_TAUNT = 175
+TAUNT_TURNS_MIN = 3
+TAUNT_TURNS_SPAN = 3
 
 #: Stat raises a move puts on its OWN USER, by effect -- the mirror of `PRIMARY_STAT_DROPS`.
 #:
@@ -1581,6 +1610,14 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             rng, duration_roll = advance(rng)
             used += 1
             sleep_turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
+        taunt_turns = 0
+        if move.effect == EFFECT_TAUNT:
+            # The same shape as sleep's: a hidden duration, rolled only once every earlier check
+            # in the subscript has passed. `will_fail` above has already handled the one case that
+            # fails free, so reaching here means the Taunt really is going on.
+            rng, duration_roll = advance(rng)
+            used += 1
+            taunt_turns = TAUNT_TURNS_MIN + duration_roll % TAUNT_TURNS_SPAN
         # Mist guards its own side's stats, against EVERY reduction and not just Sweet Scent's.
         # The move still executed, so it stays SUCCESSFUL and still spends the post-move advances
         # [verified: test1.jsonl turn 15 spent 8 skeleton rolls, not 6, on a Sweet Scent the game
@@ -1591,7 +1628,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         blocked = (drop is not None and field is not None and field.mist_turns > 0)
         return rng, MoveOutcome(
             rolls=used, tokens=tuple(parts), successful=True,
-            applied_status=status, sleep_turns=sleep_turns,
+            applied_status=status, sleep_turns=sleep_turns, starts_taunt=taunt_turns,
             stat_drop=None if blocked else drop,
             sets_rain=move.effect == EFFECT_RAIN_DANCE,
             sets_mist=move.effect == EFFECT_MIST,
@@ -1864,7 +1901,7 @@ def sent_out(battler: Battler) -> Battler:
                    # NOT reset here. That is a pre-existing gap rather than a decision, and it is
                    # left alone rather than changed in passing because the advance counts around
                    # Darkrai were all fitted with it as it is (clayton-6xu.7.2).
-                   drowsy_turns=0, uproar_turns=0, uproar_slot=None)
+                   drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0)
 
 
 def _all_stats_up(battler: Battler) -> Battler:
@@ -2179,6 +2216,25 @@ def _tick_uproar(state: BattleState) -> None:
         left = battler.uproar_turns - 1
         setattr(state, side, replace(battler, uproar_turns=left,
                                      uproar_slot=battler.uproar_slot if left else None))
+
+
+def _tick_taunt(state: BattleState) -> None:
+    """Taunt's countdown, state 20 of the end-of-turn condition walk. Costs no rolls.
+
+    `MON_COND_CHECK_STATE_TAUNT` (battle_controller_player.c:1636-1644) decrements and runs
+    `subscript_taunt_end` on reaching zero -- a message and nothing else. So this spends nothing
+    and needs no position inside the measured end-of-turn advances, which is the one mercy in the
+    whole of `_END_OF_TURN_RESIDUAL_ANCHOR`'s neighbourhood.
+
+    Ordered between `_tick_uproar` (state 14) and `_tick_drowsy` (state 24) because that is the
+    walk's order. Nothing observable depends on it -- none of the three spends a roll where this
+    one sits -- but a reader checking the sequence against the ROM should find it in the right
+    place.
+    """
+    for side in ("ours", "target"):
+        battler = getattr(state, side)
+        if battler.taunted_turns:
+            setattr(state, side, replace(battler, taunted_turns=battler.taunted_turns - 1))
 
 
 def _tick_drowsy(rng: int, state: BattleState) -> tuple[int, int, int]:
@@ -2516,6 +2572,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # they read. Note what it would mean if it were reachable: our own Uproar would make
             # the target unsleepable too, which is the opposite of what a plan wants.
             new.ours = replace(new.ours, uproar_turns=outcome.starts_uproar, uproar_slot=slot)
+        if outcome.starts_taunt:
+            # Ours to inflict, and the live one: from here the target picks only from the slots
+            # `usable_slots` still offers it, which is a narrower modulus rather than a refused
+            # move. Permanent in the sense that matters -- a wild target never switches out, so
+            # nothing resets it but the counter running down.
+            new.target = replace(new.target, taunted_turns=outcome.starts_taunt)
         if outcome.sets_drowsy:
             new.target = replace(new.target, drowsy_turns=YAWN_DROWSY_TURNS)
         if outcome.banked_future_sight is not None:
@@ -2642,6 +2704,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # spends no PP until the counter runs out (`select_target_move`).
             new.target = replace(new.target, uproar_turns=outcome.starts_uproar,
                                  uproar_slot=target_slot)
+        if outcome.starts_taunt:
+            # Unreachable: Taunt is in no configured target's moveset. Wired for the same reason
+            # Nightmare's mirror is -- the two halves of a turn are meant to differ only in which
+            # side they read. Note what it would mean: OUR status moves would stop being
+            # selectable, which includes the paralyzer the whole run is built on.
+            new.ours = replace(new.ours, taunted_turns=outcome.starts_taunt)
         if outcome.sets_drowsy:
             # Uxie's Yawn, aimed at us. `will_fail` has already refused every case the ROM
             # refuses, so reaching here means the counter really is being set.
@@ -2797,6 +2865,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # Uproar, state 14: it wakes before it counts down, and a turn on which it woke somebody
         # does not count down at all.
         _tick_uproar(new)
+        # Taunt, state 20. Spends nothing, which is why it needs no anchor of its own.
+        _tick_taunt(new)
         # Yawn, state 24.
         rng, spent, drowsy_sleep_turns = _tick_drowsy(rng, new)
         new.rng_offset += spent

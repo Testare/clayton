@@ -5588,7 +5588,11 @@ function hrTargetBlocks(){
     return {blocks: out, done: true};
   }
 
-  const opts = s.target.move_info.filter(m => m.known).map(m =>
+  // `selectable` as well as `known`: a taunted Uxie cannot pick Yawn and a 0-PP move cannot be
+  // picked either, and offering one invites a report no candidate can render -- which eliminates
+  // every seed rather than contradicting one. The flag is `usable_slots` on the Python side, so
+  // this list and the simulator's selection roll cannot disagree about the modulus.
+  const opts = s.target.move_info.filter(m => m.known && m.selectable).map(m =>
     hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
            t.target && t.target.slot === m.slot && !t.target.prevented,
            `${m.pp} PP left`));

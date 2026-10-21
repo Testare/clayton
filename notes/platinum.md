@@ -1328,3 +1328,96 @@ Four concrete planning notes, all now surfaced by `hunt_readiness`:
    `will_fail` decides, which is the ROM's order — so a Sing thrown at an uproaring Azelf or an
    already-paralyzed Uxie still rolls its 55, and the miss-versus-failed distinction is still the
    sharpest separator in the run (`notes/seed_separation.md`). Do not stop throwing it.
+
+## 16. As built — Taunt, and the ROM read that nearly went the wrong way (clayton-4wr.1.2)
+
+Our side's first move that changes what the TARGET's turn *costs* rather than only what it does.
+Everything before it hurt the target, statused it, or degraded it; Taunt takes moves away.
+
+`subscript_taunt_start.s` fails free if the defender is already taunted or the move missed, and
+otherwise rolls `Random 2, 3` → `(rand % 3) + 3`, so **3 to 5 turns** [verified]. Accuracy is 100,
+so the accuracy roll is spent too: **two rolls when it lands, one when it fails**. The wear-off is
+`MON_COND_CHECK_STATE_TAUNT`, state 20 of the end-of-turn condition walk — between Uproar at 14
+and Yawn at 24 — and it spends nothing, so unlike §15.5's two rolls it needs no position inside
+the measured four end-of-turn advances.
+
+### 16.1 The mechanism is a narrowed MODULUS, not a refused move
+
+This is the part that nearly went in backwards, and it is worth recording how.
+
+The ROM has a `subscript_move_fail_taunted` whose message — "{0} can't use {1} after the taunt!" —
+reads exactly like the wild side picking a status move and being refused for it. It is reached
+from `CHECK_STATUS_STATE_TAUNT` in the before-move status check, on the test
+`tauntedTurns && moveTable[moveCur].power == 0` (`battle_controller_player.c:2559`). Modelled that
+way, Taunt would leave `select_target_move`'s modulus alone and refuse the move afterwards.
+
+That is wrong. The wild side's move choice is a max-score tie broken randomly, and
+`TrainerAI_Init` zeroes the score of every move flagged by
+`BattleSystem_CheckInvalidMoves(..., CHECK_INVALID_ALL)` (`trainer_ai.c:234-237`, then the pick at
+`:317-338`). `CHECK_INVALID_ALL` is `~0` (`include/constants/battle.h:132`), so it carries
+`CHECK_INVALID_TAUNTED` **and** `CHECK_INVALID_NO_PP`. A taunted power-0 move therefore drops out
+of the tie list and the modulus shrinks with it.
+
+Modelled as a refusal, every taunted turn would have spent two post-successful-move advances the
+game does not spend, **and** picked the wrong move besides. The subscript is reached only when
+something *forces* a taunted Pokémon into a status move — Encore, Sleep Talk, a locked move — none
+of which any configured target can do, which is why it exists at all and why it is not the wild
+path.
+
+So the whole of the implementation is `Battler.usable_slots` growing one clause. Two things fall
+out of that:
+
+* **The same code path is the source behind the PP rule we already model.**
+  `CHECK_INVALID_NO_PP` zeroes a 0-PP move's score by the identical route, which is why
+  `select_target_move`'s `% usable_slots()` is right. That was verified by measurement; this is
+  the code behind it.
+* **A likely identification of `turn.BEFORE_TURN_ADVANCES`** [derived, not asserted]. The loop
+  that zeroes those scores also does `moveDamageRolls[i] = 100 - (BattleSystem_RandNext % 16)`
+  once per slot, `LEARNED_MOVES_MAX` is 4, and it runs for the AI-controlled side only. That is
+  four advances at the top of the turn for the side that is not the player, which is exactly what
+  `turn.py` has as measured-but-unexplained. Exact match, right position; confirm before writing
+  it down as fact, and note the rolls are spent whether or not the AI ever reads them.
+
+### 16.2 What it is worth, per target
+
+By POWER, which is the ROM's own test rather than by category:
+
+| | taunted slots | what is shut |
+|---|---|---|
+| Uxie | 2 of 4 | **Yawn and Amnesia** |
+| Azelf | 3 of 4 | Nasty Plot |
+| Heatran | 2 of 4 | **Metal Sound and Scary Face** — both two-stage drops |
+| Darkrai | 1 of 4 | Hypnosis, Nightmare, Double Team |
+| Suicune | 2 of 4 | Rain Dance, Mist |
+| Giratina | 4 of 4 | nothing — all four of its moves have power |
+
+Heatran is the best of them: both of the drops that make it dangerous (§14.1, §14.3) are power 0.
+Darkrai is the most dramatic — one move left, and a Dark/Flying carrier takes it at ×0.5 — though
+Insomnia already answers that target more cheaply (§15.6 note 1).
+
+A target reduced to a single pickable move **still spends the selection roll**:
+`maxScoreMoveSlots[RandNext % numMaxScoreMoves]` rolls at a count of one. And a taunted target
+whose last damaging move runs out of PP would Struggle, which is outside the model — Taunt is the
+first thing that can put a target there, so `select_target_move`'s existing `None` path has a
+second way to be reached.
+
+### 16.3 It does not help identification
+
+`% 2` divides 256, so the narrowed modulus is as blind between RTC-second siblings as `% 4` was
+(§15.6's table). Worth stating because "fewer options" reads like "more information": a taunted
+Uxie picks the same move as its sibling every turn, and when the two separate at all it is still
+Future Sight's 90% check doing it.
+
+### 16.4 Fixed in passing
+
+* **The interview offered moves the target could not pick.** `move_info` gained `selectable`, read
+  straight off `usable_slots`, and the page filters on it — so the simulator's modulus and the
+  list of answers cannot disagree. An answer the game could not have produced is worse than a
+  contradiction: it eliminates every candidate. The pre-existing half of the same bug was 0-PP
+  moves, which were offered as answers too, and one flag fixes both.
+* **The readiness panel dropped every party member's ABILITY.**
+  `facade._survivability_warnings` built its Battlers without `ability=`, so the whole party was
+  judged ability-less: an Insomnia holder was told a target could sleep it, an Early Bird holder
+  got the unhalved sleep clock, and the sentence naming the carrier could never fire. The run path
+  has always passed it, so the simulation was right and only the advice was wrong — found by
+  pointing the Honchkrow kit at it.

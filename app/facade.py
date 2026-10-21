@@ -1372,6 +1372,14 @@ class Facade:
                     name=pokemon.name, level=pokemon.level,
                     types=tuple(species(pokemon.species)["types"]),
                     stats=dict(pokemon.stats), moves=tuple(pokemon.moveset),
+                    # **The ability, which this dropped.** The RUN path has always passed it
+                    # (`hunt_run_setup`'s `battler_for`), so the simulation was right and only
+                    # the pre-hunt advice was wrong -- and wrong in the direction that matters:
+                    # every party member was judged ability-less, so an Insomnia holder was told
+                    # a target could sleep it, an Early Bird holder got the unhalved sleep clock,
+                    # and `_sleep_answer` could never find the carrier it exists to name. Found by
+                    # pointing the Honchkrow kit at it (clayton-4wr.1.3).
+                    ability=pokemon.ability or "",
                     held_item=slot.held_item))
             except (KeyError, TypeError, ValueError):
                 continue

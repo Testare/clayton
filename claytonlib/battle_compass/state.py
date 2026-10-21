@@ -209,6 +209,15 @@ class Battler:
     #: does shake it off. That is the opposite of a pending Future Sight; see
     #: `BattleState.future_sight_turns` for why that one does not travel.
     drowsy_turns: int = 0
+    #: Taunt's countdown. While it is nonzero this battler cannot SELECT a move with no power --
+    #: and that is a change to the move-selection roll's MODULUS, not a refusal after the fact
+    #: (see `usable_slots`).
+    #:
+    #: Ours to inflict: Taunt is in no configured target's moveset, and it is the first move of
+    #: ours that changes what the target's turn costs. Set to 3-5 by `subscript_taunt_start.s`'s
+    #: ``Random 2, 3``, decremented by `MON_COND_CHECK_STATE_TAUNT` (state 20 of the end-of-turn
+    #: condition walk, between Uproar at 14 and Yawn at 24), and it spends nothing on the way out.
+    taunted_turns: int = 0
 
     def __post_init__(self):
         if self.hp is None:
@@ -265,18 +274,38 @@ class Battler:
         return item_key(self.held_item) in CHOICE_ITEMS
 
     def usable_slots(self) -> tuple[int, ...]:
-        """Slots with a known move and PP remaining -- and, under a Choice item, only the one.
+        """Slots this battler could actually pick right now -- and, under a Choice item, only one.
 
         This is the list the wild move-selection roll indexes into: ``RANDOM % len(usable)``
         picks a position in it, so the modulus shrinks as PP runs out (sec 5.2 R4). No wild
         target holds an item, so the Choice branch below never narrows that roll; it narrows what
         OUR side may be offered and what the solver may plan.
+
+        **Taunt narrows it too, and that was not the obvious answer.** The ROM builds the wild
+        side's choice as a max-score tie broken randomly, and `TrainerAI_Init` zeroes the score of
+        every move `BattleSystem_CheckInvalidMoves(..., CHECK_INVALID_ALL)` flags
+        (trainer_ai.c:234-237, 317-338). That mask is ``~0``, so it carries both
+        CHECK_INVALID_NO_PP -- which is the code path behind the PP rule above -- and
+        CHECK_INVALID_TAUNTED. A taunted power-0 move therefore drops out of the tie list and the
+        modulus shrinks with it: a taunted Uxie picks from two slots rather than four.
+
+        The plausible-looking alternative is wrong and worth naming, because
+        `subscript_move_fail_taunted` exists and reads like the wild path: pick a status move and
+        then be refused for it. That subscript is reached from `CHECK_STATUS_STATE_TAUNT` when
+        something *forces* a taunted Pokemon into a status move -- Encore, Sleep Talk, a locked
+        move -- none of which any configured target can do. Modelled as a refusal rather than as
+        a narrowing, every taunted turn would have spent two post-successful-move advances the
+        game does not spend, and picked the wrong move besides.
+
+        **By POWER, not by category**, which is the ROM's own test. The same set in practice for
+        every configured moveset, but transcribed rather than translated.
         """
         if self.choice_locked_slot is not None:
             slot = self.choice_locked_slot
             return (slot,) if self.move(slot) is not None and self.pp_left(slot) > 0 else ()
         return tuple(i for i in range(len(self.moves))
-                     if self.move(i) is not None and self.pp_left(i) > 0)
+                     if (move := self.move(i)) is not None and self.pp_left(i) > 0
+                     and not (self.taunted_turns and not move.power))
 
     def pp_left(self, slot: int) -> int:
         return self.pp[slot] if 0 <= slot < len(self.pp) else 0
@@ -307,14 +336,15 @@ class Battler:
         landed = max(0, min(hp, self.max_hp))
         if landed == 0 and (self.status is not Status.NONE or self.nightmare
                             or self.charging_slot is not None
-                            or self.uproar_turns or self.drowsy_turns):
+                            or self.uproar_turns or self.drowsy_turns
+                            or self.taunted_turns):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
             # drowsy from a Yawn it will never now fall asleep from.
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
-                           drowsy_turns=0)
+                           drowsy_turns=0, taunted_turns=0)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
