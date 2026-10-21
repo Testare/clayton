@@ -5,7 +5,7 @@ having worked and changed nothing, and an unrecognised damaging move as plain da
 missing secondary is **inert rather than refused** -- and for the target's moves that is unsound
 rather than imprecise, because an unnoticed modifier eliminates the true seed.
 
-Adding Ho-Oh to `STATIC_ENCOUNTERS` is what made this urgent: all four of its Lv70 moves have
+Adding Ho-Oh to `ENCOUNTERS` is what made this urgent: all four of its Lv70 moves have
 unmodelled effects, so without a check it would have looked ready and been confidently wrong on
 every turn one of them fired.
 """
@@ -13,7 +13,7 @@ import unittest
 
 from claytonlib.battle_compass.sim import MODELLED_TARGET_EFFECTS
 from claytonlib.battle_compass.targets import (
-    STATIC_ENCOUNTERS, VERSION_SPLIT_LEVELS, encounter_level, moveset, supported,
+    ENCOUNTERS, VERSION_SPLIT_LEVELS, encounter_level, moveset, supported,
     unsupported_moves,
 )
 from claytonlib.moves import resolve_move
@@ -101,11 +101,11 @@ class TestHoOhIsConfigured(unittest.TestCase):
         self.assertIn("different moveset", note)
 
     def test_every_configured_target_has_a_level_and_four_moves(self):
-        for name, (level, moves) in STATIC_ENCOUNTERS.items():
-            self.assertTrue(1 <= level <= 100, name)
-            self.assertEqual(len(moves), 4, name)
-            for move in moves:
-                self.assertIsNotNone(resolve_move(move), f"{name}: {move}")
+        for key, row in ENCOUNTERS.items():
+            self.assertTrue(1 <= row.level <= 100, key)
+            self.assertEqual(len(row.moves), 4, key)
+            for move in row.moves:
+                self.assertIsNotNone(resolve_move(move), f"{key}: {move}")
 
     def test_it_is_in_the_supported_list(self):
         self.assertIn("ho-oh", supported())
@@ -139,7 +139,27 @@ class TestReadinessRefusesWhatCannotBeSimulated(unittest.TestCase):
 
     def test_an_unconfigured_species_is_reported_as_such(self):
         errors = " ".join(self._target("mewtwo", 70).hard_errors())
-        self.assertIn("not a configured Battle Compass target", errors)
+        self.assertIn("mewtwo", errors)
+        self.assertIn("no known encounter", errors)
+        # And what the player CAN hunt, which is the half that makes the message actionable.
+        self.assertIn("suicune", errors)
+
+    def test_a_target_from_another_game_says_so_rather_than_denying_it_exists(self):
+        """The two mistakes need different fixes: a typo and the wrong cartridge.
+
+        A Platinum profile asking for Lugia used to be told it was "not a configured target",
+        which is false -- it is configured, for a game this profile is not.
+        """
+        errors = " ".join(self._target("lugia", 45).hard_errors("platinum"))
+        self.assertIn("Platinum", errors)
+        self.assertIn("SoulSilver", errors)
+        self.assertIn("darkrai", errors)         # what Platinum does have
+
+    def test_an_unset_game_filters_nothing(self):
+        """Every profile written before the game field existed has none, and refusing those
+        would lock out every hunt that already works."""
+        self.assertEqual(self._target("ho-oh", 70).hard_errors(""), [])
+        self.assertEqual(self._target("darkrai", 50).hard_errors(""), [])
 
     def test_the_spread_errors_stay_separate_from_the_encounter_ones(self):
         """`hunt_readiness` gates the derived stats on the SPREAD, so an unsupported encounter

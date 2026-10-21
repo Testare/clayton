@@ -20,7 +20,7 @@ from claytonlib.battle.catch import (
 from claytonlib.battle.stats import derive_species_stats, has_fast_ball_bonus, species
 from claytonlib.battle_compass.sim import HuntConfig
 from claytonlib.battle_compass.targets import (
-    STATIC_ENCOUNTERS, VERSION_SPLIT_LEVELS, encounter_level, moveset, unsupported_moves,
+    ENCOUNTERS, VERSION_SPLIT_LEVELS, encounter_level, moveset, unsupported_moves,
 )
 from claytonlib.moves import resolve_move
 

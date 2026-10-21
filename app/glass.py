@@ -22,6 +22,10 @@ _MAX_HOUR = 23
 #: The fields a history entry is allowed to carry, in display order. Anything else the page
 #: sends is dropped rather than stored: the history is a scratchpad, and an open-ended dict
 #: would quietly become a second, undocumented place where run data lives.
+#:
+#: `elm_heard` is HGSS-only, and there is no Platinum sibling: a Platinum frame is counted rather
+#: than heard, so there is nothing the player reported to record. What a Platinum entry carries
+#: instead is `frame` and `routed_to` — where they started and where they went (clayton-6xu.5).
 _HISTORY_FIELDS = ("seed", "seed_hex", "time", "delay", "delay_delta", "sec_delta",
                    "elm_heard", "frame", "routed_to")
 

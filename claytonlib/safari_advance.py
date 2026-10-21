@@ -55,6 +55,12 @@ def frame_candidates(rng_calls: int, elm: str, observed: str,
     (generate it with `advance_context`). `observed` is cleaned via `clean_elm`. Returns a
     sorted list of candidate CURRENT advance frames: one => pinned; more than one => keep
     listening; empty => the calls don't occur in the sequence (bad input, or too short).
+
+    **HGSS only, and that is not an oversight.** Platinum's per-advance signal is a chatot pitch,
+    which the player is never asked to report — there, the advance frame is counted from the
+    venue's starting frame rather than searched for, and the pitch margin is how the count gets
+    checked (see :mod:`claytonlib.platinum_advance`). An earlier version of this function grew a
+    `match` hook so pitch observations could be searched for too; nothing wanted it.
     """
     obs = clean_elm(observed)
     positions = _all_start_positions(elm, obs)
@@ -148,8 +154,9 @@ def plan_advances(current_frame: int, encounter_frame: int,
     )
 
 
-def margin_guide(rng_calls: int, elm: str, plan: AdvancePlan,
-                 n_before: int = 5, n_after: int = 3) -> str:
+def margin_guide(rng_calls: int, elm, plan: AdvancePlan,
+                 n_before: int = 5, n_after: int = 3, render=None,
+                 render_bracket=None) -> str:
     """The Elm-call guide string around the approach, e.g. "PEEEP[KPE]!KEP".
 
     `n_before` calls precede the bracket (in case you land early), the bracket holds the
@@ -163,13 +170,23 @@ def margin_guide(rng_calls: int, elm: str, plan: AdvancePlan,
         raise ValueError(
             f"land_frame {plan.land_frame} precedes REL end (frame {rng_calls})")
     truncated = len(elm) < j_scent
-    before = elm[max(0, j_land - n_before):j_land]
-    bracket = elm[j_land:j_scent]
-    after = elm[j_scent:j_scent + n_after]
+    show = render if render is not None else _render_elm
+    # The bracket may render differently from its surroundings. Elm letters have nothing to add,
+    # but a pitch does: the margin is the part you listen to carefully, so it carries the exact
+    # number (`M (41)`) while the context stays in bare buckets and the line stays readable.
+    show_bracket = render_bracket if render_bracket is not None else show
+    before = show(elm[max(0, j_land - n_before):j_land])
+    bracket = show_bracket(elm[j_land:j_scent])
+    after = show(elm[j_scent:j_scent + n_after])
     return f"{before}[{bracket}]!{after}", truncated
 
 
-def margin_ambiguous(rng_calls: int, elm: str, plan: AdvancePlan) -> bool:
+def _render_elm(symbols) -> str:
+    """Elm calls render as the bare letters they always have: `PEEEP`."""
+    return "".join(symbols)
+
+
+def margin_ambiguous(rng_calls: int, elm, plan: AdvancePlan, same=None) -> bool:
     """Whether the plan's Elm-call margin can't reliably confirm the Sweet-Scent frame.
 
     The margin confirms the frame only if it reads uniquely — flagged when a full copy of the
@@ -182,10 +199,16 @@ def margin_ambiguous(rng_calls: int, elm: str, plan: AdvancePlan) -> bool:
     if m < 1 or lo < 0 or hi > len(elm):
         return False
     bracket = elm[lo:hi]
+
+    def confusable(other) -> bool:
+        if same is None:
+            return other == bracket
+        return len(other) == len(bracket) and all(same(a, b) for a, b in zip(other, bracket))
+
     for p in range(1, min(m, 2) + 1):
-        if lo - p >= 0 and elm[lo - p:hi - p] == bracket:
+        if lo - p >= 0 and confusable(elm[lo - p:hi - p]):
             return True
-        if hi + p <= len(elm) and elm[lo + p:hi + p] == bracket:
+        if hi + p <= len(elm) and confusable(elm[lo + p:hi + p]):
             return True
     return False
 

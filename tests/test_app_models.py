@@ -126,7 +126,7 @@ class TestMetronomeUsers(unittest.TestCase):
 
 class TestSerialization(unittest.TestCase):
     def test_profile_round_trip(self):
-        p = Profile(name="Silver", trainer_name="Ash", version="SoulSilver", console="my DS Lite")
+        p = Profile(name="Silver", trainer_name="Ash", game="soulsilver", console="my DS Lite")
         p.add_metronome_user("Chansey A", **_GOOD_USER)
         p.add_metronome_user("Chansey B", **_GOOD_USER)
         p.remove_metronome_user(1)

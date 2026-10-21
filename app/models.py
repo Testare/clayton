@@ -30,6 +30,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import asdict, dataclass, field
 
+from claytonlib.battle.balls import TERRAIN_OTHER, TERRAINS as TERRANS_OK
+from claytonlib.games import canonical_game_key, game_name, tool_refusal
 from claytonlib.metronome_abilities import ability_info, unsupported_abilities
 
 # Metronome-user suitability (P0). See draft2 "Metronome Users".
@@ -283,7 +285,16 @@ class Profile:
     id: str = field(default_factory=_new_id)
     # TID/SID aren't tracked -- this app does no shiny-checking logic that would need them.
     trainer_name: str = ""
-    version: str = ""  # "HeartGold" or "SoulSilver"
+    #: Which game this cartridge is, as a `claytonlib.games` KEY ("platinum"), not a display
+    #: name. Stored as a key because the thing it replaced -- a free-text `version` holding
+    #: "HeartGold" -- could not be branched on without string-matching, so nothing ever did:
+    #: `targets.py` simply hardcoded SoulSilver's rows and a HeartGold player was silently
+    #: simulated against the wrong four moves (clayton-6xu.1.1).
+    #:
+    #: Reads back through `games.canonical_game_key`, so profiles written with the old field
+    #: migrate on load rather than needing a data migration. May be "" on a profile whose game
+    #: was never set; `game_errors` is what refuses work in that case.
+    game: str = ""
     console: str = ""  # free-text note; see the different-console caveat in the doc.
     metronome_users: list[MetronomeUser] = field(default_factory=list)
     # Monotonic; assigns the next metronome-user id and never rewinds, so ids are
@@ -297,6 +308,25 @@ class Profile:
     # `excluded` flag: excluding a tag here does NOT toggle individual runs' flags — a run's
     # effective-excluded state is the OR of both, and the UI shows "tag:<name>" for this case.
     excluded_tags: list[str] = field(default_factory=list)
+
+    @property
+    def game_name(self) -> str:
+        """The game's display name, or ``""`` when unset. What the UI shows.
+
+        A property rather than a stored field so there is exactly one spelling of the truth: the
+        old setup stored the display name *as* the identity, which is how it ended up unusable for
+        branching.
+        """
+        return game_name(self.game)
+
+    def tool_refusal(self, tool: str) -> str:
+        """Why `tool` cannot run against this profile's game, or ``""`` when it can.
+
+        `tool` is one of `games.ALL_TOOLS`. Returns a sentence rather than a boolean because every
+        caller needs to tell the player why — Diamond/Pearl and "Expeditions are HGSS-only" are
+        different refusals and deserve different words.
+        """
+        return tool_refusal(self.game, tool)
 
     def get_party_pokemon(self, pokemon_id: int) -> PartyPokemon | None:
         return next((p for p in self.party if p.id == pokemon_id), None)
@@ -387,7 +417,10 @@ class Profile:
             "id": self.id,
             "name": self.name,
             "trainer_name": self.trainer_name,
-            "version": self.version,
+            "game": self.game,
+            # Written alongside `game` so an export read by an older build still names the game.
+            # Read back only as a fallback -- see from_dict.
+            "version": self.game_name,
             "console": self.console,
             "metronome_users": [u.to_dict() for u in self.metronome_users],
             "next_metronome_user_id": self.next_metronome_user_id,
@@ -402,7 +435,9 @@ class Profile:
             name=d["name"],
             id=d.get("id") or _new_id(),
             trainer_name=d.get("trainer_name", ""),
-            version=d.get("version", ""),
+            # `version` is the pre-Platinum spelling and held a display name; both resolve
+            # through canonical_game_key, so no stored profile needs rewriting.
+            game=canonical_game_key(d.get("game") or d.get("version") or ""),
             console=d.get("console", ""),
             metronome_users=[MetronomeUser.from_dict(u) for u in d.get("metronome_users", [])],
             excluded_tags=list(d.get("excluded_tags", [])),
@@ -618,9 +653,14 @@ class HuntTarget:
     # Keyed by STAT_KEYS; 0-31 each.
     ivs: dict = field(default_factory=dict)
 
-    def hard_errors(self) -> list[str]:
-        """Everything wrong with this target: its spread, and the encounter itself."""
-        return self.spread_errors() + self._encounter_errors()
+    def hard_errors(self, game: str = "") -> list[str]:
+        """Everything wrong with this target: its spread, and the encounter itself.
+
+        `game` is the profile's game key, and it decides which encounter rows exist at all --
+        Darkrai is Platinum's and Lugia's row on file is SoulSilver's. Empty means "unset", which
+        filters nothing; see `targets.resolve`.
+        """
+        return self.spread_errors() + self._encounter_errors(game)
 
     def spread_errors(self) -> list[str]:
         """Only what makes the SPREAD unusable -- a missing species, level, nature or IV.
@@ -646,7 +686,7 @@ class HuntTarget:
             errors.append("target IVs out of range: " + ", ".join(out_of_range))
         return errors
 
-    def _encounter_errors(self) -> list[str]:
+    def _encounter_errors(self, game: str = "") -> list[str]:
         """Whether this species can be simulated at all, and at the level entered.
 
         Both are hard rather than advisory, and for the same reason: `execute_move` treats an
@@ -661,25 +701,30 @@ class HuntTarget:
         moves their Pokemon does not have.
         """
         from claytonlib.battle_compass.targets import (
-            VERSION_SPLIT_LEVELS, encounter_level, supported, unsupported_moves,
+            VERSION_SPLIT_LEVELS, encounter_key, resolve, supported, unsupported_moves,
         )
 
         if not self.species:
             return []
-        key = self.species.strip().lower().replace(" ", "-")
-        if key not in supported():
-            return [f"{self.species} is not a configured Battle Compass target "
-                    f"(have: {', '.join(supported())})"]
+        key = encounter_key(self.species)
+        try:
+            key, row = resolve(key, game)
+        except KeyError as problem:
+            # `resolve` says which of the three mistakes it was -- a typo, a species met twice, or
+            # the wrong cartridge -- and the last of those is the one a bare "not a configured
+            # target" was actively misleading about. Its own message is carried through, with the
+            # list of what IS available appended.
+            available = supported(game)
+            return [f"{problem.args[0]} Configured: {', '.join(available) or 'nothing'}."]
         errors: list[str] = []
-        known = encounter_level(key)
-        if self.level is not None and self.level != known:
+        if self.level is not None and self.level != row.level:
             note = VERSION_SPLIT_LEVELS.get(key)
             errors.append(
-                f"the {self.species} on file is the Lv{known} encounter, not Lv{self.level}"
+                f"the {self.species} on file is the Lv{row.level} encounter, not Lv{self.level}"
                 + (f" -- Lv{note[0]} is {note[1]}, and it is not configured" if note else ""))
-        _, problem = unsupported_moves(key)
-        if problem:
-            errors.append(problem)
+        _, problem_text = unsupported_moves(key, game)
+        if problem_text:
+            errors.append(problem_text)
         return errors
 
     def to_dict(self) -> dict:
@@ -736,14 +781,32 @@ class Hunt:
     # Candidate search window around the centre seed.
     seconds_window: int = 2
     delay_window: int = 60
+    # Where the encounter happens, for the conditional balls: "other", "cave" or "water".
+    # Terrain is a property of the TILE you stand on, not of the map (CalcTerrain,
+    # pokeplatinum src/field_battle_data_transfer.c:467-494), which is why it is configured here
+    # rather than derived -- a Dusk Ball is x3.5 in any cave at any hour, and a Dive Ball is
+    # x3.5 only on water. Time of day is NOT configured alongside it: it is derivable from the
+    # key seed's own hour byte (notes/platinum.md section 5.3).
+    terrain: str = TERRAIN_OTHER
+    # Whether this species is already registered as CAUGHT in the Pokedex (Repeat Ball x3).
+    target_registered: bool = False
+    # The advance frame a freshly loaded save sits on at this venue, which in Platinum replaces
+    # HGSS's REL cost as the anchor for counting. Zero unless a venue is known to differ -- and
+    # note the published guides are 1-based where this project is 0-based
+    # (claytonlib.platinum_advance.PLATINUM_START_FRAME).
+    start_frame: int = 0
     completed: bool = False
 
     def hard_errors(self, profile: "Profile | None" = None) -> list[str]:
         """Reasons Battle Compass cannot start from this hunt."""
         errors: list[str] = []
-        errors.extend(self.target.hard_errors())
+        errors.extend(self.target.hard_errors(profile.game if profile is not None else ""))
         if not self.capture_ball:
             errors.append("needs a capture ball")
+        elif profile is not None:
+            errors.extend(self._ball_errors(profile))
+        if self.terrain not in TERRANS_OK:
+            errors.append(f"terrain must be one of {', '.join(TERRANS_OK)}")
         if not self.party:
             errors.append("needs at least one party pokemon")
         if self.key_seed is None:
@@ -760,6 +823,24 @@ class Hunt:
                 else:
                     errors.extend(f"{pokemon.name}: {e}" for e in pokemon.hard_errors())
         return errors
+
+    def _ball_errors(self, profile: "Profile") -> list[str]:
+        """Whether the chosen ball exists in this profile's game.
+
+        A hard error rather than a warning: a Fast Ball on a Platinum cartridge is not a ball the
+        player can throw, so a plan built around one is a plan they cannot execute. Mirrors the
+        unsupported-move refusal — better to refuse the configuration than to simulate an hour of
+        a run that could not happen.
+        """
+        from claytonlib.battle.balls import ball, balls_for_game
+        try:
+            chosen = ball(self.capture_ball)
+        except ValueError as problem:
+            return [str(problem)]
+        available = balls_for_game(profile.game)
+        if chosen not in available:
+            return [f"{chosen.name} does not exist in {profile.game_name or 'this game'}"]
+        return []
 
     def to_dict(self) -> dict:
         return {
@@ -778,6 +859,9 @@ class Hunt:
             "seed_a_defaults": self.seed_a_defaults,
             "seconds_window": self.seconds_window,
             "delay_window": self.delay_window,
+            "terrain": self.terrain,
+            "target_registered": self.target_registered,
+            "start_frame": self.start_frame,
             "completed": self.completed,
         }
 
@@ -799,6 +883,10 @@ class Hunt:
             seed_a_defaults=dict(d.get("seed_a_defaults", {})),
             seconds_window=d.get("seconds_window", 2),
             delay_window=d.get("delay_window", 60),
+            # Absent on hunts written before the conditional balls needed them.
+            terrain=d.get("terrain") or TERRAIN_OTHER,
+            target_registered=bool(d.get("target_registered", False)),
+            start_frame=int(d.get("start_frame") or 0),
             completed=bool(d.get("completed", False)),
         )
 

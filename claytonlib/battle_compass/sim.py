@@ -19,9 +19,10 @@ roll before the move it prevents.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from claytonlib.battle import turn as turn_costs
+from claytonlib.battle.balls import BallEffect, ThrowContext, ball_effect, is_turn_dependent
 from claytonlib.battle.catch import (
     BALL_POKE, SHAKES_TO_CAPTURE, catch_value, fast_ball_catch_rate, is_guaranteed,
     shake_threshold, shakes_for_rolls,
@@ -73,6 +74,19 @@ FLINCH_EFFECTS = frozenset({31, 150, 158})
 #: never be "configured" and silently mis-simulated at the same time.
 MODELLED_TARGET_EFFECTS: dict[int, str] = {
     0: "no effect beyond damage",
+    # Darkrai's four, and the first status move any target has had. Each needed its own piece of
+    # machinery before it could be listed here -- see `act_target`, which until Darkrai threw
+    # away `applied_status` outright, so a target's Hypnosis was the exact "inert rather than
+    # refused" failure this table exists to prevent.
+    1: "Hypnosis: sleep ON US, its hidden duration roll, and the turns it costs",
+    16: "Double Team: the target's own evasion, which makes our 100%-accuracy moves missable",
+    17: "Faint Attack: accuracy 0, so it never misses and spends no accuracy roll",
+    107: "Nightmare: the volatile, its quarter-max-HP residual, and waking up as the cure",
+    # Giratina's, and the first two-turn move on either side. Listed once all three of its
+    # consequences are modelled: the charge turn spends no rolls, the fire turn spends no
+    # SELECTION roll, and while it is away everything we throw at it misses -- after spending
+    # its rolls (see `execute_move`).
+    272: "Shadow Force: the charge turn, the move lock, and the turn it cannot be hit",
     # Gust's effect is "double power against a Flying target"; against a grounded Pokemon in a
     # single battle it is plain damage, and it is in the emulator-verified Suicune fixture.
     149: "double power vs airborne, which never applies here",
@@ -349,6 +363,18 @@ class MoveOutcome:
     #: Named for the attacker because that is who it lands on, which is the opposite of every
     #: other field here.
     attacker_status: Status | None = None
+    #: Nightmare landed on the defender. A volatile rather than a status, so it travels in its
+    #: own field instead of in `applied_status` -- it coexists with the sleep it requires.
+    sets_nightmare: bool = False
+    #: The move slot this move's CHARGE turn just locked its user into, or None. Shadow Force's
+    #: first turn: no rolls, nothing lands, and the user is away until it fires.
+    starts_charge: int | None = None
+    #: Set on the turn a charged move actually fires, so the lock and the vanish come off.
+    ends_charge: bool = False
+    #: ``(stage field, stages)`` this move raises on its OWN USER -- Double Team's evasion. The
+    #: mirror of `stat_drop`, and a separate field for the same reason `attacker_status` is: the
+    #: side it lands on is the opposite one, and `simulate_turn` is what knows which side that is.
+    self_stat_raise: tuple[str, int] | None = None
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
@@ -465,6 +491,23 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     # a move -- which is what keeps the target catchable through it.
     if status is not None and field is not None and getattr(field, "safeguard_turns", 0) > 0:
         return True
+    if status is not None and immune_to_status(defender, status):
+        # Insomnia and Vital Spirit, checked at the very top of `subscript_fall_asleep` and
+        # landing on the same no-more-work flag as "is already asleep" -- so the cost is the
+        # same as that verified failure's.
+        return True
+    if move.effect == EFFECT_NIGHTMARE:
+        # Fails against anything not asleep, and against a second application
+        # [effect_script_0107.s]. The first half is the one that fires in a real run: Darkrai
+        # cannot sequence its own moves, so it throws Nightmare at a wide-awake party member
+        # roughly a quarter of the turns it acts.
+        return defender.status is not Status.SLEEP or defender.nightmare
+    if move.effect == EFFECT_EVASION_UP:
+        # A stat already at +6 cannot go higher, and the move fails outright rather than landing
+        # for nothing -- which is an advance difference, not a cosmetic one.
+        # Self-targeting, so it reads `actor` the way Refresh does -- and no actor means "cannot
+        # tell" rather than a guess about the defender's stages.
+        return actor is not None and actor.evasion_stage >= STAT_STAGE_CEILING
     if move.effect == EFFECT_REFRESH:
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
@@ -554,6 +597,40 @@ EFFECT_ALL_STATS_UP = 140
 #: Safeguard: protects its own side from new non-volatile statuses for five turns.
 EFFECT_SAFEGUARD = 124
 SAFEGUARD_TURNS = 5
+#: Double Team (BATTLE_EFFECT_EVA_UP). One stage on the USER, no roll of its own -- the move's
+#: accuracy is 0, so not even an accuracy roll [res/battle/scripts/effects/effect_script_0016.s].
+EFFECT_EVASION_UP = 16
+#: Faint Attack (BATTLE_EFFECT_BYPASS_ACCURACY). Its script is CalcCrit then CalcDamage with no
+#: accuracy check at all [effect_script_0017.s], which is exactly what `execute_move` already
+#: does for an accuracy-0 damaging move -- so this id needs no code of its own, only saying so.
+EFFECT_BYPASS_ACCURACY = 17
+#: Nightmare. Fails against anything not asleep and against a second application
+#: [effect_script_0107.s], then takes a quarter of max HP at the end of every sleeping turn.
+EFFECT_NIGHTMARE = 107
+#: Nightmare's and Bad Dreams' divisors, both floor-divided with a floor of 1 like every other
+#: residual: `BattleSystem_Divide` never returns 0 [src/battle/battle_lib.c:3599-3618].
+NIGHTMARE_DIVISOR = 4
+BAD_DREAMS_DIVISOR = 8
+#: Abilities that change what a residual does. Magic Guard skips burn, Nightmare and Bad Dreams
+#: alike (each case opens by checking it); Heatproof halves the burn tick
+#: [subscript_burn_damage.s, subscript_nightmare_effect.s, battle_controller_player.c:1484-1496].
+ABILITY_MAGIC_GUARD = "magic guard"
+ABILITY_HEATPROOF = "heatproof"
+ABILITY_BAD_DREAMS = "bad dreams"
+#: Sleep-blocking abilities. `subscript_fall_asleep` checks Insomnia and Vital Spirit before
+#: anything else, and lands on the same MOVE_STATUS_NO_MORE_WORK flag as "is already asleep" --
+#: which is the failure whose advance cost is verified (test1.jsonl), so the cost follows.
+#:
+#: Leaf Guard is deliberately absent: it blocks sleep only in sunshine, and nothing in any
+#: configured moveset can set sun, so a row for it could never fire.
+SLEEP_BLOCKING_ABILITIES = frozenset({"insomnia", "vital spirit"})
+#: Shadow Force. A two-turn move: turn 1 vanishes and spends NOTHING, turn 2 is an ordinary
+#: damaging move [res/battle/scripts/effects/effect_script_0272.s].
+EFFECT_SHADOW_FORCE = 272
+#: Effects whose charge turn makes their user untouchable. Only Shadow Force is in any configured
+#: moveset; Fly (19), Dig (39) and Dive (256) belong here the day a target has one, and the ROM
+#: tests all four in the same condition (`CheckMoveHitOverrides`).
+SEMI_INVULNERABLE_EFFECTS = frozenset({EFFECT_SHADOW_FORCE})
 
 
 #: The non-volatile status a move's SECONDARY inflicts on its victim, by effect.
@@ -609,6 +686,10 @@ _CONTACT_STATUS_ABILITIES: dict[str, Status] = {
 _INERT_ABILITIES = frozenset({
     "pressure", "levitate", "technician", "own tempo", "sturdy", "magnet pull",
     "serene grace", "synchronize", "early bird", "keen eye", "tangled feet", "", "none",
+    # Darkrai's, and it is not inert in general -- it costs us an eighth of our max HP every
+    # sleeping turn (`bad_dreams_tick`). It belongs here because this set is only about CONTACT:
+    # touching a Darkrai inflicts nothing, which is the one question `can_inflict` asks.
+    "bad dreams",
 })
 
 
@@ -769,6 +850,21 @@ def apply_stat_drop(battler: Battler, drop: tuple[str, int]) -> Battler:
     return replace(battler, **{field: max(STAT_STAGE_FLOOR, current - stages)})
 
 
+def apply_stat_raise(battler: Battler, raise_: tuple[str, int]) -> Battler:
+    """`battler` with `raise_` applied to its own stage, clamped at the +6 ceiling.
+
+    The mirror of `apply_stat_drop`, with one asymmetry worth stating: a raise at the ceiling
+    really does make the move FAIL (`will_fail`), so the clamp here is belt-and-braces rather
+    than the rule -- where a drop at the floor merely does nothing and keeps costing a full turn.
+
+    **Permanent.** A wild target never switches out, so the ROM's stat reset never runs on it:
+    every Double Team Darkrai gets off is one our 100%-accuracy moves keep paying for.
+    """
+    field, stages = raise_
+    current = getattr(battler, field)
+    return replace(battler, **{field: min(STAT_STAGE_CEILING, current + stages)})
+
+
 # --- screens -----------------------------------------------------------------------------------
 #
 # OUR side's, and only ours: no configured target moveset contains either move, the same way
@@ -841,8 +937,97 @@ def burn_tick(battler: Battler) -> int:
 
     The check is not lost: on any turn where something random ALSO moved our HP, the single HP
     token reports the total, tick included. See notes/battle_compass_next_targets.md sec 4a.
+
+    Two abilities change the figure, both read straight off `subscript_burn_damage.s`: Magic
+    Guard skips the tick entirely and Heatproof halves it. Neither is in a planned party, but
+    both are ordinary enough to bring -- and a predicted HP that is wrong by a tick is wrong
+    forever afterwards, because every comparison is exact.
     """
-    return max(1, battler.max_hp // BURN_TICK_DIVISOR)
+    if ignores_residuals(battler):
+        return 0
+    tick = max(1, battler.max_hp // BURN_TICK_DIVISOR)
+    if (battler.ability or "").strip().lower() == ABILITY_HEATPROOF:
+        # The ROM halves the already-divided figure with the same floor-of-1 divide, so a
+        # 16-HP holder still takes 1 rather than 0.
+        tick = max(1, tick // 2)
+    return tick
+
+
+def ignores_residuals(battler: Battler) -> bool:
+    """Whether Magic Guard spares this Pokemon the deterministic ticks.
+
+    One helper rather than three checks because the ROM really does ask the same question in
+    three places -- `subscript_burn_damage`, `subscript_nightmare_effect` and the Bad Dreams case
+    all open with `CheckAbility ... ABILITY_MAGIC_GUARD` and skip to the end. Nothing in the
+    planned parties has it, but a holder would otherwise be predicted to lose HP it never loses,
+    and every HP comparison after that point is exact.
+    """
+    return (battler.ability or "").strip().lower() == ABILITY_MAGIC_GUARD
+
+
+def immune_to_status(battler: Battler, status: Status) -> bool:
+    """Whether `battler`'s own ability refuses `status` outright.
+
+    Only sleep so far, and only now that it matters: Hypnosis is the first status move pointed at
+    OUR side, and an Insomnia carrier (Noctowl, Xatu, Hypno) would otherwise be simulated as
+    falling asleep for several turns it actually spends awake and attacking.
+
+    Asked of the VICTIM, which is what makes it the mirror of `can_inflict` rather than a
+    duplicate of it: that one asks whether an attacker has any route to a status at all.
+    """
+    if status is not Status.SLEEP:
+        return False
+    return (battler.ability or "").strip().lower() in SLEEP_BLOCKING_ABILITIES
+
+
+def is_semi_invulnerable(battler: Battler) -> bool:
+    """Whether `battler` is away mid-charge, so nothing can touch it this turn.
+
+    Read off the charging move rather than a second flag, so the two cannot disagree. Shadow
+    Force is the only one any configured encounter has; `SEMI_INVULNERABLE_EFFECTS` is where Fly,
+    Dig and Dive would join it, which is the same condition the ROM tests
+    [src/battle/battle_controller_player.c:3034-3041].
+    """
+    if battler.charging_slot is None:
+        return False
+    move = battler.move(battler.charging_slot)
+    return move is not None and move.effect in SEMI_INVULNERABLE_EFFECTS
+
+
+def nightmare_tick(battler: Battler) -> int:
+    """Nightmare's end-of-turn damage: a quarter of max HP, or 0 if it does not apply.
+
+    Gated on being ASLEEP, not merely on carrying the volatile: the ROM's end-of-turn case
+    damages a sleeping holder and otherwise clears the flag outright
+    [src/battle/battle_controller_player.c:1436-1446]. So waking up is the cure, which is why the
+    rolled sleep duration decides the total rather than the move landing doing so.
+
+    Deterministic, like every other residual here, and therefore carries no token of its own --
+    the HP token reports the total on any turn where something random also moved our HP.
+    """
+    if not battler.nightmare or battler.status is not Status.SLEEP or battler.fainted:
+        return 0
+    if ignores_residuals(battler):
+        return 0
+    return max(1, battler.max_hp // NIGHTMARE_DIVISOR)
+
+
+def bad_dreams_tick(battler: Battler, *, opponent_has_bad_dreams: bool) -> int:
+    """Darkrai's ability: an eighth of max HP for every turn we spend asleep.
+
+    Takes the opponent's ability as a flag rather than reading a Battler, mirroring
+    `HuntConfig.target_has_pressure`: the facade derives it from the species once, and the
+    simulator should not have to hold a second copy of the target's ability to answer it.
+
+    With Nightmare that is 37.5% of our max HP a turn, which is what makes falling asleep against
+    this target a different kind of event from falling asleep against any other -- not a lost
+    turn but a clock.
+    """
+    if not opponent_has_bad_dreams or battler.status is not Status.SLEEP or battler.fainted:
+        return 0
+    if ignores_residuals(battler):
+        return 0
+    return max(1, battler.max_hp // BAD_DREAMS_DIVISOR)
 
 
 def leftovers_tick(battler: Battler) -> int:
@@ -923,6 +1108,24 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     slot_token = tok.our_move_token(slot) if actor == "M" else tok.target_move_token(slot)
     parts: list[str] = [slot_token]
 
+    if move.effect in SEMI_INVULNERABLE_EFFECTS and attacker.charging_slot != slot:
+        # The CHARGE turn, and it costs **nothing**: its effect script branches away from
+        # CalcCrit/CalcDamage, and `CheckMoveHitAccuracy` returns before its roll because
+        # "charge-up moves don't consider accuracy on their first turn"
+        # [battle_controller_player.c:2905-2907]. Cross-validated against
+        # `metronome_compass.effects._eff_charge_fire`, which spends no rolls either and was fit
+        # to the Blackthorn ground truth.
+        #
+        # SUCCESSFUL, so the turn still gets its two post-successful-move advances. That is the
+        # one part of this move's cost that is derived rather than measured: the move went off
+        # and printed a message, which is every other successful move's situation, but nothing
+        # has watched a charge turn in the emulator. See notes/platinum.md section 13.
+        #
+        # A Power Herb (`HOLD_EFFECT_CHARGE_SKIP`) skips the charge turn entirely; no wild
+        # Pokemon holds one, so that branch is not modelled.
+        return rng, MoveOutcome(rolls=0, tokens=tuple(parts), successful=True,
+                                starts_charge=slot)
+
     if move.category == CATEGORY_STATUS:
         hit = True
         if move.accuracy > 0:
@@ -930,6 +1133,12 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             used += 1
             hit = roll % 100 < _effective_accuracy(
             move, net_stage, attacker=attacker, defender=defender)
+        # ...and then it misses anyway if the defender is away mid-charge. **After** the roll, not
+        # instead of it: `CheckMoveHitAccuracy` spends the accuracy roll and the semi-invulnerable
+        # verdict is layered on by `CheckMoveHitOverrides` afterwards
+        # [battle_controller_player.c:219-220]. So the cost is an ordinary miss's.
+        if hit and is_semi_invulnerable(defender):
+            hit = False
         if not hit:
             parts.append(tok.MISS)
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
@@ -968,6 +1177,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_light_screen=move.effect == EFFECT_LIGHT_SCREEN,
             screen_turns=(screen_turns_for(attacker.held_item)
                           if move.effect in SCREEN_EFFECTS else 0),
+            sets_nightmare=move.effect == EFFECT_NIGHTMARE,
+            # Double Team. Mist does not guard against it -- Mist blocks REDUCTIONS to its own
+            # side, and this is the user raising its own stage.
+            self_stat_raise=(("evasion_stage", 1) if move.effect == EFFECT_EVASION_UP else None),
             blocked_by_mist=blocked)
 
     # Damaging.
@@ -984,9 +1197,17 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         used += 1
         hit = hit_roll % 100 < _effective_accuracy(
             move, net_stage, attacker=attacker, defender=defender)
+    # As in the status branch: the rolls are spent first, the invulnerability decides afterwards.
+    # An accuracy-0 move is not exempt -- Faint Attack spends no accuracy roll and still cannot
+    # reach something that is not there.
+    if is_semi_invulnerable(defender):
+        hit = False
     if not hit:
         parts.append(tok.MISS)
-        return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
+        # The lock comes off even on a miss: the effect script's cleanup (`_055`) is fallen
+        # through to from the fire branch, and the hit verdict is decided after the script runs.
+        return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False,
+                                ends_charge=attacker.charging_slot == slot)
     parts.append(tok.CRIT if critical else tok.HIT)
 
     dealt = 0
@@ -1015,7 +1236,11 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             attacker_side,
             Defender(defence=defender.stats["def"], special_defence=defender.stats["spd"],
                      types=defender.types, defence_stage=defender.def_stage,
-                     special_defence_stage=defender.spdef_stage),
+                     special_defence_stage=defender.spdef_stage,
+                     # Only Levitate is read, and only as a Ground immunity. It reaches the
+                     # calculation at all because the target's Battler now carries its encounter's
+                     # ability, and Giratina Origin's is Levitate.
+                     ability=defender.ability),
             base_power=base_power,
             roll=DAMAGE_ROLL_MAX_PERCENT - damage_roll % DAMAGE_ROLL_COUNT,
             critical=critical,
@@ -1064,7 +1289,11 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
 
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
                             damage=dealt, secondary=secondary,
-                            attacker_status=attacker_status)
+                            attacker_status=attacker_status,
+                            # The charged move has fired, so the lock and the vanish come off
+                            # (`_055` in the effect script). True for every other move too, where
+                            # there is nothing to clear.
+                            ends_charge=attacker.charging_slot == slot)
 
 
 def _contact_ability(rng: int, used: int, move: Move, attacker: Battler, defender: Battler,
@@ -1222,7 +1451,8 @@ def party_order(bench: tuple[Battler, ...]) -> tuple[Battler, ...]:
 def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     """The wild move-selection roll: ``RANDOM % (moves with PP)``, indexing the survivors.
 
-    One roll always, and the modulus shrinks as PP runs out — so its entropy decays from 2.00
+    One roll per turn **except while the target is locked into a multi-turn move**, and the
+    modulus shrinks as PP runs out — so its entropy decays from 2.00
     bits to 1.58 to 1.00 and then to nothing (sec 5.2 R4, verified). Returns (rng, slot), with
     slot None when nothing is usable and the target would have to Struggle.
 
@@ -1232,6 +1462,12 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     The solver therefore never searches that far — see ``solver.struggle_deadline`` — and callers
     that might should check for None themselves.
     """
+    if target.charging_slot is not None:
+        # Locked into the second half of a multi-turn move, so the ROM never asks it to pick:
+        # `Battler_CanPickCommand` is FALSE and command selection is skipped entirely
+        # [src/battle/battle_controller_player.c:334-338]. **One advance fewer on that turn**,
+        # and getting it wrong would desynchronise every turn after Giratina's Shadow Force.
+        return rng, target.charging_slot
     usable = target.usable_slots()
     if not usable:
         return rng, None
@@ -1284,11 +1520,36 @@ BATTLE_START_ADVANCES = 6
 
 @dataclass(frozen=True)
 class HuntConfig:
-    """Everything a simulation needs that does not change during the battle."""
+    """Everything a simulation needs that does not change during the battle.
+
+    **"Does not change" stopped being true of the ball.** Platinum's Quick Ball is ×4 on turn 1
+    only and its Timer Ball climbs to ×4, so a throw's multiplier is a function of the turn
+    (notes/platinum.md §5.3). That is why the multiplier is reached through `ball_multiplier_at`
+    rather than read off a field: everything else here really is constant, and the one thing that
+    is not says so in its name.
+    """
     target_catch_rate: int
+    #: The ball by name, resolved through `claytonlib.battle.balls`. When set it is the authority,
+    #: and `capture_ball_multiplier` / `fast_ball_matched` below are ignored.
+    capture_ball: str = ""
+    #: The non-turn context a conditional ball needs: terrain, time of day, the target's types,
+    #: level and base Speed, and whether the species is already registered. The turn is filled in
+    #: per throw, which is the whole point.
+    throw: ThrowContext = field(default_factory=ThrowContext)
+    #: Explicit multiplier, for a caller that has one and no ball name. Pre-dates `capture_ball`
+    #: and is kept so every existing fixture and test still means what it meant.
     capture_ball_multiplier: int = BALL_POKE
     #: Pressure doubles OUR PP consumption, not the target's own (sec 4.4).
     target_has_pressure: bool = True
+    #: Bad Dreams takes an eighth of our max HP every turn we spend asleep. Darkrai's only
+    #: ability, so for that target it is not optional.
+    #:
+    #: Defaults FALSE where `target_has_pressure` defaults True, and the asymmetry is deliberate:
+    #: the default has to be the one that is wrong in the safe direction, and these two are
+    #: opposite. Assuming Pressure where there is none only over-budgets PP; assuming Bad Dreams
+    #: where there is none would subtract HP the game never subtracts, which contradicts every
+    #: candidate from that turn on.
+    target_has_bad_dreams: bool = False
     #: True once the target's base Speed clears the Fast Ball's threshold.
     fast_ball_matched: bool = False
     #: Rolls to burn before turn 1. A field rather than a bare constant because the count is
@@ -1296,10 +1557,36 @@ class HuntConfig:
     #: would spend a different number. See :data:`BATTLE_START_ADVANCES`.
     battle_start_advances: int = BATTLE_START_ADVANCES
 
-    def effective_catch_rate(self) -> int:
-        return fast_ball_catch_rate(self.target_catch_rate, 100 if self.fast_ball_matched else 0)
+    def ball_effect_at(self, turn: int = 0) -> BallEffect:
+        """What the capture ball is worth on `turn` (0 == the first turn, as the ROM counts).
 
-    def standard_ball_matches_capture_ball(self) -> bool:
+        Falls back to the explicit `capture_ball_multiplier` / `fast_ball_matched` pair when no
+        ball name is set, so a config built the old way behaves exactly as it did.
+        """
+        if self.capture_ball:
+            return ball_effect(self.capture_ball, self.target_catch_rate,
+                               replace(self.throw, turn=turn))
+        return BallEffect(
+            catch_rate=fast_ball_catch_rate(self.target_catch_rate,
+                                            100 if self.fast_ball_matched else 0),
+            multiplier=self.capture_ball_multiplier)
+
+    def effective_catch_rate(self, turn: int = 0) -> int:
+        return self.ball_effect_at(turn).catch_rate
+
+    def ball_multiplier_at(self, turn: int = 0) -> int:
+        return self.ball_effect_at(turn).multiplier
+
+    @property
+    def ball_is_turn_dependent(self) -> bool:
+        """Whether `b` moves with the turn — a Quick or Timer Ball.
+
+        Worth reporting rather than inferring: the solver's dominance key assumes a threshold that
+        does not improve over time, and a Timer Ball's does.
+        """
+        return bool(self.capture_ball) and is_turn_dependent(self.capture_ball)
+
+    def standard_ball_matches_capture_ball(self, turn: int = 0) -> bool:
         """Whether a plain Poke Ball is exactly as likely to catch as the capture ball.
 
         This is the fact behind sec 2.3's warning, and it is a property of the MATCHUP rather
@@ -1309,8 +1596,9 @@ class HuntConfig:
         cheaper. Reported to the UI so the warning can say which case the player is in instead of
         asserting the harsher one.
         """
-        return (self.capture_ball_multiplier == BALL_POKE
-                and self.effective_catch_rate() == self.target_catch_rate)
+        effect = self.ball_effect_at(turn)
+        return (not effect.guaranteed and effect.multiplier == BALL_POKE
+                and effect.catch_rate == self.target_catch_rate)
 
 
 def opening_rng(seed: int, config: HuntConfig) -> int:
@@ -1466,9 +1754,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # why `Action.FAINTED` need not say which move it was.
             return False
         if action is Action.CAPTURE_BALL or action is Action.STANDARD_BALL:
-            multiplier = (config.capture_ball_multiplier
+            # `new.turn` is still the count of COMPLETED turns here -- it is incremented at the
+            # end of the turn -- which is exactly the ROM's `totalTurns`, so a Quick Ball's
+            # "first turn" and a Timer Ball's climb line up without an adjustment.
+            effect = config.ball_effect_at(new.turn)
+            multiplier = (effect.multiplier
                           if action is Action.CAPTURE_BALL else BALL_POKE)
-            rate = (config.effective_catch_rate() if action is Action.CAPTURE_BALL
+            rate = (effect.catch_rate if action is Action.CAPTURE_BALL
                     else config.target_catch_rate)
             rng, shakes, captured = throw_ball(
                 rng, new.target, catch_rate=rate, ball_multiplier=multiplier,
@@ -1614,6 +1906,17 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # and the ROM's stat reset runs only on the Pokemon being sent out -- which is what
             # makes six Flashes worth more than any five-turn field condition.
             new.target = apply_stat_drop(new.target, outcome.stat_drop)
+        if outcome.starts_charge is not None:
+            new.ours = replace(new.ours, charging_slot=outcome.starts_charge)
+        elif outcome.ends_charge:
+            new.ours = replace(new.ours, charging_slot=None)
+        if outcome.sets_nightmare:
+            # Nothing in any configured party carries Nightmare; wired for symmetry with
+            # `act_target`, where it is Darkrai's, so that a party move would need a moveset row
+            # and nothing else.
+            new.target = replace(new.target, nightmare=True)
+        if outcome.self_stat_raise is not None:
+            new.ours = apply_stat_raise(new.ours, outcome.self_stat_raise)
         if outcome.attacker_status is not None:
             # The target's own ability paralyzed US on contact -- nothing has this yet, but the
             # path is symmetric with `act_target` and costing nothing is the point.
@@ -1671,10 +1974,21 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         move = new.target.move(target_slot)
         if move is None:
             return False
+        was_charging = new.target.charging_slot == target_slot
         rng, outcome = execute_move(
             rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new)
         new.rng_offset += outcome.rolls
-        new.target = new.target.spend_pp(target_slot, 1)
+        # **PP is spent on the charge turn only.** The ROM marks `ppDecremented` TRUE for a
+        # battler that cannot pick a command [battle_controller_player.c:334-336], so the turn
+        # Shadow Force fires costs no PP. Spending it twice would empty a 5-PP move in two uses,
+        # shrink `usable_slots` early and change the selection modulus -- a desync, not a
+        # rounding error.
+        if not was_charging:
+            new.target = new.target.spend_pp(target_slot, 1)
+        if outcome.starts_charge is not None:
+            new.target = replace(new.target, charging_slot=outcome.starts_charge)
+        elif outcome.ends_charge:
+            new.target = replace(new.target, charging_slot=None)
         apply_field(outcome)
         if outcome.damage:
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
@@ -1686,6 +2000,22 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Mist Ball drops Sp. Atk, which is not inert: our special damage is what some
             # parties use to bring the target down.
             new.ours = replace(new.ours, spatk_stage=max(-6, new.ours.spatk_stage - 1))
+        if outcome.applied_status is not None:
+            # Hypnosis. **This branch did not exist before Darkrai**, and its absence was the
+            # exact failure `MODELLED_TARGET_EFFECTS` guards against: the duration roll was spent
+            # and the sleep dropped on the floor, so the simulator would have had us attacking
+            # through turns the game had us asleep for -- every prediction after the first
+            # Hypnosis wrong, with no contradiction raised. Nothing fired it until now only
+            # because no configured target had a status move.
+            new.ours = new.ours.with_status(outcome.applied_status,
+                                            sleep_turns=outcome.sleep_turns)
+        if outcome.sets_nightmare:
+            new.ours = replace(new.ours, nightmare=True)
+        if outcome.self_stat_raise is not None:
+            # Double Team raises the TARGET's own evasion, which is why this reads
+            # `new.target`: it degrades our accuracy for the rest of the battle, and permanently
+            # -- a wild Pokemon never switches out, so nothing ever resets it.
+            new.target = apply_stat_raise(new.target, outcome.self_stat_raise)
         if outcome.stat_drop is not None:
             # No configured target has a primary stat-drop move; wired anyway so that adding one
             # is a row in `PRIMARY_STAT_DROPS` and nothing else. Our own Mist would guard this,
@@ -1799,6 +2129,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.ours = new.ours.with_hp(new.ours.hp + recovery)
         if new.ours.status is Status.BURN:
             new.ours = new.ours.with_hp(new.ours.hp - burn_tick(new.ours))
+        # Leftovers -> burn -> Nightmare -> Bad Dreams, which is the ROM's own order:
+        # MON_COND_CHECK_STATE_LEFTOVERS, _BURN, _NIGHTMARE then _BAD_DREAMS
+        # [src/battle/battle_controller_player.c:1259-1272]. Order matters here even though none
+        # of the four spends a roll, because each is clamped at 0 and the one that reaches it
+        # first is the one that faints us.
+        nightmare = nightmare_tick(new.ours)
+        if nightmare:
+            new.ours = new.ours.with_hp(new.ours.hp - nightmare)
+        elif new.ours.nightmare and new.ours.status is not Status.SLEEP:
+            # Awake, so the flag is cleared with no damage -- the ROM's `else` branch on the same
+            # case. Waking up really is the cure, and leaving the flag set would re-nightmare us
+            # the next time anything put us to sleep.
+            new.ours = replace(new.ours, nightmare=False)
+        dreams = bad_dreams_tick(
+            new.ours, opponent_has_bad_dreams=config.target_has_bad_dreams)
+        if dreams:
+            new.ours = new.ours.with_hp(new.ours.hp - dreams)
         residual = hp_at_block - new.ours.hp
 
     # HP, then the faint. A faint turn carries no HP token at all: zero is implied by the X, and

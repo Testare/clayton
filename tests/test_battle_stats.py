@@ -118,9 +118,19 @@ class TestSpeciesData(unittest.TestCase):
             self.assertTrue(1 <= len(entry["types"]) <= 2, key)
             self.assertNotIn("Fairy", entry["types"], f"{key}: no Fairy type in Gen 4")
 
-    def test_forms_resolve_from_their_bare_name(self):
+    def test_a_bare_form_name_resolves_only_while_it_is_unambiguous(self):
+        """`species` falls back to a suffix match, which is how `giratina` used to reach
+        `giratina-altered`. Once the Origin forme joined the file there are two matches and the
+        fallback refuses, naming both -- which is the right answer rather than a regression: the
+        two formes differ in ability and stat line, so picking one silently would mis-simulate
+        whichever fight the player meant (clayton-6xu.3.4).
+        """
         from claytonlib.battle.stats import species
-        self.assertEqual(species("giratina")["name"], "giratina-altered")
+        self.assertEqual(species("shaymin")["name"], "shaymin")      # a real key, no fallback
+        with self.assertRaises(KeyError) as caught:
+            species("giratina")
+        self.assertIn("giratina-altered", str(caught.exception))
+        self.assertIn("giratina-origin", str(caught.exception))
 
     def test_unknown_species_raises(self):
         from claytonlib.battle.stats import species

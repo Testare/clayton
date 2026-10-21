@@ -90,6 +90,12 @@ class Action(Enum):
                         Action.ITEM, Action.ITEM_CURE, Action.SWITCH, Action.REVIVE)
 
 
+#: How much a sleeping Pokemon's counter drops when it tries to act, and what Early Bird makes
+#: that instead [pokeplatinum src/battle/battle_controller_player.c:2442].
+SLEEP_DECREMENT = 1
+SLEEP_DECREMENT_EARLY_BIRD = 2
+
+
 @dataclass(frozen=True)
 class Battler:
     """One side, as the simulation needs it.
@@ -150,6 +156,25 @@ class Battler:
     #: directly as the simulator's own tests do; `sim.party_number` then falls back to the old
     #: positional guess. Last in the field order so positional construction keeps working.
     party_slot: int = 0
+    #: The move slot a multi-turn move has this battler locked into mid-charge, or None.
+    #:
+    #: **Different from `choice_locked_slot`**, which is a Choice item's lock: that one still has
+    #: its holder PICK a command every turn (it just refuses the other three), while this one
+    #: skips command selection entirely -- `Battler_CanPickCommand` returns FALSE and the wild
+    #: move-selection roll is never spent (pokeplatinum
+    #: src/battle/battle_controller_player.c:334-338, 1885-1888). That is an advance difference,
+    #: which is why the two cannot share a field.
+    #:
+    #: Shadow Force is the only move any configured encounter has in this family, and while it is
+    #: charging its user is semi-invulnerable -- see `sim.is_semi_invulnerable`.
+    charging_slot: int | None = None
+    #: Nightmare, a volatile the ROM keeps in `statusVolatile` alongside confusion rather than
+    #: in `status` -- so it coexists with sleep instead of replacing it, which is the whole point
+    #: of the move. It only ever damages a SLEEPING holder: the end-of-turn check clears the flag
+    #: with no damage the moment the holder is awake
+    #: (pokeplatinum src/battle/battle_controller_player.c:1436-1446), which is why waking up is
+    #: a cure and not merely a reprieve.
+    nightmare: bool = False
     #: Which move slot a Choice item has locked this Pokemon into, or None.
     #:
     #: The ROM records the move itself (``moveNoChoice``) the first time a holder of a
@@ -257,8 +282,13 @@ class Battler:
         mismatch in 108 turns of ground truth (clayton-957.10.14).
         """
         landed = max(0, min(hp, self.max_hp))
-        if landed == 0 and self.status is not Status.NONE:
-            return replace(self, hp=0, status=Status.NONE, sleep_turns=0)
+        if landed == 0 and (self.status is not Status.NONE or self.nightmare
+                            or self.charging_slot is not None):
+            # The volatiles go too. `statusVolatile` is cleared wholesale when a Pokemon leaves
+            # the field, and a fainted one always does -- so a Revive cannot bring back something
+            # that is still locked in a nightmare.
+            return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
+                           charging_slot=None)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
@@ -286,9 +316,19 @@ class Battler:
         """
         if self.status is not Status.SLEEP:
             return self, True
-        if self.sleep_turns <= 1:
+        # Early Bird decrements the counter by TWO rather than one
+        # (pokeplatinum src/battle/battle_controller_player.c:2442-2452), so a rolled duration of
+        # 2 costs its holder no turn at all. Worth modelling now that a target can put US to
+        # sleep: how long we spend asleep is how much Nightmare and Bad Dreams take off, and
+        # Noctowl and Xatu are ordinary things to bring.
+        decrement = SLEEP_DECREMENT_EARLY_BIRD if self.has_early_bird else SLEEP_DECREMENT
+        if self.sleep_turns <= decrement:
             return replace(self, status=Status.NONE, sleep_turns=0), True
-        return replace(self, sleep_turns=self.sleep_turns - 1), False
+        return replace(self, sleep_turns=self.sleep_turns - decrement), False
+
+    @property
+    def has_early_bird(self) -> bool:
+        return (self.ability or "").strip().lower() == "early bird"
 
 
 @dataclass

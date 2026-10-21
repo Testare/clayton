@@ -78,6 +78,69 @@ class TestApiCallsResolve(unittest.TestCase):
             self.assertIn(f'api("{call}"', _function_body(fn),
                           f"{fn} should reach {call}")
 
+    def test_glass_wires_up_the_platinum_seed_a_surface(self):
+        """Platinum identifies Seed A from coin flips, and routes with a pitch margin."""
+        called = set(_API_CALLS.findall(_HTML))
+        for method in ("list_games", "platinum_seed_a", "platinum_key_seed_info",
+                       "platinum_plan_frame"):
+            self.assertIn(method, called, f"{method} is never called from the UI")
+
+    def test_the_player_is_never_asked_to_report_a_pitch(self):
+        """A pitch is output, not input (clayton-6xu.5).
+
+        The player knows their advance frame by arithmetic -- they load on frame 0 and count what
+        they do -- so the pitch margin is an error CHECK on a number they already have. An
+        earlier version of Glass asked them to type pitches in and derived the frame from them,
+        which is measuring something already known. There is no facade call for it and no control
+        that accepts one.
+        """
+        called = set(_API_CALLS.findall(_HTML))
+        self.assertNotIn("platinum_identify_frame", called)
+        panel = _function_body("renderGlassPlatinumRoute")
+        self.assertNotIn("gl-frame-elm-new", panel)
+        # The only input in the Platinum panel is where to go.
+        self.assertEqual(panel.count("<input"), 1)
+        self.assertIn("gl-routeto", panel)
+
+    def test_the_platinum_panel_states_the_frame_rather_than_asking_for_it(self):
+        panel = _function_body("renderGlassPlatinumRoute")
+        self.assertIn("You are on advance frame", panel)
+        for gone in ("Apply", "Re-pin", "keep listening"):
+            self.assertNotIn(gone, panel, f"the Platinum panel should not offer {gone!r}")
+
+    def test_glass_picks_its_seed_a_signal_from_the_descriptor_not_the_game_name(self):
+        """One predicate, asked of the descriptor the facade builds. Branching on the game name
+        in each renderer is how a two-game fork becomes a five-game mess."""
+        body = _function_body("glassIsPlatinum")
+        self.assertIn("flips_pitch", body)
+        for renderer in ("renderGlassSeedA", "renderGlassFrame", "glassRouteHtml"):  # noqa
+            text = _function_body(renderer)
+            self.assertIn("glassIsPlatinum", text, f"{renderer} should ask the predicate")
+            self.assertNotIn("Platinum\"", text,
+                             f"{renderer} should not branch on the game's NAME")
+
+    def test_glass_keeps_both_games_on_one_route_renderer(self):
+        """The two plans are the same arithmetic with different nouns (a blind 2-advance bulk
+        action, then a readable 1-advance margin), so one renderer reads either payload."""
+        body = _function_body("glassRouteHtml")
+        for key in ("journal_flips", "cries_before_target", "chatot_flips", "elm_before_scent"):
+            self.assertIn(key, body, f"glassRouteHtml should read {key}")
+
+    def test_the_elm_identification_path_is_hgss_only(self):
+        """Appending heard calls and identifying from them is HGSS machinery. Platinum returns
+        from renderGlassFrame before reaching it, and glassIdentifyFrame has no Platinum branch
+        left to take."""
+        self.assertNotIn("glassIsPlatinum", _function_body("glassAppendFrameElm"))
+        self.assertNotIn("platinum", _function_body("glassIdentifyFrame"))
+        self.assertIn("renderGlassPlatinumRoute", _function_body("renderGlassFrame"))
+
+    def test_glass_surfaces_the_platinum_hygiene_note(self):
+        """A randomly-moving NPC spends an advance of its own and the in-game menu freezes them.
+        It is the one instruction a player cannot recover from forgetting, so the page must show
+        it rather than leaving it in the notes -- and now that the frame is counted rather than
+        measured, an NPC stealing an advance is the error the pitch margin has to catch."""
+        self.assertIn("hygiene_note", _function_body("renderGlassPlatinumRoute"))
+
     def test_glass_never_tells_the_player_to_sweet_scent(self):
         """A Seed in Glass has no encounter method, so the route guide carries no verb: the
         facade's `method` only chooses between Sweet Scent and casting a rod."""
@@ -296,6 +359,63 @@ class TestNoUndeclaredIdentifiers(unittest.TestCase):
                    "confirm", "parseInt", "parseFloat", "this"}
         missing = sorted(n for n in called if n not in declared and n not in browser)
         self.assertEqual(missing, [], f"markup calls undefined: {missing}")
+
+
+class TestMidTurnStatusIsSymmetric(unittest.TestCase):
+    """A status landed by whoever moved FIRST is live before the other half of the same turn.
+
+    The page already added the option for a status WE landed; the mirror -- one the TARGET landed
+    on us -- was missing, which left two turns unreportable: Darkrai's Hypnosis (our move simply
+    does not happen) and Latios's Dragon Breath paralysis, which has been a configured target all
+    along (clayton-6xu.3.3).
+    """
+
+    def test_both_directions_exist(self):
+        self.assertIn("function hrStatusWeJustApplied", _HTML)
+        self.assertIn("function hrStatusTargetJustApplied", _HTML)
+
+    def test_it_reads_the_targets_reported_move_not_the_opening_state(self):
+        body = _function_body("hrStatusTargetJustApplied")
+        self.assertIn("hrTargetMoveInfo()", body)
+        self.assertIn("applies_status", body)
+        self.assertIn("secondary_status", body)
+
+    def test_it_only_applies_when_the_target_moved_first(self):
+        """Our half is already over otherwise, so the status cannot have stopped it."""
+        body = _function_body("hrStatusTargetJustApplied")
+        self.assertIn("hrWeActFirst()", body)
+
+    def test_a_landed_hypnosis_short_circuits_our_half_of_the_turn(self):
+        body = _function_body("hrOurOutcomeBlock")
+        self.assertIn('hrStatusTargetJustApplied() === "slp"', body)
+        self.assertIn("fell asleep before its turn", body)
+
+    def test_paralysis_joins_the_options_rather_than_replacing_them(self):
+        """It only MIGHT stop the move, unlike sleep -- the same asymmetry the target side
+        already makes."""
+        body = _function_body("hrOurOutcomeBlock")
+        self.assertIn('hrStatusTargetJustApplied() === "par"', body)
+        self.assertIn("was fully paralyzed", body)
+
+
+class TestTheVanishedTargetIsExplained(unittest.TestCase):
+    """Shadow Force's charge turn: nothing we do can reach Giratina that turn.
+
+    Worth a line on the page rather than leaving it to be inferred -- four moves missing in a row
+    with no explanation reads as a broken tool. And it is a MISS, not a prevention: the move
+    happened and spent its rolls, so it cannot ride on `guaranteed_fail`, which renders as a bare
+    slot token (clayton-6xu.3.4).
+    """
+
+    def test_our_outcome_block_short_circuits_on_a_vanished_target(self):
+        body = _function_body("hrOurOutcomeBlock")
+        self.assertIn("s.target.vanished", body)
+        self.assertIn("is away", body)
+
+    def test_it_records_a_miss_rather_than_a_prevention(self):
+        body = _function_body("hrOurOutcomeBlock")
+        vanished = body[body.index("s.target.vanished"):]
+        self.assertIn('result: "-"', vanished[:400])
 
 
 if __name__ == "__main__":

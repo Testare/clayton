@@ -293,16 +293,41 @@ _WEATHER_MODIFIERS: dict[str, dict[str, tuple[int, int]]] = {
     WEATHER_SUN: {"Fire": (15, 10), "Water": (1, 2)},
 }
 
-#: Abilities that change damage and are NOT modelled here. Listed so an unmodelled one is
-#: reported rather than silently ignored -- the same discipline `unsupported_reason` applies to
-#: moves, and for incoming damage an unnoticed modifier is unsound, not merely imprecise.
-UNMODELLED_DAMAGE_ABILITIES = frozenset({
+#: Abilities that change the damage their holder **DEALS** and are NOT modelled here.
+#:
+#: Listed so an unmodelled one is reported rather than silently ignored -- the same discipline
+#: `unsupported_reason` applies to moves, and for incoming damage an unnoticed modifier is
+#: unsound, not merely imprecise.
+UNMODELLED_ATTACKER_ABILITIES = frozenset({
     "huge power", "pure power", "hustle", "guts", "blaze", "torrent", "overgrow", "swarm",
-    "flash fire", "thick fat", "heatproof", "levitate", "solid rock", "filter", "sniper",
-    "tinted lens", "rivalry", "slow start", "iron fist", "reckless", "sheer force",
-    "adaptability", "dry skin", "water absorb", "volt absorb", "flash fire", "wonder guard",
-    "marvel scale", "mold breaker",
+    "sniper", "tinted lens", "rivalry", "slow start", "iron fist", "reckless", "sheer force",
+    "adaptability", "mold breaker",
 })
+
+#: Abilities that change the damage their holder **TAKES** and are not modelled here.
+#:
+#: Separated from the attacker set because `unsupported_attacker_reason` is asked of the
+#: ATTACKER, and a defensive ability there changes nothing. Conflating the two had a real cost:
+#: once the facade started setting the target's ability from its encounter row, every Levitate
+#: holder -- both Lati twins and Giratina Origin -- was reported as an unmodelled ATTACKER and
+#: so dealt zero damage, which is not a conservative error but a wrong prediction
+#: (clayton-6xu.3.4).
+#:
+#: Nothing reads this yet. It is the list a defender-side check would use, and it is here so the
+#: split above is a statement about which side each ability acts on rather than a deletion.
+UNMODELLED_DEFENDER_ABILITIES = frozenset({
+    "flash fire", "thick fat", "heatproof", "solid rock", "filter", "dry skin", "water absorb",
+    "volt absorb", "wonder guard", "marvel scale",
+})
+
+#: Both, for a caller that wants "any ability that touches damage".
+UNMODELLED_DAMAGE_ABILITIES = UNMODELLED_ATTACKER_ABILITIES | UNMODELLED_DEFENDER_ABILITIES
+
+#: Levitate is in NEITHER set, because it is fully modelled: in Gen 4 it grants immunity to
+#: Ground moves and does nothing else whatsoever. So it is a type rule, not an unknown
+#: multiplier -- see `_levitates`. Treating it as unmodelled was the bug above.
+ABILITY_LEVITATE = "levitate"
+TYPE_GROUND = "Ground"
 
 
 @dataclass(frozen=True)
@@ -329,6 +354,21 @@ class Defender:
     types: tuple[str, ...]
     defence_stage: int = 0
     special_defence_stage: int = 0
+    #: The defender's ability. Only Levitate is read, and only as a Ground immunity -- which is
+    #: all Levitate is in Gen 4. Last, so every positional construction keeps working.
+    ability: str = ""
+
+
+def _levitates(defender: Defender, move: Move) -> bool:
+    """Whether Levitate makes this move do nothing at all.
+
+    A type rule rather than an unmodelled multiplier: Gen 4 Levitate grants immunity to Ground
+    moves and has no other effect, so a Normal move against a Levitate holder is simply a normal
+    move. Both Lati twins and Giratina Origin have it, and the Distortion World fight is the one
+    where it matters -- its sibling in Turnback Cave has Pressure instead.
+    """
+    return (defender.ability or "").strip().lower() == ABILITY_LEVITATE \
+        and move.type_name == TYPE_GROUND
 
 
 def unsupported_reason(move: Move, *, power_known: bool = False) -> str | None:
@@ -375,7 +415,7 @@ def unsupported_attacker_reason(attacker: Attacker) -> str | None:
     never assumed inert. For incoming damage an unnoticed multiplier eliminates the true seed.
     """
     ability = attacker.ability.strip().lower()
-    if ability in UNMODELLED_DAMAGE_ABILITIES:
+    if ability in UNMODELLED_ATTACKER_ABILITIES:
         return f"{attacker.ability} changes damage and is not modelled"
     return None
 
@@ -429,6 +469,11 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
         raise ValueError(f"damage roll must be 85..100, got {roll}")
     if weather not in WEATHERS:
         raise ValueError(f"unknown weather {weather!r}; expected one of {WEATHERS}")
+    if _levitates(defender, move):
+        # Immune, which is a real answer rather than a refusal: Levitate's whole effect in Gen 4
+        # is "Ground moves do not hit me". Returned here rather than folded into the type chart
+        # because the chart is about types and this is about an ability.
+        return 0
 
     physical = move.category == CATEGORY_PHYSICAL
     attack = attacker.attack if physical else attacker.special_attack

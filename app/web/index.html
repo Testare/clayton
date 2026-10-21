@@ -3880,9 +3880,10 @@ function renderSafariCalibrateModel(){
 // target, the ball, and the seed targeting. The live encounter runs in Battle Compass, whose
 // mid-battle state is never persisted here -- the same split as Expedition vs Safari Compass.
 
-const BALLS = ["Poké Ball", "Great Ball", "Ultra Ball", "Fast Ball", "Level Ball", "Heavy Ball",
-  "Love Ball", "Lure Ball", "Moon Ball", "Friend Ball", "Timer Ball", "Quick Ball", "Dusk Ball",
-  "Net Ball", "Dive Ball", "Nest Ball", "Repeat Ball", "Luxury Ball", "Premier Ball"];
+// The balls this hunt's game actually has, fetched per hunt (see huntConfigure). Null until
+// then; the picker renders whatever is in `h.capture_ball` meanwhile so a stored choice is never
+// dropped by a race.
+let _huntBalls = null;
 const STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
 const STAT_LABEL = {hp:"HP", atk:"Attack", def:"Defense", spa:"Sp. Atk", spd:"Sp. Def", spe:"Speed"};
 const NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","Relaxed","Impish",
@@ -4135,6 +4136,9 @@ async function huntRunStart(_owner, id){
     huntAdviceInvalidate();
     _huntSetup = await api("hunt_run_setup", id);
     const d = _huntSetup.seed_a_defaults || {};
+    // Which Seed A signal this hunt's game offers, asked of the descriptor the facade builds --
+    // the same predicate Glass uses, so neither page branches on a game NAME.
+    _hsaSignal = _huntSetup.seed_a_signal || {};
     _hsa = {
       startrel: d.startrel || "",
       secondsWindow: d.seconds_window ?? 2,
@@ -4151,9 +4155,14 @@ async function huntRunStart(_owner, id){
       // static encounter the frame decides which Suicune the A-press generates, so it is what
       // tells the player either how to reach the one they planned (key-seed hit) or which one
       // they are about to get (anything else).
-      frameObservedElm: "", frameElmPrefill: "", frameCandidates: null,
+      frameObserved: "", framePrefill: "", frameCandidates: null,
       pinnedFrame: null, frameGuide: null,
+      // Platinum: the flips typed to narrow the seed, and nothing to pin -- the advance frame is
+      // counted from the venue's starting frame, which the hunt carries.
+      observedFlips: "",
     };
+    // A Platinum run is on its starting frame the moment it loads; there is no frame to find.
+    if (huntIsPlatinum()) _hsa.pinnedFrame = _huntSetup.start_frame ?? 0;
     renderHuntSetup();
     huntSeedAFocus();
   } catch (e) { toast(String(e.message || e)); }
@@ -4186,6 +4195,12 @@ function huntKeySeedValue(){
   return /^0x[0-9a-fA-F]+$/.test(t) ? parseInt(t.slice(2), 16) : null;
 }
 
+// Which Seed A signal this hunt's game has (see huntRunStart). Platinum identifies the seed from
+// Poketch coin flips -- which cost no advances -- and counts the advance frame rather than
+// measuring it; HGSS uses roamer routes and Elm calls.
+let _hsaSignal = {};
+function huntIsPlatinum(){ return _hsaSignal.kind === "flips_pitch"; }
+
 function huntValidateStartRel(){
   const el = $("hsa-startrel");
   if (el) el.classList.toggle("invalid", !_startRelValid(el.value));
@@ -4206,8 +4221,10 @@ async function huntGenerateSeedA(){
   if (keySeed == null){ toast("Enter the key seed first — Seed A is searched around it."); return; }
   if (!time){ toast("Enter an initial time first."); return; }
   try {
-    _hsa.startrel = $("hsa-startrel").value;
-    const prev = parseStartRel(_hsa.startrel);
+    const plat = huntIsPlatinum();
+    // No roamer starting positions on Platinum: nothing relocates at game load.
+    _hsa.startrel = plat ? "" : $("hsa-startrel").value;
+    const prev = plat ? {} : parseStartRel(_hsa.startrel);
     _hsa.secondsWindow = Number($("hsa-secwin").value);
     _hsa.delayWindow = Number($("hsa-delaywin").value);
     _hsa.matchParity = $("hsa-parity").checked;
@@ -4215,19 +4232,32 @@ async function huntGenerateSeedA(){
       target_time: time, key_seed: keySeed, prev_routes: prev,
       seconds_window: _hsa.secondsWindow, delay_window: _hsa.delayWindow,
       match_parity: _hsa.matchParity };
-    _hsa.candidates = await api("metronome_seed_a", _hsa.seedAParams);
-    _hsa.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
+    _hsa.observedFlips = "";
+    if (plat){
+      _hsa.candidates = await api("platinum_seed_a", _hsa.seedAParams);
+      _hsa.keyInfo = await api("platinum_key_seed_info", keySeed);
+    } else {
+      _hsa.candidates = await api("metronome_seed_a", _hsa.seedAParams);
+      _hsa.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
+    }
     // Remembered per hunt: the roamers' starting positions belong to the save file, not the run.
     await api("hunt_save_seed_a_defaults", _huntRunHunt, {
       startrel: _hsa.startrel, seconds_window: _hsa.secondsWindow,
       delay_window: _hsa.delayWindow, match_parity: _hsa.matchParity });
     renderHuntSetup();
-    $("hsa-obsrel")?.focus();
+    ($("hsa-flips") || $("hsa-obsrel"))?.focus();
   } catch (e) { toast(String(e.message || e)); }
 }
 
 async function huntNarrowSeedA(){
   try {
+    if (huntIsPlatinum()){
+      _hsa.observedFlips = $("hsa-flips").value;
+      _hsa.candidates = await api("platinum_seed_a",
+        {..._hsa.seedAParams, observed_flips: _hsa.observedFlips});
+      $("hsa-candA").innerHTML = renderCandAFlips(_hsa.candidates, "huntPickSeedA");
+      return;
+    }
     const params = {..._hsa.seedAParams,
       rel_observed: $("hsa-obsrel").value, elm_observed: $("hsa-elm").value};
     _hsa.candidates = await api("metronome_seed_a", params);
@@ -4249,17 +4279,21 @@ function huntPickSeedA(seed){
   // The Elm calls typed to narrow Seed A ARE the calls heard since it loaded, so they are the
   // start of the frame identification -- prefilled rather than applied, so a mistyped call can
   // be corrected first. Same handoff Safari Compass makes.
-  const elmHeard = $("hsa-elm")?.value || "";
+  // No Platinum equivalent: coin flips are a different generator, so they say nothing about the
+  // advance frame and there is nothing to hand over.
+  const elmHeard = huntIsPlatinum() ? "" : ($("hsa-elm")?.value || "");
   if (changed){
     // A different Seed A is a different Suicune on a different stream: the confirmed spread
     // describes nothing, the pinned frame belonged to the old seed, and the Seed B window found
     // under it is equally stale.
     _hsa.spread = null; _hsa.spreadConfirmed = false;
-    _hsa.frameObservedElm = ""; _hsa.frameCandidates = null;
+    _hsa.frameObserved = ""; _hsa.frameCandidates = null;
     _hsa.pinnedFrame = null; _hsa.frameGuide = null;
     _huntWindow = null;
   }
-  _hsa.frameElmPrefill = elmHeard;
+  _hsa.framePrefill = elmHeard;
+  // A Platinum run never lost its frame: it is the venue's starting frame, counted from.
+  if (huntIsPlatinum()) _hsa.pinnedFrame = _huntSetup.start_frame ?? 0;
   renderHuntSetup();
   // Seed A advances is the next step either way -- the guide on a key-seed hit, the frame
   // identification otherwise.
@@ -4281,7 +4315,8 @@ function renderHuntSeedA(){
   if (_hsa.seedA && !_hsa.editing){
     const key = huntSeedAIsKeySeed();
     return `<h3>Seed A — identified</h3>
-      <div class="info-line done">${_seedASummary(_hsa.seedA)}</div>
+      <div class="info-line done">${huntIsPlatinum()
+        ? _seedASummaryFlips(_hsa.seedA) : _seedASummary(_hsa.seedA)}</div>
       <div class="hr-small ${key ? "muted" : ""}" style="margin:6px 0">${key
         ? `This is the key seed, so the target is the ${esc(hsaTarget())} this hunt was planned
            around — its configured nature and IVs still apply and there is nothing more to
@@ -4292,15 +4327,17 @@ function renderHuntSeedA(){
       <button class="btn small" onclick="huntChangeSeedA()">Change Seed A</button>`;
   }
   const hasCand = !!_hsa.candidates;
+  const plat = huntIsPlatinum();
   const keepBar = _hsa.seedA
-    ? `<div class="info-line">Currently: ${_seedASummary(_hsa.seedA)}</div>
+    ? `<div class="info-line">Currently: ${huntIsPlatinum()
+         ? _seedASummaryFlips(_hsa.seedA) : _seedASummary(_hsa.seedA)}</div>
        <button class="btn small" onclick="huntKeepSeedA()">Keep this Seed A</button>` : "";
   return `<h3>Seed A — ${_hsa.seedA ? "change" : "initial"} seed</h3>
     ${keepBar}
     <div class="rel-row">
-      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
+      ${plat ? "" : `<div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
         <input id="hsa-startrel" value="${esc(_hsa.startrel || "")}" placeholder="31 30 7  (- = not roaming)"
-          oninput="huntValidateStartRel()" onkeydown="hsaSeedAKey(event)"></div>
+          oninput="huntValidateStartRel()" onkeydown="hsaSeedAKey(event)"></div>`}
       <div class="field"><label>± seconds</label><input id="hsa-secwin" type="number" min="0"
         value="${_hsa.secondsWindow}" onkeydown="hsaSeedAKey(event)"></div>
       <div class="field"><label>± delays</label><input id="hsa-delaywin" type="number" min="0"
@@ -4309,18 +4346,25 @@ function renderHuntSeedA(){
     </div>
     <div class="field check"><input type="checkbox" id="hsa-parity" ${_hsa.matchParity?"checked":""}>
       <label for="hsa-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
-    <div class="info-line" id="hsa-keyinfo">${_hsa.keyInfo
-      ? `key seed: R${_hsa.keyInfo.r_route??"\u00b7"} E${_hsa.keyInfo.e_route??"\u00b7"} L${_hsa.keyInfo.l_route??"\u00b7"} · elm ${esc(_hsa.keyInfo.elm)}`
-      : "key seed: —"}</div>
-    <div class="grid2">
+    <div class="info-line" id="hsa-keyinfo">${!_hsa.keyInfo ? "key seed: —" : plat
+      ? `key seed: flips <code>${esc((_hsa.keyInfo.flips||"").slice(0,12))}</code>`
+      : `key seed: R${_hsa.keyInfo.r_route??"\u00b7"} E${_hsa.keyInfo.e_route??"\u00b7"} L${_hsa.keyInfo.l_route??"\u00b7"} · elm ${esc(_hsa.keyInfo.elm)}`}</div>
+    ${plat
+      ? `<div class="field">${helpLabel('Coin flips (H/T)', 'Flip the coin in the Poketch coin-toss app and type what you get, in order. The coin toss reads a different generator from the one advances are counted on, so flipping costs NOTHING -- you can identify the seed without moving the advance frame. Around 10 flips pins a single candidate.')}
+        <input id="hsa-flips" value="${esc(_hsa.observedFlips || "")}" placeholder="HTTHH…"
+          oninput="huntNarrowSeedA()" onkeydown="hsaElmKey(event)"
+          ${hasCand?"":"disabled"}></div>`
+      : `<div class="grid2">
       <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
         <input id="hsa-obsrel" placeholder="38 42 11  (. = any)" oninput="huntNarrowSeedA()"
           onkeydown="hsaObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
         <input id="hsa-elm" placeholder="EKP…" oninput="huntNarrowSeedA()"
           onkeydown="hsaElmKey(event)" ${hasCand?"":"disabled"}></div>
-    </div>
-    <div id="hsa-candA">${hasCand ? renderCandA(_hsa.candidates, "huntPickSeedA")
+    </div>`}
+    <div id="hsa-candA">${hasCand
+      ? (plat ? renderCandAFlips(_hsa.candidates, "huntPickSeedA")
+              : renderCandA(_hsa.candidates, "huntPickSeedA"))
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
 }
 
@@ -4354,7 +4398,7 @@ async function huntIdentifyFrame(){
   try {
     const res = await api("safari_compass_identify_frame", {
       seed: _hsa.seedA.seed, prev_routes: _hsa.seedAParams.prev_routes,
-      observed_elm: _hsa.frameObservedElm});
+      observed_elm: _hsa.frameObserved});   // HGSS only -- see renderHuntFrameGuide
     _hsa.frameCandidates = res.frames;
     if (res.pinned){
       _hsa.pinnedFrame = res.frame;
@@ -4377,28 +4421,33 @@ async function huntAppendFrameElm(){
   const el = $("hsa-frame-elm-new");
   const add = (el?.value || "").trim();
   if (!add) return;
-  _hsa.frameObservedElm = (_hsa.frameObservedElm || "") + add;
-  _hsa.frameElmPrefill = "";
+  _hsa.frameObserved = (_hsa.frameObserved || "") + add;
+  _hsa.framePrefill = "";
   await huntIdentifyFrame();
 }
 
 function huntChangeFrameElm(){
   // Move what was heard back into the input rather than discarding it: the usual reason to
   // come back here is one mistyped call in an otherwise correct sequence.
-  const moved = _hsa.frameObservedElm || "";
-  _hsa.frameObservedElm = ""; _hsa.frameCandidates = null;
+  const moved = _hsa.frameObserved || "";
+  _hsa.frameObserved = ""; _hsa.frameCandidates = null;
   _hsa.pinnedFrame = null; _hsa.frameGuide = null;
-  _hsa.frameElmPrefill = moved;
+  _hsa.framePrefill = moved;
   renderHuntSetup();
   $("hsa-frame-elm-new")?.focus();
 }
 
 async function huntPlanFrameRoute(target){
   try {
-    _hsa.frameGuide = await api("safari_compass_plan_frame", {
-      seed: _hsa.seedA.seed, prev_routes: _hsa.seedAParams.prev_routes,
-      current_frame: _hsa.pinnedFrame, encounter_frame: target,
-      margin: huntFrameMargin()});
+    _hsa.frameGuide = huntIsPlatinum()
+      ? await api("platinum_plan_frame", {
+          seed: _hsa.seedA.seed, target_frame: target,
+          current_frame: _hsa.pinnedFrame, margin: huntFrameMargin(),
+          start_frame: _huntSetup.start_frame ?? 0})
+      : await api("safari_compass_plan_frame", {
+          seed: _hsa.seedA.seed, prev_routes: _hsa.seedAParams.prev_routes,
+          current_frame: _hsa.pinnedFrame, encounter_frame: target,
+          margin: huntFrameMargin()});
     renderHuntSetup();
     $("hrVectorMs")?.focus();
   } catch (e) { toast(String(e.message || e)); }
@@ -4414,6 +4463,9 @@ function renderHuntFrameGuide(){
   const onKeySeed = huntSeedAIsKeySeed();
 
   if (_hsa.pinnedFrame == null){
+    // Unreachable on Platinum: `pinnedFrame` is set from the venue's starting frame as soon as
+    // the run opens, because the advance frame is counted rather than identified. The branch
+    // below is HGSS's Elm-call identification.
     const target = huntKeySeedTargetFrame();
     const why = target != null
       ? `Seed A is the key seed, so the ${esc(hsaTarget())} you planned for is waiting at advance
@@ -4433,12 +4485,12 @@ function renderHuntFrameGuide(){
              ${_hsa.frameCandidates.join(", ")} — keep listening.</div>`;
     return `<h3>Seed A advances</h3>
       <div class="hint muted" style="margin-bottom:8px">${why}</div>
-      ${_hsa.frameObservedElm ? `<div class="hr-small muted">Elm calls so far:
-        <code>${esc(_hsa.frameObservedElm)}</code>
+      ${_hsa.frameObserved ? `<div class="hr-small muted">Elm calls so far:
+        <code>${esc(_hsa.frameObserved)}</code>
         <button class="btn small" type="button" onclick="huntChangeFrameElm()">Change</button>
         </div>` : ""}
       <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
-        <input id="hsa-frame-elm-new" value="${esc(_hsa.frameElmPrefill || "")}"
+        <input id="hsa-frame-elm-new" value="${esc(_hsa.framePrefill || "")}"
           placeholder="PEKE…" autocomplete="off"
           onkeydown="if(event.key==='Enter'){event.preventDefault();huntAppendFrameElm();}">
         </div>
@@ -4475,16 +4527,26 @@ function renderHuntFrameGuide(){
       </div>`;
   }
   const g = _hsa.frameGuide;
+  // The two games' plans are the same arithmetic with different nouns -- a blind 2-advance bulk
+  // action, then a readable 1-advance margin -- so one renderer reads either payload.
+  const plat = huntIsPlatinum();
+  const bulk = plat ? g.journal_flips : g.chatot_flips;
+  const margin = plat ? g.cries_before_target : g.elm_before_scent;
+  const dest = plat ? g.target_frame : g.encounter_frame;
   return `<h3>Seed A advances</h3>
-    <div class="info-line">Current advance frame: <b>${g.current_frame}</b></div>
-    <div class="info-line done">${g.chatot_flips > 0
-      ? `${g.chatot_flips} chatot flip(s), then ` : ""}${g.elm_before_scent} Elm call(s) →
-      frame ${g.encounter_frame}, then press A on ${esc(hsaTarget())}.</div>
+    <div class="info-line">Current advance frame: <b>${g.current_frame}</b>${plat
+      ? ` — counted from where this save loads, not measured` : ""}</div>
+    <div class="info-line done">${bulk > 0
+      ? `${bulk} ${plat ? "Journal" : "chatot"} flip(s), then ` : ""}${margin}
+      ${plat ? "Chatot cry/cries" : "Elm call(s)"} →
+      frame ${dest}, then press A on ${esc(hsaTarget())}.</div>
     <div class="status">Guide: <code>${esc(g.guide)}</code> (press A at the "!")
-      ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer Elm
-        sequence</span>` : ""}
+      ${g.truncated ? ` — <span class="badge warn">truncated, needs a longer
+        ${plat ? "pitch" : "Elm"} sequence</span>` : ""}
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>
-    <button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>`;
+    ${plat && _hsaSignal.hygiene_note
+      ? `<div class="notice">${esc(_hsaSignal.hygiene_note)}</div>` : ""}
+    ${plat ? "" : `<button class="btn small" onclick="huntChangeFrameElm()">Re-pin the frame</button>`}`;
 }
 
 // --- The target's actual spread -------------------------------------------
@@ -5088,6 +5150,30 @@ function hrStatusWeJustApplied(){
   return null;
 }
 
+// The status the TARGET's move just inflicted on US, as its marker, or null.
+//
+// The exact mirror of hrStatusWeJustApplied, and live for the same reason: a status landed by
+// whoever moved FIRST takes effect before the other half of the same turn, while the snapshot's
+// option lists describe the state the turn OPENED in. Two real cases, one per game:
+//
+//   * Darkrai's Hypnosis (Platinum). It lands, and then our move simply does not happen -- so
+//     "is asleep" is the whole of our half of the turn and was not on the list at all.
+//   * Latios's Dragon Breath (HGSS), whose 30% paralysis is the same thing one roll later. That
+//     one MIGHT stop our move rather than certainly doing so, so it joins the options instead of
+//     replacing them -- the same asymmetry the target side already makes between sleep and par.
+function hrStatusTargetJustApplied(){
+  const t = _hrTurn, info = hrTargetMoveInfo();
+  if (!info) return null;
+  if (hrWeActFirst()) return null;              // our half is already over; the status is too late
+  if (info.applies_status){
+    if (info.guaranteed_fail) return null;      // it went ahead and did nothing
+    return t.target.result === "" ? info.applies_status : null;   // "-" is a miss
+  }
+  if (info.secondary_status && hrLanded(t.target) && t.target.secondary === true)
+    return info.secondary_status;
+  return null;
+}
+
 // How many accuracy stages OUR move just dropped on the target, or 0. The same mid-turn liveness
 // as hrStatusWeJustApplied, and the same reason for existing: a Flash that resolves first makes
 // the target's 100%-accuracy Punishment missable ON THAT TURN, while the snapshot's `can_miss`
@@ -5348,6 +5434,23 @@ function hrChipOff(text, why){
 function hrOurOutcomeBlock(){
   const s = _huntSnap, t = _hrTurn, info = hrOurMoveInfo();
   const opts = [];
+  // Asleep before we could move, from a Hypnosis that landed earlier in this same turn. One
+  // option, not a question -- and not on the snapshot's list, because the turn opened with us
+  // awake. The mirror of the same short-circuit on the target's side.
+  if (hrStatusTargetJustApplied() === "slp"){
+    if (!t.ours || t.ours.prevented !== "slp") t.ours = {prevented: "slp"};
+    return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(hrActive().name)}
+        fell asleep before its turn, so it could not move — nothing to report.</div></div>`;
+  }
+  // Away mid-charge (Shadow Force's first turn), so nothing we do can reach it. One option, like
+  // the sleep above -- but a MISS rather than a prevention: the move happened, it spent its rolls
+  // and it could not land. "It missed" and "it went ahead and did nothing" are different tokens,
+  // which is why this cannot ride on `guaranteed_fail`.
+  if (s.target.vanished){
+    if (!t.ours || t.ours.result !== "-") t.ours = {result: "-"};
+    return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
+        is away — ${esc(info.name)} could not reach it, so it missed.</div></div>`;
+  }
   if (info.damaging){
     opts.push(hrChip("Hit", `hrSet('ours',{result:'h'})`, t.ours?.result === "h"));
     opts.push(hrChip("Critical hit", `hrSet('ours',{result:'!'})`, t.ours?.result === "!"));
@@ -5374,11 +5477,19 @@ function hrOurOutcomeBlock(){
   // flinch unless the other side has a flinching move and moved first. The snapshot's list is
   // built from the turn's opening state and so can only check the MOVESET; "flinched" is then
   // narrowed here to a target that actually went first and landed such a move this turn.
+  const offeredOurs = new Set();
   (s.prevention.ours || []).forEach(o => {
     if (o.code === "fln" && !hrFlinchPossibleOnUs()) return;
+    offeredOurs.add(o.code);
     opts.push(hrChip(o.label, `hrSet('ours',{prevented:'${o.code}'})`,
                      t.ours?.prevented === o.code));
   });
+  // Paralysis the target just inflicted is live on this turn for the same reason sleep is -- but
+  // it only MIGHT stop the move, so it joins the options rather than replacing them. Latios's
+  // Dragon Breath is the live case, and it has been a configured target all along.
+  if (hrStatusTargetJustApplied() === "par" && !offeredOurs.has("par"))
+    opts.push(hrChip("was fully paralyzed", `hrSet('ours',{prevented:'par'})`,
+                     t.ours?.prevented === "par"));
   (s.resolution.ours || []).forEach(o =>
     opts.push(hrChip(o.label,
       `hrSet('ours',{snapped:true,result:'${info.damaging ? "h" : ""}'})`,
@@ -6009,8 +6120,15 @@ async function huntSaveRun(ev){
       // The page's half: identified before the session existed, so the session cannot supply it.
       a_seed: (_hsa && _hsa.seedA) ? _hsa.seedA : {},
       advance_frame: (_hsa && _hsa.pinnedFrame != null) ? _hsa.pinnedFrame : null,
-      elm_calls: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.elm_before_scent : null,
-      chatot_flips: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.chatot_flips : null,
+      // The two advance units, under the names the Run record has always used: a Journal flip is
+      // the same 2 advances as a chatot flip and a Chatot cry the same 1 as an Elm call, so the
+      // numbers mean the same thing in both games (notes/platinum.md section 3.3).
+      elm_calls: (_hsa && _hsa.frameGuide)
+        ? (huntIsPlatinum() ? _hsa.frameGuide.cries_before_target
+                            : _hsa.frameGuide.elm_before_scent) : null,
+      chatot_flips: (_hsa && _hsa.frameGuide)
+        ? (huntIsPlatinum() ? _hsa.frameGuide.journal_flips
+                            : _hsa.frameGuide.chatot_flips) : null,
       frame_guide: (_hsa && _hsa.frameGuide) ? _hsa.frameGuide.description || "" : "",
       // The spread the run was actually simulated against -- without it a saved run on a
       // non-key-seed Seed A cannot be reproduced.
@@ -6460,6 +6578,10 @@ async function huntConfigure(id){
   if(!_hunt || _hunt.id !== id){
     _hunt = await api("get_hunt", id);
     _huntProfile = await api("get_profile", _hunt.profile_id);
+    // Scoped to the profile's game: the apricorn balls do not exist in Platinum and the Sport
+    // Ball does not exist outside HGSS, and offering one the player cannot hold is how a plan
+    // gets built around a throw they cannot make.
+    _huntBalls = await api("list_balls", _hunt.profile_id);
   }
   _huntReadiness = await api("hunt_readiness", id);
   renderHuntConfigure();
@@ -6471,6 +6593,32 @@ async function huntSaveAndRefresh(){
   _hunt = await api("save_hunt", _hunt);
   _huntReadiness = await api("hunt_readiness", _hunt.id);
   renderHuntConfigure();
+}
+
+function huntBallOptions(chosen){
+  const names = (_huntBalls || []).map(b => b.name);
+  // A ball stored on the hunt but absent from this game still appears, selected, so the picker
+  // shows what is actually configured -- `hard_errors` is what says it cannot be thrown.
+  if(chosen && !names.includes(chosen)) names.unshift(chosen);
+  return names.map(n => `<option ${chosen===n?"selected":""}>${esc(n)}</option>`).join("");
+}
+
+// What the chosen ball is worth, and the two conditions it was computed FROM. Shown because a
+// conditional ball's multiplier is invisible otherwise: a Dusk Ball is x3.5 or x1 depending on an
+// hour the player never typed (it comes off the key seed) and a terrain they did.
+function huntBallReadoutHtml(ball, h){
+  if(!ball) return "";
+  const times = ball.multiplier === 10 ? "×1" : `×${(ball.multiplier/10).toFixed(1).replace(/\.0$/,"")}`;
+  const bits = [];
+  if(ball.terrain) bits.push(`terrain: ${esc(ball.terrain)}`);
+  if(ball.time_of_day) bits.push(`time of day: ${esc(ball.time_of_day)} (from the key seed's hour)`);
+  return `<div class="hr-small" style="margin-top:10px">
+      ${esc(ball.name)}: <b>${ball.guaranteed ? "always catches" : times}</b>
+      — ${esc(ball.reason)}${bits.length ? ` · ${bits.join(" · ")}` : ""}
+      ${ball.turn_dependent
+        ? ` <span class="badge warn" title="This ball's multiplier changes as the battle goes on, so the capture threshold is not constant.">turn-dependent</span>` : ""}
+    </div>
+    ${ball.unmodelled ? `<div class="notice warn">${esc(ball.unmodelled)}</div>` : ""}`;
 }
 
 function renderHuntConfigure(){
@@ -6558,10 +6706,22 @@ function renderHuntConfigure(){
         <div class="field"><label>Capture ball</label>
           <select id="hc-ball" onchange="huntSetField('capture_ball', this.value)">
             <option value="">—</option>
-            ${BALLS.map(b => `<option ${h.capture_ball===b?"selected":""}>${esc(b)}</option>`).join("")}
+            ${huntBallOptions(h.capture_ball)}
           </select>
           <div class="hint">One ball, no fallback — the solver aims at a single threshold.</div></div>
       </div>
+      <div class="grid4" style="margin-top:10px">
+        <div class="field">${helpLabel('Terrain', 'Where the encounter happens, for the conditional balls. A Dusk Ball is x3.5 in ANY cave at any hour, and a Dive Ball is x3.5 only on water. Terrain comes from the tile you stand on rather than from the map, so a cave entrance room still counts as a cave.')}
+          <select id="hc-terrain" onchange="huntSetField('terrain', this.value)">
+            ${["other","cave","water"].map(v =>
+              `<option value="${v}" ${(h.terrain||"other")===v?"selected":""}>${v}</option>`).join("")}
+          </select></div>
+        <div class="field check" style="align-self:end">
+          <input type="checkbox" id="hc-registered" ${h.target_registered?"checked":""}
+            onchange="huntSetField('target_registered', this.checked)">
+          <label for="hc-registered" style="margin:0">Already caught (Repeat Ball ×3)</label></div>
+      </div>
+      ${huntBallReadoutHtml(r.ball, h)}
       <div class="section-label" style="margin-top:14px">IVs
         <span class="muted" style="text-transform:none;font-weight:400">— from Pokéfinder.
           These are what let Battle Compass read the damage you take, so they have to be exact.</span></div>
@@ -6615,6 +6775,9 @@ function renderHuntConfigure(){
         <div class="field"><label>Delay window (±)</label>
           <input id="hc-delay-window" type="number" min="0" value="${h.delay_window ?? 60}"
             onchange="huntSetField('delay_window', +this.value)"></div>
+        <div class="field">${helpLabel('Starting advance frame', 'The advance frame a freshly loaded save sits on at this venue. Zero unless the venue is known to differ — in Platinum this replaces HeartGold/SoulSilver\'s roamer-relocation cost as the anchor for counting advances. Note the published guides number frames from 1 where this project numbers them from 0, so a guide\'s figure is one higher than the one to enter here.')}
+          <input id="hc-start-frame" type="number" min="0" value="${h.start_frame ?? 0}"
+            onchange="huntSetField('start_frame', this.value ? +this.value : 0)"></div>
       </div>
     </div>`);
 }
@@ -6764,6 +6927,11 @@ const TOD_EMOJI = {morning: "🌅", day: "☀️", night: "🌙"};
 const TOD_LABEL = {morning: "morning, 4:00–9:59", day: "day, 10:00–19:59",
   night: "night, 20:00–3:59"};
 
+// A freshly loaded seed sits on advance 0: Clayton and PokeFinder count advances from the seed
+// itself. Note the published guides are 1-BASED, so their frame numbers are one higher than ours
+// (see claytonlib.platinum_advance.PLATINUM_START_FRAME).
+const PLATINUM_START_FRAME = 0;
+
 let _glass = null;            // the open seed's whole page state
 let _glassSaveTimer = null;   // the page saves as you type, debounced
 let _glassReadTimer = null;
@@ -6846,6 +7014,12 @@ async function openSeedPage(id){
     _glass = {
       id: doc.id,
       profileName: profile.name,
+      gameName: profile.game_name || "",
+      // Which Seed A signal this game offers, and the Platinum-only hygiene note. The page
+      // asks the descriptor what to draw rather than asking which game it is -- the same
+      // reason the facade returns a descriptor instead of a boolean.
+      signal: profile.seed_a_signal || {},
+      refusal: (profile.tool_refusals || {}).glass || "",
       readout: doc.readout,
       history: doc.history || [],
       historyOpen: true,
@@ -6867,7 +7041,8 @@ async function openSeedPage(id){
       // Seed A's advance frame is a different question from which seed it is, and the live
       // answers to both are deliberately NOT persisted -- reopening the page starts clean,
       // like every other compass. Only "Save to history" writes anything.
-      frameObservedElm: "", frameElmPrefill: "", frameCandidates: null, pinnedFrame: null,
+      frameObserved: "", framePrefill: "", frameCandidates: null, pinnedFrame: null,
+      observedFlips: "",
       routeTo: doc.default_frame == null ? "" : String(doc.default_frame),
       frameGuide: null, frameProblem: "",
     };
@@ -6991,7 +7166,11 @@ function renderSeedPage(){
         <button class="btn danger" onclick="confirmDeleteSeed()">Delete</button>
         <button class="btn" onclick="setView('glass')">← All seeds</button>
       </div></div>
-    <div class="muted">profile: ${esc(_glass.profileName)}</div>
+    <div class="muted">profile: ${esc(_glass.profileName)}${
+      _glass.gameName ? " · " + esc(_glass.gameName) : ""}</div>
+    ${_glass.refusal ? `<div class="notice warn">${esc(_glass.refusal)}</div>` : ""}
+    ${_glass.signal.unset_hint
+      ? `<div class="notice">${esc(_glass.signal.unset_hint)}</div>` : ""}
     <div class="nr-stack">
       <form class="panel panel-tight" onsubmit="return false">
         <div class="grid2">
@@ -7045,6 +7224,8 @@ async function deleteSeedConfirmed(){
 // --- Seed A, exactly as every other compass does it -----------------------
 
 function glassValidateStartRel(){
+  // Absent entirely on Platinum, which has no roamer relocation at game load -- so this is a
+  // no-op there rather than a branch at every call site.
   const el = $("gl-startrel");
   if (el) el.classList.toggle("invalid", !_startRelValid(el.value));
 }
@@ -7069,8 +7250,10 @@ async function glassGenerateSeedA(){
     toast(_glass.readout?.problem || "this key seed and time cannot produce a delay"); return;
   }
   try {
-    _glass.startrel = $("gl-startrel").value;
-    const prev = parseStartRel(_glass.startrel);
+    const plat = glassIsPlatinum();
+    // No roamer starting positions to read on Platinum: nothing relocates at game load.
+    _glass.startrel = plat ? "" : $("gl-startrel").value;
+    const prev = plat ? {} : parseStartRel(_glass.startrel);
     _glass.secondsWindow = Number($("gl-secwin").value);
     _glass.delayWindow = Number($("gl-delaywin").value);
     _glass.matchParity = $("gl-parity").checked;
@@ -7078,19 +7261,34 @@ async function glassGenerateSeedA(){
       target_time: time, key_seed: keySeed, prev_routes: prev,
       seconds_window: _glass.secondsWindow, delay_window: _glass.delayWindow,
       match_parity: _glass.matchParity};
-    _glass.candidates = await api("metronome_seed_a", _glass.seedAParams);
-    _glass.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
-    // The roamers' starting positions belong to the save file, not the visit.
+    _glass.observedFlips = "";
+    if (plat){
+      _glass.candidates = await api("platinum_seed_a", _glass.seedAParams);
+      _glass.keyInfo = await api("platinum_key_seed_info", keySeed);
+    } else {
+      _glass.candidates = await api("metronome_seed_a", _glass.seedAParams);
+      _glass.keyInfo = await api("metronome_key_seed_info", keySeed, prev);
+    }
+    // The roamers' starting positions belong to the save file, not the visit. Saved for both
+    // games: the window sizes and the parity box are shared, and `startrel` is simply blank for
+    // a game with nothing roaming at load.
     await api("seed_save_seed_a_defaults", _glass.id, {
       startrel: _glass.startrel, seconds_window: _glass.secondsWindow,
       delay_window: _glass.delayWindow, match_parity: _glass.matchParity});
     renderSeedPage();
-    $("gl-obsrel")?.focus();
+    ($("gl-flips") || $("gl-obsrel"))?.focus();
   } catch (e) { toast(String(e.message || e)); }
 }
 
 async function glassNarrowSeedA(){
   try {
+    if (glassIsPlatinum()){
+      _glass.observedFlips = $("gl-flips").value;
+      _glass.candidates = await api("platinum_seed_a",
+        {..._glass.seedAParams, observed_flips: _glass.observedFlips});
+      $("gl-candA").innerHTML = renderCandAFlips(_glass.candidates, "glassPickSeedA");
+      return;
+    }
     const params = {..._glass.seedAParams,
       rel_observed: $("gl-obsrel").value, elm_observed: $("gl-elm").value};
     _glass.candidates = await api("metronome_seed_a", params);
@@ -7108,19 +7306,61 @@ function glassPickSeedA(seed){
   // The Elm calls typed to narrow Seed A ARE the calls heard since it loaded, so they are the
   // start of the frame identification -- prefilled rather than applied, so a mistyped call can
   // be corrected first. The same handoff Safari and Battle Compass make.
-  const elmHeard = $("gl-elm")?.value || "";
+  //
+  // There is deliberately NO Platinum equivalent: coin flips are a different generator, so they
+  // say nothing about the advance frame and there is nothing to hand over. That is the same
+  // property that makes flips free to use -- it cuts both ways.
+  const elmHeard = glassIsPlatinum() ? "" : ($("gl-elm")?.value || "");
   if (changed){
     // A different Seed A is a different stream: the frame pinned on the old one, and the route
     // planned from it, describe nothing here.
-    _glass.frameObservedElm = ""; _glass.frameCandidates = null;
+    _glass.frameObserved = ""; _glass.frameCandidates = null;
     _glass.pinnedFrame = null; _glass.frameGuide = null; _glass.frameProblem = "";
   }
-  _glass.frameElmPrefill = elmHeard;
+  _glass.framePrefill = elmHeard;
+  // Nothing to pin on Platinum: the seed was just loaded, so it is on the starting frame and the
+  // route can be planned immediately.
+  if (glassIsPlatinum()) _glass.pinnedFrame = PLATINUM_START_FRAME;
   renderSeedPage();
-  $("gl-frame-elm-new")?.focus();
+  if (glassIsPlatinum()){ glassPlanRoute(); $("gl-routeto")?.focus(); }
+  else $("gl-frame-elm-new")?.focus();
 }
 function glassChangeSeedA(){ _glass.editing = true; renderSeedPage(); }
 function glassKeepSeedA(){ _glass.editing = false; renderSeedPage(); }
+
+// Platinum identifies Seed A from Poketch coin flips (which cost no advances) and its advance
+// frame from Chatot cry pitch; HGSS uses roamer routes + Elm calls. One predicate, asked of the
+// descriptor the facade built, so the branch never spreads into "which game is this".
+function glassIsPlatinum(){ return _glass?.signal?.kind === "flips_pitch"; }
+
+function glassAdvanceNoun(){ return glassIsPlatinum() ? "Chatot pitches" : "Elm calls"; }
+
+// The identified-seed line, in whichever signal the game actually has. The absolute delay is
+// deliberately absent from both: it depends on the year, so only the delta from the search
+// centre is meaningful (see _seedASummary).
+function _seedASummaryFlips(a){
+  return `Seed A ${hrCopyable(a.seed_hex, "Seed A")} · delay ${a.delay_delta>=0?"+":""}${a.delay_delta}
+    · flips ${esc(a.flips.slice(0, 10))}`;
+}
+function glassSeedASummary(a){
+  return glassIsPlatinum() ? _seedASummaryFlips(a) : _seedASummary(a);
+}
+
+// The Platinum candidate table. Same columns as renderCandA where they mean the same thing
+// (seed, both deltas) and the two signals in place of the roamer routes: flips narrow the seed,
+// pitches then narrow the frame.
+function renderCandAFlips(res, pickFn){
+  if(res.count === 0) return `<div class="status">No candidates match.</div>`;
+  const rows = res.candidates.slice(0, 60).map(c => `
+    <tr class="pick" onclick="${pickFn}(${c.seed})">
+      <td>${esc(c.seed_hex)}</td><td>${c.delay_delta>=0?"+":""}${c.delay_delta}</td>
+      <td>${c.sec_delta>=0?"+":""}${c.sec_delta}</td>
+      <td><code>${esc(c.flips.slice(0, 12))}</code></td>
+      <td><code>${esc(c.pitch_display)}</code></td></tr>`).join("");
+  return `<div class="status"><b>${res.count}</b> candidate(s) — click one to identify Seed A</div>
+    <div class="candtable"><table><thead><tr><th title="A candidate initial seed still consistent with the flips entered.">seed</th><th title="How far this candidate's delay sits from the delay you aimed for.">Δdelay</th><th title="How far this candidate's RTC second sits from the second you aimed for.">Δsecond</th><th title="The Poketch coin flips this seed produces, from the first flip. Flipping costs no RNG advances, so this never moves your advance frame.">flips</th><th title="The Chatot cry pitches this seed produces from its first advance — for pinning the frame once the seed is known.">pitches</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+}
 
 function glassSeedAIsKeySeed(){
   return !!_glass?.seedA && glassKeySeedValue() === _glass.seedA.seed;
@@ -7130,7 +7370,7 @@ function renderGlassSeedA(){
   if (_glass.seedA && !_glass.editing){
     const key = glassSeedAIsKeySeed();
     return `<h3>Seed A — identified</h3>
-      <div class="info-line done">${_seedASummary(_glass.seedA)}</div>
+      <div class="info-line done">${glassSeedASummary(_glass.seedA)}</div>
       <div class="hr-small muted" style="margin:6px 0">${key
         ? `This is the key seed — you hit what you aimed at.`
         : `Not the key seed: you landed ${_glass.seedA.delay_delta >= 0 ? "+" : ""}${_glass.seedA.delay_delta}
@@ -7139,35 +7379,53 @@ function renderGlassSeedA(){
       <button class="btn small" onclick="glassChangeSeedA()">Change Seed A</button>`;
   }
   const hasCand = !!_glass.candidates;
+  const plat = glassIsPlatinum();
   const keepBar = _glass.seedA
-    ? `<div class="info-line">Currently: ${_seedASummary(_glass.seedA)}</div>
+    ? `<div class="info-line">Currently: ${glassSeedASummary(_glass.seedA)}</div>
        <button class="btn small" onclick="glassKeepSeedA()">Keep this Seed A</button>` : "";
-  return `<h3>Seed A — ${_glass.seedA ? "change" : "initial"} seed</h3>
-    ${keepBar}
-    <div class="rel-row">
-      <div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
+  // Platinum has no roamer relocation at game load, so there are no starting positions to enter
+  // and no observed routes to narrow by -- the whole REL half of the HGSS form has nothing to
+  // ask about. What replaces it is one text box of coin flips.
+  const searchRow = `<div class="rel-row">
+      ${plat ? "" : `<div class="field">${helpLabel('Roamer starting positions (R E L)', 'Roamer starting positions, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "-" to skip a roamer that is not currently roaming.')}
         <input id="gl-startrel" value="${esc(_glass.startrel || "")}" placeholder="31 30 7  (- = not roaming)"
-          oninput="glassValidateStartRel()" onkeydown="glassSeedAKey(event)"></div>
+          oninput="glassValidateStartRel()" onkeydown="glassSeedAKey(event)"></div>`}
       <div class="field"><label>± seconds</label><input id="gl-secwin" type="number" min="0"
         value="${_glass.secondsWindow}" onkeydown="glassSeedAKey(event)"></div>
       <div class="field"><label>± delays</label><input id="gl-delaywin" type="number" min="0"
         value="${_glass.delayWindow}" onkeydown="glassSeedAKey(event)"></div>
       <button class="btn primary" onclick="glassGenerateSeedA()">Generate</button>
-    </div>
-    <div class="field check"><input type="checkbox" id="gl-parity" ${_glass.matchParity?"checked":""}>
-      <label for="gl-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
-    <div class="info-line" id="gl-keyinfo">${_glass.keyInfo
-      ? `key seed: R${_glass.keyInfo.r_route??"·"} E${_glass.keyInfo.e_route??"·"} L${_glass.keyInfo.l_route??"·"} · elm ${esc(_glass.keyInfo.elm)}`
-      : "key seed: —"}</div>
-    <div class="grid2">
+    </div>`;
+  const keyInfoLine = plat
+    ? `<div class="info-line" id="gl-keyinfo">${_glass.keyInfo
+        ? `key seed: flips <code>${esc((_glass.keyInfo.flips||"").slice(0,12))}</code>`
+        : "key seed: —"}</div>`
+    : `<div class="info-line" id="gl-keyinfo">${_glass.keyInfo
+        ? `key seed: R${_glass.keyInfo.r_route??"·"} E${_glass.keyInfo.e_route??"·"} L${_glass.keyInfo.l_route??"·"} · elm ${esc(_glass.keyInfo.elm)}`
+        : "key seed: —"}</div>`;
+  const narrowRow = plat
+    ? `<div class="field">${helpLabel('Coin flips (H/T)', 'Flip the coin in the Poketch coin-toss app and type what you get, in order. The coin toss reads a different generator from the one you are counting advances on, so flipping costs you NOTHING: you can identify the seed without moving the advance frame. Around 10 flips pins a single candidate.')}
+        <input id="gl-flips" value="${esc(_glass.observedFlips || "")}" placeholder="HTTHH…"
+          oninput="glassNarrowSeedA()" onkeydown="glassElmKey(event)"
+          ${hasCand?"":"disabled"}></div>`
+    : `<div class="grid2">
       <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
         <input id="gl-obsrel" placeholder="38 42 11  (. = any)" oninput="glassNarrowSeedA()"
           onkeydown="glassObsRelKey(event)" ${hasCand?"":"disabled"}></div>
       <div class="field"><label>Elm calls heard</label>
         <input id="gl-elm" placeholder="EKP…" oninput="glassNarrowSeedA()"
           onkeydown="glassElmKey(event)" ${hasCand?"":"disabled"}></div>
-    </div>
-    <div id="gl-candA">${hasCand ? renderCandA(_glass.candidates, "glassPickSeedA")
+    </div>`;
+  return `<h3>Seed A — ${_glass.seedA ? "change" : "initial"} seed</h3>
+    ${keepBar}
+    ${searchRow}
+    <div class="field check"><input type="checkbox" id="gl-parity" ${_glass.matchParity?"checked":""}>
+      <label for="gl-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
+    ${keyInfoLine}
+    ${narrowRow}
+    <div id="gl-candA">${hasCand
+      ? (plat ? renderCandAFlips(_glass.candidates, "glassPickSeedA")
+              : renderCandA(_glass.candidates, "glassPickSeedA"))
       : `<div class="status">Click Generate to see candidates.</div>`}</div>`;
 }
 
@@ -7177,11 +7435,12 @@ function renderGlassSeedA(){
 // default frame is a frame on whatever stream you are on, so a route is always worth planning),
 // and the destination is editable, re-planning as you type without touching the stored default.
 
+// HGSS only: Platinum never reaches here, because its frame is counted rather than identified.
 async function glassIdentifyFrame(){
   try {
     const res = await api("safari_compass_identify_frame", {
       seed: _glass.seedA.seed, prev_routes: _glass.seedAParams.prev_routes,
-      observed_elm: _glass.frameObservedElm});
+      observed_elm: _glass.frameObserved});
     _glass.frameCandidates = res.frames;
     if (res.pinned){
       _glass.pinnedFrame = res.frame;
@@ -7200,18 +7459,18 @@ async function glassIdentifyFrame(){
 async function glassAppendFrameElm(){
   const add = ($("gl-frame-elm-new")?.value || "").trim();
   if (!add) return;
-  _glass.frameObservedElm = (_glass.frameObservedElm || "") + add;
-  _glass.frameElmPrefill = "";
+  _glass.frameObserved = (_glass.frameObserved || "") + add;
+  _glass.framePrefill = "";
   await glassIdentifyFrame();
 }
 
 function glassChangeFrameElm(){
   // Move what was heard back into the input rather than discarding it: the usual reason to come
   // back here is one mistyped call in an otherwise correct sequence.
-  const moved = _glass.frameObservedElm || "";
-  _glass.frameObservedElm = ""; _glass.frameCandidates = null;
+  const moved = _glass.frameObserved || "";
+  _glass.frameObserved = ""; _glass.frameCandidates = null;
   _glass.pinnedFrame = null; _glass.frameGuide = null; _glass.frameProblem = "";
-  _glass.frameElmPrefill = moved;
+  _glass.framePrefill = moved;
   renderSeedPage();
   $("gl-frame-elm-new")?.focus();
 }
@@ -7243,9 +7502,12 @@ async function glassPlanRoute(){
     glassRenderRoute(); return;
   }
   try {
-    _glass.frameGuide = await api("safari_compass_plan_frame", {
-      seed: _glass.seedA.seed, prev_routes: _glass.seedAParams.prev_routes,
-      current_frame: _glass.pinnedFrame, encounter_frame: Number(raw)});
+    _glass.frameGuide = glassIsPlatinum()
+      ? await api("platinum_plan_frame", {
+          seed: _glass.seedA.seed, target_frame: Number(raw)})
+      : await api("safari_compass_plan_frame", {
+          seed: _glass.seedA.seed, prev_routes: _glass.seedAParams.prev_routes,
+          current_frame: _glass.pinnedFrame, encounter_frame: Number(raw)});
   } catch (e) {
     // Whatever else the planner refuses belongs in the panel, not in a toast that fades while
     // you are still looking at the number you typed.
@@ -7266,13 +7528,19 @@ function glassRouteHtml(){
   if (_glass.frameProblem) return `<div class="notice warn">${esc(_glass.frameProblem)}</div>`;
   const g = _glass.frameGuide;
   if (!g) return `<div class="status">Enter a frame to route to.</div>`;
-  const steps = (g.chatot_flips > 0 ? `${g.chatot_flips} chatot flip(s), then ` : "")
-    + `${g.elm_before_scent} Elm call(s)`;
-  return `<div class="info-line done">${steps} → frame <b>${g.encounter_frame}</b>${
+  // The two games' plans are the same arithmetic with different nouns -- a blind 2-advance bulk
+  // action then a readable 1-advance margin -- so this renders one shape from either payload.
+  const plat = glassIsPlatinum();
+  const bulk = plat ? g.journal_flips : g.chatot_flips;
+  const margin = plat ? g.cries_before_target : g.elm_before_scent;
+  const target = plat ? g.target_frame : g.encounter_frame;
+  const steps = (bulk > 0 ? `${bulk} ${plat ? "Journal" : "chatot"} flip(s), then ` : "")
+    + `${margin} ${plat ? "Chatot cry/cries" : "Elm call(s)"}`;
+  return `<div class="info-line done">${steps} → frame <b>${target}</b>${
       g.total_advances === 0 ? " — you are already on it" : ""}</div>
     <div class="status">Guide: <code>${esc(g.guide)}</code> — the “!” is frame
-      ${g.encounter_frame}, so act there
-      ${g.truncated ? ` <span class="badge warn">truncated, needs a longer Elm sequence</span>` : ""}
+      ${target}, so act there
+      ${g.truncated ? ` <span class="badge warn">truncated, needs a longer ${plat ? "pitch" : "Elm"} sequence</span>` : ""}
       ${g.ambiguous ? ` <span class="badge warn">ambiguous margin</span>` : ""}</div>`;
 }
 
@@ -7280,23 +7548,30 @@ function renderGlassFrame(){
   if (!_glass.seedA)
     return `<h3>Seed A advances</h3><div class="status">Identify Seed A first.</div>`;
 
+  // Platinum has NO frame-finding step, and that is not a gap. You load the seed on frame 0 and
+  // every action from there has a known cost -- a Journal flip is 2 advances, a Chatot cry is 1 --
+  // so the frame is counted, never measured. The pitch margin in the route below is how the count
+  // gets checked: you hear it and know whether you landed where the plan said (clayton-6xu.5).
+  if (glassIsPlatinum()) return renderGlassPlatinumRoute();
+
   if (_glass.pinnedFrame == null){
+    const noun = glassAdvanceNoun();
     const cand = !_glass.frameCandidates ? ""
       : _glass.frameCandidates.length === 0
-        ? `<div class="notice warn">Those calls don't match this seed's Elm sequence — check
-             what you entered.</div>`
+        ? `<div class="notice warn">Those ${noun.toLowerCase()} don't match this seed's sequence
+             — check what you entered.</div>`
         : `<div class="status">${_glass.frameCandidates.length} possible frame(s):
              ${_glass.frameCandidates.join(", ")} — keep listening.</div>`;
     return `<h3>Seed A advances</h3>
-      <div class="hint muted" style="margin-bottom:8px">Type the Elm calls you have heard since
-        this seed loaded and Glass works out which advance frame you are on. From there it can
-        route you to any frame ahead of you.</div>
-      ${_glass.frameObservedElm ? `<div class="hr-small muted">Elm calls so far:
-        <code>${esc(_glass.frameObservedElm)}</code>
+      <div class="hint muted" style="margin-bottom:8px">Type the ${noun.toLowerCase()} you have
+        heard since this seed loaded and Glass works out which advance frame you are on. From
+        there it can route you to any frame ahead of you.</div>
+      ${_glass.frameObserved ? `<div class="hr-small muted">${noun} so far:
+        <code>${esc(_glass.frameObserved)}</code>
         <button class="btn small" type="button" onclick="glassChangeFrameElm()">Change</button>
         </div>` : ""}
       <div class="field"><label>New Elm calls heard (P/E/K) — Enter to apply</label>
-        <input id="gl-frame-elm-new" value="${esc(_glass.frameElmPrefill || "")}"
+        <input id="gl-frame-elm-new" value="${esc(_glass.framePrefill || "")}"
           placeholder="PEKE…" autocomplete="off"
           onkeydown="if(event.key==='Enter'){event.preventDefault();glassAppendFrameElm();}">
         </div>
@@ -7317,6 +7592,25 @@ function renderGlassFrame(){
     <div id="gl-route-result">${glassRouteHtml()}</div>`;
 }
 
+// The Platinum panel: one destination box and a route. No "where am I" step, no Apply button,
+// nothing to type but the frame you want.
+function renderGlassPlatinumRoute(){
+  const def = glassFrameValue();
+  return `<h3>Seed A advances</h3>
+    <div class="info-line done">You are on advance frame <b>${_glass.pinnedFrame}</b> — a freshly
+      loaded seed starts there, and Journal flips (2 advances) and Chatot cries (1) are counted
+      from it.</div>
+    ${_glass.signal.hygiene_note
+      ? `<div class="notice">${esc(_glass.signal.hygiene_note)}</div>` : ""}
+    <div class="rel-row" style="margin-top:8px">
+      <div class="field">${helpLabel('Navigate to frame', 'Where to route to. Starts at this seed\'s default frame and changing it here plans a new route without touching that default — edit the Default frame field above to change what it starts at.')}
+        <input id="gl-routeto" value="${esc(_glass.routeTo || "")}"
+          placeholder="${def === "" || def === null ? "e.g. 73" : esc(String(def))}"
+          oninput="glassRouteInput()"></div>
+    </div>
+    <div id="gl-route-result">${glassRouteHtml()}</div>`;
+}
+
 // --- Recent history -------------------------------------------------------
 // A scratchpad, not a record: nothing here can feed calibration (both fits need a vector ms and
 // a Seed B, and Glass has neither), and nothing is saved unless the button is pressed.
@@ -7330,8 +7624,14 @@ async function glassSaveHistory(){
     _glass.history = await api("seed_add_history", _glass.id, {
       seed: a.seed, seed_hex: a.seed_hex, time: a.time, delay: a.delay,
       delay_delta: a.delay_delta, sec_delta: a.sec_delta,
-      elm_heard: _glass.frameObservedElm, frame: _glass.pinnedFrame,
-      routed_to: _glass.frameGuide ? _glass.frameGuide.encounter_frame : null});
+      // HGSS records what was HEARD, because that is how its frame was established. Platinum has
+      // nothing equivalent to record: the frame came from counting, and the pitches were a check
+      // the player made in the moment rather than data they entered.
+      ...(glassIsPlatinum() ? {} : {elm_heard: _glass.frameObserved}),
+      frame: _glass.pinnedFrame,
+      routed_to: _glass.frameGuide
+        ? (glassIsPlatinum() ? _glass.frameGuide.target_frame
+                             : _glass.frameGuide.encounter_frame) : null});
     _glass.historyOpen = true;
     renderSeedPage();
     toast("Saved to history.");
@@ -7401,7 +7701,7 @@ async function renderProfiles(){
     : `<div class="row-list">` + profiles.map(p => `
         <div class="card">
           <div><div class="title">${esc(p.name)}</div>
-            <div class="sub">${esc(p.trainer_name || "—")}${p.version ? " · " + esc(p.version) : ""} ·
+            <div class="sub">${esc(p.trainer_name || "—")}${p.game_name ? " · " + esc(p.game_name) : ""} ·
               ${p.metronome_user_count} metronome user(s)</div></div>
           <div style="display:flex;gap:10px;align-items:center">
             ${p.has_valid_metronome_user
@@ -7574,7 +7874,18 @@ async function editProfile(id){
 
 // existing: a profile doc when editing settings after creation (round 13 feedback), else
 // null (create).
-function profileForm(existing){
+// The games the build knows, fetched once. Cached because the profile form is opened from two
+// places and the list cannot change while the app is running; `_games` being null just means
+// "not fetched yet", which `gamesList` resolves.
+let _games = null;
+async function gamesList(){
+  if(_games) return _games;
+  _games = await api("list_games");
+  return _games;
+}
+
+async function profileForm(existing){
+  const games = await gamesList();
   const editing = !!existing;
   mount(`<div class="head"><h2>${editing ? "Profile settings" : "New profile"}</h2></div>
     <form class="panel" onsubmit="return saveProfile(event, ${editing ? `'${esc(existing.id)}'` : "null"})">
@@ -7584,10 +7895,12 @@ function profileForm(existing){
       <div class="grid2">
         <div class="field"><label>Trainer name</label>
           <input name="trainer_name" value="${esc(existing?.trainer_name || "")}" placeholder="Testare"></div>
-        <div class="field"><label>Version</label><select name="version">
-          <option value=""${existing?.version?"":" selected"}>—</option>
-          <option${existing?.version==="HeartGold"?" selected":""}>HeartGold</option>
-          <option${existing?.version==="SoulSilver"?" selected":""}>SoulSilver</option></select></div>
+        <div class="field"><label>Game</label><select name="game" onchange="gameHint(this)">
+          <option value=""${existing?.game?"":" selected"}>—</option>
+          ${games.map(g => `<option value="${esc(g.key)}"${existing?.game===g.key?" selected":""}>`
+            + `${esc(g.name)}${g.is_supported ? "" : " (not supported yet)"}</option>`).join("")}
+        </select>
+        <div class="hint" id="game-hint">${esc(gameHintText(games, existing?.game || ""))}</div></div>
       </div>
       <div class="field"><label>Console note</label>
         <input name="console" value="${esc(existing?.console || "")}" placeholder="original DS Lite">
@@ -7600,12 +7913,33 @@ function profileForm(existing){
     </form>`);
 }
 
+// What a chosen game means, in one line under the picker. Three cases worth distinguishing:
+// unset, supported (say which tools), and not supported (say why).
+function gameHintText(games, key){
+  if(!key) return "Which cartridge this is. It decides how Seed A is identified and which tools "
+    + "can run.";
+  const g = games.find(x => x.key === key);
+  if(!g) return "";
+  if(!g.is_supported) return g.unsupported_reason;
+  const tools = g.tools.map(t => t === "expeditions" ? "Expeditions" : t === "hunts" ? "Hunts" : "Glass");
+  return `${g.name}: ${tools.join(", ")}. Seed A from `
+    + (g.seed_a_signal === "flips_pitch"
+        ? `Poketch coin flips, advances by ${g.bulk_action.toLowerCase()}s and Chatot cries.`
+        : "roamer routes and Elm calls.");
+}
+
+async function gameHint(select){
+  const el = $("game-hint");
+  if(!el) return;
+  el.textContent = gameHintText(await gamesList(), select.value);
+}
+
 async function saveProfile(ev, existingId){
   ev.preventDefault();
   const f = ev.target;
   const fields = {
     name: f.name.value, trainer_name: f.trainer_name.value.trim(),
-    version: f.version.value, console: f.console.value.trim() };
+    game: f.game.value, console: f.console.value.trim() };
   if(existingId){
     await api("update_profile", existingId, fields);
     openProfile(existingId);
@@ -7739,7 +8073,7 @@ async function openProfile(id){
         <button class="btn danger" onclick="confirmDeleteProfile('${esc(p.id)}','${esc(p.name)}')">Delete</button>
         <button class="btn" onclick="setView('profiles')">← All profiles</button>
       </div></div>
-    <div class="muted">${esc(p.trainer_name || "—")}${p.version ? " · " + esc(p.version) : ""}${p.console ? " · " + esc(p.console) : ""}</div>
+    <div class="muted">${esc(p.trainer_name || "—")}${p.game_name ? " · " + esc(p.game_name) : ""}${p.console ? " · " + esc(p.console) : ""}</div>
 
     <div class="section-label">Battle Compass party
       <span class="muted" style="text-transform:none;font-weight:400">— Pokémon you take into

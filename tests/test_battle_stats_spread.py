@@ -144,6 +144,11 @@ class TestAbilitiesAndPressure(unittest.TestCase):
         data = json.loads((pathlib.Path(__file__).resolve().parent.parent / "claytonlib"
                            / "basedata" / "base_stats.json").read_text())
         for key, entry in data.items():
+            if "forme_of" in entry:
+                # A form row's `dex_no` is its SPECIES' number, not its slot in the personal
+                # table (Giratina Origin is dex 487 and slot 501), so it cannot be indexed this
+                # way. tests/test_base_stats_rom.py's TestTheFormes covers them.
+                continue
             expected: list[str] = []
             for raw in personal[entry["dex_no"]]["abilities"]:
                 if raw == "ABILITY_NONE":

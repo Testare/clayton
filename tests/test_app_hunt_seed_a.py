@@ -384,14 +384,18 @@ class TestTheAdvanceFrameStep(unittest.TestCase):
 
     def test_the_elm_calls_typed_for_seed_a_carry_into_the_frame_step(self):
         """They are the same calls -- the ones heard since the seed loaded. Prefilled rather
-        than applied, so a mistyped call can be fixed first."""
-        self.assertIn('const elmHeard = $("hsa-elm")?.value || "";', self.html)
-        self.assertIn("_hsa.frameElmPrefill = elmHeard;", self.html)
+        than applied, so a mistyped call can be fixed first.
+
+        Platinum has no equivalent and the handoff is guarded on that: coin flips are a different
+        generator, so they say nothing about the advance frame (clayton-6xu.3.7).
+        """
+        self.assertIn('huntIsPlatinum() ? "" : ($("hsa-elm")?.value || "")', self.html)
+        self.assertIn("_hsa.framePrefill = elmHeard;", self.html)
 
     def test_re_pinning_moves_the_heard_calls_back_into_the_field(self):
         """Rather than discarding them: the usual reason to come back is one mistyped call in an
         otherwise correct sequence."""
-        self.assertIn("const moved = _hsa.frameObservedElm", self.html)
+        self.assertIn("const moved = _hsa.frameObserved", self.html)
 
 
 class TestTheSetupCarriesTheFrameInputs(unittest.TestCase):

@@ -44,9 +44,11 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
-    FLINCH_EFFECTS, HuntConfig, _effective_accuracy, accuracy_net_stage, burn_tick, can_flinch,
-    can_miss,
-    effective_speed, primary_stat_drop, secondary_description, secondary_status, simulate_turn,
+    ABILITY_BAD_DREAMS, EFFECT_NIGHTMARE, FLINCH_EFFECTS, HuntConfig, SLEEP_DURATION_MIN,
+    SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
+    can_flinch, can_inflict, can_miss, is_semi_invulnerable,
+    effective_speed, nightmare_tick, primary_stat_drop, secondary_description, secondary_status,
+    simulate_turn,
     status_applied_by, unselectable_reason, variable_base_power, weather_of,
     will_fail,
 )
@@ -186,6 +188,9 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
     for mon in party:
         if not mon.stats:
             continue
+        clock = _sleep_clock_warning(mon, target)
+        if clock:
+            out.append(clock)
         # `any_reachable_weather` on BOTH, because this is pre-hunt advice: the question is
         # "what can this battle ever do to me", and a Lugia that has not used Rain Dance yet
         # certainly will. The live indicator is the one that reads the current field
@@ -203,6 +208,59 @@ def survivability_warnings(party: "list[Battler]", target: Battler) -> list[str]
                 f"{mon.name} ({mon.max_hp} HP) survives a critical {move} at {now} now, but "
                 f"{boosted} once the target has boosted.")
     return out
+
+
+#: The most turns a sleep can cost. A rolled duration of d leaves the sleeper acting on the turn
+#: the counter reaches 1, so it loses d-1 turns -- and the residuals tick at the end of each of
+#: those and not on the waking turn, whose status check has already cleared the sleep.
+MAX_SLEEP_RESIDUAL_TURNS = SLEEP_DURATION_MIN + SLEEP_DURATION_SPAN - 2
+
+
+def _sleep_clock_warning(mon: Battler, target: Battler) -> str:
+    """Whether falling asleep is lethal to `mon`, as a sentence, or "".
+
+    **A different shape of danger from every other warning here, and the reason this function
+    exists at all.** The tiers above all ask "can one hit kill this", which is the only question
+    a target without sleep can pose. Darkrai poses another: Hypnosis costs no HP, and then
+    Nightmare takes a quarter of max HP and Bad Dreams an eighth at the end of every sleeping
+    turn -- 37.5% a turn, so a four-turn sleep kills ANY party member outright, whatever its HP
+    and whatever it would have survived as a hit. A warning table that only priced hits would
+    call that party safe.
+
+    Reported in turns rather than in HP because turns are what the player can act on: it says
+    how much of a 2-5 turn sleep is survivable, which is the same thing as how many turns of
+    healing the plan has to have in it.
+
+    Reads the target's own ability and moveset rather than taking flags, so a target that has
+    one mechanism and not the other (a sleep move but no Bad Dreams, or the reverse) gets a
+    figure that is actually its own.
+    """
+    if not can_inflict(target, Status.SLEEP):
+        return ""
+    has_nightmare = any(
+        (move := resolve_move(name)) is not None and move.effect == EFFECT_NIGHTMARE
+        for name in target.moves)
+    asleep = replace(mon, status=Status.SLEEP, sleep_turns=MAX_SLEEP_RESIDUAL_TURNS + 1,
+                     nightmare=has_nightmare)
+    per_turn = (nightmare_tick(asleep)
+                + bad_dreams_tick(asleep, opponent_has_bad_dreams=_has_bad_dreams(target)))
+    if per_turn <= 0:
+        return ""
+    survivable = (mon.max_hp - 1) // per_turn        # turns it can take and still be standing
+    sources = " and ".join(
+        [s for s in ("Nightmare" if has_nightmare else "",
+                     "Bad Dreams" if _has_bad_dreams(target) else "") if s])
+    if survivable >= MAX_SLEEP_RESIDUAL_TURNS:
+        return ""
+    return (
+        f"{mon.name} ({mon.max_hp} HP) loses {per_turn} a turn to {sources} while asleep, so it "
+        f"survives {survivable} of a sleep that can last {MAX_SLEEP_RESIDUAL_TURNS}. Keep it "
+        f"awake or heal every turn.")
+
+
+def _has_bad_dreams(target: Battler) -> bool:
+    """Read off the target's own ability, which the facade now sets from the encounter row."""
+    return (target.ability or "").strip().lower() == ABILITY_BAD_DREAMS
 
 
 def _worst_move_name(ours: Battler, target: Battler) -> str:
@@ -1401,6 +1459,7 @@ class HuntSession:
         candidate, so a mid-run `rebase` cannot leave them describing a window that no longer
         exists.
         """
+        import datetime as _dt
         info = self._session.candidate_info[seed]
         return {
             "seed": f"{seed:#010x}",
@@ -1408,6 +1467,16 @@ class HuntSession:
             "second": info.second,
             "frame_delta": info.frame_delta(self.window.frame_centre),
             "second_delta": info.second_delta(self.window.second_centre),
+            # The same two values again, in the spelling the calibration fit reads -- `delay` is
+            # the frame (one physical quantity, two historical names) and `time` is the absolute
+            # clock time this seed was generated at. Both are exact rather than reconstructed:
+            # `candidates.generate` builds the seed as
+            # `calculate_seed(initial_time + second, frame)`, so this is that expression read
+            # back. Carried on the row so a saved run is self-describing and does not depend on
+            # the hunt's configuration still saying what it said during the run (clayton-6xu.3.6).
+            "delay": info.frame,
+            "time": (self.window.initial_time
+                     + _dt.timedelta(seconds=info.second)).strftime("%Y-%m-%dT%H:%M:%S"),
         }
 
     def hp_range(self, side: str) -> dict:
@@ -1536,6 +1605,13 @@ class HuntSession:
                        "ivs": dict(self.target_ivs),
                        # The three the Ho-Oh plan spends most of its turns moving.
                        "stages": stat_stages(state.target),
+                       # Away mid-charge, so **nothing we do can reach it this turn** -- Shadow
+                       # Force's charge turn. Reported rather than left to be inferred, because
+                       # the alternative is a player watching four moves miss in a row with no
+                       # explanation and reasonably concluding the tool is broken. Our move still
+                       # spends its rolls, so the candidate filtering is unaffected; what the
+                       # page does with this is say why.
+                       "vanished": is_semi_invulnerable(state.target),
                        "move_info": move_info(state.target, state.ours)},
             # Every field condition the simulator tracks, with its remaining turns. None of it
             # was shown, so the player was holding counters in their head -- and several of these

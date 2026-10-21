@@ -6,29 +6,75 @@ order, and a Suicune met any other way would differ. Slot order matters as much 
 it is what the ``E1``-``E4`` tokens refer to and what the wild move-selection roll indexes into
 (sec 5.2 R4), so a reordered list would silently mis-simulate every turn.
 
+**Keyed by ENCOUNTER, not by species** (clayton-957.35.4). For every single-venue target the two
+coincide and the key simply is the species slug, which is why `resolve` takes either. They come
+apart where the same species is met twice: Platinum's Giratina is Lv47 in the Distortion World
+and Lv47 in Turnback Cave with a different forme, ability and base stats, so a species key could
+not hold both and the level cross-check could not tell them apart.
+
 Adding a target means adding its row here, its base stats via
-``one-offs/populate_base_stats.py``, and confirming every one of its moves is in
+``one-offs/populate_base_stats_from_rom.py``, and confirming every one of its moves is in
 ``sim.MODELLED_TARGET_EFFECTS`` -- which `unsupported_moves` checks for you rather than leaving
 to a reading of a list.
 
-**Two of these encounters are version-split, and they split in OPPOSITE directions.** This
-profile is SoulSilver, so Ho-Oh's row is the Lv70 one and Lugia's is the Lv45 one;
-`VERSION_SPLIT_LEVELS` holds the other side of each so a player on HeartGold is told what they
-are actually facing instead of being silently simulated against the wrong four moves.
+**Rows carry the GAMES they exist in**, and that is what finally fixes the bug this module's old
+docstring admitted to: it said outright "This profile is SoulSilver" and shipped SoulSilver's
+rows, so a HeartGold player was offered them too. Ho-Oh and Lugia are version-split in OPPOSITE
+directions, and only the SoulSilver side of each is on file; `VERSION_SPLIT_LEVELS` holds the
+other so a player on HeartGold is told what they are actually facing instead of being simulated
+against the wrong four moves. A profile with no game set is filtered by nothing -- see
+`supported`.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: species key -> (level, moves in slot order). Levels are the encounter's, not a range.
-STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
+
+@dataclass(frozen=True)
+class Encounter:
+    """One encounter: where it is, what it is, and what it knows.
+
+    The moveset and the level are the parts the simulator cannot do without. `ability` and
+    `forme` exist because a species row cannot answer them for a forme-split target: Giratina is
+    Pressure with one stat line in Turnback Cave and Levitate with another in the Distortion
+    World, and `battle.stats.has_pressure` reading the species would be confidently wrong for
+    one of the two -- which halves every PP budget the solver plans against.
+
+    Terrain is deliberately NOT here. It is a property of the tile you stand on rather than of
+    the encounter (`CalcTerrain`, pokeplatinum src/field_battle_data_transfer.c:467-494), so it
+    lives on the Hunt where the player can say which tile they will be on.
+    """
+    #: Species slug, as `species_names.canonical_species_name` spells it.
+    species: str
+    #: The encounter's level. Not a range: a static encounter has one.
+    level: int
+    #: Moves in slot order -- the order E1-E4 and the selection roll depend on.
+    moves: tuple[str, ...]
+    #: Game keys this encounter exists in, as `claytonlib.games` spells them. Empty means every
+    #: game, which is what a target met identically in all of them wants.
+    games: tuple[str, ...] = ()
+    #: The ability to simulate it with, or "" to take the species' slot-0 ability.
+    ability: str = ""
+    #: The `base_stats.json` key to take stats from, or "" for the species' own row. Set only
+    #: for a forme whose stats differ from the species row.
+    forme: str = ""
+    #: Where the encounter is, for a message that can say which one it means.
+    where: str = ""
+
+
+#: encounter key -> `Encounter`. For a single-venue target the key IS the species slug, so
+#: ``moveset("suicune")`` keeps working; a species met twice gets one venue-qualified key apiece.
+ENCOUNTERS: dict[str, Encounter] = {
     # HGSS Bell Tower, after the Burned Tower release. Roaming Suicune is the same set.
     # `WildBattle SPECIES_SUICUNE, 40, 0` with no version branch, so Lv40 in both versions
     # (files/fielddata/script/scr_seq/scr_seq_0024_D18R0102.s:247).
-    "suicune": (40, ("Rain Dance", "Gust", "Aurora Beam", "Mist")),
+    "suicune": Encounter(
+        "suicune", 40, ("Rain Dance", "Gust", "Aurora Beam", "Mist"),
+        games=("heartgold", "soulsilver"), where="the Bell Tower"),
     # HGSS Pewter City museum, the Enigma Stone event. `WildBattle <species>, 40, 0` with the
     # species version-gated (scr_seq_0750_T03.s:364-381): HeartGold gets Latios here and
-    # SoulSilver gets Latias, with the OTHER twin roaming at Lv35.
+    # SoulSilver gets Latias, with the OTHER twin roaming at Lv35. So these two rows are
+    # version-split by SPECIES rather than by level, and the `games` tuple is what says so.
     #
     # Derived from wotbl.narc rather than transcribed: entries are `(level << 9) | moveId` and
     # `InitBoxMonMoveset` keeps the last four learnable moves IN LEARN ORDER, which is exactly
@@ -37,28 +83,31 @@ STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # Refresh is the reason this target wants SLEEP rather than paralysis: it sheds paralysis,
     # but it is self-targeting, so a sleeping Latias cannot use it -- and awake and unstatused it
     # cures nothing and simply fails (notes/battle_compass_next_targets.md sec 4b).
-    "latias": (40, ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt")),
-    "latios": (40, ("Protect", "Refresh", "Luster Purge", "Zen Headbutt")),
+    "latias": Encounter(
+        "latias", 40, ("Water Sport", "Refresh", "Mist Ball", "Zen Headbutt"),
+        games=("soulsilver",), where="the Pewter City museum"),
+    "latios": Encounter(
+        "latios", 40, ("Protect", "Refresh", "Luster Purge", "Zen Headbutt"),
+        games=("heartgold",), where="the Pewter City museum"),
     # HGSS Bell Tower. The level is VERSION-SPLIT, and this row is **SoulSilver's**:
     # `GetGameVersion` then `Compare VAR_SPECIAL_RESULT, 7` / `GoToIfNe` picks Lv45, and the
     # fall-through picks Lv70 (scr_seq_0021_D17R0110.s:63-73). HeartGold's Lv45 Ho-Oh is a
     # DIFFERENT set -- Extrasensory / Sunny Day / Fire Blast / Sacred Fire -- so a HeartGold hunt
-    # must not use this row. `encounter_level` is what catches that: the configured level is
-    # cross-checked against it, so entering 45 here is reported rather than silently simulated
-    # with the wrong four moves.
+    # must not use this row. TWO things now catch that: `games` refuses the row outright on a
+    # HeartGold profile, and `encounter_level` still cross-checks the configured level for a
+    # profile with no game set at all.
     #
     # Derived from wotbl.narc the same way as the Lati twins: `InitBoxMonMoveset` keeps the last
     # four learnable moves in LEARN order, which is the slot order E1-E4 depends on.
-    "ho-oh": (70, ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard")),
+    "ho-oh": Encounter(
+        "ho-oh", 70, ("Sacred Fire", "Punishment", "Ancient Power", "Safeguard"),
+        games=("soulsilver",), where="the Bell Tower"),
     # HGSS Whirl Islands. Version-split the OPPOSITE way round from Ho-Oh, which is the trap:
     # `GetGameVersion` then `Compare VAR_SPECIAL_RESULT, 7` / `GoToIfNe` sends HeartGold (7) to
     # Lv70 and the fall-through gives SoulSilver Lv45 (scr_seq_0104_D40R0107.s:75-85). So this
     # row is **SoulSilver's**, and HeartGold's Lv70 Lugia is a different set entirely --
     # Aeroblast / Punishment / Ancient Power / Safeguard, none of which this row can stand in
-    # for. `encounter_level` is the cross-check that catches a player on the wrong version.
-    #
-    # Derived from wotbl.narc like the rows above: `InitBoxMonMoveset` keeps the last four
-    # learnable moves in LEARN order, which is the slot order E1-E4 depends on.
+    # for.
     #
     # Aeroblast is why this row could not exist until clayton-957.2: it is effect 43, the
     # high-crit group, and `execute_move` read `CRIT_MODIFIERS[0]` unconditionally -- so the
@@ -69,12 +118,62 @@ STATIC_ENCOUNTERS: dict[str, tuple[int, tuple[str, ...]]] = {
     # Two things make this target *easier* than Suicune to identify, both from the moveset
     # rather than from the catch rate: Hydro Pump's accuracy 80 and Aeroblast's 95 mean it
     # separates RTC-second siblings on its own, where Suicune's set could not miss at all.
-    "lugia": (45, ("Extrasensory", "Rain Dance", "Hydro Pump", "Aeroblast")),
+    "lugia": Encounter(
+        "lugia", 45, ("Extrasensory", "Rain Dance", "Hydro Pump", "Aeroblast"),
+        games=("soulsilver",), where="the Whirl Islands"),
+    # Platinum, Newmoon Island, reached by the Member Card event: `StartLegendaryBattle
+    # SPECIES_DARKRAI, 50` (res/field/scripts/scripts_newmoon_island_forest.s:44). Lv50, NOT the
+    # 40 the unused roamer slot in field_roamer.c says -- the roamer never activates.
+    #
+    # Moveset from res/pokemon/darkrai/data.json's own `learnset.by_level`, which the complete
+    # Platinum decomp exposes as JSON rather than as the packed wotbl.narc the HGSS rows had to
+    # be unpacked from: Hypnosis (20), Faint Attack (29), Nightmare (38), Double Team (47) are
+    # the last four learnable at 50, in learn order. Haze is 57, so it just misses.
+    #
+    # All four effects had to be modelled before this row could exist, the same bar Lugia's
+    # Aeroblast had to clear: Hypnosis is the first STATUS move any target has had (effect 1),
+    # Nightmare the first volatile residual (107), Double Team the first thing to degrade our own
+    # accuracy from the target's side (16), and Faint Attack the first never-miss move (17).
+    # Bad Dreams is modelled alongside them -- 1/8 of our max HP every turn we spend asleep,
+    # which with Nightmare's quarter is 37.5% a turn (`sim.bad_dreams_tick`).
+    "darkrai": Encounter(
+        "darkrai", 50, ("Hypnosis", "Faint Attack", "Nightmare", "Double Team"),
+        games=("platinum",), where="Newmoon Island"),
+    # Platinum's Giratina, met TWICE, which is the case this table's key exists for. Both at
+    # **Lv47**, so the level cross-check cannot tell them apart at all -- and they differ in
+    # forme, ability and base stats, not merely in moveset:
+    #
+    #   `StartGiratinaOriginBattle SPECIES_GIRATINA, 47`  (scripts_distortion_world_giratina_room.s:69)
+    #   `StartLegendaryBattle SPECIES_GIRATINA, 47`       (scripts_turnback_cave_giratina_room.s:35)
+    #
+    # Keyed by FORME rather than by venue, because the forme is both what distinguishes the two
+    # fights mechanically and what a player types: "Origin Giratina" names the Distortion World
+    # one unambiguously, and the key is then also the `base_stats.json` row its stats come from.
+    # `resolve("giratina")` raises and names both, with their venues.
+    #
+    # The moveset is the SAME in both, because the learnsets agree through 47 -- the form's
+    # `learnset.by_level` in res/pokemon/giratina/forms/origin/data.json is identical to the
+    # species' up to Heal Block at 50. Last four learnable at 47, in learn order: Ominous
+    # Wind(10), Ancient Power(20), Dragon Claw(30), Shadow Force(40).
+    #
+    # Two of the four were already modelled (140 twice, 0); Shadow Force is effect 272 and is the
+    # first two-turn move on either side -- see `sim.EFFECT_SHADOW_FORCE` for the three things it
+    # costs. The player also meets Giratina in the Distortion World during the story and can
+    # *leave* it there; the Turnback Cave fight is the same Pokemon met again, which is why both
+    # rows exist rather than one being the "real" one.
+    "giratina-origin": Encounter(
+        "giratina", 47, ("Ominous Wind", "Ancient Power", "Dragon Claw", "Shadow Force"),
+        games=("platinum",), ability="Levitate", forme="giratina-origin",
+        where="the Distortion World"),
+    "giratina-altered": Encounter(
+        "giratina", 47, ("Ominous Wind", "Ancient Power", "Dragon Claw", "Shadow Force"),
+        games=("platinum",), ability="Pressure", forme="giratina-altered",
+        where="Turnback Cave"),
 }
 
 #: The other side of each version-split encounter, for the cross-check's error message. Not in
-#: `STATIC_ENCOUNTERS` because nothing can simulate it yet either -- it is here so a player on
-#: the wrong version is told what they are actually facing rather than just refused.
+#: `ENCOUNTERS` because nothing can simulate it yet either -- it is here so a player on the wrong
+#: version is told what they are actually facing rather than just refused. Keyed by encounter key.
 VERSION_SPLIT_LEVELS: dict[str, tuple[int, str]] = {
     "ho-oh": (45, "HeartGold's Lv45 Ho-Oh, which has a different moveset"),
     # The inverse of the row above, and worth stating as its own entry rather than as a note on
@@ -257,7 +356,64 @@ def _join(names: list[str], conjunction: str = "or") -> str:
     return f"{', '.join(names[:-1])} {conjunction} {names[-1]}"
 
 
-def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
+def encounter_key(name: str) -> str:
+    """Normalise anything a caller might hold into an encounter key.
+
+    Shared by every lookup here so that ``"Ho-Oh"``, ``"ho-oh"`` and ``" ho oh "`` cannot resolve
+    differently depending on which function was asked.
+    """
+    return name.strip().lower().replace(" ", "-")
+
+
+def resolve(name: str, game: str = "") -> tuple[str, Encounter]:
+    """``(encounter key, row)`` for `name`, which may be an encounter key or a species slug.
+
+    `game` is a game key (`claytonlib.games`). Its job is to keep a player from being simulated
+    against another version's encounter: a HeartGold profile asking for Lugia must not silently
+    get SoulSilver's Lv45 row. **An empty `game` filters nothing**, deliberately -- every profile
+    written before the field existed has none, and refusing those would lock out every hunt that
+    already works (the same choice `games.tool_refusal` makes).
+
+    Raises `KeyError` for an unknown target, and for a species whose name is AMBIGUOUS in this
+    game -- two venues, as Giratina has. Ambiguity is an error rather than a silent first-match
+    because the two rows differ in the things the whole simulation rests on: ability, base stats
+    and moveset.
+    """
+    key = encounter_key(name)
+    rows = {k: row for k, row in ENCOUNTERS.items() if _in_game(row, game)}
+    if key in rows:
+        return key, rows[key]
+    by_species = {k: row for k, row in rows.items() if row.species == key}
+    if len(by_species) == 1:
+        return next(iter(by_species.items()))
+    if len(by_species) > 1:
+        where = ", ".join(f"{k} ({row.where})" for k, row in sorted(by_species.items()))
+        raise KeyError(
+            f"{name!r} is met more than once and the two differ in more than their moveset; "
+            f"say which: {where}")
+    # Present but filtered out by the game: say that, rather than "no such target". The two
+    # mistakes need different fixes -- one is a typo, the other is the wrong cartridge.
+    elsewhere = [k for k, row in ENCOUNTERS.items() if k == key or row.species == key]
+    if elsewhere and game:
+        from claytonlib.games import game_name
+        rowgames = sorted({g for k in elsewhere for g in ENCOUNTERS[k].games})
+        listed = ", ".join(game_name(g) or g for g in rowgames)
+        raise KeyError(
+            f"{name!r} is not an encounter in {game_name(game) or game} -- it is "
+            f"{listed}'s. Battle Compass simulates the target's turns, so the row it uses has "
+            f"to be the one from the cartridge being played.")
+    raise KeyError(
+        f"no known encounter for {name!r}. Battle Compass simulates the target's turns, so its "
+        f"moves and their slot order are required; add it to "
+        f"battle_compass.targets.ENCOUNTERS.")
+
+
+def _in_game(row: Encounter, game: str) -> bool:
+    """Whether `row` exists in `game`. No game, or a row with no games, matches everything."""
+    return not game or not row.games or game in row.games
+
+
+def unsupported_moves(name: str, game: str = "") -> tuple[tuple[str, str], str | None]:
     """``((move name, why), ...)`` for every move in this encounter's set the simulator cannot
     model, plus the same as one sentence.
 
@@ -277,13 +433,13 @@ def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
     from claytonlib.moves import resolve_move
 
     problems: list[tuple[str, str]] = []
-    for name in moveset(species):
-        move = resolve_move(name)
+    for move_name in moveset(name, game):
+        move = resolve_move(move_name)
         if move is None:
-            problems.append((name, "is not in the move table at all"))
+            problems.append((move_name, "is not in the move table at all"))
             continue
         if move.effect not in MODELLED_TARGET_EFFECTS:
-            problems.append((name, f"effect {move.effect} is not modelled"))
+            problems.append((move_name, f"effect {move.effect} is not modelled"))
             continue
         # `power_known` for a move whose power is computed from state: Punishment's power 1 in
         # the table means "work it out", not "we have no rule".
@@ -291,40 +447,61 @@ def unsupported_moves(species: str) -> tuple[tuple[str, str], str | None]:
             move, power_known=move.effect in VARIABLE_POWER_EFFECTS)
         # A status move "deals no damage" is the expected answer, not a gap.
         if reason is not None and "status move" not in reason:
-            problems.append((name, reason))
+            problems.append((move_name, reason))
     if not problems:
         return (), None
-    listed = "; ".join(f"{name} ({why})" for name, why in problems)
+    listed = "; ".join(f"{move_name} ({why})" for move_name, why in problems)
     return tuple(problems), (
-        f"{species} cannot be simulated yet -- {listed}. The simulator treats an unmodelled "
+        f"{name} cannot be simulated yet -- {listed}. The simulator treats an unmodelled "
         f"effect as inert rather than refusing it, so running this would mis-predict every turn "
         f"it fires on and eliminate the true seed.")
 
 
-def moveset(species: str) -> tuple[str, ...]:
+def moveset(name: str, game: str = "") -> tuple[str, ...]:
     """The encounter moveset, in slot order. Raises for an unknown target.
 
     Raises rather than returning empty: the simulator needs the target's moves to advance a turn
     at all, so a missing moveset is a hard stop, not a degraded mode.
     """
-    key = species.strip().lower().replace(" ", "-")
-    entry = STATIC_ENCOUNTERS.get(key)
-    if entry is None:
-        raise KeyError(
-            f"no known moveset for {species!r}. Battle Compass simulates the target's turns, so "
-            f"its moves and their slot order are required; add it to "
-            f"battle_compass.targets.STATIC_ENCOUNTERS.")
-    return entry[1]
+    return resolve(name, game)[1].moves
 
 
-def encounter_level(species: str) -> int:
+def encounter_level(name: str, game: str = "") -> int:
     """The level this target is met at, for cross-checking the configured one."""
-    key = species.strip().lower().replace(" ", "-")
-    entry = STATIC_ENCOUNTERS.get(key)
-    if entry is None:
-        raise KeyError(f"no known encounter for {species!r}")
-    return entry[0]
+    return resolve(name, game)[1].level
 
 
-def supported() -> tuple[str, ...]:
-    return tuple(sorted(STATIC_ENCOUNTERS))
+def target_ability(name: str, game: str = "") -> str:
+    """The ability to simulate this encounter with.
+
+    Off the ROW, falling back to the species' slot-0 ability. The fallback is right for every
+    target met once and wrong for exactly the case the row exists for: Giratina is Pressure in
+    Turnback Cave and Levitate in the Distortion World, and `battle.stats.has_pressure` asked
+    about the species would answer Pressure for both -- which halves every PP budget the solver
+    plans against for the fight where it does not apply.
+    """
+    _, row = resolve(name, game)
+    if row.ability:
+        return row.ability
+    from claytonlib.battle.stats import abilities
+    return (abilities(row.species) or ("",))[0]
+
+
+def stats_key(name: str, game: str = "") -> str:
+    """Which `base_stats.json` row to take this encounter's stats and types from.
+
+    The species' own row for everything met once, and the forme's row where the encounter names
+    one. Separate from `Encounter.species` because the species is still what the player typed and
+    what the Pokedex calls it -- only the STATS come from somewhere else.
+    """
+    _, row = resolve(name, game)
+    return row.forme or row.species
+
+
+def supported(game: str = "") -> tuple[str, ...]:
+    """Encounter keys this game can hunt, sorted.
+
+    An empty `game` returns everything, which is what a profile with no game set gets. See
+    `resolve` for why that is permissive rather than refused.
+    """
+    return tuple(sorted(k for k, row in ENCOUNTERS.items() if _in_game(row, game)))

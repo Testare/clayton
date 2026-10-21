@@ -64,6 +64,42 @@ def _record_for_run(run: dict) -> dict | None:
     }
 
 
+def _record_for_battle_run(run: dict) -> dict | None:
+    """A calibrate_timer-shaped record for one Battle Compass run, or None if it can't be fit.
+
+    **This is the only way a Platinum profile can ever calibrate.** The two existing fit paths
+    take ``kind="metronome"`` (the Blackthorn Magikarp matchup) and ``kind="safari"`` (a Safari
+    Zone encounter), and *both tools are HeartGold/SoulSilver only* — so a Platinum profile was
+    stuck on the bundled "Standard" model for good, with no way to improve it from its own runs
+    (notes/platinum.md §6). A battle run already carries everything the fit wants: a Vector ms,
+    an identified Seed A with its time and delay, and an identified Seed B with the same, so the
+    gap was a missing record builder rather than missing data.
+
+    It helps HGSS too — a Suicune or Lugia run is a perfectly good observation of the F_b-vs-M
+    trend, and until now it was discarded.
+
+    The `b_seed` fields come from `hunt_session._candidate_row`, which writes `delay` and `time`
+    alongside its own `frame`/`second` spelling precisely so this can read them.
+    """
+    if run.get("kind") != "battle":
+        return None
+    a, b = run.get("a_seed") or {}, run.get("b_seed") or {}
+    if run.get("vector_ms") is None or "time" not in a or "time" not in b:
+        return None
+    if a.get("delay") is None or b.get("delay") is None:
+        return None
+    return {
+        "_run_id": run["id"],
+        "tag": run.get("tag") or None,
+        "target_timer_delay": run["vector_ms"],
+        "target_timer_calibration": run.get("target_timer_calibration") or 0,
+        "a_seed": a, "b_seed": b,
+        # As for metronome runs: the app does not track mid-boot battle provenance, so every
+        # saved run is treated as a clean fresh boot.
+        "prior_battles": 0, "fresh_boot": True,
+    }
+
+
 def _record_for_safari_run(run: dict) -> dict | None:
     """A fit_safari_offset-shaped record for one app Safari Compass Run, or None if it
     can't feed the offset fit (missing Vector ms, a confident identified seed+frame, or
@@ -176,6 +212,29 @@ def _stats_for(cm) -> dict:
             "safari_jitter_c": cm.safari_jitter_c}
 
 
+def preview_battle_fit(battle_runs: list[dict], excluded_tags: list[str]) -> dict:
+    """Fit a calibration model from Battle Compass runs alone — the Platinum path.
+
+    Deliberately a **separate fit rather than pooled with the metronome runs**, and the reason is
+    the same one the safari offset exists for: the two runs reach their battle seed by different
+    routes. A metronome run loads and walks to a Chansey; a battle-compass run loads and presses A
+    on a static encounter. Whether those two load paths share an offset is **unmeasured**, and
+    pooling them would quietly average over a difference rather than measure it — exactly the
+    mistake `fit_safari_offset` was added to avoid for the Safari path.
+
+    So: one fit per observed path, and a profile uses whichever model matches what it actually
+    plays. When enough runs of both kinds exist on one profile, comparing the two fits IS the
+    measurement of whether they could have been pooled.
+    """
+    records, pre_excluded = effective_included(
+        battle_runs, set(excluded_tags), record_fn=_record_for_battle_run)
+    if not records:
+        raise ValueError(
+            "no fittable battle runs after exclusions (need Vector ms + both seeds identified)")
+    return _report_for(calibrate_timer(runs=records, verbose=False),
+                       pre_excluded, len(battle_runs))
+
+
 def preview_fit(metronome_runs: list[dict], excluded_tags: list[str]) -> dict:
     """Fit a calibration model from `metronome_runs` (after exclusions) — Metronome
     Compass's own Calibrate Model preview. Never looks at safari runs and never produces a
@@ -191,6 +250,16 @@ def preview_fit(metronome_runs: list[dict], excluded_tags: list[str]) -> dict:
 
     m = calibrate_timer(runs=records, verbose=False)
 
+    return _report_for(m, pre_excluded, len(metronome_runs))
+
+
+def _report_for(m: dict, pre_excluded: dict[str, str], n_input: int) -> dict:
+    """Shape a `calibrate_timer` result into the JSON report the preview flows return.
+
+    Shared by `preview_fit` and `preview_battle_fit`: the two differ in which runs they feed the
+    fit, not in how the answer is reported, and a second copy of this would be a second place for
+    the exclusion reasons to drift.
+    """
     reasons: dict[str, list[str]] = {rid: [reason] for rid, reason in pre_excluded.items()}
     for r in m["runs"]:
         rid = r.get("_run_id")
@@ -214,7 +283,7 @@ def preview_fit(metronome_runs: list[dict], excluded_tags: list[str]) -> dict:
         artifact_models["linear"] = models[m["recommended"]]["model"]
 
     return {
-        "n_input": len(metronome_runs), "n_pre_excluded": len(pre_excluded),
+        "n_input": n_input, "n_pre_excluded": len(pre_excluded),
         "n_runs": m["n_runs"], "n_fit": m["n_fit"],
         "n_outliers": m["n_outliers"], "n_contaminated": m["n_contaminated"],
         "recommended": m["recommended"],

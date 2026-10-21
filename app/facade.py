@@ -19,6 +19,72 @@ from app.models import (
     Profile, Run, Seed, Target, _default_preferences,
 )
 from app.store import FileStore, Store
+from claytonlib.games import (
+    ALL_TOOLS, GAMES, LEGACY_DEFAULT_SIGNAL, TOOL_GLASS, TOOL_HUNTS, UNSET_HINT,
+    canonical_game_key, game as game_info,
+)
+
+def _throw_context(hunt, species_info: dict):
+    """The non-turn context the conditional balls need, assembled from the hunt.
+
+    Three of the four pieces come from configuration or species data. The fourth, **time of day,
+    is derived rather than asked for**: the in-game hour is bits 16-23 of the key seed, so a hunt
+    that knows which seed it is aiming at already knows whether the Dusk Ball's night applies.
+    Asking the player for it would be asking them to restate something the seed already says --
+    and to get it wrong independently.
+    """
+    from claytonlib.battle.balls import ThrowContext
+    from claytonlib.safari_encounters import time_of_day
+
+    hour = None if hunt.key_seed is None else (int(hunt.key_seed) >> 16) & 0xFF
+    # An hour byte above 23 means no clock can produce the seed at all (Glass refuses it for the
+    # same reason); treat the bucket as unknown rather than inventing one.
+    bucket = time_of_day(hour) if hour is not None and hour <= 23 else ""
+    return ThrowContext(
+        terrain=hunt.terrain,
+        time_of_day=bucket,
+        target_types=tuple(species_info.get("types") or ()),
+        target_level=int(hunt.target.level or 1),
+        target_base_speed=int((species_info.get("base_stats") or {}).get("spe", 0)),
+        registered=bool(hunt.target_registered),
+    )
+
+
+def _seed_a_signal(profile) -> dict:
+    """How this profile's game identifies Seed A, as data the page can render.
+
+    Two shapes exist and the page has to render whichever one applies: HGSS narrows by roamer
+    routes and Elm calls, Platinum by Poketch coin flips, with chatot pitch for the advance
+    frame. Returning a descriptor rather than a boolean keeps the branch in one place -- the
+    page asks what to draw instead of asking which game it is.
+    """
+    found = game_info(profile.game)
+    if found is None:
+        # No game set: every profile that predates the field is HGSS, and both HGSS versions
+        # identify Seed A identically, so the signal is well-defined even when the version is
+        # not. The page shows `unset_hint` alongside, so this is a default rather than a guess
+        # the player cannot see.
+        return {"kind": LEGACY_DEFAULT_SIGNAL, "label": "roamer routes and Elm calls",
+                "bulk_action": "Chatot flip", "bulk_advances": 2, "margin_action": "Elm call",
+                "hygiene_note": "", "unset_hint": UNSET_HINT}
+    flips = found.uses_coin_flips
+    return {
+        "kind": found.seed_a_signal,
+        "label": "Poketch coin flips" if flips else "roamer routes and Elm calls",
+        "bulk_action": found.bulk_action,
+        "bulk_advances": found.bulk_advances,
+        "margin_action": found.margin_action,
+        # The one thing a Platinum player must do that an HGSS player need not, and it is
+        # invisible when forgotten: a randomly-moving NPC spends an advance of its own, and the
+        # in-game menu freezes them. The Journal lives in that menu anyway.
+        "hygiene_note": (
+            "Press X to open the in-game menu the moment you enter the world -- it freezes the "
+            "NPCs, which would otherwise spend advances of their own. The Journal is in there "
+            "too. Your Chatot also needs a recorded cry, or playing it spends no advance at all."
+        ) if flips else "",
+        "unset_hint": "",
+    }
+
 
 _PROFILES = "profiles"
 _EXPEDITIONS = "expeditions"
@@ -94,7 +160,9 @@ class Facade:
                 "id": p.id,
                 "name": p.name,
                 "trainer_name": p.trainer_name,
-                "version": p.version,
+                "game": p.game,
+                "game_name": p.game_name,
+                "version": p.game_name,
                 "console": p.console,
                 "metronome_user_count": len(p.metronome_users),
                 "has_valid_metronome_user": p.has_valid_metronome_user,
@@ -120,7 +188,31 @@ class Facade:
             pokemon_dict["hard_errors"] = errors
             pokemon_dict["is_hunt_ready"] = not errors
         doc["has_valid_metronome_user"] = p.has_valid_metronome_user
+        doc["game_name"] = p.game_name
+        # Why each tool can't run, per tool, so a page can refuse with a sentence instead of
+        # re-deriving the rule. Empty string == this tool works.
+        doc["tool_refusals"] = {tool: p.tool_refusal(tool) for tool in ALL_TOOLS}
+        doc["seed_a_signal"] = _seed_a_signal(p)
         return doc
+
+    def list_games(self) -> list[dict]:
+        """Every game the build knows, for the profile form's picker.
+
+        Unsupported games are listed rather than hidden, with their reason attached: a player who
+        owns Diamond should see it and be told why it is not ready, not wonder whether the app has
+        heard of it.
+        """
+        return [{
+            "key": g.key,
+            "name": g.name,
+            "is_supported": g.is_supported,
+            "unsupported_reason": g.unsupported_reason,
+            "tools": sorted(g.tools),
+            "seed_a_signal": g.seed_a_signal,
+            "bulk_action": g.bulk_action,
+            "bulk_advances": g.bulk_advances,
+            "margin_action": g.margin_action,
+        } for g in GAMES]
 
     def create_profile(self, fields: dict) -> dict:
         name = (fields.get("name") or "").strip()
@@ -129,7 +221,9 @@ class Facade:
         p = Profile(
             name=name,
             trainer_name=fields.get("trainer_name", ""),
-            version=fields.get("version", ""),
+            # Accepts the key or a display name (and the old "version" spelling), so the UI can
+            # send either and an import written by an older build still resolves.
+            game=canonical_game_key(fields.get("game") or fields.get("version") or ""),
             console=fields.get("console", ""),
         )
         self._save_profile(p)
@@ -168,7 +262,7 @@ class Facade:
         p = self._load_profile(profile_id)
         p.name = name
         p.trainer_name = fields.get("trainer_name", "")
-        p.version = fields.get("version", "")
+        p.game = canonical_game_key(fields.get("game") or fields.get("version") or "")
         p.console = fields.get("console", "")
         self._save_profile(p)
         return self.get_profile(profile_id)
@@ -402,7 +496,12 @@ class Facade:
         profile_id = fields.get("profile_id")
         if not profile_id:
             raise ValueError("a hunt must reference a profile")
-        self._load_profile(profile_id)
+        profile = self._load_profile(profile_id)
+        # The same gate Glass applies, in the same place and for the same reason: refused at the
+        # facade so it holds however a hunt is created, and with the game's own sentence.
+        refusal = profile.tool_refusal(TOOL_HUNTS)
+        if refusal:
+            raise ValueError(refusal)
         self._assert_hunt_name_free(name)
         h = Hunt.from_dict({**fields, "name": name})
         self._store.write(_HUNTS, h.id, h.to_dict())
@@ -476,18 +575,27 @@ class Facade:
         bench = tuple(battler_for(m, item, party_slot=i + 2)
                       for i, (m, item) in enumerate(members[1:]) if m is not None)
 
-        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.battle_compass.targets import moveset, stats_key, target_ability
         from claytonlib.moves import resolve_move
-        target_moves = moveset(hunt.target.species)
+        target_moves = moveset(hunt.target.species, profile.game)
+        # Which base-stats row the target's numbers come from. The same as the species for every
+        # target met once; for a forme-split one it is the forme's row, which is the whole reason
+        # Giratina needed two encounters -- Origin is 120/100/120/100 against Altered's
+        # 100/120/100/120 (clayton-6xu.3.4).
+        stats_row = stats_key(hunt.target.species, profile.game)
         nature = (spread or {}).get("nature") or hunt.target.nature
         ivs = (spread or {}).get("ivs") or dict(hunt.target.ivs)
         target = Battler(
             name=hunt.target.species.title(), level=hunt.target.level,
-            types=tuple(species_data(hunt.target.species)["types"]),
-            stats=derive_species_stats(hunt.target.species, hunt.target.level,
-                                       nature, ivs=dict(ivs)),
+            types=tuple(species_data(stats_row)["types"]),
+            stats=derive_species_stats(stats_row, hunt.target.level, nature, ivs=dict(ivs)),
             moves=target_moves,
-            pp=tuple(resolve_move(name).pp for name in target_moves))
+            pp=tuple(resolve_move(name).pp for name in target_moves),
+            # Off the encounter row, like the HuntConfig flags. The target's Battler used to
+            # carry no ability at all, which was invisible while the only abilities in play were
+            # read from HuntConfig -- and would have gone on being invisible right up to a forme
+            # whose ability differs from its species' (clayton-957.35.4).
+            ability=target_ability(hunt.target.species, profile.game))
         return ours, target, bench
 
     @staticmethod
@@ -577,6 +685,16 @@ class Facade:
             # are already above. What it adds is the roamer/Elm search defaults, remembered per
             # hunt so a repeat run does not retype them.
             "seed_a_defaults": dict(h.seed_a_defaults or {}),
+            # Which Seed A signal this hunt's game offers -- roamers + Elm, or coin flips with a
+            # chatot-pitch margin. The page asks the descriptor what to draw rather than asking
+            # which game it is in.
+            "seed_a_signal": _seed_a_signal(profile),
+            # The advance frame a freshly loaded save sits on at this venue. In Platinum this is
+            # the anchor for counting advances, since there is nothing to identify the frame FROM
+            # (notes/platinum.md section 3.4).
+            "start_frame": h.start_frame,
+            # Whether this profile's game can run a hunt at all. Diamond and Pearl cannot.
+            "refusal": profile.tool_refusal(TOOL_HUNTS),
             # The spread the hunt is PLANNED around -- the one the key seed produces. Shown as
             # the prefill for the spread step, and the thing a different Seed A replaces.
             "configured_spread": {
@@ -740,10 +858,9 @@ class Facade:
 
         from claytonlib.battle_compass.candidates import generate
         from claytonlib.battle_compass.hunt_session import HuntSession
-        from claytonlib.battle.stats import (
-            has_fast_ball_bonus, has_pressure, species as species_data,
-        )
-        from claytonlib.battle_compass.sim import HuntConfig
+        from claytonlib.battle.stats import species as species_data
+        from claytonlib.battle_compass.sim import ABILITY_BAD_DREAMS, HuntConfig
+        from claytonlib.battle_compass.targets import stats_key, target_ability
 
         h = self._load_hunt(hunt_id)
         profile = self._load_profile(h.profile_id)
@@ -773,19 +890,32 @@ class Facade:
             vector_ms=float(h.vector_ms),
             frame_window=h.delay_window, second_window=h.seconds_window)
 
-        info = species_data(h.target.species)
+        # The forme's row where the encounter names one: the catch rate agrees between Giratina's
+        # two formes but the types and the base Speed a conditional ball reads do not have to.
+        info = species_data(stats_key(h.target.species, profile.game))
+        # The ability comes off the ENCOUNTER, not the species. For every target met once the two
+        # agree, and for a forme-split one they do not: Giratina is Pressure in Turnback Cave and
+        # Levitate in the Distortion World, so asking the species would be confidently wrong for
+        # one of the two fights (clayton-957.35.4).
+        ability = target_ability(h.target.species, profile.game).strip().lower()
         config = HuntConfig(
             target_catch_rate=int(info["catch_rate"]),
-            # A Fast Ball only gets its x4 above base Speed 100, and Suicune's 85 misses it --
-            # which is the whole reason this target is the hard case (sec 2.2).
-            fast_ball_matched=(h.capture_ball.strip().lower() == "fast ball"
-                               and has_fast_ball_bonus(h.target.species)),
+            # The ball by NAME, so `claytonlib.battle.balls` decides what it is worth rather than
+            # the facade guessing. This used to set only `fast_ball_matched`, which left
+            # `capture_ball_multiplier` unassigned and simulated every ball as x1 -- harmless
+            # while every HGSS target/ball pairing really was x1, and wrong the moment a
+            # conditional ball is in play (notes/platinum.md section 5.3).
+            capture_ball=h.capture_ball,
+            throw=_throw_context(h, info),
             # Derived, not defaulted. `HuntConfig.target_has_pressure` defaults True and this
             # never set it, so every target was assumed to have Pressure -- right for all three
             # tower birds and wrong for both Lati twins, which have Levitate. Assuming it where
             # there is none DOUBLE-COUNTS our PP, halving every budget the solver plans against,
             # and the run quietly runs out of moves earlier than the plan said it would.
-            target_has_pressure=has_pressure(h.target.species))
+            target_has_pressure=ability == "pressure",
+            # Darkrai's, and the reason a hunt against it is a clock rather than a budget: an
+            # eighth of our max HP every turn we spend asleep, on top of Nightmare's quarter.
+            target_has_bad_dreams=ability == ABILITY_BAD_DREAMS)
         # The spread the stats were DERIVED from, for the popup that lets the player check them
         # against the summary screen -- a run override if there was one, else the hunt's own
         # (clayton-1jd).
@@ -972,6 +1102,49 @@ class Facade:
     def hunt_session_abandon(self, session_id: str) -> dict:
         return {"session_id": session_id, "closed": self._hunt_sessions.drop(session_id)}
 
+    def list_balls(self, profile_id: str | None = None) -> list[dict]:
+        """The balls available, for the hunt form's picker.
+
+        Scoped to the profile's game when one is given: the apricorn balls do not exist in
+        Platinum and the Sport Ball does not exist outside HGSS, and offering one a player cannot
+        hold is how a plan gets built around a throw they cannot make.
+        """
+        from claytonlib.battle.balls import balls_for_game
+        game_key = ""
+        if profile_id:
+            game_key = self._load_profile(profile_id).game
+        return [{"name": b.name, "note": b.note,
+                 "turn_dependent": bool(b.rule in ("timer", "quick")),
+                 "conditional": bool(b.rule), "apricorn": bool(b.apricorn)}
+                for b in balls_for_game(game_key)]
+
+    def _ball_readout(self, hunt) -> dict | None:
+        """What `hunt`'s ball is worth against its target, as data for the configure screen."""
+        from claytonlib.battle.balls import ball_effect, is_turn_dependent
+        from claytonlib.battle.stats import species as species_data
+        if not hunt.capture_ball or not hunt.target.species:
+            return None
+        try:
+            info = species_data(hunt.target.species)
+            effect = ball_effect(hunt.capture_ball, int(info["catch_rate"]),
+                                 _throw_context(hunt, info))
+            turn_dependent = is_turn_dependent(hunt.capture_ball)
+        except (ValueError, KeyError):
+            return None
+        return {
+            "name": hunt.capture_ball,
+            "multiplier": effect.multiplier,
+            "catch_rate": effect.catch_rate,
+            "reason": effect.reason,
+            "guaranteed": effect.guaranteed,
+            "unmodelled": effect.unmodelled,
+            "turn_dependent": turn_dependent,
+            # The two conditions the player can get wrong without noticing, echoed back so the
+            # screen can show what the multiplier was computed FROM.
+            "terrain": hunt.terrain,
+            "time_of_day": _throw_context(hunt, info).time_of_day,
+        }
+
     def hunt_readiness(self, hunt_id: str) -> dict:
         """Everything the configure screen needs to say whether this hunt can be run.
 
@@ -1029,6 +1202,11 @@ class Facade:
             # are profile-scoped and every profile is seeded with an active "Standard" one, so
             # this is information plus a route to Review Data, not a thing to configure.
             "calibration_model": self.calibration_model_summary(h.profile_id),
+            # What the chosen ball is actually worth against this target -- its multiplier, the
+            # sentence explaining why, whether it moves with the turn, and whether its rule is
+            # modelled at all. Information rather than a blocker: a x1 ball is a legitimate
+            # choice, and the warning worth giving is the one about a rule we do NOT model.
+            "ball": self._ball_readout(h),
         }
 
         movesets: dict[str, list] = {}
@@ -1135,24 +1313,25 @@ class Facade:
         from claytonlib.battle.stats import species
         from claytonlib.battle_compass.hunt_session import survivability_warnings
         from claytonlib.battle_compass.state import Battler
-        from claytonlib.battle_compass.targets import moveset
+        from claytonlib.battle_compass.targets import moveset, target_ability
         from claytonlib.moves import resolve_move
 
+        game = profile.game if profile is not None else ""
         try:
-            target_moves = moveset(hunt.target.species)
+            target_moves = moveset(hunt.target.species, game)
+            ability = target_ability(hunt.target.species, game)
         except KeyError:
             return []
         try:
             info = species(hunt.target.species)
         except KeyError:
             return []
-        abilities = info.get("abilities") or [""]
         target = Battler(
             name=hunt.target.species, level=hunt.target.level,
             types=tuple(info["types"]), stats=dict(target_stats),
             moves=target_moves,
             pp=tuple((resolve_move(n).pp if resolve_move(n) else 0) for n in target_moves),
-            ability=abilities[0])
+            ability=ability)
         party = []
         for slot in hunt.party:
             pokemon = profile.get_party_pokemon(slot.pokemon_id)
@@ -1254,7 +1433,12 @@ class Facade:
         profile_id = fields.get("profile_id")
         if not profile_id:
             raise ValueError("a seed must reference a profile")
-        self._load_profile(profile_id)  # validate the reference
+        profile = self._load_profile(profile_id)  # validate the reference
+        # The gate the game field exists for. Refused here rather than in the page so it holds
+        # however a seed is created, and with the game's own sentence rather than a generic no.
+        refusal = profile.tool_refusal(TOOL_GLASS)
+        if refusal:
+            raise ValueError(refusal)
         s = Seed.from_dict({
             **fields,
             "profile_id": profile_id,
@@ -1298,6 +1482,88 @@ class Facade:
         s.seed_a_defaults = {**(s.seed_a_defaults or {}), **(defaults or {})}
         self._store.write(_SEEDS, s.id, s.to_dict())
         return dict(s.seed_a_defaults)
+
+    # -- Platinum Seed A: coin flips, then chatot pitch ----------------------
+    #
+    # The Platinum counterparts of `metronome_seed_a`, `safari_compass_identify_frame` and
+    # `safari_compass_plan_frame`. Named by MECHANISM rather than after a tool, unlike the three
+    # above -- those carry the name of the compass they were written for and are now called from
+    # three pages each, which is exactly the confusion worth not repeating.
+    #
+    # PokeFinder draws this same fork in one line (`Core/Gen4/SeedTime4.cpp:77`), so a player
+    # moving between the two tools sees the same two columns.
+
+    def platinum_seed_a(self, params: dict) -> dict:
+        """Candidate initial seeds around a target, narrowed by the coin flips observed.
+
+        params: target_time (ISO), key_seed, seconds_window, delay_window, match_parity, and
+        optionally observed_flips. The search delay is derived from key_seed + target_time, never
+        a caller input -- same contract as `metronome_seed_a`.
+
+        No `prev_routes`: Platinum does not relocate its roamers at game load, so there is
+        nothing to enter and nothing to walk past.
+        """
+        import datetime as dt
+
+        from claytonlib.platinum_advance import filter_flips, generate_flip_candidates_near
+        target_time = dt.datetime.fromisoformat(str(params["target_time"]).strip())
+        key_seed = int(params["key_seed"])
+        target_delay = metronome.target_delay_for_key_seed(key_seed, target_time)
+        rows = generate_flip_candidates_near(
+            target_time, target_delay,
+            int(params.get("seconds_window", 2)),
+            int(params.get("delay_window", 10)),
+            match_parity=bool(params.get("match_parity", False)))
+        observed = (params.get("observed_flips") or "").strip()
+        if observed:
+            rows = filter_flips(rows, observed)
+        return {"candidates": [self._flip_row_json(r) for r in rows], "count": len(rows)}
+
+    @staticmethod
+    def _flip_row_json(row: dict) -> dict:
+        return {
+            "seed": row["seed"], "seed_hex": f"0x{row['seed']:08X}",
+            "time": row["time"].strftime("%Y-%m-%dT%H:%M:%S"),
+            "delay": row["delay"], "sec_delta": row["sec_delta"],
+            "delay_delta": row["delay_delta"],
+            "flips": row["flips"], "pitch_display": row["pitch_display"],
+        }
+
+    def platinum_key_seed_info(self, key_seed: int) -> dict:
+        """The key seed's own flips and opening pitches — the Seed-to-Time readout.
+
+        The counterpart of `metronome_key_seed_info`, and it needs no second argument for the
+        same reason `platinum_seed_a` needs no `prev_routes`.
+        """
+        from claytonlib.chatot_pitch import format_sequence, pitch_values
+        from claytonlib.coin_flips import flip_sequence
+        key_seed = int(key_seed)
+        return {
+            "flips": flip_sequence(key_seed, 20),
+            "pitch_display": format_sequence(pitch_values(key_seed, 12)),
+        }
+
+    def platinum_plan_frame(self, params: dict) -> dict:
+        """A Journal-flip + chatot-cry route to `target_frame`, with its pitch margin.
+
+        params: seed, target_frame, optionally current_frame (default 0), margin and start_frame.
+
+        **There is no Platinum counterpart of `safari_compass_identify_frame`, deliberately.** The
+        advance frame is not identified in Platinum, it is counted: you load the seed on frame 0
+        and every action you take has a known cost. The pitch margin this returns is how that
+        count gets *checked* — the player hears it and knows whether they landed where the plan
+        said. Asking them to type pitches in would be asking them to measure a number they
+        already have (clayton-6xu.5).
+        """
+        from claytonlib.platinum_advance import PLATINUM_START_FRAME, plan_route
+        seed = params["seed"]
+        seed = int(seed, 16) if isinstance(seed, str) else int(seed)
+        current = params.get("current_frame")
+        return plan_route(
+            seed, int(params["target_frame"]),
+            current_frame=PLATINUM_START_FRAME if current in (None, "") else int(current),
+            margin=int(params.get("margin", 3)),
+            start_frame=int(params.get("start_frame", 0) or 0))
 
     def seed_readout(self, key_seed, initial_time: str = "") -> dict:
         """The hour, time-of-day bucket and ABSOLUTE delay for a key seed + initial time.
@@ -1732,8 +1998,13 @@ class Facade:
     def save_hunt_run(self, session_id: str, data: dict | None = None) -> dict:
         """Persist this Battle Compass attempt (kind="battle").
 
-        Diagnostic only -- no fit consumes these, which is why nothing here is validated against
-        a calibration model. Taken from the SESSION rather than from the page: the session is
+        **No longer diagnostic-only.** `preview_battle_calibration` fits these, which is the only
+        calibration path a Platinum profile has (notes/platinum.md section 6) and a free gain on
+        HGSS, where a Suicune or Lugia run used to be thrown away. Nothing here is validated
+        against a calibration model even so: a run that cannot be fit is screened out by
+        `_record_for_battle_run` returning None, the same way an incomplete metronome run is.
+
+        Taken from the SESSION rather than from the page: the session is
         what knows the path, the items actually spent and how it ended, and a record assembled
         from whatever the page had in hand is the kind that turns out to be missing the one field
         you needed.
@@ -2211,6 +2482,33 @@ class Facade:
         p = self._load_profile(profile_id)
         metronome_runs = self.list_runs(profile_id, kind="metronome")
         return calibration_lib.preview_fit(metronome_runs, p.excluded_tags)
+
+    def preview_battle_calibration(self, profile_id: str) -> dict:
+        """Fit a calibration model from this profile's Battle Compass runs.
+
+        The only calibration path a Platinum profile has: the metronome fit needs the Blackthorn
+        Magikarp matchup and the safari offset needs the Safari Zone, and neither exists outside
+        HGSS -- so without this a Platinum profile stays on the bundled "Standard" model forever
+        (notes/platinum.md section 6). Useful on HGSS too, where a Suicune or Lugia run was
+        previously thrown away as diagnostic-only.
+
+        Kept separate from `preview_calibration` rather than pooled, because whether a static
+        A-press encounter shares the metronome run's load-path offset is unmeasured -- see
+        `calibration.preview_battle_fit`.
+        """
+        p = self._load_profile(profile_id)
+        battle_runs = self.list_runs(profile_id, kind="battle")
+        return calibration_lib.preview_battle_fit(battle_runs, p.excluded_tags)
+
+    def battle_run_exclude_reasons(self, profile_id: str) -> dict:
+        """Why each battle run does or does not reach the battle fit. Mirrors
+        `safari_run_exclude_reasons`, which does the same for the safari offset fit."""
+        p = self._load_profile(profile_id)
+        battle_runs = self.list_runs(profile_id, kind="battle")
+        _records, pre_excluded = calibration_lib.effective_included(
+            battle_runs, set(p.excluded_tags),
+            record_fn=calibration_lib._record_for_battle_run)
+        return pre_excluded
 
     def preview_safari_calibration(self, profile_id: str, base_model_id: str,
                                    params: dict | None = None) -> dict:

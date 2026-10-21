@@ -2432,6 +2432,87 @@
    "Psychic"
   ]
  },
+ "deoxys-atk": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 180,
+   "def": 20,
+   "hp": 50,
+   "spa": 180,
+   "spd": 20,
+   "spe": 150
+  },
+  "catch_rate": 3,
+  "dex_no": 386,
+  "forme_of": "deoxys",
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "deoxys-atk",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "deoxys-def": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 70,
+   "def": 160,
+   "hp": 50,
+   "spa": 70,
+   "spd": 160,
+   "spe": 90
+  },
+  "catch_rate": 3,
+  "dex_no": 386,
+  "forme_of": "deoxys",
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "deoxys-def",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
+ "deoxys-spd": {
+  "abilities": [
+   "Pressure"
+  ],
+  "base_stats": {
+   "atk": 95,
+   "def": 90,
+   "hp": 50,
+   "spa": 95,
+   "spd": 90,
+   "spe": 180
+  },
+  "catch_rate": 3,
+  "dex_no": 386,
+  "forme_of": "deoxys",
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "deoxys-spd",
+  "source": "rom",
+  "types": [
+   "Psychic"
+  ]
+ },
  "dewgong": {
   "abilities": [
    "Thick Fat",
@@ -3949,6 +4030,36 @@
    "Dragon"
   ],
   "weight_hg": 7500
+ },
+ "giratina-origin": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 120,
+   "def": 100,
+   "hp": 150,
+   "spa": 120,
+   "spd": 100,
+   "spe": 90
+  },
+  "catch_rate": 3,
+  "dex_no": 487,
+  "forme_of": "giratina-altered",
+  "genderless": true,
+  "hms": [
+   "Cut",
+   "Fly",
+   "Rock Climb",
+   "Rock Smash",
+   "Strength"
+  ],
+  "name": "giratina-origin",
+  "source": "rom",
+  "types": [
+   "Ghost",
+   "Dragon"
+  ]
  },
  "glaceon": {
   "abilities": [
@@ -9750,6 +9861,126 @@
    "Ghost"
   ]
  },
+ "rotom-fan": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 107,
+   "hp": 50,
+   "spa": 105,
+   "spd": 107,
+   "spe": 86
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "forme_of": "rotom",
+  "genderless": true,
+  "hms": [],
+  "name": "rotom-fan",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ "rotom-frost": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 107,
+   "hp": 50,
+   "spa": 105,
+   "spd": 107,
+   "spe": 86
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "forme_of": "rotom",
+  "genderless": true,
+  "hms": [],
+  "name": "rotom-frost",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ "rotom-heat": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 107,
+   "hp": 50,
+   "spa": 105,
+   "spd": 107,
+   "spe": 86
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "forme_of": "rotom",
+  "genderless": true,
+  "hms": [],
+  "name": "rotom-heat",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ "rotom-mow": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 107,
+   "hp": 50,
+   "spa": 105,
+   "spd": 107,
+   "spe": 86
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "forme_of": "rotom",
+  "genderless": true,
+  "hms": [],
+  "name": "rotom-mow",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
+ "rotom-wash": {
+  "abilities": [
+   "Levitate"
+  ],
+  "base_stats": {
+   "atk": 65,
+   "def": 107,
+   "hp": 50,
+   "spa": 105,
+   "spd": 107,
+   "spe": 86
+  },
+  "catch_rate": 45,
+  "dex_no": 479,
+  "forme_of": "rotom",
+  "genderless": true,
+  "hms": [],
+  "name": "rotom-wash",
+  "source": "rom",
+  "types": [
+   "Electric",
+   "Ghost"
+  ]
+ },
  "sableye": {
   "abilities": [
    "Keen Eye",
@@ -10193,6 +10424,30 @@
   "source": "rom",
   "types": [
    "Grass"
+  ]
+ },
+ "shaymin-sky": {
+  "abilities": [
+   "Serene Grace"
+  ],
+  "base_stats": {
+   "atk": 103,
+   "def": 75,
+   "hp": 100,
+   "spa": 120,
+   "spd": 75,
+   "spe": 127
+  },
+  "catch_rate": 45,
+  "dex_no": 492,
+  "forme_of": "shaymin",
+  "genderless": true,
+  "hms": [],
+  "name": "shaymin-sky",
+  "source": "rom",
+  "types": [
+   "Grass",
+   "Flying"
   ]
  },
  "shedinja": {
@@ -13104,6 +13359,56 @@
   "types": [
    "Bug",
    "Grass"
+  ]
+ },
+ "wormadam-sandy": {
+  "abilities": [
+   "Anticipation"
+  ],
+  "base_stats": {
+   "atk": 79,
+   "def": 105,
+   "hp": 60,
+   "spa": 59,
+   "spd": 85,
+   "spe": 36
+  },
+  "catch_rate": 45,
+  "dex_no": 413,
+  "female_ratio": 1.0,
+  "forme_of": "wormadam",
+  "genderless": false,
+  "hms": [],
+  "name": "wormadam-sandy",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Ground"
+  ]
+ },
+ "wormadam-trash": {
+  "abilities": [
+   "Anticipation"
+  ],
+  "base_stats": {
+   "atk": 69,
+   "def": 95,
+   "hp": 60,
+   "spa": 69,
+   "spd": 95,
+   "spe": 36
+  },
+  "catch_rate": 45,
+  "dex_no": 413,
+  "female_ratio": 1.0,
+  "forme_of": "wormadam",
+  "genderless": false,
+  "hms": [],
+  "name": "wormadam-trash",
+  "source": "rom",
+  "types": [
+   "Bug",
+   "Steel"
   ]
  },
  "wurmple": {

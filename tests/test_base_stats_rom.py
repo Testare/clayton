@@ -19,19 +19,72 @@ from claytonlib.battle.stats import abilities, species
 DATA = basedata_json("base_stats.json")
 LAST_GEN4_DEX = 493
 
+#: Rows for a SPECIES, which is what a dex number names. A form row carries `forme_of` and shares
+#: its base species' number, so the "one row per dex number" invariant is about these only.
+SPECIES_ROWS = {k: e for k, e in DATA.items() if "forme_of" not in e}
+#: The nine alternate forms, which exist in the file because Platinum's Distortion World Giratina
+#: is the Origin forme -- a different stat line AND a different ability from the species row
+#: (clayton-6xu.3.4).
+FORME_ROWS = {k: e for k, e in DATA.items() if "forme_of" in e}
+
 
 class TestCoverage(unittest.TestCase):
     def test_every_gen4_species_is_present(self):
-        self.assertEqual(len(DATA), LAST_GEN4_DEX)
+        self.assertEqual(len(SPECIES_ROWS), LAST_GEN4_DEX)
 
     def test_the_dex_numbers_are_exactly_one_through_493(self):
-        self.assertEqual(sorted(e["dex_no"] for e in DATA.values()),
+        self.assertEqual(sorted(e["dex_no"] for e in SPECIES_ROWS.values()),
                          list(range(1, LAST_GEN4_DEX + 1)))
 
     def test_no_species_is_duplicated_under_two_keys(self):
         """`giratina` and `giratina-altered` both appeared for one ROM row when the alias was
         added to the key map instead of replacing the naive key -- 494 entries for 493 species."""
-        self.assertEqual(len({e["dex_no"] for e in DATA.values()}), LAST_GEN4_DEX)
+        self.assertEqual(len({e["dex_no"] for e in SPECIES_ROWS.values()}), LAST_GEN4_DEX)
+
+
+class TestTheFormes(unittest.TestCase):
+    """Nine rows, each a form of a species that is also in the file.
+
+    They are here for one reason: Platinum's Distortion World Giratina is the **Origin** forme,
+    which is 120/100/120/100 with **Levitate** against Altered's 100/120/100/120 with
+    **Pressure**. A species-keyed table could hold only one of the two, so `has_pressure` asked
+    about the species would be wrong for one of the two fights -- and wrong in the expensive
+    direction, since assuming Pressure halves every PP budget the solver plans against.
+    """
+
+    def test_there_are_twelve_of_them(self):
+        self.assertEqual(len(FORME_ROWS), 12)
+
+    def test_each_names_a_base_species_that_exists(self):
+        for key, entry in FORME_ROWS.items():
+            with self.subTest(key):
+                self.assertIn(entry["forme_of"], SPECIES_ROWS)
+
+    def test_a_forme_shares_its_species_dex_number(self):
+        """Because that is what a dex number is. Giratina Origin is 487, like Altered."""
+        for key, entry in FORME_ROWS.items():
+            with self.subTest(key):
+                self.assertEqual(entry["dex_no"], DATA[entry["forme_of"]]["dex_no"])
+
+    def test_giratinas_two_formes_differ_in_stats_and_ability(self):
+        altered, origin = species("giratina-altered"), species("giratina-origin")
+        self.assertEqual(altered["base_stats"]["def"], 120)
+        self.assertEqual(origin["base_stats"]["def"], 100)
+        self.assertEqual(altered["base_stats"]["atk"], 100)
+        self.assertEqual(origin["base_stats"]["atk"], 120)
+        self.assertEqual(abilities("giratina-altered"), ("Pressure",))
+        self.assertEqual(abilities("giratina-origin"), ("Levitate",))
+        # Everything else about them agrees, which is why only these two fields are checked.
+        self.assertEqual(altered["types"], origin["types"])
+        self.assertEqual(altered["catch_rate"], origin["catch_rate"])
+
+    def test_a_bare_giratina_is_now_ambiguous_rather_than_silently_altered(self):
+        """It used to resolve to `giratina-altered` through the suffix fallback, because that was
+        the only match. With both formes present the honest answer is a refusal naming them --
+        and `targets.resolve` gives the same answer for the same reason."""
+        with self.assertRaises(KeyError) as caught:
+            species("giratina")
+        self.assertIn("giratina-origin", str(caught.exception))
 
     def test_the_keys_the_project_already_used_still_resolve(self):
         """A regenerate must not rename an existing key: `targets.py`, saved hunts and party

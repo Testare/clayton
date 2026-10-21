@@ -12,10 +12,21 @@ spread from the IVs the player entered, and the run then contradicts on the firs
 Gen-4-exact by construction, which is a different kind of claim from "we checked the ones we
 thought might have changed".
 
-Covers **dex 1-493**. The alternate forms live in the same table past 493 (DEOXYS_ATK,
-WORMADAM_SANDY, GIRATINA_ORIGIN, SHAYMIN_SKY, the five ROTOM_*) and are deliberately skipped:
-none is a reachable encounter for this tool, and inventing key names for them would be guessing
-at a convention nothing consumes.
+Covers **dex 1-493, plus the nine alternate forms** that live in the same table past 493
+(DEOXYS_ATK/DEF/SPD, WORMADAM_SANDY/TRASH, GIRATINA_ORIGIN, SHAYMIN_SKY, the five ROTOM_*).
+
+The forms used to be skipped, with the honest reason that "none is a reachable encounter for this
+tool, and inventing key names for them would be guessing at a convention nothing consumes".
+**Platinum's Giratina ends that**: the Distortion World fight is the Origin forme, which is
+120/100/120/100 against Altered's 100/120/100/120 and **Levitate against Pressure** -- and a
+species-keyed table could only hold one of them, so `has_pressure` would be confidently wrong for
+one of the two fights and halve every PP budget the solver plans against (clayton-6xu.3.4). The
+convention is now consumed: `battle_compass.targets.Encounter.forme` names the row an encounter
+takes its stats from.
+
+A form row carries `forme_of` (its base species' key) and **shares that species' dex number**,
+because that is what a dex number is. So the invariant is no longer "one row per dex number" --
+it is "one row per dex number among rows WITHOUT `forme_of`".
 
 What this does NOT supply:
 
@@ -62,6 +73,28 @@ STAT_FIELDS = {"hp": "hp", "atk": "atk", "def": "def",
 #: by rule, so adding Deoxys or Shaymin later is a visible decision.
 KEY_TO_ROM: dict[str, str] = {"giratina-altered": "GIRATINA"}
 
+#: our key -> (ROM species name past dex 493, the base species' key).
+#:
+#: Named from the ROM's own constants rather than from veekun ("deoxys-atk", not veekun's
+#: "deoxys-attack"), because nothing joins these to veekun and the ROM is the only source they
+#: have. `giratina-origin` pairs with the `giratina-altered` alias above, so the two formes read
+#: as siblings rather than as a species and an exception.
+FORMES: dict[str, tuple[str, str]] = {
+    "deoxys-atk": ("DEOXYS_ATK", "deoxys"),
+    "deoxys-def": ("DEOXYS_DEF", "deoxys"),
+    "deoxys-spd": ("DEOXYS_SPD", "deoxys"),
+    "wormadam-sandy": ("WORMADAM_SANDY", "wormadam"),
+    "wormadam-trash": ("WORMADAM_TRASH", "wormadam"),
+    # The one that forced this. Lv47 in the Distortion World (`StartGiratinaOriginBattle`).
+    "giratina-origin": ("GIRATINA_ORIGIN", "giratina-altered"),
+    "shaymin-sky": ("SHAYMIN_SKY", "shaymin"),
+    "rotom-heat": ("ROTOM_HEAT", "rotom"),
+    "rotom-wash": ("ROTOM_WASH", "rotom"),
+    "rotom-frost": ("ROTOM_FROST", "rotom"),
+    "rotom-fan": ("ROTOM_FAN", "rotom"),
+    "rotom-mow": ("ROTOM_MOW", "rotom"),
+}
+
 #: `genderRatio` as the decomp's JSON writes it: 0.0 always male, 1.0 always female, 2.0
 #: genderless, anything else the fraction that is female. Decoded here because the Love Ball
 #: turns on it -- `catchRate *= 8` needs `attacker.gender != target.gender`, which a genderless
@@ -103,6 +136,23 @@ def gender_note(ratio: float) -> dict:
     return {"genderless": False,
             "female_ratio": (1.0 if ratio == ALWAYS_FEMALE
                              else 0.0 if ratio == ALWAYS_MALE else ratio)}
+
+
+def forme_entries(decomp: Path) -> dict[str, dict]:
+    """``{ROM species name: row}`` for the form rows past dex 493, unfiltered by dex.
+
+    Read in a second pass rather than by widening `rom_entries`' range, because the two have
+    different invariants: a species row's index IS its dex number and the count must be exactly
+    493, while a form row's index is a personal-table slot and its dex number has to be borrowed
+    from the species it is a form of.
+    """
+    rows = json.loads((decomp / PERSONAL).read_text())["baseStats"]
+    wanted = {rom_name for rom_name, _ in FORMES.values()}
+    out = {row["species"]: dict(row) for row in rows if row.get("species") in wanted}
+    missing = sorted(wanted - set(out))
+    if missing:
+        raise SystemExit(f"form rows not in the table: {', '.join(missing)}")
+    return out
 
 
 def rom_entries(decomp: Path) -> dict[str, dict]:
@@ -172,6 +222,29 @@ def main() -> int:
             added.append(key)
         else:
             # Fields this script does not own are carried over rather than dropped.
+            for field in ("weight_hg", "hms"):
+                if field in was:
+                    entry[field] = was[field]
+            differing = {f for f in ("base_stats", "types", "abilities", "catch_rate")
+                         if was.get(f) != entry[f]}
+            if differing:
+                changed.append((key, sorted(differing), was, entry))
+        data[key] = entry
+
+    # The form rows, each borrowing its base species' dex number. Added after the species loop so
+    # `data[base]` is already there to read the number off -- and so a typo in FORMES names a key
+    # that does not exist rather than silently creating one.
+    formes = forme_entries(Path(args.decomp).expanduser())
+    for key, (rom_name, base) in sorted(FORMES.items()):
+        if base not in data:
+            raise SystemExit(f"{key}: no base species {base!r} to take a dex number from")
+        entry = build(dict(formes[rom_name], dex_no=data[base]["dex_no"]))
+        entry["name"] = key
+        entry["forme_of"] = base
+        was = existing.get(key)
+        if was is None:
+            added.append(key)
+        else:
             for field in ("weight_hg", "hms"):
                 if field in was:
                     entry[field] = was[field]

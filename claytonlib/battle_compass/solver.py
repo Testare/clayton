@@ -234,8 +234,12 @@ def target_threshold(state: BattleState, config: HuntConfig,
     `status` overrides the target's own, for asking what ``b`` *would* be in some other state.
     """
     from claytonlib.battle_compass.sim import _status_bonus
-    a = catch_value(config.effective_catch_rate(),
-                    ball_multiplier=config.capture_ball_multiplier,
+    # The ball is asked what it is worth ON THIS TURN, not in general: a Quick Ball is x4 only
+    # while `state.turn` is 0 and a Timer Ball climbs with it, so a `b` computed turn-blind would
+    # be wrong in opposite directions for the two of them.
+    effect = config.ball_effect_at(state.turn)
+    a = catch_value(effect.catch_rate,
+                    ball_multiplier=effect.multiplier,
                     cur_hp=max(state.target.hp, 1), max_hp=state.target.max_hp,
                     status_bonus=_status_bonus(status or state.target.status))
     return shake_threshold(a)

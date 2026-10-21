@@ -37,7 +37,10 @@ BALL_SPORT = 15
 # Conditional non-apricorn balls, at the value they take when their condition holds.
 BALL_NET_MATCHED = 30       # Water or Bug target
 BALL_DIVE_MATCHED = 35      # surfing / fishing / underwater
-BALL_NEST_MATCHED = 40      # scales with the target's level; 40 is its ceiling
+# Nest Ball: `ballMod = 40 - level`, floored at 10 and applied only below level 40. So 40 is the
+# constant it is subtracted FROM, never a value it reaches -- its real ceiling is 39, at level 1.
+# Named for the ROM's constant rather than for an outcome; `balls._nest` does the arithmetic.
+BALL_NEST_MATCHED = 40
 BALL_REPEAT_MATCHED = 30    # species already registered in the Pokedex
 BALL_TIMER_MATCHED = 40     # grows with turn count, capped at x4
 BALL_DUSK_MATCHED = 35      # night, or in a cave
