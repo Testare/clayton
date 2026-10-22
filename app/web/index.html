@@ -5644,6 +5644,16 @@ function hrTargetBlocks(){
     opts.push(hrChip("flinched", `hrSet('target',{prevented:'fln'})`,
                      t.target?.prevented === "fln"));
   out.push(hrChips(`What did ${s.target.name} do?`, opts));
+  // The one ambiguity this screen has, and it is new: a Taunt refusal reads like a prevention.
+  // "The wild UXIE can't use Amnesia after the taunt!" is a turn where the move did not happen,
+  // so the natural reach is for a prevention chip -- and picking one would throw away the slot
+  // the game just told us, which is the only free read of the selection roll a run ever gets.
+  // So the steer is explicit rather than left to the chip hints.
+  if (hrTauntWeJustApplied())
+    out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">The Taunt landed before
+        ${esc(s.target.name)}'s turn. If the game named a move it couldn't use, pick
+        <em>that move</em> — not "was fully paralyzed": the name is worth more than the
+        refusal.</div></div>`);
   if (!t.target) return {blocks: out, done: false};
 
   if (!t.target.prevented){

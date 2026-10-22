@@ -521,3 +521,43 @@ class TestTheMoveInfoFlagsTheInterviewNeedsArePublished(unittest.TestCase):
         """Otherwise the subTest loop above could be passing on an empty read set."""
         body = _function_body("hrTauntWeJustApplied")
         self.assertIn("applies_taunt", set(re.findall(r"\binfo\.([a-z_]+)\b", body)))
+
+
+class TestTheTauntRefusalIsTestedBeforeTheOtherOutcomes(unittest.TestCase):
+    """Order inside `hrTargetBlocks`, which is the fix rather than a tidy-up -- the same kind of
+    ordering the `guaranteed_fail`-before-`damaging` comment already pins.
+
+    A refused move never executes, so the refusal dominates both branches that describe how a
+    move WENT: `guaranteed_fail` (it ran and did nothing) and `damaging` (it hit us). Asked the
+    other way round, Yawn against an Insomnia holder -- which is guaranteed to fail and is also
+    refused -- would offer "It failed" for a turn whose only rendering is `E2tnt`.
+    """
+
+    def test_the_refusal_short_circuits_before_guaranteed_fail(self):
+        body = _function_body("hrTargetBlocks")
+        outcome = body[body.index("const base = `{slot:"):]
+        self.assertLess(outcome.index("hrTauntRefuses(info)"),
+                        outcome.index("info.guaranteed_fail"))
+
+    def test_the_refusal_short_circuits_before_damaging(self):
+        body = _function_body("hrTargetBlocks")
+        outcome = body[body.index("const base = `{slot:"):]
+        self.assertLess(outcome.index("hrTauntRefuses(info)"), outcome.index("info.damaging"))
+
+    def test_it_returns_rather_than_falling_through(self):
+        """Otherwise the secondary and Static questions would still be asked about a move that
+        never happened."""
+        body = _function_body("hrTargetBlocks")
+        refusal = body[body.index("hrTauntRefuses(info)"):]
+        self.assertIn("return {blocks: out, done: true}", refusal[:600])
+
+    def test_the_player_is_steered_to_the_move_rather_than_a_prevention(self):
+        """The refusal reads like a prevention, and picking one would discard the slot."""
+        body = _function_body("hrTargetBlocks")
+        steer = body[body.index("hrTauntWeJustApplied()"):]
+        self.assertIn("pick", steer[:600])
+        self.assertIn("was fully paralyzed", steer[:600])
+
+    def test_the_steer_comes_before_the_outcome_question(self):
+        body = _function_body("hrTargetBlocks")
+        self.assertLess(body.index("hrTauntWeJustApplied()"), body.index("hrTauntRefuses(info)"))
