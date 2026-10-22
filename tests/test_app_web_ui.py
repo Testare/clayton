@@ -420,3 +420,104 @@ class TestTheVanishedTargetIsExplained(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheTauntRefusalIsOfferedAndSettled(unittest.TestCase):
+    """The turn a Taunt lands, the target's already-selected status move is refused by name.
+
+    It needs its own handling in the page for the same reason a mid-turn status does -- the
+    snapshot's flags describe the state the turn OPENED in, when nothing was taunted -- but the
+    opposite treatment: a status only MIGHT stop the move, while the Taunt refusal has no roll
+    behind it at all, so it is stated rather than asked (clayton-6xu.7.6).
+    """
+
+    def test_the_predicate_exists_and_reads_our_reported_move(self):
+        self.assertIn("function hrTauntWeJustApplied", _HTML)
+        body = _function_body("hrTauntWeJustApplied")
+        self.assertIn("hrOurMoveInfo()", body)
+        self.assertIn("applies_taunt", body)
+
+    def test_it_only_applies_when_we_moved_first(self):
+        """Otherwise the target's turn is over before the Taunt exists."""
+        self.assertIn("hrWeActFirst()", _function_body("hrTauntWeJustApplied"))
+
+    def test_a_missed_or_failed_taunt_does_not_count(self):
+        body = _function_body("hrTauntWeJustApplied")
+        self.assertIn("guaranteed_fail", body)
+        self.assertIn('t.ours.result === ""', body)
+
+    def test_the_refusal_test_is_the_roms_power_test_not_the_category(self):
+        """`taunt_refusable` is published as `not move.power`, which is what
+        CHECK_STATUS_STATE_TAUNT tests."""
+        self.assertIn("taunt_refusable", _function_body("hrTauntRefuses"))
+
+    def test_the_move_chip_says_the_move_will_be_blocked(self):
+        """The player saw "The wild UXIE can't use Amnesia after the taunt!", so the move is on
+        offer -- it was selected -- and the chip has to say what became of it."""
+        body = _function_body("hrTargetBlocks")
+        self.assertIn("hrTauntRefuses(m)", body)
+        self.assertIn("blocked by the taunt", body)
+
+    def test_the_outcome_is_settled_rather_than_asked(self):
+        """One possible answer, so asking invites a guess at a different one."""
+        body = _function_body("hrTargetBlocks")
+        self.assertIn("hrTauntRefuses(info)", body)
+        self.assertIn("after the taunt", body)
+
+    def test_the_token_keeps_the_slot(self):
+        """The one prevention that does, because the game named the move -- so the result rides
+        in the move detail where `hrTokens` already concatenates it, not in `prevented`."""
+        body = _function_body("hrTargetBlocks")
+        self.assertIn('result: "tnt"', body)
+        self.assertNotIn("prevented:'tnt'", body)
+        self.assertNotIn('prevented: "tnt"', body)
+
+    def test_the_marker_matches_the_python_grammar(self):
+        """A marker the two sides spell differently renders a token no candidate can match."""
+        from claytonlib.battle_compass.tokens import TAUNTED
+        self.assertEqual(TAUNTED, "tnt")
+        self.assertIn(f'result: "{TAUNTED}"', _function_body("hrTargetBlocks"))
+
+    def test_a_refused_turn_needs_no_hp(self):
+        """`hrNeedsHp` keys on the hit markers, and a refused move dealt no damage -- so this is
+        really a check that `tnt` contains neither of them, which is what would otherwise make
+        the page demand an HP number for a turn that had none."""
+        from claytonlib.battle_compass.tokens import CRIT, HIT, TAUNTED
+        self.assertNotIn(HIT, TAUNTED)
+        self.assertNotIn(CRIT, TAUNTED)
+
+
+class TestTheMoveInfoFlagsTheInterviewNeedsArePublished(unittest.TestCase):
+    """A flag the page reads and `move_info` does not publish is `undefined`, so the branch
+    reading it is silently dead -- which is how an interview quietly stops offering an outcome.
+    Scoped to the interview's own block builders, because `info` and `m` name other things
+    elsewhere on the page."""
+
+    #: The functions that are handed a `move_info` entry.
+    CONSUMERS = ("hrTargetBlocks", "hrOurOutcomeBlock", "hrTauntRefuses", "hrTauntWeJustApplied",
+                 "hrStatusWeJustApplied", "hrStatusTargetJustApplied", "hrSecondaryMark",
+                 "hrTargetCanMiss")
+
+    def _published(self) -> set:
+        import inspect
+
+        from claytonlib.battle_compass import hunt_session
+
+        return set(re.findall(r'"([a-z_]+)":', inspect.getsource(hunt_session.move_info)))
+
+    def test_every_flag_the_interview_reads_is_published(self):
+        published = self._published()
+        for name in self.CONSUMERS:
+            body = _function_body(name)
+            read = set(re.findall(r"\binfo\.([a-z_]+)\b", body))
+            with self.subTest(name):
+                self.assertEqual(sorted(read - published), [],
+                                 f"{name} reads flags move_info does not publish")
+
+    def test_the_two_taunt_flags_are_among_them(self):
+        self.assertLessEqual({"taunt_refusable", "applies_taunt"}, self._published())
+
+    def test_the_check_would_notice_a_missing_flag(self):
+        """Otherwise the subTest loop above could be passing on an empty read set."""
+        body = _function_body("hrTauntWeJustApplied")
+        self.assertIn("applies_taunt", set(re.findall(r"\binfo\.([a-z_]+)\b", body)))

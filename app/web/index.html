@@ -5176,6 +5176,33 @@ function hrStatusWeJustApplied(){
 
 // The status the TARGET's move just inflicted on US, as its marker, or null.
 //
+// A Taunt of OURS that just landed, which settles the target's turn if it had picked a status
+// move. The exact shape of hrStatusWeJustApplied and live for the same reason: our half of the
+// turn resolves before the target's, so something we did this turn changes what the target's
+// half can be -- and the snapshot's flags describe the state the turn OPENED in, when nothing
+// was taunted.
+//
+// Why it is the landing turn specifically: the wild AI drops taunted status moves at SELECTION
+// time, so on every LATER turn the target never picks one and `selectable` has already removed
+// it from the list. On the turn the Taunt lands it had already chosen, so the ROM refuses the
+// move it is holding -- `CHECK_STATUS_STATE_TAUNT`, `tauntedTurns && power == 0`. See
+// sim.taunt_refuses (clayton-6xu.7.6).
+function hrTauntWeJustApplied(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!info || !info.applies_taunt) return false;
+  if (!hrWeActFirst()) return false;              // its turn is over before the Taunt exists
+  if (info.guaranteed_fail) return false;         // already taunted: our Taunt did nothing
+  if (!t.ours || t.ours.prevented) return false;  // we never got the move off
+  return t.ours.result === "";                    // "-" is a miss
+}
+
+// Whether a Taunt refuses the slot the target picked. Deterministic -- the ROM's test has no
+// roll in it -- so this is answered FOR the player rather than asked: a question with one
+// possible answer invites a guess at a different one.
+function hrTauntRefuses(info){
+  return !!info && !!info.taunt_refusable && hrTauntWeJustApplied();
+}
+
 // The exact mirror of hrStatusWeJustApplied, and live for the same reason: a status landed by
 // whoever moved FIRST takes effect before the other half of the same turn, while the snapshot's
 // option lists describe the state the turn OPENED in. Two real cases, one per game:
@@ -5593,9 +5620,14 @@ function hrTargetBlocks(){
   // every seed rather than contradicting one. The flag is `usable_slots` on the Python side, so
   // this list and the simulator's selection roll cannot disagree about the modulus.
   const opts = s.target.move_info.filter(m => m.known && m.selectable).map(m =>
-    hrChip(m.name, `hrSet('target',{slot:${m.slot},result:'${m.damaging ? "h" : ""}'})`,
+    hrChip(m.name,
+           // A slot our Taunt refuses carries its own outcome, so picking the move answers the
+           // next question too -- and the chip says so, because "Yawn (blocked by the taunt)"
+           // is the only honest label for a move the game announced and then refused.
+           `hrSet('target',{slot:${m.slot},result:'${
+              hrTauntRefuses(m) ? "tnt" : (m.damaging ? "h" : "")}'})`,
            t.target && t.target.slot === m.slot && !t.target.prevented,
-           `${m.pp} PP left`));
+           hrTauntRefuses(m) ? "blocked by the taunt" : `${m.pp} PP left`));
   const offered = new Set();
   (s.prevention.target || []).forEach(o => {
     if (o.code === "fln" && !hrFlinchPossibleOnTarget()) return;
@@ -5617,6 +5649,16 @@ function hrTargetBlocks(){
   if (!t.target.prevented){
     const info = s.target.move_info[t.target.slot];
     const base = `{slot:${t.target.slot}`;
+    // Settled, not asked. The refusal has no roll behind it, so there is exactly one thing that
+    // can have happened -- and the game named the move, which is why this turn keeps its slot
+    // where a paralysis or a flinch would have replaced it (tokens.TAUNTED).
+    if (hrTauntRefuses(info)){
+      if (t.target.result !== "tnt") t.target = {slot: t.target.slot, result: "tnt"};
+      out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
+          couldn't use ${esc(info.name)} after the taunt, so its turn produced nothing —
+          nothing to report.</div></div>`);
+      return {blocks: out, done: true};
+    }
     const opts2 = [];
     // `guaranteed_fail` is tested BEFORE `damaging`, and that order is the fix rather than a
     // tidy-up: a move can be both. Azelf's Uproar is the first DAMAGING move any target has that

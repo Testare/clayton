@@ -16,6 +16,12 @@ What it answers:
   it, and ``check_damage_event`` asks ``battle.damage`` which of the sixteen Gen 4 rolls could
   have produced it. An event no roll explains is the signal that matters: it means the seed, the
   stats, or the damage model is wrong, and §3.1 requires that be loud rather than silent.
+* **Where in the end of turn a roll landed.** Only for logs that carry ``phase`` records, which
+  at present means ones taken by ``utils/gdb-platinum-battle-reader.py``.
+  ``end_of_turn_sequences`` returns each turn's end-of-turn rolls in order, labelled with the
+  ROM's own condition-check state, which is what clayton-6xu.7.1 asks for: which of the four
+  end-of-turn advances is Yawn's sleep-duration roll, and which is Future Sight's hit check.
+  ``rolls_by_phase`` is the same data aggregated, for the phases outside the end of turn.
 
 Run it directly for a report::
 
@@ -31,6 +37,36 @@ from pathlib import Path
 # Our active Pokemon is battler 0; the wild target is battler 1.
 PLAYER_BATTLER = 0
 TARGET_BATTLER = 1
+
+#: The BATTLE_CONTROL_* commands that make up the end of a turn, as
+#: include/battle/battle_controller_player.h orders them. A roll under one of these is one of the
+#: end-of-turn advances that turn_costs.END_OF_TURN_ADVANCES counts.
+END_OF_TURN_COMMANDS = (
+    "CHECK_FIELD_CONDITIONS", "CHECK_MON_CONDITIONS", "CHECK_SIDE_CONDITIONS", "TURN_END",
+)
+
+#: Which condition-check state machine each of those commands walks, so a label can name the
+#: condition and not just the command. TURN_END walks none.
+#:
+#: The third element is how far the state has already MOVED ON by the time a subscript the walk
+#: loaded is running, which is the only reason a label can be wrong:
+#:
+#: * ``mon`` — every one of the 26 cases in ``BattleControllerPlayer_CheckMonConditions`` ends
+#:   ``monConditionCheckState++; break;``, *including* the ones that break out to a subscript. So
+#:   a roll inside ``subscript_fall_asleep`` reads the state as ITEM_CONDITION (24) when Yawn
+#:   (23) is what loaded it. Measured: data/battle_logs/uxie1.jsonl, every fall-asleep roll.
+#: * ``side`` — ``CheckSideConditions`` loops ``sideConditionCheckTemp`` over the battlers inside
+#:   each state and only advances the state when that loop finishes, so the state still names the
+#:   condition. Measured in the same log: the Future Sight rolls read FUTURE_SIGHT (0).
+#: * ``field`` — MIXED. The seven side-scoped cases (Reflect..Wish) do not increment on break-out
+#:   and the six weather cases do, so there is no single adjustment; `None` means "do not guess",
+#:   and :func:`phase_label` marks such a label with a trailing ``?``.
+_CHECK_STATE_OF = {
+    "CHECK_FIELD_CONDITIONS": ("field", "fieldConditionCheckState", "fieldConditionCheckTemp",
+                               None),
+    "CHECK_MON_CONDITIONS": ("mon", "monConditionCheckState", "monConditionCheckTemp", 1),
+    "CHECK_SIDE_CONDITIONS": ("side", "sideConditionCheckState", "sideConditionCheckTemp", 0),
+}
 
 
 @dataclass
@@ -60,11 +96,85 @@ class DamageEvent:
         return self.before - self.after
 
 
+#: The condition-check enums, needed only to re-name a state after undoing the mon walk's
+#: increment (``_CHECK_STATE_OF``). Duplicated from the recorder's own copies -- which are
+#: themselves copies of file-local enums in src/battle/battle_controller_player.c -- and
+#: tests/test_battle_logcheck.py asserts the two agree, so neither can drift.
+_CONDITION_NAMES = {
+    "mon": (
+        "INGRAIN", "AQUA_RING", "ABILITY", "USE_ITEM", "LEFTOVERS", "LEECH_SEED", "POISON",
+        "TOXIC", "BURN", "NIGHTMARE", "CURSE", "BIND", "BAD_DREAMS", "UPROAR", "THRASH",
+        "DISABLE", "ENCORE", "LOCK_ON", "CHARGE", "TAUNT", "MAGNET_RISE", "HEAL_BLOCK",
+        "EMBARGO", "YAWN", "ITEM_CONDITION", "ITEM_DETRIMENTAL_EFFECT", "END",
+    ),
+    "side": ("FUTURE_SIGHT", "PERISH_SONG", "TRICK_ROOM", "END"),
+    "field": (
+        "REFLECT", "LIGHT_SCREEN", "MIST", "SAFEGUARD", "TAILWIND", "LUCKY_CHANT", "WISH",
+        "RAINING", "SANDSTORM", "SUNNY", "HAILING", "DEEP_FOG", "GRAVITY", "END",
+    ),
+}
+
+
+@dataclass
+class PhaseRoll:
+    """One roll, with the battle phase the ROM was in when it asked for it."""
+
+    #: Index into the log's record list.
+    index: int
+    #: Which roll this is within its end-of-turn sequence, counting from 1. This is the number
+    #: clayton-6xu.7.1 is after: "the second of the four end-of-turn advances" is ordinal 2.
+    ordinal: int
+    #: e.g. ``mon:YAWN[b0]``, ``side:FUTURE_SIGHT[b1]``, ``turn_end``.
+    label: str
+    #: e.g. ``sub_seq:subscript_fall_asleep@3``.
+    script: str
+    value: int
+
+
+def phase_label(phase: dict) -> str | None:
+    """A readable label for an END-OF-TURN phase, or None if it is not one.
+
+    A roll inside a subscript reports ``command`` as EXEC_SCRIPT, with ``commandNext`` holding
+    the command that will resume once the script finishes — so that is what says whether a
+    script's roll belongs to the end of turn. Both of 6xu.7.1's rolls are of that shape:
+    subscript_fall_asleep and subscript_future_sight_damage are both loaded by the
+    condition-check walk and both return to it.
+    """
+    fields, names = phase.get("fields", {}), phase.get("names", {})
+    command = names.get("command")
+    in_script = command == "EXEC_SCRIPT"
+    host = names.get("commandNext") if in_script else command
+    if host not in END_OF_TURN_COMMANDS:
+        return None
+    walk = _CHECK_STATE_OF.get(host)
+    if walk is None:
+        return "turn_end"
+    kind, state_key, temp_key, lag = walk
+    state = fields.get(state_key)
+    label = names.get(state_key, state)
+    uncertain = ""
+    if in_script:
+        if lag is None:
+            uncertain = "?"
+        elif lag and isinstance(state, int):
+            label = _CONDITION_NAMES.get(kind, ())[state - lag] \
+                if 0 <= state - lag < len(_CONDITION_NAMES.get(kind, ())) else str(state - lag)
+    return f"{kind}:{label}[b{fields.get(temp_key)}]{uncertain}"
+
+
+def phase_script(phase: dict) -> str:
+    names, fields = phase.get("names", {}), phase.get("fields", {})
+    return f"{names.get('script', fields.get('scriptFile'))}@{fields.get('scriptCursor')}"
+
+
 class BattleLog:
     """One recorded battle."""
 
     def __init__(self, doc: dict):
         self.label: str = doc.get("label", "")
+        #: "platinum" for a log from the Platinum reader; absent (so None) for the HG/SS
+        #: reader's own logs, which predate the field.
+        self.game: str | None = doc.get("game")
         self.forced_seed: str | None = doc.get("forced_seed")
         self.recorded_at: str = doc.get("recorded_at", "")
         self.records: list[dict] = list(doc.get("records", []))
@@ -87,13 +197,59 @@ class BattleLog:
     def mons(self) -> list[dict]:
         return [r["mon"] for r in self.records if "mon" in r]
 
+    @property
+    def phases(self) -> list[dict]:
+        return [r["phase"] for r in self.records if "phase" in r]
+
+    @property
+    def seeds(self) -> list[dict]:
+        """The ``seed`` entries: what the game's two streams actually held at each battle's
+        first roll. One per battle recorded, so normally one."""
+        return [r["seed"] for r in self.records if "seed" in r]
+
     def rolls_by_caller(self) -> Counter:
         """How many rolls each calling function requested.
 
-        The first thing to look at in a new log: it tells you which of the ROM's call sites this
-        matchup actually exercises, and how often.
+        **Unreliable for Platinum logs** — see :meth:`rolls_by_site`, which is the same question
+        asked of the program counter instead of a symbol name.
         """
         return Counter(roll["func"] for roll in self.rolls)
+
+    def rolls_by_site(self) -> Counter:
+        """How many rolls each PROGRAM COUNTER requested, most common first.
+
+        The first thing to look at in a new log. ``rolls_by_caller`` asks the same question of
+        GDB's symbol name for the frame, and in an overlay that name can be another overlay's
+        function at the same address: in data/battle_logs/uxie1.jsonl the 192 most common rolls
+        came back as ``ChooseTraceTarget`` in a battle containing no Trace, while
+        ``BattleSystem_CalcDamageVariance`` and ``BattleSystem_CalcCriticalMulti`` on other
+        addresses were correct. The PC is unambiguous, so this is the grouping to trust and the
+        names are a hint to check against the phases around each roll.
+        """
+        return Counter(roll["addr"] for roll in self.rolls)
+
+    def sites(self) -> dict[str, Counter]:
+        """Address -> how often each battle PHASE was seen at it, for logs carrying phases.
+
+        This is how a roll site gets identified when its symbol name cannot be trusted: a PC
+        that fires only under ``TRY_MOVE`` and inside ``subscript_future_sight_damage`` is the
+        accuracy check, whatever GDB calls it. Keyed on ``command|script`` so the two halves of
+        that argument are both visible.
+        """
+        out: dict[str, Counter] = {}
+        phase: dict | None = None
+        for record in self.records:
+            if "phase" in record:
+                phase = record["phase"]
+                continue
+            if "roll" not in record:
+                continue
+            if phase is None:
+                where = "<before any phase>"
+            else:
+                where = f"{phase['names'].get('command')}|{phase['names'].get('script')}"
+            out.setdefault(record["roll"]["addr"], Counter())[where] += 1
+        return out
 
     def hp_changes(self, battler: int | None = None) -> list[HpChange]:
         out = []
@@ -137,6 +293,44 @@ class BattleLog:
         if count:
             out.append(("<end>", count))
         return out
+
+    # -- phases: where in the turn a roll landed -------------------------
+
+    def end_of_turn_sequences(self) -> list[list[PhaseRoll]]:
+        """Each end-of-turn run of rolls, in order, labelled with the condition being walked.
+
+        One list per time the battle entered the end-of-turn commands and spent at least one
+        roll there; the list is empty for a log without ``phase`` records, which is how an HG/SS
+        log reports that it cannot answer this.
+
+        Read it against ``turn_costs.END_OF_TURN_ADVANCES``: a quiet turn gives one sequence of
+        four, and the ordinals of the labels that mention YAWN or FUTURE_SIGHT are where those
+        rolls sit among them.
+        """
+        out: list[list[PhaseRoll]] = []
+        current: list[PhaseRoll] = []
+        label: str | None = None
+        script = ""
+        for index, record in enumerate(self.records):
+            if "phase" in record:
+                label = phase_label(record["phase"])
+                script = phase_script(record["phase"])
+                if label is None and current:
+                    out.append(current)
+                    current = []
+                continue
+            if "roll" not in record or label is None:
+                continue
+            current.append(PhaseRoll(index=index, ordinal=len(current) + 1, label=label,
+                                     script=script, value=record["roll"]["val"]))
+        if current:
+            out.append(current)
+        return out
+
+    def rolls_by_phase(self) -> Counter:
+        """How many rolls each end-of-turn label accounted for, across the whole battle."""
+        return Counter(roll.label
+                       for sequence in self.end_of_turn_sequences() for roll in sequence)
 
     # -- R10: damage attribution ----------------------------------------
 
@@ -198,11 +392,20 @@ def load(path: str | Path) -> list[BattleLog]:
 def report(log: BattleLog) -> str:
     """A human-readable summary — what to look at first in a fresh recording."""
     lines = [
-        f"battle: {log.label or '(unlabelled)'}   recorded {log.recorded_at or '?'}",
+        f"battle: {log.label or '(unlabelled)'}   recorded {log.recorded_at or '?'}"
+        + (f"   game: {log.game}" if log.game else ""),
         f"forced seed: {log.forced_seed or 'none'}",
         f"records: {len(log.records)}  rolls: {len(log.rolls)}  "
-        f"messages: {len(log.messages)}  marks: {len(log.marks)}",
+        f"messages: {len(log.messages)}  marks: {len(log.marks)}  phases: {len(log.phases)}",
     ]
+    for seed in log.seeds:
+        confirmed = seed.get("confirmed")
+        lines.append(
+            f"seeds at the first roll: Seed B (seedRandNext) {seed.get('seedRandNext')}  "
+            f"Seed A (seedLCRNG) {seed.get('seedLCRNG')}"
+            + ("" if confirmed is None else
+               "   [forced seed CONFIRMED]" if confirmed else
+               "   [FORCED SEED DID NOT TAKE]"))
     if log.mons:
         lines.append("")
         lines.append("battlers at start:")
@@ -212,17 +415,45 @@ def report(log: BattleLog) -> str:
                          f"stats {mon.get('stats')}")
             lines.append(f"      IVs {mon.get('ivs')}  ability {mon.get('ability')}  "
                          f"moves {mon.get('moves')}  PP {mon.get('pp')}")
-    by_caller = log.rolls_by_caller()
-    if by_caller:
+    by_site = log.rolls_by_site()
+    if by_site and log.phases:
+        # With phases in the log the PC is the identity and the symbol name is a hint, so group
+        # by address and show what each one was doing. Without phases there is nothing to show
+        # but the name, which is the HG/SS reader's case below.
         lines.append("")
-        lines.append("rolls by calling function (R7: maps call sites onto phases):")
-        for func, count in by_caller.most_common():
-            lines.append(f"  {count:5}  {func}")
+        lines.append("rolls by site (R7: the PC is the identity -- `func` can be another "
+                     "overlay's symbol):")
+        sites = log.sites()
+        for addr, count in by_site.most_common():
+            names = ", ".join(sorted({r["func"] for r in log.rolls if r["addr"] == addr}))
+            lines.append(f"  {count:5}  {addr}  [gdb says: {names}]")
+            for where, seen in sites.get(addr, Counter()).most_common(4):
+                lines.append(f"            {seen:5}  {where}")
+    else:
+        by_caller = log.rolls_by_caller()
+        if by_caller:
+            lines.append("")
+            lines.append("rolls by calling function (R7: maps call sites onto phases):")
+            for func, count in by_caller.most_common():
+                lines.append(f"  {count:5}  {func}")
     if log.marks:
         lines.append("")
         lines.append("rolls between markers (R2 / per-turn counts):")
         for label, count in log.segments():
             lines.append(f"  {count:5}  up to {label!r}")
+    sequences = log.end_of_turn_sequences()
+    if sequences:
+        lines.append("")
+        lines.append("end-of-turn rolls, in order (which advance each condition's roll is):")
+        for number, sequence in enumerate(sequences, start=1):
+            lines.append(f"  sequence {number}: {len(sequence)} roll(s)")
+            for roll in sequence:
+                lines.append(f"    {roll.ordinal}. {roll.label:<28} {roll.script:<44} "
+                             f"val {roll.value}")
+    elif log.phases:
+        lines.append("")
+        lines.append("no end-of-turn rolls: the battle spent none under "
+                     + ", ".join(END_OF_TURN_COMMANDS) + ".")
     events = log.damage_events()
     if events:
         lines.append("")

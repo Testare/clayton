@@ -443,10 +443,12 @@ def move_roll_cost(move: Move) -> int:
     advance an RNG stream. Cross-validated against ``metronome_compass.effects`` for all nine
     fixture moves (tests/test_battle_compass_effects_parity.py).
     """
-    # Future Sight is the one move whose cost is not built from the usual parts at all: its effect
-    # script banks the damage with a single roll and then switches the accuracy check off, so the
-    # turn it is used costs exactly one. The hit check it defers is an END-OF-TURN roll two turns
-    # later and belongs to no move's cost (`_fire_future_sight`).
+    # Future Sight is the one move whose cost is not built from the usual parts at all, and it is
+    # one either way it goes: on the turn it LANDS the effect script banks the damage with a
+    # single roll and switches the accuracy check off, and on a turn where one is already in the
+    # air it jumps past that switch and pays an ordinary accuracy roll instead (see
+    # `execute_move`). The hit check it defers is an END-OF-TURN roll two turns later and belongs
+    # to no move's cost (`_fire_future_sight`).
     if move.effect == EFFECT_FUTURE_SIGHT:
         return 1
     rolls = 1 if move.accuracy > 0 else 0
@@ -975,6 +977,28 @@ EFFECT_HAZE = 25
 EFFECT_TAUNT = 175
 TAUNT_TURNS_MIN = 3
 TAUNT_TURNS_SPAN = 3
+
+
+def taunt_refuses(move: Move, actor: Battler) -> bool:
+    """Whether a Taunt on `actor` refuses `move` at execution time.
+
+    The ROM's own test, transcribed: ``CHECK_STATUS_STATE_TAUNT`` is
+    ``tauntedTurns && aiContext.moveTable[moveCur].power == 0``
+    (src/battle/battle_controller_player.c:2557-2570). By POWER, like `Battler.usable_slots`.
+
+    **This is reachable, and `usable_slots` used to argue it was not.** The argument was that the
+    wild AI never PICKS a taunted status move -- true, and `usable_slots` still models it -- so
+    the only way into the refusal would be something forcing the choice, which no configured
+    target can do. What it missed is that the AI's narrowing happens at SELECTION time. On the
+    turn a Taunt lands with the taunter moving first, the target had already chosen, so there was
+    nothing to narrow and the refusal is what fires. Measured:
+    data/battle_logs/uxie1.jsonl turn 14, "The wild UXIE can't use Amnesia after the taunt!"
+    with `sub_seq:subscript_move_fail_taunted` on the phase record.
+
+    It is the common case rather than a corner, because a Taunt is thrown to land and we outspeed
+    a paralyzed target by construction.
+    """
+    return actor.taunted_turns > 0 and not move.power
 
 #: Stat raises a move puts on its OWN USER, by effect -- the mirror of `PRIMARY_STAT_DROPS`.
 #:
@@ -1591,11 +1615,36 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # `TRY_MOVE` ever runs. So the turn renders as the bare slot token, exactly as a
         # successful status move does.
         if will_fail(move, defender, field, actor=attacker):
-            # One already in the air. `TryFutureSight` jumps straight to "But it failed!" without
-            # reaching `CalcMoveDamage`, so this costs NOTHING -- the only zero-roll failure in
-            # the whole function, and the reason the check has to come before the roll below
-            # rather than after it.
-            return rng, MoveOutcome(rolls=0, tokens=tuple(parts), successful=False)
+            # One already in the air, so `TryFutureSight` jumps straight to "But it failed!"
+            # without reaching `CalcMoveDamage` -- no damage roll. **But an accuracy roll IS
+            # spent**, and it took ground truth to see why. `effect_script_0148.s` is:
+            #
+            #     _000:
+            #         TryFutureSight _010
+            #         UpdateVar OPCODE_FLAG_ON, BTLVAR_BATTLE_CTX_STATUS, ...
+            #                   ...|SYSCTL_NONSTANDARD_ACC_CHECK|...
+            #         End
+            #     _010:
+            #         PrintAttackMessage / Wait / WaitButtonABTime 30
+            #         Call BATTLE_SUBSCRIPT_BUT_IT_FAILED
+            #         End
+            #
+            # SYSCTL_NONSTANDARD_ACC_CHECK -- the flag that makes `CheckMoveHitAccuracy` return 0
+            # and is why `accuracy_for` answers 0 on a use turn -- is set on the SUCCESS path
+            # only. The already-pending path jumps over it, so the ordinary TRY_MOVE phase
+            # afterwards runs CheckMoveHit against Future Sight's real 90.
+            #
+            # Measured: data/battle_logs/uxie1.jsonl turn 4, roll 60087 at the accuracy PC
+            # 0x0224f230 with no damage-variance roll on the turn, right after "The wild UXIE
+            # used Future Sight! / But it failed!" (clayton-6xu.7.5). This was modelled as zero,
+            # which desynchronised every turn after a target re-picked Future Sight while one was
+            # in the air -- frequent, since Uxie and Azelf pick from four slots and the bank
+            # lasts two turns.
+            #
+            # The VERDICT is not observable: the script has already printed "But it failed!"
+            # before the roll happens, so nothing downstream reads it. One advance, no token.
+            rng, _unseen = advance(rng)
+            return rng, MoveOutcome(rolls=used + 1, tokens=tuple(parts), successful=False)
         rng, damage_roll = advance(rng)
         used += 1
         return rng, MoveOutcome(
@@ -2580,6 +2629,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if flinched["M"]:
             parts.append(tok.prevented_token("M", "fln"))
             return False
+        if taunt_refuses(move, new.ours):
+            # BEFORE the paralysis check, and that order is the whole cost model: the taunt test
+            # is state 6 of the before-move walk and the paralysis roll is state 11, and a refusal
+            # returns CHECK_STATUS_DISRUPT_MOVE, which stops the walk there. So a taunted AND
+            # paralyzed actor spends NOTHING -- not even the paralysis roll it would otherwise
+            # owe. Zero rolls, no post-successful-move advances, and the slot is reported because
+            # the game names the move (`tokens.TAUNTED`).
+            parts.append(tok.taunted_token("M", slot))
+            return False
         if new.ours.status is Status.PARALYSIS:
             # R7 residual: a paralysis check costs one roll, as metronome_compass models it.
             rng, roll = advance(rng)
@@ -2710,15 +2768,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if flinched["E"]:
             parts.append(tok.prevented_token("E", "fln"))
             return False
+        move = new.target.move(target_slot)
+        if move is None:
+            return False
+        if taunt_refuses(move, new.target):
+            # Resolved BEFORE the paralysis check, which is why `move` is fetched above rather
+            # than below it as it used to be. See the mirror of this in `act_ours`: the ROM's
+            # taunt test is state 6 of the before-move walk and the paralysis roll is state 11,
+            # so a taunted and paralyzed Uxie -- which is every Uxie in a real run -- spends no
+            # roll at all on the turn its Yawn or Amnesia is refused.
+            parts.append(tok.taunted_token("E", target_slot))
+            return False
         if new.target.status is Status.PARALYSIS:
             rng, roll = advance(rng)
             new.rng_offset += 1
             if roll % 4 == 0:
                 parts.append(tok.prevented_token("E", "par"))
                 return False
-        move = new.target.move(target_slot)
-        if move is None:
-            return False
         was_charging = new.target.charging_slot == target_slot
         # An Uproar continuation turn is the same case as a charge turn and for the same reason:
         # `Battler_CanPickCommand` is FALSE, so `ppDecremented` is set TRUE at command selection

@@ -5,12 +5,14 @@ judgement lives here instead and is tested against synthetic logs.
 """
 import json
 import tempfile
+from collections import Counter
 import unittest
 from pathlib import Path
 
 from claytonlib.battle.damage import Attacker, Defender
 from claytonlib.battle.logcheck import (
-    PLAYER_BATTLER, TARGET_BATTLER, BattleLog, check_damage_event, load, report,
+    END_OF_TURN_COMMANDS, PLAYER_BATTLER, TARGET_BATTLER, BattleLog, check_damage_event, load,
+    phase_label, report,
 )
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.moves import resolve_move
@@ -22,6 +24,25 @@ def _roll(val, func="BattleSystem_Random", addr="0x0"):
 
 def _hp(battler, hp, max_hp):
     return {"hp": [{"battler": battler, "hp": hp, "max": max_hp}]}
+
+
+def _phase(command, *, next_command=None, mon=26, side=3, field=13, temp=0,
+           narc=1, script_file=18, cursor=0, script="sub_seq:subscript_fall_asleep"):
+    """A phase record shaped like the Platinum reader's, with readable defaults: every
+    condition-check state parked at its END value and nothing being walked."""
+    fields = {"command": command, "commandNext": next_command or command,
+              "fieldConditionCheckState": field, "fieldConditionCheckTemp": temp,
+              "monConditionCheckState": mon, "monConditionCheckTemp": temp,
+              "sideConditionCheckState": side, "sideConditionCheckTemp": temp,
+              "attacker": 0, "defender": 1,
+              "scriptNarc": narc, "scriptFile": script_file, "scriptCursor": cursor}
+    names = {"command": command, "commandNext": next_command or command,
+             "fieldConditionCheckState": {7: "RAINING", 13: "END"}.get(field, str(field)),
+             "monConditionCheckState": {14: "THRASH", 23: "YAWN", 24: "ITEM_CONDITION",
+                                        26: "END"}.get(mon, str(mon)),
+             "sideConditionCheckState": {0: "FUTURE_SIGHT", 3: "END"}.get(side, str(side)),
+             "script": script}
+    return {"phase": {"fields": fields, "names": names}}
 
 
 def _log(records, **kwargs):
@@ -206,3 +227,198 @@ class TestLoadAndReport(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPhaseLabels(unittest.TestCase):
+    def test_a_command_outside_the_end_of_turn_has_no_label(self):
+        self.assertIsNone(phase_label(_phase("USE_MOVE")["phase"]))
+
+    def test_the_mon_condition_walk_names_the_condition_and_the_battler(self):
+        phase = _phase("CHECK_MON_CONDITIONS", mon=23, temp=1)["phase"]
+        self.assertEqual(phase_label(phase), "mon:YAWN[b1]")
+
+    def test_the_side_condition_walk_names_its_own_state(self):
+        phase = _phase("CHECK_SIDE_CONDITIONS", side=0)["phase"]
+        self.assertEqual(phase_label(phase), "side:FUTURE_SIGHT[b0]")
+
+    def test_turn_end_walks_nothing(self):
+        self.assertEqual(phase_label(_phase("TURN_END")["phase"]), "turn_end")
+
+    def test_a_subscripts_roll_is_attributed_to_the_command_it_returns_to(self):
+        """A roll inside subscript_fall_asleep reports command EXEC_SCRIPT; commandNext is what
+        says it is still the end of turn. Without this the two rolls 6xu.7.1 is about -- both of
+        which happen inside subscripts -- would be invisible."""
+        phase = _phase("EXEC_SCRIPT", next_command="CHECK_MON_CONDITIONS", mon=24)["phase"]
+        self.assertEqual(phase_label(phase), "mon:YAWN[b0]")
+
+    def test_the_mon_walks_increment_is_undone_inside_a_subscript(self):
+        """Every case in CheckMonConditions increments the state before breaking out to its
+        subscript, so a roll in subscript_fall_asleep reads ITEM_CONDITION (24) when Yawn (23)
+        is what loaded it. Measured in data/battle_logs/uxie1.jsonl."""
+        inside = _phase("EXEC_SCRIPT", next_command="CHECK_MON_CONDITIONS", mon=24)["phase"]
+        self.assertEqual(phase_label(inside), "mon:YAWN[b0]")
+        # ...and NOT undone when the walk itself is the current command.
+        walking = _phase("CHECK_MON_CONDITIONS", mon=24)["phase"]
+        self.assertEqual(phase_label(walking), "mon:ITEM_CONDITION[b0]")
+
+    def test_the_side_walks_state_is_not_adjusted(self):
+        """CheckSideConditions loops the battler inside each state and only advances the state
+        when that loop ends, so the state still names the condition."""
+        phase = _phase("EXEC_SCRIPT", next_command="CHECK_SIDE_CONDITIONS", side=0,
+                       temp=1)["phase"]
+        self.assertEqual(phase_label(phase), "side:FUTURE_SIGHT[b1]")
+
+    def test_a_field_walk_subscript_is_marked_uncertain(self):
+        """The field walk is mixed -- seven cases do not increment on break-out and six do -- so
+        there is no adjustment to apply and the label says so instead of guessing."""
+        phase = _phase("EXEC_SCRIPT", next_command="CHECK_FIELD_CONDITIONS", field=7)["phase"]
+        self.assertEqual(phase_label(phase), "field:RAINING[b0]?")
+
+    def test_the_condition_tables_match_the_recorders(self):
+        """logcheck keeps its own copy of the three enums so it can re-name an adjusted state.
+        The recorder's copies are the ones a log's `names` were built from, so they must agree."""
+        import importlib.util
+        import pathlib as _pathlib
+        import sys as _sys
+        from claytonlib.battle.logcheck import _CONDITION_NAMES
+        path = (_pathlib.Path(__file__).resolve().parent.parent / "utils"
+                / "gdb-platinum-battle-reader.py")
+        sentinel = object()
+        previous = _sys.modules.get("gdb", sentinel)
+        _sys.modules["gdb"] = None
+        try:
+            spec = importlib.util.spec_from_file_location("_plr_for_logcheck", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        finally:
+            if previous is sentinel:
+                del _sys.modules["gdb"]
+            else:
+                _sys.modules["gdb"] = previous
+        self.assertEqual(_CONDITION_NAMES["mon"], module.MON_COND_CHECK_NAMES)
+        self.assertEqual(_CONDITION_NAMES["side"], module.SIDE_COND_CHECK_NAMES)
+        self.assertEqual(_CONDITION_NAMES["field"], module.FIELD_COND_CHECK_NAMES)
+
+    def test_a_subscript_outside_the_end_of_turn_is_still_unlabelled(self):
+        phase = _phase("EXEC_SCRIPT", next_command="USE_MOVE")["phase"]
+        self.assertIsNone(phase_label(phase))
+
+    def test_every_end_of_turn_command_gets_a_label(self):
+        for command in END_OF_TURN_COMMANDS:
+            self.assertIsNotNone(phase_label(_phase(command)["phase"]), command)
+
+
+class TestEndOfTurnSequences(unittest.TestCase):
+    def test_a_log_without_phases_reports_nothing_rather_than_guessing(self):
+        """An HG/SS log has no phase records, and inventing an attribution for it would be worse
+        than saying it cannot answer the question."""
+        log = _log([_roll(1), _roll(2)])
+        self.assertEqual(log.end_of_turn_sequences(), [])
+        self.assertEqual(log.phases, [])
+
+    def test_rolls_are_numbered_within_the_sequence(self):
+        log = _log([
+            _phase("USE_MOVE"), _roll(10),
+            _phase("CHECK_MON_CONDITIONS", mon=14), _roll(20),
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(30),
+            _phase("CHECK_SIDE_CONDITIONS", side=0), _roll(40),
+            _phase("TURN_END"), _roll(50),
+        ])
+        sequences = log.end_of_turn_sequences()
+        self.assertEqual(len(sequences), 1)
+        self.assertEqual([(r.ordinal, r.label, r.value) for r in sequences[0]],
+                         [(1, "mon:THRASH[b0]", 20),
+                          (2, "mon:YAWN[b0]", 30),
+                          (3, "side:FUTURE_SIGHT[b0]", 40),
+                          (4, "turn_end", 50)])
+
+    def test_the_move_phase_roll_is_not_counted(self):
+        log = _log([_phase("USE_MOVE"), _roll(10)])
+        self.assertEqual(log.end_of_turn_sequences(), [])
+
+    def test_leaving_the_end_of_turn_closes_the_sequence(self):
+        log = _log([
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(1),
+            _phase("INIT_COMMAND_SELECTION"), _roll(2),
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(3),
+        ])
+        sequences = log.end_of_turn_sequences()
+        self.assertEqual([len(s) for s in sequences], [1, 1])
+        self.assertEqual([s[0].ordinal for s in sequences], [1, 1])
+
+    def test_a_phase_with_no_rolls_in_it_does_not_split_a_sequence(self):
+        """The ROM walks every condition state whether or not it does anything, so most phases
+        spend no roll; splitting on those would turn one sequence into four empty ones."""
+        log = _log([
+            _phase("CHECK_MON_CONDITIONS", mon=4), _phase("CHECK_MON_CONDITIONS", mon=8),
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(1),
+            _phase("CHECK_SIDE_CONDITIONS", side=0), _roll(2),
+        ])
+        self.assertEqual([len(s) for s in log.end_of_turn_sequences()], [2])
+
+    def test_rolls_before_the_first_phase_are_not_attributed(self):
+        log = _log([_roll(1), _phase("TURN_END"), _roll(2)])
+        self.assertEqual([r.value for r in log.end_of_turn_sequences()[0]], [2])
+
+    def test_the_script_travels_with_the_roll(self):
+        log = _log([
+            _phase("EXEC_SCRIPT", next_command="CHECK_MON_CONDITIONS", mon=23, cursor=7,
+                   script="sub_seq:subscript_fall_asleep"),
+            _roll(1),
+        ])
+        self.assertEqual(log.end_of_turn_sequences()[0][0].script,
+                         "sub_seq:subscript_fall_asleep@7")
+
+    def test_rolls_by_phase_aggregates_the_whole_battle(self):
+        log = _log([
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(1),
+            _phase("INIT_COMMAND_SELECTION"), _roll(2),
+            _phase("CHECK_MON_CONDITIONS", mon=23), _roll(3),
+        ])
+        self.assertEqual(log.rolls_by_phase(), Counter({"mon:YAWN[b0]": 2}))
+
+
+class TestSeedAndGameMetadata(unittest.TestCase):
+    def test_the_game_is_read_when_present_and_none_otherwise(self):
+        self.assertEqual(_log([], game="platinum").game, "platinum")
+        self.assertIsNone(_log([]).game)
+
+    def test_the_seed_entries_are_exposed(self):
+        log = _log([{"seed": {"seedRandNext": "0xec1504dc", "seedLCRNG": "0x1",
+                              "forced": "0xec1504dc", "confirmed": True}}])
+        self.assertEqual(log.seeds[0]["seedRandNext"], "0xec1504dc")
+
+    def test_a_confirmed_forced_seed_is_reported_as_such(self):
+        log = _log([{"seed": {"seedRandNext": "0xec1504dc", "seedLCRNG": "0x1",
+                              "confirmed": True}}], game="platinum")
+        self.assertIn("CONFIRMED", report(log))
+
+    def test_a_forced_seed_that_did_not_take_is_loud(self):
+        log = _log([{"seed": {"seedRandNext": "0x1", "seedLCRNG": "0x2",
+                              "confirmed": False}}], game="platinum")
+        self.assertIn("DID NOT TAKE", report(log))
+
+
+class TestReportIncludesPhases(unittest.TestCase):
+    def test_the_report_lists_each_end_of_turn_roll_in_order(self):
+        log = _log([
+            _phase("CHECK_MON_CONDITIONS", mon=14), _roll(1),
+            _phase("EXEC_SCRIPT", next_command="CHECK_MON_CONDITIONS", mon=24, cursor=3),
+            _roll(2),
+            _phase("CHECK_SIDE_CONDITIONS", side=0), _roll(3),
+            _phase("TURN_END"), _roll(4),
+        ], game="platinum")
+        text = report(log)
+        self.assertIn("end-of-turn rolls", text)
+        self.assertIn("mon:YAWN[b0]", text)
+        self.assertIn("side:FUTURE_SIGHT[b0]", text)
+        self.assertIn("sub_seq:subscript_fall_asleep@3", text)
+        self.assertIn("phases: 4", text)
+
+    def test_a_phase_bearing_log_with_no_end_of_turn_rolls_says_so(self):
+        log = _log([_phase("USE_MOVE"), _roll(1)], game="platinum")
+        self.assertIn("no end-of-turn rolls", report(log))
+
+    def test_an_hgss_log_gets_no_phase_section_at_all(self):
+        text = report(_log([_roll(1), _hp(0, 100, 100)]))
+        self.assertNotIn("end-of-turn rolls", text)

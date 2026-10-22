@@ -318,3 +318,73 @@ class TestBallTokensAreValidated(unittest.TestCase):
     def test_a_shake_count_out_of_range_is_rejected(self):
         self.assertTrue(tok.validate_turn(["C4"]))
         self.assertTrue(tok.validate_turn(["P9"]))
+
+
+class TestTheTauntRefusal(unittest.TestCase):
+    """``E2tnt`` -- the one move-prevention that keeps its slot, because the game named the move
+    it refused: "The wild UXIE can't use Amnesia after the taunt!" (clayton-6xu.7.6)."""
+
+    def test_the_marker_is_tnt(self):
+        self.assertEqual(tok.TAUNTED, "tnt")
+
+    def test_the_slot_comes_first(self):
+        self.assertEqual(tok.taunted_token("E", 1), "E2tnt")
+        self.assertEqual(tok.taunted_token("M", 3), "M4tnt")
+
+    def test_it_is_not_a_prevention_marker(self):
+        """Membership of PREVENTION_DETAIL is what makes a marker REPLACE the slot, which is the
+        one thing this token must not do."""
+        self.assertNotIn(tok.TAUNTED, tok.PREVENTION_DETAIL)
+        self.assertNotIn(tok.TAUNTED, tok.RESOLUTION_DETAIL)
+        self.assertNotIn(tok.TAUNTED, tok.STATUS_MARKERS)
+
+    def test_an_out_of_range_slot_or_actor_raises(self):
+        for slot in (-1, 4):
+            with self.assertRaises(ValueError):
+                tok.taunted_token("E", slot)
+        with self.assertRaises(ValueError):
+            tok.taunted_token("T", 0)
+
+    def test_it_tokenises_as_one_token(self):
+        self.assertEqual(tok.tokenise("M1E2tnt"), ["M1", "E2tnt"])
+        self.assertEqual(tok.tokenise("M1hE4tntHP120"), ["M1h", "E4tnt", "HP120"])
+
+    def test_a_well_formed_refusal_validates(self):
+        self.assertEqual(tok.validate_turn(["M1", "E2tnt"]), [])
+        self.assertEqual(tok.validate_turn(["M1", "M3tnt"]), [])
+
+    def test_a_slotless_refusal_is_rejected(self):
+        """Dropping the slot would discard the only free read of the target's selection roll a
+        run ever gets."""
+        problems = tok.validate_turn(["Etnt"])
+        self.assertTrue(problems)
+        self.assertIn("slot", problems[0])
+
+    def test_nothing_may_follow_it(self):
+        """The move never executed, so there is no hit, crit, miss or secondary to report."""
+        for token in ("E2tnth", "E2tnt!", "E2tnt~"):
+            with self.subTest(token):
+                self.assertTrue(any("tnt" in p for p in tok.validate_turn([token])))
+
+    def test_it_needs_no_hp_token(self):
+        self.assertFalse(tok.turn_requires_hp(["M1", "E2tnt"]))
+        self.assertEqual(tok.validate_turn(["M1", "E2tnt"]), [])
+
+    def test_it_does_not_disturb_the_ordinary_details(self):
+        """`tnt` shares no letter with the hit markers, so adding it cannot change how an
+        existing turn parses."""
+        for marker in (tok.HIT, tok.CRIT, tok.MISS, tok.SECONDARY, tok.STATIC):
+            with self.subTest(marker):
+                self.assertNotIn(marker, tok.TAUNTED)
+        self.assertEqual(tok.validate_turn(["M1h", "E2!~", "HP100"]), [])
+
+    def test_the_prose_names_the_refused_move(self):
+        lines = tok.explain_turn(("E2tnt",), target="Uxie",
+                                 target_moves=("Swift", "Yawn", "Future Sight", "Amnesia"))
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Yawn", lines[0])
+        self.assertIn("taunt", lines[0].lower())
+
+    def test_the_prose_falls_back_to_a_move_number(self):
+        lines = tok.explain_turn(("E2tnt",), target="Uxie")
+        self.assertIn("move 2", lines[0])

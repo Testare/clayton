@@ -33,6 +33,8 @@ data/
 
 # Game-derived binaries — never commit ROM/emulator artifacts
 *.elf
+# Platinum's symbol file, the sibling of main.elf: a 29MB build artifact, same reasoning.
+*.nef
 *.nds
 *.sav
 *.dsv

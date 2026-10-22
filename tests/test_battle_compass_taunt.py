@@ -16,7 +16,16 @@ actually happens is that `TrainerAI_Init` zeroes the move's SCORE, so it drops o
 max-score tie list the wild pick draws from and the selection modulus shrinks. See
 `Battler.usable_slots`, which carries the citation.
 
-(clayton-4wr.1.2)
+**And then exactly one turn turned out to work the obvious way after all: the turn the Taunt
+LANDS.** The score-zeroing happens at SELECTION time, so a target that chose before the Taunt
+existed had nothing narrowed, and `CHECK_STATUS_STATE_TAUNT` refuses the move it already picked.
+Measured in data/battle_logs/uxie1.jsonl turn 14 -- "The wild UXIE can't use Amnesia after the
+taunt!", with `sub_seq:subscript_move_fail_taunted` on the phase record -- which is not a corner
+case: a Taunt is thrown to land, and we outspeed a paralyzed target by construction. So both
+halves are modelled, and they are modelled in different places: the narrowing in `usable_slots`,
+the refusal in `sim.taunt_refuses` with a token of its own (`tokens.TAUNTED`).
+
+(clayton-4wr.1.2, clayton-6xu.7.6)
 """
 import unittest
 from dataclasses import replace
@@ -27,8 +36,9 @@ from claytonlib.battle_compass.hunt_session import field_conditions, move_info
 from claytonlib.battle_compass.sim import (
     EFFECT_TAUNT, MODELLED_OUR_EFFECTS, SOUND_MOVES, TAUNT_TURNS_MIN, TAUNT_TURNS_SPAN,
     HuntConfig, can_miss, execute_move, move_roll_cost, opening_rng, select_target_move,
-    sent_out, simulate_turn, unselectable_reason, will_fail,
+    sent_out, simulate_turn, taunt_refuses, unselectable_reason, will_fail,
 )
+from claytonlib.battle import turn as turn_costs
 from claytonlib.battle_compass.state import Action, BattleState, Battler, Status
 from claytonlib.battle_compass.targets import moveset, target_ability
 from claytonlib.moves import resolve_move
@@ -345,3 +355,110 @@ class TestItRunsEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheLandingTurnRefusesAnAlreadySelectedMove(unittest.TestCase):
+    """clayton-6xu.7.6. The one turn the refusal path fires, and it is the commonest Taunt turn
+    there is.
+
+    Every turn here has the target PARALYZED, which is not a contrivance: a free Lv50 Uxie
+    outspeeds Honchkrow (121 to 110) and so moves before the Taunt can land, and paralysis is the
+    Phase 2 precondition anyway. Quartered to 30 it moves second, which is the only arrangement
+    in which the refusal is reachable at all.
+    """
+
+    def test_the_predicate_is_the_roms_power_test(self):
+        """``tauntedTurns && moveTable[moveCur].power == 0``, by POWER not by category."""
+        taunted = _target("uxie", taunted_turns=3)
+        self.assertTrue(taunt_refuses(resolve_move("Amnesia"), taunted))
+        self.assertTrue(taunt_refuses(resolve_move("Yawn"), taunted))
+        self.assertFalse(taunt_refuses(resolve_move("Swift"), taunted))
+        self.assertFalse(taunt_refuses(resolve_move("Future Sight"), taunted))
+
+    def test_an_untaunted_actor_is_never_refused(self):
+        free = _target("uxie")
+        self.assertFalse(any(taunt_refuses(resolve_move(m), free) for m in moveset("uxie")))
+
+    def _landing_turns(self):
+        """(seed, state-after) for every seed whose Taunt turn ends in a refusal."""
+        config = _config()
+        for seed in range(0x0C0E0200, 0x0C0E0300):
+            state = BattleState(ours=_honchkrow(),
+                                target=_target("uxie", status=Status.PARALYSIS),
+                                rng=opening_rng(seed, config))
+            after = simulate_turn(state, Action.MOVE_1, config)   # Honchkrow's Taunt
+            if any(p.endswith(tok.TAUNTED) for p in after.log[-1]):
+                yield seed, after
+
+    def test_the_landing_turn_renders_a_tnt_token_naming_the_slot(self):
+        """Over a seed sweep, some Uxies had picked Yawn or Amnesia before the Taunt resolved;
+        those turns must render the slot and the refusal, not a bare slot and not a prevention."""
+        refusals = {p for _, after in self._landing_turns()
+                    for p in after.log[-1] if p.endswith(tok.TAUNTED)}
+        # Yawn is slot 2 and Amnesia slot 4 of the Uxie moveset, and nothing else can be refused.
+        self.assertEqual(refusals, {"E2" + tok.TAUNTED, "E4" + tok.TAUNTED})
+        self.assertNotIn("E" + tok.TAUNTED, refusals,
+                         "the slot must be kept, unlike every other prevention")
+
+    def test_a_refused_turn_is_a_well_formed_turn(self):
+        for seed, after in self._landing_turns():
+            with self.subTest(f"{seed:#x}"):
+                self.assertEqual(tok.validate_turn(after.log[-1]), [])
+
+    def test_the_refused_side_contributes_nothing_and_pays_no_paralysis_roll(self):
+        """The exact advance count, which is the point of the whole issue.
+
+        One selection roll, the four before-turn advances, our Taunt's accuracy and duration
+        rolls plus its two post-successful-move advances, the two between-turn advances, NOTHING
+        for the target, and the four end-of-turn advances.
+
+        The paralysis roll is the part that has to be absent. The ROM's taunt test is state 6 of
+        the before-move walk and the paralysis roll is state 11, and a refusal returns
+        CHECK_STATUS_DISRUPT_MOVE -- so a taunted and paralyzed target never reaches it. One
+        extra here would be that roll, and Uxie is paralyzed in every real run.
+        """
+        expected = (1                                          # the wild selection roll
+                    + turn_costs.BEFORE_TURN_ADVANCES          # 4
+                    + 2                                        # Taunt: accuracy + duration
+                    + turn_costs.POST_SUCCESSFUL_MOVE_ADVANCES  # 2
+                    + turn_costs.BETWEEN_TURN_ADVANCES         # 2
+                    + 0                                        # the refused target
+                    + turn_costs.END_OF_TURN_ADVANCES)         # 4
+        counted = 0
+        for seed, after in self._landing_turns():
+            counted += 1
+            with self.subTest(f"{seed:#x}"):
+                self.assertEqual(after.rng_offset, expected)
+        self.assertGreater(counted, 5, "the sweep produced too few refusals to measure")
+
+    def test_a_refused_turn_is_the_cheapest_taunt_turn_there_is(self):
+        """Same action, same Honchkrow, same Taunt landing — so our half of the turn is identical
+        and the only difference is what the target did with its own half.
+
+        Compared against the Taunt turns of the same sweep where the target had picked a damaging
+        move instead and so was not refused. Not compared against an EXECUTED status move,
+        because that is not apples to apples here: Yawn against Honchkrow's Insomnia fails free,
+        which makes it cheaper than Amnesia and muddies the number the test is about.
+        """
+        config = _config()
+        refused, allowed = set(), set()
+        for seed in range(0x0C0E0200, 0x0C0E0300):
+            after = simulate_turn(
+                BattleState(ours=_honchkrow(), target=_target("uxie", status=Status.PARALYSIS),
+                            rng=opening_rng(seed, config)), Action.MOVE_1, config)
+            theirs = [p for p in after.log[-1] if p.startswith("E")]
+            if any(p.endswith(tok.TAUNTED) for p in theirs):
+                refused.add(after.rng_offset)
+            elif theirs and theirs[0][1:2] in "13":     # Swift or Future Sight: never refused
+                allowed.add(after.rng_offset)
+        self.assertTrue(refused and allowed, "the sweep did not produce both kinds of turn")
+        self.assertLess(max(refused), min(allowed))
+
+    def test_the_prose_names_the_move(self):
+        """The whole reason the token keeps its slot: the game announced which move it was."""
+        lines = " ".join(tok.explain_turn(
+            ("M1", "E2" + tok.TAUNTED),
+            ours="Honchkrow", ours_moves=("Taunt", "Haze"),
+            target="Uxie", target_moves=("Swift", "Yawn", "Future Sight", "Amnesia")))
+        self.assertIn("Yawn", lines)
+        self.assertIn("taunt", lines.lower())

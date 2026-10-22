@@ -232,18 +232,39 @@ class TestFutureSight(unittest.TestCase):
                                   _lake("uxie"), _ours(), actor="E", slot=2)
         self.assertEqual(outcome.tokens, ("E3",))
 
-    def test_a_second_one_fails_and_costs_nothing_at_all(self):
-        """`TryFutureSight` jumps straight to "But it failed!" without reaching `CalcMoveDamage`
-        -- the only zero-roll failure in `execute_move`."""
+    def test_a_second_one_fails_but_still_pays_an_accuracy_roll(self):
+        """It banks nothing -- `TryFutureSight` jumps straight to "But it failed!" without
+        reaching `CalcMoveDamage` -- but it is NOT free, and this test used to assert that it
+        was (clayton-6xu.7.5).
+
+        `effect_script_0148.s` sets `SYSCTL_NONSTANDARD_ACC_CHECK`, the flag that suppresses the
+        accuracy check, on the SUCCESS path only; the already-pending path jumps over it to
+        `_010`, so the ordinary TRY_MOVE phase afterwards runs CheckMoveHit against Future
+        Sight's real 90. Measured in data/battle_logs/uxie1.jsonl turn 4: roll 60087 at the
+        accuracy PC 0x0224f230, with no damage-variance roll on that turn.
+
+        One roll either way, so `move_roll_cost`'s bound of 1 was right even while this was not.
+        """
         pending = _state(_lake("uxie"), future_sight_turns=2, future_sight_damage=40,
                          future_sight_move="Future Sight")
         rng = 0x0C0E02CA
         after, outcome = execute_move(rng, resolve_move("Future Sight"), _lake("uxie"),
                                       _ours(), actor="E", slot=2, field=pending)
-        self.assertEqual(outcome.rolls, 0)
-        self.assertEqual(after, rng)
+        self.assertEqual(outcome.rolls, 1)
+        self.assertNotEqual(after, rng)
+        self.assertEqual(outcome.rolls, move_roll_cost(resolve_move("Future Sight")))
         self.assertFalse(outcome.successful)
         self.assertIsNone(outcome.banked_future_sight)
+
+    def test_the_failed_use_renders_the_bare_slot_and_nothing_else(self):
+        """The roll's verdict is unobservable: `BATTLE_SUBSCRIPT_BUT_IT_FAILED` has already
+        printed before the accuracy check happens, so nothing downstream reads it. A miss marker
+        would be a report no player could have made."""
+        pending = _state(_lake("uxie"), future_sight_turns=2, future_sight_damage=40,
+                         future_sight_move="Future Sight")
+        _, outcome = execute_move(0x0C0E02CA, resolve_move("Future Sight"), _lake("uxie"),
+                                  _ours(), actor="E", slot=2, field=pending)
+        self.assertEqual(outcome.tokens, ("E3",))
 
     def test_it_lands_two_turns_later_with_its_own_token(self):
         config = _config()

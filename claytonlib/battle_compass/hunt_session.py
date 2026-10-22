@@ -44,7 +44,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
-    ABILITY_BAD_DREAMS, EFFECT_NIGHTMARE, FLINCH_EFFECTS, HuntConfig, SLEEP_DURATION_MIN,
+    ABILITY_BAD_DREAMS, EFFECT_NIGHTMARE, EFFECT_TAUNT, FLINCH_EFFECTS, HuntConfig,
+    SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
     can_flinch, can_inflict, can_miss, is_semi_invulnerable, pending_future_sight,
     effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
@@ -897,7 +898,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
         move = battler.move(slot)
         if move is None:
             out.append({"slot": slot, "name": "", "known": False, "damaging": False,
-                        "selectable": False,
+                        "selectable": False, "taunt_refusable": False, "applies_taunt": False,
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
@@ -963,6 +964,19 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # `sim.SECONDARY_DESCRIPTIONS` for why a wrong name is worse than a vague one.
             "secondary_side": (desc[0] if (desc := secondary_description(move)) else None),
             "secondary_label": (desc[1] if desc else None),
+            # Whether a Taunt refuses this move at EXECUTION time, which is a different question
+            # from `selectable` and the two have to be published separately. `selectable` is read
+            # off the opening state, so on the turn a Taunt LANDS it still offers the status
+            # moves -- correctly, because the target had already chosen when the Taunt hit. This
+            # flag is what lets the page then offer "refused by the taunt" as that slot's
+            # outcome. The ROM's own test is on POWER (`sim.taunt_refuses`), so a 0-power move is
+            # refusable whether or not anything is taunted yet; the page combines it with
+            # `applies_taunt` below (clayton-6xu.7.6).
+            "taunt_refusable": not move.power,
+            # ...and whether THIS move is the one that lands the Taunt. The mirror of
+            # `applies_status`, and live on the same turn for the same reason: a Taunt we land
+            # resolves before the target's half of the turn.
+            "applies_taunt": move.effect == EFFECT_TAUNT,
             # Contact, which decides whether a Static holder's ability could have fired. The
             # page needs it because Static's paralysis is announced by no move at all, so the
             # interview has to ask for it or the roll goes unreported (clayton-957.10.13).

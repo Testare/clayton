@@ -55,6 +55,26 @@ SECONDARY = "~"
 #: indistinguishable from an ability trigger.
 STATIC = "*"
 
+#: The selected move was refused by a Taunt, so it never executed: ``E2tnt``.
+#:
+#: **The one move-prevention that keeps its slot**, which is why it is a move DETAIL and not a
+#: member of `PREVENTION_DETAIL`. Every other prevention replaces the slot because there is no
+#: move to attribute -- "was fully paralyzed" says nothing about what it would have done. A Taunt
+#: refusal announces the move by name ("The wild UXIE can't use Amnesia after the taunt!"), so
+#: the slot is observed rather than hidden, and a grammar that threw it away would discard the
+#: only free read of the target's selection roll a run ever gets.
+#:
+#: Reachable on exactly one kind of turn: the one a Taunt LANDS on, with the taunter moving
+#: first. The target had already selected, so `Battler.usable_slots`'s narrowing -- which is what
+#: keeps a taunted target off its status moves on every LATER turn -- had nothing to narrow.
+#: ``CHECK_STATUS_STATE_TAUNT`` (src/battle/battle_controller_player.c:2557) then refuses it:
+#: ``tauntedTurns && moveTable[moveCur].power == 0``.
+#:
+#: Measured in data/battle_logs/uxie1.jsonl turn 14 -- and it costs the refused side every roll
+#: its move would have spent, because the taunt check is state 6 of the before-move walk and
+#: ``CHECK_STATUS_DISRUPT_MOVE`` stops the walk there, before the paralysis check at state 11.
+TAUNTED = "tnt"
+
 #: A Future Sight landing, two turns after the move that banked it. ``Fh`` hit, ``F-`` missed.
 #:
 #: The only token in the grammar that belongs to no actor's move, which is why it needs a prefix
@@ -121,6 +141,18 @@ def prevented_token(actor: str, status: str) -> str:
         raise ValueError(f"{status!r} does not prevent a move; known: "
                          f"{sorted(PREVENTION_DETAIL)}")
     return f"{actor}{status}"
+
+
+def taunted_token(actor: str, slot: int) -> str:
+    """``E2tnt`` — the actor had picked that slot and a Taunt refused it.
+
+    Slot FIRST, unlike `prevented_token`, because the slot is known: see `TAUNTED`.
+    """
+    if actor not in ("M", "E"):
+        raise ValueError(f"actor must be M or E, got {actor!r}")
+    if not 0 <= slot <= 3:
+        raise ValueError(f"move slot out of range: {slot}")
+    return f"{actor}{slot + 1}{TAUNTED}"
 
 
 def resolved_token(actor: str, status: str, slot: int) -> str:
@@ -325,6 +357,25 @@ BALL_TOKENS = frozenset(
     {"C", "Pc"} | {f"{prefix}{shakes}" for prefix in "CP" for shakes in range(4)})
 
 
+def _taunt_problems(token: str, detail: str) -> list[str]:
+    """`TAUNTED`'s two grammar rules, checked where the M/E details are.
+
+    Worth checking rather than documenting for the reason the ball tokens are: a malformed one is
+    still a well-formed *token*, so it would sit in the right place matching no candidate's
+    prediction with nothing to say why.
+    """
+    if TAUNTED not in detail:
+        return []
+    if not detail[:1].isdigit():
+        return [f"{token!r} is a Taunt refusal, so the slot it refused must come first "
+                f"(e.g. {'E2' + TAUNTED!r})"]
+    rest = detail[1:]
+    if rest != TAUNTED:
+        return [f"{token!r} is a Taunt refusal, so the move never executed and nothing may "
+                f"follow {TAUNTED!r}"]
+    return []
+
+
 def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
     """Grammar invariants, as a list of problems (sec 13.8). Empty means the turn is well formed.
 
@@ -353,6 +404,8 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
                     problems.append(f"{token!r} prevented the move, so no slot may follow "
                                     f"{marker!r}")
                 break
+            else:
+                problems.extend(_taunt_problems(token, detail))
             continue
         if token[0] == FUTURE_SIGHT:
             # Hit or miss and nothing else. Checked explicitly for the reason the ball tokens are:
@@ -439,6 +492,10 @@ def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
     slot = int(detail[0]) - 1
     rest = detail[1:]
     move = _move_name(names, slot)
+    if rest == TAUNTED:
+        # Before the hit/miss branch, because the move never executed -- and the move is NAMED,
+        # which is the whole point of the token.
+        return f"{actor} couldn't use {move} after the taunt"
     secondary = SECONDARY in rest
     if MISS in rest:
         phrase = f"{actor} used {move} and it missed"

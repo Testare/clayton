@@ -1287,6 +1287,130 @@ wrong sleep length or a wrong Future Sight hit, which eliminates the true seed r
 mispredicting a number. Uxie is the target that makes it load-bearing — both rolls are in its own
 moveset and the target picks its own moves, so a run cannot route around them. [needs gdb]
 
+**The capture tool now exists**: `utils/gdb-platinum-battle-reader.py`, the Platinum port of
+`utils/gdb-battle-reader.py`. Beyond the port it logs the ROM's **battle phase** next to every
+roll — `command`, all three condition-check state machines, and the battle script and cursor —
+so the position of a roll inside the end of turn is read off the log rather than argued about.
+`claytonlib.battle.logcheck`'s `end_of_turn_sequences` prints each turn's end-of-turn rolls in
+order with the condition each one belongs to, which is the shape of the answer this section wants:
+
+```
+end-of-turn rolls, in order (which advance each condition's roll is):
+  sequence 1: 4 roll(s)
+    1. mon:THRASH[b0]          sub_seq:subscript_fall_asleep@0           val 40000
+    2. mon:YAWN[b0]            sub_seq:subscript_fall_asleep@3           val 21000
+    3. side:FUTURE_SIGHT[b0]   sub_seq:subscript_future_sight_damage@0   val 5000
+    4. turn_end                ...                                      val 9
+```
+
+The recipe is the issue's: force a seed, Yawn on turn 1, read the end of turn 2; then the same
+with a Future Sight banked on turn 1. Both rolls happen inside a subscript, so they report
+`command` as `EXEC_SCRIPT` — `commandNext` is what says they are still the end of turn, and
+`logcheck` attributes on that.
+
+#### MEASURED (data/battle_logs/uxie1.jsonl, forced seed 0x9876543a)
+
+The framing above is wrong in a way that makes the answer simpler. **None of the four
+end-of-turn commands spends a roll of its own.** `CheckFieldConditions`, `CheckMonConditions`,
+`CheckSideConditions` and `TurnEnd` contain zero `BattleSystem_RandNext` calls between them, and
+in 362 recorded rolls not one has `command` set to any of the four [verified]. Every end-of-turn
+roll happens inside a *subscript* the walk loads, and so reports `command = EXEC_SCRIPT` with
+`commandNext` naming the walk it will return to.
+
+The per-turn skeleton is rigidly regular across all 23 turns of the recording:
+
+| rolls | phase | notes |
+|---|---|---|
+| 4 | `CHECK_PRE_MOVE_ACTIONS` | invariant — the pre-move speed rolls |
+| — | *first mover's move* | `TRY_MOVE` = accuracy, `EXEC_SCRIPT→TRY_MOVE` = crit + damage variance |
+| 2 | `AFTER_MOVE_EFFECT` | per **executed** move — the post-successful-move advances |
+| 2 | `MOVE_END` | invariant |
+| 1 | `BEFORE_MOVE` | invariant (`subscript_check_quick_claw`); 0 on a switch turn |
+| — | *second mover's move* | |
+| 2 | `MOVE_END` | invariant |
+| 0–1 | `EXEC_SCRIPT→CHECK_MON_CONDITIONS` | **Yawn's sleep-duration roll** |
+| 0–1 | `EXEC_SCRIPT→CHECK_SIDE_CONDITIONS` | **Future Sight's hit check** |
+| 2 | `SHOW_BATTLE_MON` | invariant |
+| 1 | `COMMAND_SELECTION_INPUT` | invariant |
+
+Turn 4 is the turn both fired, verbatim:
+
+```
+PRE PRE PRE PRE  TRY AME AME  MEND MEND  BMV  TRY  MEND MEND  ES>MON ES>SIDE  SHOW SHOW CSEL
+```
+
+Both land after `MEND MEND` and before `SHOW SHOW`, **Yawn first**, one roll each.
+
+**`_END_OF_TURN_RESIDUAL_ANCHOR = 2` is correct**, on one named identification: that the modelled
+`END_OF_TURN_ADVANCES = 4` are the four trailing invariant rolls `MEND MEND SHOW SHOW`. On that
+reading the anchor is exact, and it agrees with metronome_compass's rampage-end confusion
+measurement ("between END[1] and END[2]", 0-based = after two) — `THRASH` is a mon-walk subscript
+like Yawn, so it lands in the same place. The identification is the one thing still [derived];
+`BEFORE_MOVE` and `COMMAND_SELECTION_INPUT` are the two per-turn invariant rolls `battle/turn.py`
+already lists as unmodelled R7 residuals, which is consistent with it.
+
+Every value matched the model [verified]:
+
+| roll | site | value | model | observed |
+|---|---|---|---|---|
+| Yawn duration | `0x02242c90` `subscript_fall_asleep@155` | 63348 | `%4=0` → 2 | an Awakening was used |
+| Yawn duration | same | 30480 | `%4=0` → 2 | 1 × "fast asleep", then woke |
+| Yawn duration | same | 346 | `%4=2` → 4 | 3 × "fast asleep", then woke |
+| Future Sight hit | `0x0224f230` `subscript_future_sight_damage@9` | 17334 | `%100=34 < 90` hit | "took the Future Sight attack", 133→99 |
+| Future Sight hit | same | 62125 | `%100=25 < 90` hit | "took the Future Sight attack", 138→102 |
+| Future Sight hit | same | 15792 | `%100=92 ≥ 90` miss | "took the Future Sight attack" **+ "But it failed!"**, no HP change |
+| Taunt duration | `0x02242c90` `subscript_taunt_start@16` | 24559 | `%3=1` → 4 | wore off at the end of the 4th turn |
+
+`0x02242c90` is the battle-script `Random` **opcode** — it fires only inside `subscript_fall_asleep`
+and `subscript_taunt_start` in this log. And `BtlCmd_Random` is
+`(rand % (range + 1)) + offset` (`src/battle/battle_script.c:3200-3210`), so `Random 3, 2` is
+`% 4` and `Random 2, 3` is `% 3`: `SLEEP_DURATION_SPAN = 4` and `TAUNT_TURNS_SPAN = 3` are both
+right, and any future reading of a script `Random` must add the 1.
+
+#### Two bugs the same recording surfaced, both now fixed
+
+**A pending Future Sight's re-use spends an accuracy roll** (clayton-6xu.7.5). It was modelled as
+the only zero-roll failure in `execute_move`. `effect_script_0148.s` sets
+`SYSCTL_NONSTANDARD_ACC_CHECK` — the flag that suppresses the accuracy check, and the reason
+`accuracy_for` answers 0 on a use turn — on the **success** path only; `TryFutureSight` jumps over
+it to `_010`, so the ordinary TRY_MOVE phase afterwards runs CheckMoveHit against the real 90.
+Measured at turn 4: roll 60087 at the accuracy PC with no damage-variance roll on the turn. One
+roll either way it goes, so `move_roll_cost`'s bound of 1 was right even while the branch was not.
+The verdict is unobservable — the script prints "But it failed!" before the roll — so the turn
+still renders the bare slot [verified].
+
+**Taunt's landing turn refuses the target's already-selected move** (clayton-6xu.7.6), which
+`Battler.usable_slots` argued could not happen. The narrowing it models happens at *selection*
+time; on the turn the Taunt lands with the taunter moving first the target had already chosen, so
+`CHECK_STATUS_STATE_TAUNT` (`tauntedTurns && power == 0`) refuses the move it is holding. Both
+halves are now modelled — the narrowing in `usable_slots` for every later turn, the refusal in
+`sim.taunt_refuses` for the landing turn.
+
+The refusal costs the refused side **three advances**: the taunt test is state 6 of the
+before-move walk and the paralysis roll is state 11, and `CHECK_STATUS_DISRUPT_MOVE` ends the walk
+there — so a taunted *and paralyzed* target, which is every target in a real run, spends neither
+its paralysis roll nor its two post-successful-move advances. Measured:
+
+```
+taunt-refused (turn 14)  PRE x4  TRY ES>MOVE_FAILED AME AME  MEND MEND       MEND MEND  SHOW SHOW CSEL
+par-prevented (turn 17)  PRE x4  AME AME             MEND MEND  BMV           MEND MEND  SHOW SHOW CSEL
+executed      (turn 19)  PRE x4                      MEND MEND  BMV  AME AME  MEND MEND  SHOW SHOW CSEL
+```
+
+And it gets a token of its own, `tokens.TAUNTED` — `E2tnt`, the **one move-prevention that keeps
+its slot**, because the game announces the move by name where a paralysis or a flinch announces
+nothing. On the landing turn that is a free read of the target's selection roll, which no other
+prevented turn gives.
+
+**Correction while porting — the state numbers above are one too high.** Platinum's enum opens
+`MON_COND_CHECK_STATE_INGRAIN = MON_COND_CHECK_START`, which is an alias and not a state of its
+own, so counting `MON_COND_CHECK_START` as a slot shifts everything after it by one. The decomp's
+values are **Uproar 13, Thrash 14, Taunt 19, Yawn 23** (`src/battle/battle_controller_player.c`,
+enum `MonCondCheckState`) against the 14 / 15 / 20 / 24 used in this document, in
+`battle_compass/sim.py` and in clayton-6xu.7.1. Nothing about the *order* changes, so no
+conclusion drawn from the old numbers is wrong — but a phase record carries the number, so the
+reader and `tests/test_gdb_platinum_battle_reader.py` use the ROM's. [verified]
+
 ### 15.6 Strategy — and the finding that is the opposite of the natural guess
 
 **Neither target separates two seeds one RTC second apart.** Both have exactly one sub-100 check,

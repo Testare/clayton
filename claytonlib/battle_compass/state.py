@@ -289,13 +289,22 @@ class Battler:
         CHECK_INVALID_TAUNTED. A taunted power-0 move therefore drops out of the tie list and the
         modulus shrinks with it: a taunted Uxie picks from two slots rather than four.
 
-        The plausible-looking alternative is wrong and worth naming, because
-        `subscript_move_fail_taunted` exists and reads like the wild path: pick a status move and
-        then be refused for it. That subscript is reached from `CHECK_STATUS_STATE_TAUNT` when
-        something *forces* a taunted Pokemon into a status move -- Encore, Sleep Talk, a locked
-        move -- none of which any configured target can do. Modelled as a refusal rather than as
-        a narrowing, every taunted turn would have spent two post-successful-move advances the
-        game does not spend, and picked the wrong move besides.
+        **And the refusal path is real as well, on exactly one turn.** This docstring used to
+        argue it was not -- that `subscript_move_fail_taunted` is reached from
+        `CHECK_STATUS_STATE_TAUNT` only when something *forces* a taunted Pokemon into a status
+        move, which no configured target can do. What that missed is that the narrowing above
+        happens at SELECTION time. On the turn a Taunt LANDS with the taunter moving first, the
+        target had already chosen, so there was nothing to narrow and the ROM refuses the move it
+        is holding. Measured in data/battle_logs/uxie1.jsonl turn 14 -- and it is the commonest
+        Taunt turn there is, because a Taunt is thrown to land and we outspeed a paralyzed target
+        by construction.
+
+        So both halves are modelled, in two places: the narrowing here, which is every turn
+        AFTER the first, and the refusal in `sim.taunt_refuses`, which is the landing turn and
+        carries its own token (`tokens.TAUNTED`). Getting that split wrong either way is a
+        desync: modelled as a refusal throughout, every taunted turn would spend two
+        post-successful-move advances the game does not spend and pick the wrong move besides;
+        modelled as a narrowing throughout, the landing turn spends three the game does not.
 
         **By POWER, not by category**, which is the ROM's own test. The same set in practice for
         every configured moveset, but transcribed rather than translated.
