@@ -1325,7 +1325,7 @@ The per-turn skeleton is rigidly regular across all 23 turns of the recording:
 | — | *first mover's move* | `TRY_MOVE` = accuracy, `EXEC_SCRIPT→TRY_MOVE` = crit + damage variance |
 | 2 | `AFTER_MOVE_EFFECT` | per **executed** move — the post-successful-move advances |
 | 2 | `MOVE_END` | invariant |
-| 1 | `BEFORE_MOVE` | invariant (`subscript_check_quick_claw`); 0 on a switch turn |
+| 1 | `BEFORE_MOVE` | **the paralysis check** — see below |
 | — | *second mover's move* | |
 | 2 | `MOVE_END` | invariant |
 | 0–1 | `EXEC_SCRIPT→CHECK_MON_CONDITIONS` | **Yawn's sleep-duration roll** |
@@ -1340,6 +1340,31 @@ PRE PRE PRE PRE  TRY AME AME  MEND MEND  BMV  TRY  MEND MEND  ES>MON ES>SIDE  SH
 ```
 
 Both land after `MEND MEND` and before `SHOW SHOW`, **Yawn first**, one roll each.
+
+**`BEFORE_MOVE` is the paralysis check, not a Quick Claw check.** Its phase records name
+`sub_seq:subscript_check_quick_claw`, which is a trap: `scriptFile` is the last script *loaded*,
+so it goes stale and says nothing about what the current phase is doing. The roll is
+`CHECK_STATUS_STATE_PARALYSIS`, which `BattleControllerPlayer_BeforeMove` reaches through
+`BEFORE_MOVE_STATE_STATUS_DISRUPTION`. Measured: it appears on 22 of the 23 turns — Uxie is
+paralyzed from turn 1 on — and the one turn it is missing is the Taunt turn, where the refusal at
+state 6 ends the walk before the paralysis roll at state 11. That absence is the
+cleanest confirmation of the cost model below [verified].
+
+It also closes the mapping, with nothing left over:
+
+| `battle/turn.py` | ROM phase |
+|---|---|
+| `BEFORE_TURN_ADVANCES = 4` | `CHECK_PRE_MOVE_ACTIONS` ×4 |
+| `SELECTION_ADVANCES = 1` | `COMMAND_SELECTION_INPUT` ×1 |
+| the paralysis check (1, listed as an R7 residual) | `BEFORE_MOVE` ×1 |
+| `POST_SUCCESSFUL_MOVE_ADVANCES = 2` | `AFTER_MOVE_EFFECT` ×2, per **executed** move |
+| `BETWEEN_TURN_ADVANCES = 2` | the **first** `MOVE_END` pair |
+| `END_OF_TURN_ADVANCES = 4` | the **second** `MOVE_END` pair + `SHOW_BATTLE_MON` ×2 |
+
+which is what makes `_END_OF_TURN_RESIDUAL_ANCHOR = 2` exact rather than merely consistent: the
+condition-walk rolls land between the two halves of that block [derived — every constant maps,
+but the split of the four MOVE_END rolls into two pairs is read off the ordering rather than
+measured directly].
 
 **`_END_OF_TURN_RESIDUAL_ANCHOR = 2` is correct**, on one named identification: that the modelled
 `END_OF_TURN_ADVANCES = 4` are the four trailing invariant rolls `MEND MEND SHOW SHOW`. On that
@@ -1396,6 +1421,9 @@ taunt-refused (turn 14)  PRE x4  TRY ES>MOVE_FAILED AME AME  MEND MEND       MEN
 par-prevented (turn 17)  PRE x4  AME AME             MEND MEND  BMV           MEND MEND  SHOW SHOW CSEL
 executed      (turn 19)  PRE x4                      MEND MEND  BMV  AME AME  MEND MEND  SHOW SHOW CSEL
 ```
+
+`BMV` there is the paralysis roll, which is exactly the point: the refused turn is the only one
+of the 23 without it.
 
 And it gets a token of its own, `tokens.TAUNTED` — `E2tnt`, the **one move-prevention that keeps
 its slot**, because the game announces the move by name where a paralysis or a flinch announces
