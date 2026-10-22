@@ -1134,7 +1134,17 @@ class Facade:
         from claytonlib.battle.balls import balls_for_game
         game_key = ""
         if profile_id:
-            game_key = self._load_profile(profile_id).game
+            try:
+                game_key = self._load_profile(profile_id).game
+            except ValueError:
+                # Fall back to the unscoped list rather than raising. This is the ONE call the
+                # picker cannot do without: an exception reaches the page as a null list, and a
+                # Capture ball select with nothing in it looks exactly like "this game has no
+                # balls" -- which is how the reported symptom presented. Offering too many is the
+                # smaller harm, and the same reasoning `balls_for_game` applies to an unset game;
+                # `Hunt._ball_errors` is what actually refuses a ball the game does not have, and
+                # it reads the profile itself.
+                game_key = ""
         return [{"name": b.name, "note": b.note,
                  "turn_dependent": bool(b.rule in ("timer", "quick")),
                  "conditional": bool(b.rule), "apricorn": bool(b.apricorn)}

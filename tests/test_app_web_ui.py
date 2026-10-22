@@ -561,3 +561,50 @@ class TestTheTauntRefusalIsTestedBeforeTheOtherOutcomes(unittest.TestCase):
     def test_the_steer_comes_before_the_outcome_question(self):
         body = _function_body("hrTargetBlocks")
         self.assertLess(body.index("hrTauntWeJustApplied()"), body.index("hrTauntRefuses(info)"))
+
+
+class TestTheCaptureBallPickerIsAlwaysPopulated(unittest.TestCase):
+    """The picker came up empty on a Platinum hunt, and the cause was not Platinum.
+
+    `huntConfigure` fetched the ball list inside its `_hunt.id !== id` guard, and `openHuntHome`
+    loads the same hunt WITHOUT the ball list -- so Hunt home -> Configure skipped the fetch
+    entirely and `_huntBalls` stayed null, leaving the Capture ball select with nothing in it but
+    its own placeholder. It only looked game-specific because the global survives between
+    screens: a session that had been through the Hunts list already had a list cached, and a
+    brand-new Platinum profile had not.
+
+    Keying the cache on the PROFILE fixes the other half too -- an HGSS hunt's apricorn balls
+    surviving into a Platinum hunt's picker.
+    """
+
+    def test_the_fetch_is_outside_the_hunt_identity_guard(self):
+        body = _function_body("huntConfigure")
+        guard = body.index('_hunt.id !== id')
+        closing = body.index("}", body.index('get_profile'))
+        self.assertGreater(body.index('"list_balls"'), closing,
+                           "the ball fetch is back inside the hunt-id guard")
+        self.assertLess(guard, body.index('"list_balls"'))
+
+    def test_the_cache_is_keyed_on_the_profile(self):
+        body = _function_body("huntConfigure")
+        self.assertIn("_huntBallsFor !== _hunt.profile_id", body)
+        self.assertIn("_huntBallsFor = _hunt.profile_id", body)
+
+    def test_the_key_is_declared(self):
+        self.assertIn("let _huntBallsFor", _HTML)
+
+    def test_a_null_list_is_refetched(self):
+        """Not merely a profile mismatch: the first visit has no list at all, and "" === "" would
+        otherwise look like a hit."""
+        self.assertIn("_huntBalls === null", _function_body("huntConfigure"))
+
+    def test_open_hunt_home_still_does_not_fetch_balls(self):
+        """It has no picker, so the fix belongs in huntConfigure rather than in both -- but if
+        that ever changes, this is the test that says the two were meant to differ."""
+        self.assertNotIn('"list_balls"', _function_body("openHuntHome"))
+
+    def test_the_picker_keeps_rendering_a_stored_choice(self):
+        """The old behaviour that must survive: a ball absent from this game still appears,
+        selected, so a stored choice is never silently dropped."""
+        body = _function_body("huntBallOptions")
+        self.assertIn("names.unshift(chosen)", body)

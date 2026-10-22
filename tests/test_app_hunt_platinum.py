@@ -105,6 +105,46 @@ class TestBallAvailability(HuntPlatinumCase):
         self.assertTrue(rows["Dusk Ball"]["conditional"])
 
 
+class TestNoGameLeavesThePickerEmpty(HuntPlatinumCase):
+    """The reported symptom was "I can't select any capture balls for a platinum profile", and
+    the cause turned out to be front-end caching rather than the list itself. These pin the half
+    the facade owns, so a future split of the ball table by game cannot reintroduce it.
+    """
+
+    def test_every_game_has_balls(self):
+        from claytonlib.games import game_keys
+
+        for key in game_keys():
+            profile = self.api.create_profile({"name": key, "game": key})["id"]
+            with self.subTest(key):
+                self.assertGreater(len(self.api.list_balls(profile)), 10)
+
+    def test_a_profile_with_no_game_gets_every_ball(self):
+        """Permissive on purpose: a profile predating the field is HGSS, and offering too many is
+        a smaller harm than hiding the one they are holding."""
+        legacy = self.api.create_profile({"name": "Legacy"})["id"]
+        self.assertGreaterEqual(len(self.api.list_balls(legacy)),
+                                len(self.api.list_balls(self.hgss)))
+
+    def test_an_unknown_profile_id_does_not_take_the_picker_down_with_it(self):
+        """`list_balls` is the one call the picker cannot do without, so it must not raise: an
+        exception reaches the page as a null list, which looks exactly like "no balls exist"."""
+        try:
+            rows = self.api.list_balls("nosuchprofile")
+        except Exception as problem:   # pragma: no cover - the assertion is the point
+            self.fail(f"list_balls raised for an unknown profile: {problem!r}")
+        self.assertGreater(len(rows), 10)
+
+    def test_platinum_has_the_balls_a_capture_plan_would_reach_for(self):
+        """Not an exhaustive list -- the point is that scoping to Sinnoh leaves a real choice
+        rather than only the three plain balls."""
+        names = {b["name"] for b in self.api.list_balls(self.platinum)}
+        for name in ("Ultra Ball", "Dusk Ball", "Timer Ball", "Quick Ball", "Net Ball",
+                     "Nest Ball", "Repeat Ball", "Dive Ball"):
+            with self.subTest(name):
+                self.assertIn(name, names)
+
+
 class TestTheBallReadout(HuntPlatinumCase):
 
     def test_time_of_day_comes_from_the_key_seed_not_from_configuration(self):

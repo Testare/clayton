@@ -3880,10 +3880,16 @@ function renderSafariCalibrateModel(){
 // target, the ball, and the seed targeting. The live encounter runs in Battle Compass, whose
 // mid-battle state is never persisted here -- the same split as Expedition vs Safari Compass.
 
-// The balls this hunt's game actually has, fetched per hunt (see huntConfigure). Null until
-// then; the picker renders whatever is in `h.capture_ball` meanwhile so a stored choice is never
-// dropped by a race.
+// The balls this hunt's game actually has. Null until fetched; the picker renders whatever is in
+// `h.capture_ball` meanwhile so a stored choice is never dropped by a race.
+//
+// Cached against the PROFILE rather than the hunt, which is the fix for an empty picker. The
+// fetch used to sit inside huntConfigure's `_hunt.id !== id` guard, and `openHuntHome` loads the
+// same hunt WITHOUT the ball list -- so going Hunt home -> Configure left this null and the
+// Capture ball select had nothing in it but its own "—". Keying on the profile also stops the
+// other half of that: an HGSS hunt's apricorn balls surviving into a Platinum hunt's picker.
 let _huntBalls = null;
+let _huntBallsFor = "";
 const STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
 const STAT_LABEL = {hp:"HP", atk:"Attack", def:"Defense", spa:"Sp. Atk", spd:"Sp. Def", spe:"Speed"};
 const NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","Relaxed","Impish",
@@ -6692,10 +6698,17 @@ async function huntConfigure(id){
   if(!_hunt || _hunt.id !== id){
     _hunt = await api("get_hunt", id);
     _huntProfile = await api("get_profile", _hunt.profile_id);
-    // Scoped to the profile's game: the apricorn balls do not exist in Platinum and the Sport
-    // Ball does not exist outside HGSS, and offering one the player cannot hold is how a plan
-    // gets built around a throw they cannot make.
+  }
+  // OUTSIDE the guard above, and keyed on the profile. `openHuntHome` sets `_hunt` for the same
+  // id without fetching the balls, so a fetch gated on the hunt id never ran on the
+  // Hunt home -> Configure path and the picker came up empty.
+  //
+  // Scoped to the profile's game: the apricorn balls do not exist in Platinum and the Sport Ball
+  // does not exist outside HGSS, and offering one the player cannot hold is how a plan gets
+  // built around a throw they cannot make.
+  if(_huntBalls === null || _huntBallsFor !== _hunt.profile_id){
     _huntBalls = await api("list_balls", _hunt.profile_id);
+    _huntBallsFor = _hunt.profile_id;
   }
   _huntReadiness = await api("hunt_readiness", id);
   renderHuntConfigure();
