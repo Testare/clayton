@@ -667,3 +667,88 @@ class TestLowercaseFlipsAlreadyMatch(unittest.TestCase):
         flips = flip_sequence(seed, 8)
         self.assertTrue(flips_match(seed, flips))
         self.assertTrue(flips_match(seed, flips.lower()))
+
+
+class TestTheHpBarColours(unittest.TestCase):
+    """The disagreement band and the target's HP thresholds.
+
+    The band was a 35% tint of the same green as the HP beside it, at 6px tall, which is why it
+    could not be seen. The thresholds mirror the game's own bar so the panel and the screen agree.
+
+    Colour choices were computed rather than eyeballed (the dataviz validator, OKLab dE): the
+    first amber tried sat 12.6 from --danger, under the 15 floor at which full-colour readers
+    stop being able to tell two fills apart.
+    """
+
+    def _css(self) -> str:
+        return _HTML[:_HTML.index("</style>")]
+
+    def test_both_themes_define_both_new_tokens(self):
+        """Dark is re-stepped, not flipped -- the light amber has 2.4:1 on the dark track."""
+        css = self._css()
+        light = css[css.index(":root{"):css.index("@media (prefers-color-scheme: dark)")]
+        dark = css[css.index("@media (prefers-color-scheme: dark)"):]
+        for block, name in ((light, "light"), (dark, "dark")):
+            with self.subTest(name):
+                self.assertIn("--hp-mid:", block)
+                self.assertIn("--hp-unsure:", block)
+        self.assertNotEqual(
+            re.search(r"--hp-mid:(#\w+)", light).group(1),
+            re.search(r"--hp-mid:(#\w+)", dark).group(1))
+
+    def test_the_disagreement_band_is_its_own_hue(self):
+        """Not a tint of the HP colour: it is not HP, it is an unknown."""
+        css = self._css()
+        rule = css[css.index(".hr-bar-maybe{"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn("var(--hp-unsure)", rule)
+        self.assertNotIn("var(--ok)", rule)
+
+    def test_the_band_carries_a_non_colour_cue_as_well(self):
+        """A 2px track-coloured sliver: the mark spec's gap between adjacent fills, and the
+        relief a colour-only encoding would otherwise need."""
+        css = self._css()
+        rule = css[css.index(".hr-bar-maybe{"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn("inset 2px 0 0 var(--surface-2)", rule)
+
+    def test_the_label_matches_the_band(self):
+        """The words and the colour are one statement -- and the words are what stop the band
+        being colour alone for a reader who cannot see the hue."""
+        self.assertIn("hr-unsure hr-small", _HTML)
+        self.assertIn(".hr-unsure{color:var(--hp-unsure)", self._css())
+        self.assertNotIn('class="muted hr-small">candidates disagree', _HTML)
+
+    def test_the_thresholds_are_half_and_a_quarter(self):
+        body = _function_body("hrBar")
+        self.assertIn("low < 25", body)
+        self.assertIn("low < 50", body)
+        self.assertLess(body.index("low < 25"), body.index("low < 50"),
+                        "25 must be tested first or everything under a quarter reads as amber")
+
+    def test_the_step_is_judged_on_the_certain_hp(self):
+        """`low`, which is exactly what the green segment's LENGTH is -- so colour and geometry
+        can never tell different stories."""
+        body = _function_body("hrBar")
+        step = body[body.index("const step"):]
+        step = step[:step.index("\n")]
+        self.assertIn("low <", step)
+        self.assertNotIn("high", step)
+
+    def test_only_the_target_gets_the_thresholds(self):
+        """Our own side says the thing that matters about low HP in words, and that reading is
+        about one incoming hit rather than a fraction."""
+        body = _function_body("hrSide")
+        self.assertIn('hrBar(range, m.max_hp, side === "target")', body)
+
+    def test_the_classes_used_are_defined(self):
+        css = self._css()
+        for cls in (".hr-bar-sure.hp-mid", ".hr-bar-sure.hp-low", ".hr-unsure"):
+            with self.subTest(cls):
+                self.assertIn(cls, css)
+
+    def test_the_low_step_reuses_the_reserved_danger_token(self):
+        """Status colours are reserved; red here is the same red as everywhere else."""
+        css = self._css()
+        rule = css[css.index(".hr-bar-sure.hp-low{"):]
+        self.assertIn("var(--danger)", rule[:rule.index("}")])

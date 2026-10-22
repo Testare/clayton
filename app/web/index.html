@@ -10,6 +10,11 @@
     --ink-soft:#556052; --line:#dce0d2; --grass:#37744a; --grass-ink:#ffffff;
     --ember:#b8632c; --danger:#ab4029; --warn-bg:#fdf3e3; --warn-ink:#8a5a13;
     --ok:#37744a; --radius:9px; --chevron:%238a927e;
+    /* HP-bar states. Status colours, so they are reserved: never reused as a category.
+       Stepped against the bar's own track (--surface-2) rather than the page, and checked
+       rather than eyeballed -- the first amber tried was OKLab dE 12.6 from --danger, under
+       the 15 floor at which full-colour readers stop being able to tell two fills apart. */
+    --hp-mid:#c0960f; --hp-unsure:#8b3fd6;
   }
   @media (prefers-color-scheme: dark){
     :root{
@@ -17,6 +22,8 @@
       --ink-soft:#a6ae98; --line:#2b3222; --grass:#62b378; --grass-ink:#0e130c;
       --ember:#d78a4c; --danger:#d76750; --warn-bg:#2a2413; --warn-ink:#e0b665;
       --ok:#62b378; --chevron:%23a6ae98;
+      /* Re-stepped for the dark track, not flipped: the light amber has 2.4:1 on #212719. */
+      --hp-mid:#e8b547; --hp-unsure:#a86ef5;
     }
   }
   *{box-sizing:border-box}
@@ -263,8 +270,22 @@
 
   .hr-bar{display:flex}
   .hr-bar-sure{height:100%;background:var(--ok)}
-  .hr-bar-maybe{height:100%;background:color-mix(in srgb,var(--ok) 35%,var(--line))}
+  /* The band the candidates disagree over. It was a 35% tint of the green -- the same hue as
+     the HP beside it, at 6px tall, which is why it could not be seen. Bright purple reads as a
+     different KIND of thing, which is what it is: not HP, an unknown.
+     The 2px track-coloured sliver on its left edge is the gap the mark spec asks for between
+     adjacent fills, and doubles as a non-colour cue for where certainty ends. */
+  .hr-bar-maybe{height:100%;background:var(--hp-unsure);
+    box-shadow:inset 2px 0 0 var(--surface-2)}
+  /* Thresholds mirror the game's own HP bar, so the panel and the screen agree. Judged on the
+     SAME number the green segment's length is -- the HP every candidate agrees is still there --
+     so colour and geometry can never tell different stories. */
+  .hr-bar-sure.hp-mid{background:var(--hp-mid)}
+  .hr-bar-sure.hp-low{background:var(--danger)}
   .hr-danger ~ .hr-bar .hr-bar-sure{background:var(--danger)}
+  /* Named in the same purple as the band it describes, and no longer muted: the words and the
+     colour are one statement, which is also what keeps the band from being colour alone. */
+  .hr-unsure{color:var(--hp-unsure);font-weight:600}
   .ok-cta{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));
     background:color-mix(in srgb,var(--ok) 7%,var(--surface))}
 </style>
@@ -6327,16 +6348,25 @@ function huntRunAbandon(){
   huntRunStart(null, _huntRunHunt);   // back to targeting, ready to search again
 }
 
-// Green up to the HP every candidate agrees on, blue for the band they disagree over, track for
-// what is certainly gone. Candidates predict different damage rolls and different crits, so a
-// single figure would be one guess presented as fact.
-function hrBar(range, max){
+// Green up to the HP every candidate agrees on, bright purple for the band they disagree over,
+// track for what is certainly gone. Candidates predict different damage rolls and different
+// crits, so a single figure would be one guess presented as fact.
+//
+// `threshold` turns on the game's own colour steps -- amber under half, red under a quarter --
+// and is passed for the TARGET only. Our own side already says the thing that matters about low
+// HP in words ("in range of one hit"), and that reading is about one incoming hit rather than
+// about a fraction, so colouring it by fraction too would put two different meanings on one bar.
+function hrBar(range, max, threshold){
   if (!max) return `<div class="hr-bar"></div>`;
   const clamp = (v) => Math.max(0, Math.min(100, v));
   const low = clamp(100 * range.low / max);
   const high = clamp(100 * range.high / max);
+  // Keyed on `low` -- the HP every candidate agrees is still there, which is exactly what the
+  // green segment's LENGTH is. Colouring on the optimistic end instead would let a bar read
+  // healthy at a length that says otherwise.
+  const step = !threshold ? "" : low < 25 ? " hp-low" : low < 50 ? " hp-mid" : "";
   return `<div class="hr-bar">
-    <div class="hr-bar-sure" style="width:${low}%"></div>
+    <div class="hr-bar-sure${step}" style="width:${low}%"></div>
     <div class="hr-bar-maybe" style="width:${high - low}%"></div></div>`;
 }
 
@@ -6368,8 +6398,8 @@ function hrSide(label, m, danger, side, dangerIfWeather){
       ${low ? ` — in range of one hit (${danger})` : ""}
       ${lowIfWeather ? `<span class="muted hr-small"> — in range once weather is up
         (${dangerIfWeather})</span>` : ""}
-      ${range.certain ? "" : `<span class="muted hr-small">candidates disagree</span>`}</div>
-    ${hrBar(range, m.max_hp)}
+      ${range.certain ? "" : `<span class="hr-unsure hr-small">candidates disagree</span>`}</div>
+    ${hrBar(range, m.max_hp, side === "target")}
     ${extras.length ? `<div class="muted hr-small">${extras.join(" · ")}</div>` : ""}
     ${hrStages(m)}
     <div class="muted hr-small">${m.moves.map((mv, i) =>
