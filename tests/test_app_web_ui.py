@@ -608,3 +608,62 @@ class TestTheCaptureBallPickerIsAlwaysPopulated(unittest.TestCase):
         selected, so a stored choice is never silently dropped."""
         body = _function_body("huntBallOptions")
         self.assertIn("names.unshift(chosen)", body)
+
+
+class TestTheCoinFlipBoxesUpperCaseAsYouType(unittest.TestCase):
+    """Cosmetic, deliberately: `coin_flips.clean_flips` upper-cases before matching, so a
+    lowercase "htth" already narrows correctly. The box should still read the way it means."""
+
+    def test_both_flip_inputs_are_wired(self):
+        """Hunts and Glass each have their own Seed A panel and their own flip box."""
+        for element in ("hsa-flips", "gl-flips"):
+            with self.subTest(element):
+                tag = _HTML[_HTML.index(f'id="{element}"'):]
+                tag = tag[:tag.index(">")]
+                self.assertIn("upperCaseInput(this)", tag)
+
+    def test_it_still_narrows_on_the_same_keystroke(self):
+        """The upper-casing must not replace the narrow call, only precede it."""
+        for element, narrow in (("hsa-flips", "huntNarrowSeedA()"),
+                                ("gl-flips", "glassNarrowSeedA()")):
+            with self.subTest(element):
+                tag = _HTML[_HTML.index(f'id="{element}"'):]
+                tag = tag[:tag.index(">")]
+                self.assertLess(tag.index("upperCaseInput(this)"), tag.index(narrow))
+
+    def test_the_caret_is_preserved(self):
+        """Assigning `value` parks the cursor at the end, which mid-word is worse than the
+        lowercase was. Same technique as `hrHpInput`."""
+        body = _function_body("upperCaseInput")
+        self.assertIn("selectionStart", body)
+        self.assertIn("setSelectionRange", body)
+
+    def test_it_does_nothing_when_there_is_nothing_to_do(self):
+        """No write at all for already-upper input, so a plain "HTTH" never touches the caret."""
+        body = _function_body("upperCaseInput")
+        self.assertIn("if (upper === el.value) return;", body)
+
+    def test_the_selection_read_is_guarded(self):
+        """`selectionStart` throws on some input types in some engines, which `mount` already
+        works around the same way."""
+        body = _function_body("upperCaseInput")
+        self.assertIn("try {", body)
+        self.assertEqual(body.count("catch"), 2)
+
+
+class TestLowercaseFlipsAlreadyMatch(unittest.TestCase):
+    """The Python half, so the UI change stays cosmetic rather than load-bearing."""
+
+    def test_clean_flips_upper_cases(self):
+        from claytonlib.coin_flips import clean_flips
+
+        self.assertEqual(clean_flips("htth"), "HTTH")
+        self.assertEqual(clean_flips("h t, T-h"), "HTTH")
+
+    def test_a_lowercase_sequence_narrows_identically(self):
+        from claytonlib.coin_flips import flip_sequence, flips_match
+
+        seed = 0x0C0E02CA
+        flips = flip_sequence(seed, 8)
+        self.assertTrue(flips_match(seed, flips))
+        self.assertTrue(flips_match(seed, flips.lower()))

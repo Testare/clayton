@@ -521,6 +521,28 @@ function mount(html){
   }
 }
 
+// Upper-case a text box in place as it is typed. Wired to the coin-flip inputs, where the
+// characters ARE the alphabet and a lowercase "htth" reads as something other than two flips.
+//
+// Cosmetic by design: `coin_flips.clean_flips` upper-cases before matching, so lowercase already
+// narrows correctly. The point is that the box reads the way it means, and that what gets stored,
+// re-rendered and copied out of it agrees with that. The Elm-call boxes are the same shape
+// (`safari_advance.clean_elm` upper-cases too) and could use this if it is wanted there.
+//
+// Caret preserved explicitly, the way `hrHpInput` does it: assigning `value` parks the cursor at
+// the end, which mid-word is worse than the lowercase was. Upper-casing never changes the
+// length, so the offsets carry over unchanged.
+function upperCaseInput(el){
+  const upper = el.value.toUpperCase();
+  if (upper === el.value) return;
+  let caret = null;
+  try { caret = [el.selectionStart, el.selectionEnd]; } catch (e) { caret = null; }
+  el.value = upper;
+  if (caret && caret[0] != null){
+    try { el.setSelectionRange(caret[0], caret[1]); } catch (e) { /* unsupported type */ }
+  }
+}
+
 function openModal(html, wide){
   closeModal();
   const d = document.createElement("div");
@@ -4358,7 +4380,7 @@ function renderHuntSeedA(){
     ${plat
       ? `<div class="field">${helpLabel('Coin flips (H/T)', 'Flip the coin in the Poketch coin-toss app and type what you get, in order. The coin toss reads a different generator from the one advances are counted on, so flipping costs NOTHING -- you can identify the seed without moving the advance frame. Around 10 flips pins a single candidate.')}
         <input id="hsa-flips" value="${esc(_hsa.observedFlips || "")}" placeholder="HTTHH…"
-          oninput="huntNarrowSeedA()" onkeydown="hsaElmKey(event)"
+          oninput="upperCaseInput(this); huntNarrowSeedA()" onkeydown="hsaElmKey(event)"
           ${hasCand?"":"disabled"}></div>`
       : `<div class="grid2">
       <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
@@ -7533,7 +7555,7 @@ function renderGlassSeedA(){
   const narrowRow = plat
     ? `<div class="field">${helpLabel('Coin flips (H/T)', 'Flip the coin in the Poketch coin-toss app and type what you get, in order. The coin toss reads a different generator from the one you are counting advances on, so flipping costs you NOTHING: you can identify the seed without moving the advance frame. Around 10 flips pins a single candidate.')}
         <input id="gl-flips" value="${esc(_glass.observedFlips || "")}" placeholder="HTTHH…"
-          oninput="glassNarrowSeedA()" onkeydown="glassElmKey(event)"
+          oninput="upperCaseInput(this); glassNarrowSeedA()" onkeydown="glassElmKey(event)"
           ${hasCand?"":"disabled"}></div>`
     : `<div class="grid2">
       <div class="field">${helpLabel('Observed roamer routes (R E L)', 'Observed roamer routes, in REL order (Raikou Entei Latias/Latios), separated by spaces. Use "." to match any route.')}
