@@ -52,6 +52,7 @@ from claytonlib.battle_compass.sim import (
 )
 from claytonlib.battle_compass.solver import SolverConfig, danger_floor_for
 from claytonlib.battle_compass.state import Action, BattleState, Battler, Status
+from claytonlib.safari import advance_rng
 from claytonlib.battle_compass.targets import (
     encounter_level, moveset, supported, target_ability, unsupported_moves,
 )
@@ -440,6 +441,72 @@ class TestUproar(unittest.TestCase):
             state = simulate_turn(state, Action.MOVE_1, config)
         self.assertEqual(state.target.uproar_turns, 0)
         self.assertIsNone(state.target.uproar_slot)
+
+    def test_a_prevented_move_ends_the_lock_instead_of_counting_it_down(self):
+        """The measured case, and the reason data/battle_logs/azelf_failure.jsonl exists.
+
+        `MON_COND_CHECK_STATE_UPROAR` decrements and then asks `BattleContext_MoveFailed` BEFORE
+        it reads what the counter now holds [battle_controller_player.c:1523-1536]: a failed move
+        clears the volatile and the field bit whole and runs `subscript_uproar_end`, however many
+        turns were left. In the recording Azelf rolled a 3-turn Uproar, was fully paralyzed on
+        the second turn of it and calmed down there -- and because a locked target spends no
+        selection roll, carrying the lock one turn too long desynchronises the stream from that
+        point on, not merely the one prediction.
+        """
+        config = _config()
+        found = {}
+        for seed in SEEDS:
+            state = _state(_lake("azelf", uproar_turns=3, uproar_slot=1,
+                                 status=Status.PARALYSIS), seed=seed)
+            after = simulate_turn(state, Action.MOVE_1, config)
+            rendered = tok.render_turn(tok.normalise(after.log[-1]))
+            found.setdefault("Epar" in rendered, (rendered, after))
+        self.assertEqual(set(found), {True, False},
+                         "no seed in the sweep both paralysed and did not paralyse the target")
+        prevented, free = found[True][1], found[False][1]
+        self.assertEqual((prevented.target.uproar_turns, prevented.target.uproar_slot), (0, None))
+        self.assertEqual(free.target.uproar_turns, 2)
+
+    def test_a_refused_move_ends_it_too_because_taunt_is_a_fail_flag(self):
+        """`moveFailFlags.taunted` is in the same nine [battle_lib.c:2808-2821]. Unreachable
+        against the configured Azelf -- Uproar has power, so a taunt never refuses it -- but the
+        rule is the rule, and a party that taunts a target mid-Uproar of some other sound move
+        would meet it."""
+        config = _config()
+        state = _state(_lake("azelf", uproar_turns=4, uproar_slot=3, taunted_turns=3,
+                             pp=(0, 0, 0, 20)))
+        after = simulate_turn(state, Action.MOVE_1, config)
+        rendered = tok.render_turn(tok.normalise(after.log[-1]))
+        self.assertIn("E4tnt", rendered)
+        self.assertEqual(after.target.uproar_turns, 0)
+
+    def test_sleep_is_not_a_fail_flag_so_it_would_not_end_one(self):
+        """The ROM's list omits sleep, freeze, truant, recharge and a plain miss. Only the miss
+        is reachable here -- an Uproar bans sleep outright -- and a missed Uproar keeps its
+        lock."""
+        config = _config()
+        state = _state(_lake("azelf", uproar_turns=3, uproar_slot=1))
+        after = simulate_turn(state, Action.MOVE_1, config)
+        self.assertEqual(after.target.uproar_turns, 2)
+
+    def test_a_locked_turn_charges_the_offset_only_for_rolls_it_spent(self):
+        """`rng_offset` is the solver's stand-in for the stream position (`solver._state_key`,
+        and its visited set is keyed on it), so it has to equal the advances actually performed.
+
+        It used to be charged from `select_target_move` returning a slot rather than from the
+        stream moving -- and a locked target returns a slot while spending nothing, so the offset
+        gained one per locked turn while the stream stayed right.
+        """
+        config = _config()
+        seed = 0x0C0E02CA
+        state = _state(_lake("azelf", uproar_turns=3, uproar_slot=1), seed=seed)
+        for _ in range(3):
+            state = simulate_turn(state, Action.MOVE_1, config)
+            rebuilt = opening_rng(seed, config)
+            for _ in range(state.rng_offset):
+                rebuilt = advance_rng(rebuilt)
+            self.assertEqual(rebuilt, state.rng,
+                             f"rng_offset {state.rng_offset} is not where the stream is")
 
     def test_it_forbids_sleep_outright_while_it_runs(self):
         """`subscript_fall_asleep`'s "But {0} can't sleep in an uproar!" branch. The duration roll

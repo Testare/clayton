@@ -67,6 +67,20 @@ SNAPSHOT = {
     "ability": 26, "personality": 0x12345678, "types": [14, 14],
     "moves": [129, 281, 248, 133], "pp": [20, 10, 15, 20],
 }
+#: The override config these tests plan against, pinned HERE rather than read off the reader's
+#: live `TARGET_OVERRIDE`. That module global is a KNOB -- it is how you point the recorder at a
+#: different encounter, and it gets edited between runs -- so tests that read it went red the
+#: moment somebody retargeted the recorder from Uxie to Azelf, which is a working session doing
+#: exactly what the knob is for. What these tests are about is the arithmetic and the species
+#: guard, neither of which has anything to say about which encounter is currently being hunted.
+CONFIG = {
+    "battler": 1,
+    "species": UXIE,
+    "nature": "Serious",
+    "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 31, "spd": 31, "spe": 31},
+    "evs": 0,
+    "preview_levels": (50,),
+}
 
 
 class TestStatArithmeticMatchesClaytonlib(unittest.TestCase):
@@ -85,10 +99,16 @@ class TestStatArithmeticMatchesClaytonlib(unittest.TestCase):
         self.assertEqual(pbr.nature_index("Bold"), 5)
         self.assertEqual(pbr.NATURES[5][0], "Bold")
 
-    def test_the_default_nature_is_neutral(self):
-        """The default override leans on nature being 1.0 everywhere, so if someone retargets the
-        species but keeps the nature, this says what that nature means."""
-        self.assertIsNone(pbr.NATURES[pbr.nature_index(pbr.TARGET_OVERRIDE["nature"])][1])
+    def test_serious_is_the_neutral_nature(self):
+        """`CONFIG` leans on nature being 1.0 everywhere, and this is what makes that true.
+
+        It used to assert the same thing about the reader's live `TARGET_OVERRIDE` -- which is a
+        knob, so the assertion failed the first time a session pointed the recorder at an Azelf
+        with a real rolled nature. Naming the nature directly says what the fixture depends on
+        without telling a working session what it may hunt.
+        """
+        self.assertIsNone(pbr.NATURES[pbr.nature_index("Serious")][1])
+        self.assertIsNone(pbr.NATURES[pbr.nature_index(CONFIG["nature"])][1])
 
     def test_nature_multipliers_match(self):
         from claytonlib.battle.stats import nature_multiplier as lib_mult
@@ -246,7 +266,7 @@ class TestBattleMonFieldNames(unittest.TestCase):
 
 class TestPlanOverride(unittest.TestCase):
     def test_it_records_what_the_save_state_held(self):
-        before = pbr.plan_override(SNAPSHOT)["before"]
+        before = pbr.plan_override(SNAPSHOT, config=CONFIG)["before"]
         self.assertEqual(before["ivs"], SNAPSHOT["ivs"])
         self.assertEqual(before["stats"]["spe"], SNAPSHOT["stats"]["spe"])
         self.assertEqual(before["stats"]["hp"], SNAPSHOT["maxHp"])
@@ -254,16 +274,15 @@ class TestPlanOverride(unittest.TestCase):
                          pbr.NATURES[SNAPSHOT["personality"] % 25][0])
 
     def test_it_writes_every_stat_and_the_personality(self):
-        writes = pbr.plan_override(SNAPSHOT)["writes"]
+        writes = pbr.plan_override(SNAPSHOT, config=CONFIG)["writes"]
         self.assertEqual(set(writes),
                          {"personality", "curHP", "maxHP", "attack", "defense",
                           "spAttack", "spDefense", "speed"})
 
     def test_the_written_stats_are_the_configured_spread_at_the_snapshots_level(self):
-        plan = pbr.plan_override(SNAPSHOT)
+        plan = pbr.plan_override(SNAPSHOT, config=CONFIG)
         expected = pbr.derive_stats(pbr.base_stats_for(UXIE), SNAPSHOT["level"],
-                                    pbr.TARGET_OVERRIDE["nature"], pbr.TARGET_OVERRIDE["ivs"],
-                                    pbr.TARGET_OVERRIDE.get("evs", 0))
+                                    CONFIG["nature"], CONFIG["ivs"], CONFIG["evs"])
         self.assertEqual(plan["after"]["stats"], expected)
         self.assertEqual(plan["writes"]["speed"], expected["spe"])
         self.assertEqual(plan["writes"]["maxHP"], expected["hp"])
@@ -271,51 +290,50 @@ class TestPlanOverride(unittest.TestCase):
     def test_the_level_comes_from_the_snapshot_not_the_config(self):
         """The ROM decides the level (StartLegendaryBattle's second argument); the config only
         says how it is previewed."""
-        plan = pbr.plan_override(dict(SNAPSHOT, level=5))
+        plan = pbr.plan_override(dict(SNAPSHOT, level=5), config=CONFIG)
         self.assertEqual(plan["after"]["stats"],
                          pbr.derive_stats(pbr.base_stats_for(UXIE), 5,
-                                          pbr.TARGET_OVERRIDE["nature"],
-                                          pbr.TARGET_OVERRIDE["ivs"]))
+                                          CONFIG["nature"], CONFIG["ivs"]))
 
     def test_speed_is_not_confused_with_special_attack(self):
         """The IV bitfield puts speed third and spAttack fifth; the display order puts speed
         last. A spread that differs only in those two is the test for it."""
-        config = dict(pbr.TARGET_OVERRIDE,
+        config = dict(CONFIG,
                       ivs={"hp": 0, "atk": 0, "def": 0, "spa": 31, "spd": 0, "spe": 1})
         word = pbr.pack_iv_word(config["ivs"])
         self.assertEqual((word >> 15) & 0x1F, 1, "speed is not at bit 15")
         self.assertEqual((word >> 20) & 0x1F, 31, "spAttack is not at bit 20")
 
     def test_a_full_hp_target_stays_full(self):
-        plan = pbr.plan_override(SNAPSHOT)
+        plan = pbr.plan_override(SNAPSHOT, config=CONFIG)
         self.assertEqual(plan["writes"]["curHP"], plan["writes"]["maxHP"])
 
     def test_a_damaged_target_keeps_its_absolute_hp(self):
-        plan = pbr.plan_override(dict(SNAPSHOT, hp=40))
+        plan = pbr.plan_override(dict(SNAPSHOT, hp=40), config=CONFIG)
         self.assertEqual(plan["writes"]["curHP"], 40)
 
     def test_hp_is_clamped_to_a_smaller_new_maximum(self):
-        plan = pbr.plan_override(dict(SNAPSHOT, hp=900, maxHp=1000))
+        plan = pbr.plan_override(dict(SNAPSHOT, hp=900, maxHp=1000), config=CONFIG)
         self.assertEqual(plan["writes"]["curHP"], plan["writes"]["maxHP"])
 
     def test_the_wrong_species_is_refused(self):
-        plan = pbr.plan_override(dict(SNAPSHOT, species=482))
+        plan = pbr.plan_override(dict(SNAPSHOT, species=482), config=CONFIG)
         self.assertIsNone(plan["after"])
         self.assertEqual(plan["writes"], {})
         self.assertIn("482", plan["skipped"])
 
     def test_a_refusal_still_logs_what_was_there(self):
-        plan = pbr.plan_override(dict(SNAPSHOT, species=482))
+        plan = pbr.plan_override(dict(SNAPSHOT, species=482), config=CONFIG)
         self.assertEqual(plan["before"]["ivs"], SNAPSHOT["ivs"])
 
     def test_an_unknown_species_is_refused_rather_than_guessed(self):
-        config = dict(pbr.TARGET_OVERRIDE, species=9999)
+        config = dict(CONFIG, species=9999)
         plan = pbr.plan_override(dict(SNAPSHOT, species=9999), config=config)
         self.assertIsNone(plan["after"])
         self.assertIn("base stats", plan["skipped"])
 
     def test_the_nature_write_is_a_personality(self):
-        plan = pbr.plan_override(SNAPSHOT)
+        plan = pbr.plan_override(SNAPSHOT, config=CONFIG)
         self.assertEqual(plan["writes"]["personality"] % 25, plan["after"]["nature_index"])
 
 

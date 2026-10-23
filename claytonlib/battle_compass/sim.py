@@ -2284,24 +2284,42 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
     return effective_speed(state.ours) > effective_speed(state.target)
 
 
-def _tick_uproar(state: BattleState) -> None:
+def _tick_uproar(state: BattleState, move_failed: dict[str, bool] | None = None) -> None:
     """The Uproar end-of-turn check, state 14 of the condition walk. Costs no rolls.
 
-    Two things happen here and the order between them is the whole content of
-    `MON_COND_CHECK_STATE_UPROAR` (battle_controller_player.c:1506-1536):
+    Three things happen here and the order between them is the whole content of
+    `MON_COND_CHECK_STATE_UPROAR` (battle_controller_player.c:1505-1545):
 
     1. **It wakes sleepers first**, looping every battler for one that is asleep, alive and not
        Soundproof -- and if it finds one it runs `subscript_wake_up` and **breaks out before the
        countdown**. So an Uproar that woke somebody lasts one turn longer than its rolled length.
-    2. Otherwise it decrements, and the lock comes off on the turn the counter reaches zero.
+    2. **Then it decrements, and then it asks `BattleContext_MoveFailed` BEFORE it looks at what
+       the counter now holds.** If the uproarer's move failed this turn, the volatile and the
+       field bit are cleared outright and `subscript_uproar_end` runs -- whatever is left on the
+       counter. `move_failed` carries that verdict in from the turn; see its declaration in
+       `simulate_turn` for which of the ROM's nine flags are reachable and which are not.
+    3. Otherwise the lock comes off on the turn the counter reaches zero.
+
+    Point 2 is MEASURED, and getting it wrong was a desync rather than a cosmetic error.
+    data/battle_logs/azelf_failure.jsonl (forced seed 0x49023160, confirmed) has Azelf roll
+    duration 3 for its second Uproar -- roll 47036 at `subscript_uproar`, 47036 % 4 == 0 -- and
+    then run it for only TWO turns, because it was fully paralyzed on the second one and
+    "The wild AZELF calmed down." printed a turn early. With the lock wrongly still on,
+    `select_target_move` withholds a selection roll the game spends: the next turn the game rolled
+    21272 % 4 == 0 -> Swift while this simulator predicted a locked Uproar, and every roll after
+    that was off by one.
 
     Point 1 is unreachable against either configured Uproar user as things stand: only Azelf has
     the move, nothing in its set can sleep us, and `will_fail` refuses a sleep move of ours while
     an Uproar is up -- so by the time this runs nobody is asleep. Transcribed anyway, because the
     alternative is a silent off-by-one the day anything changes, and because the two act functions
     already call `_wake_for_uproar` for the mid-turn half of the same rule.
+
+    `MON_COND_CHECK_STATE_THRASH`, immediately after, carries the identical `MoveFailed` rule for
+    Thrash and Petal Dance (same file, 1547-1570). No modelled battler has either move, so there
+    is nothing here to tick for it.
     """
-    for side in ("ours", "target"):
+    for side, actor in (("ours", "M"), ("target", "E")):
         battler = getattr(state, side)
         if not battler.uproar_turns:
             continue
@@ -2315,6 +2333,11 @@ def _tick_uproar(state: BattleState) -> None:
                 break                    # the ROM breaks on the FIRST sleeper it finds
         if woke:
             continue                     # ...and skips the countdown entirely
+        if move_failed is not None and move_failed.get(actor):
+            # The early exit. Not `uproar_turns - 1`: the ROM clears the volatile whole, so a
+            # duration-6 Uproar disrupted on its first continuation turn is simply over.
+            setattr(state, side, replace(battler, uproar_turns=0, uproar_slot=None))
+            continue
         left = battler.uproar_turns - 1
         setattr(state, side, replace(battler, uproar_turns=left,
                                      uproar_slot=battler.uproar_slot if left else None))
@@ -2455,8 +2478,19 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     hp_before = new.ours.hp
 
     # The wild mon picks its move at the top of the turn, whoever ends up moving first.
+    #
+    # The offset is charged from whether the stream MOVED, not from whether a slot came back.
+    # `select_target_move` returns a non-None slot and spends nothing on the two turns where its
+    # user cannot pick a command -- mid-Uproar and mid-charge -- so `target_slot is not None` was
+    # charging a roll the game never spent, once per locked turn. The stream stayed right and the
+    # offset drifted, which is the worse of the two failures: `solver._state_key` uses the offset
+    # AS the stream position and `solver` dedupes its visited set on it.
+    #
+    # An LCRNG step can never be a no-op here -- a fixed point needs state * (A - 1) == -C mod
+    # 2**32, and A - 1 is even while C is odd -- so an unchanged `rng` means exactly "no roll".
+    rng_before = rng
     rng, target_slot = select_target_move(rng, new.target)
-    if target_slot is not None:
+    if rng != rng_before:
         new.rng_offset += 1
 
     for _ in range(turn_costs.BEFORE_TURN_ADVANCES):
@@ -2492,6 +2526,18 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     #: A dict rather than two nonlocals because both sides are symmetric and only one can ever be
     #: set in a turn -- the flincher has to have moved already.
     flinched = {"M": False, "E": False}
+    #: Set when a battler's move was prevented this turn by a disruption the ROM counts as a
+    #: FAILURE, which is a narrower thing than "did not move". `BattleContext_MoveFailed`
+    #: [battle_lib.c:2808-2821] reads nine flags -- paralyzed, noEffect, imprisoned, infatuated,
+    #: disabled, taunted, flinched, gravity, confused -- and sleep, freeze, truant, recharge, a
+    #: plain miss and Heal Block are all deliberately absent from that list. Three of the nine are
+    #: reachable here (paralysis, flinch, a taunt refusal); the other six belong to mechanics this
+    #: simulator does not model at all, so the flag is set at exactly three sites.
+    #:
+    #: Read by `_tick_uproar`, where it is the difference between a lock that counts down and one
+    #: that comes off early -- see the measured case in that docstring. Cleared per turn because
+    #: `BattleSystem_SetupNextTurn` clears the ROM's copy [battle_lib.c:2228-2234].
+    move_failed = {"M": False, "E": False}
 
     def act_ours() -> bool:
         nonlocal rng, hp_before
@@ -2627,6 +2673,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             parts.append(tok.prevented_token("M", "slp"))
             return False
         if flinched["M"]:
+            move_failed["M"] = True
             parts.append(tok.prevented_token("M", "fln"))
             return False
         if taunt_refuses(move, new.ours):
@@ -2636,6 +2683,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # paralyzed actor spends NOTHING -- not even the paralysis roll it would otherwise
             # owe. Zero rolls, no post-successful-move advances, and the slot is reported because
             # the game names the move (`tokens.TAUNTED`).
+            move_failed["M"] = True
             parts.append(tok.taunted_token("M", slot))
             return False
         if new.ours.status is Status.PARALYSIS:
@@ -2643,6 +2691,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             rng, roll = advance(rng)
             new.rng_offset += 1
             if roll % 4 == 0:
+                move_failed["M"] = True
                 parts.append(tok.prevented_token("M", "par"))
                 return False
         rng, outcome = execute_move(
@@ -2766,6 +2815,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             parts.append(tok.prevented_token("E", "slp"))
             return False
         if flinched["E"]:
+            move_failed["E"] = True
             parts.append(tok.prevented_token("E", "fln"))
             return False
         move = new.target.move(target_slot)
@@ -2777,12 +2827,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # taunt test is state 6 of the before-move walk and the paralysis roll is state 11,
             # so a taunted and paralyzed Uxie -- which is every Uxie in a real run -- spends no
             # roll at all on the turn its Yawn or Amnesia is refused.
+            move_failed["E"] = True
             parts.append(tok.taunted_token("E", target_slot))
             return False
         if new.target.status is Status.PARALYSIS:
             rng, roll = advance(rng)
             new.rng_offset += 1
             if roll % 4 == 0:
+                move_failed["E"] = True
                 parts.append(tok.prevented_token("E", "par"))
                 return False
         was_charging = new.target.charging_slot == target_slot
@@ -2997,7 +3049,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         new.rng_offset += head
         # Uproar, state 14: it wakes before it counts down, and a turn on which it woke somebody
         # does not count down at all.
-        _tick_uproar(new)
+        _tick_uproar(new, move_failed)
         # Taunt, state 20. Spends nothing, which is why it needs no anchor of its own.
         _tick_taunt(new)
         # Yawn, state 24.

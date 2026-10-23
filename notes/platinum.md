@@ -1252,6 +1252,50 @@ past the refusal, so blocking it in `will_fail` is also what keeps the roll coun
 > run, so the duration roll is not spent and no lock is set. A Soundproof party member blanks the
 > move whole — damage, lock and sleep ban together.
 
+#### 15.3.1 It ends early when its user's move is prevented [verified]
+
+**An Uproar whose user failed to move is over, whatever the counter says.** The order inside
+`MON_COND_CHECK_STATE_UPROAR` is the whole content of the rule
+(`src/battle/battle_controller_player.c:1505-1545`):
+
+1. wake a sleeper and **break out before the countdown** (above);
+2. otherwise decrement;
+3. **then ask `BattleContext_MoveFailed(battleCtx, battler)` *before* reading what the counter now
+   holds** — and if it answers TRUE, clear `VOLATILE_CONDITION_UPROAR` and the
+   `FIELD_CONDITION_UPROAR` bit outright and run `subscript_uproar_end`;
+4. only otherwise does a nonzero counter mean `subscript_uproar_continues`.
+
+`BattleContext_MoveFailed` (`battle_lib.c:2808-2821`) reads **nine** flags — `paralyzed`,
+`noEffect`, `imprisoned`, `infatuated`, `disabled`, `taunted`, `flinched`, `gravity`, `confused`.
+What is *absent* matters as much: **sleep, freeze, truant, recharge, Heal Block and a plain miss
+are not failures**, so a missed Uproar keeps its lock. `BattleSystem_SetupNextTurn` clears the
+flags each turn (`battle_lib.c:2228-2234`), so this is strictly "did this turn's move fail".
+
+Measured in `data/battle_logs/azelf_failure.jsonl` (forced seed `0x49023160`, read back and
+confirmed). Azelf's second Uproar rolled **duration 3** — roll 47036 at `subscript_uproar`,
+`47036 % 4 == 0` — and ran for **two** turns: used on turn 9, continued once, and then on turn 10
+Azelf was fully paralyzed and *"The wild AZELF calmed down."* printed with a turn still on the
+counter. The recording's other two Uproars, durations 3 and 6, both ran their full length.
+
+**Why this is a desync and not a cosmetic error.** A locked target spends no move-selection roll,
+so a lock carried one turn too long withholds a roll the game spent. On turn 11 the game rolled
+21272 at `COMMAND_SELECTION_INPUT`, `21272 % 4 == 0` → **Swift**, while Clayton predicted a locked
+Uproar — and every roll after that was off by one. This is the failure the recording was made for.
+
+`MON_COND_CHECK_STATE_THRASH`, immediately after (same file, 1547-1570), carries the identical
+rule for Thrash and Petal Dance. No configured battler has either move.
+
+> **A second bug fell out of the same replay.** `simulate_turn` charged `rng_offset` from
+> `select_target_move` returning a slot rather than from the stream having moved — and a locked
+> target returns a slot while spending nothing, so the offset gained one per locked turn while the
+> stream stayed right. It is `solver._state_key`'s stand-in for the stream position and the key
+> its visited set dedupes on, so an inflated offset lets two genuinely different stream positions
+> share a key. Now charged off `rng != rng_before`, which is exact: an LCRNG step here has no
+> fixed point (it needs `state * (A-1) == -C mod 2**32`, and `A-1` is even while `C` is odd).
+
+The whole 15-turn recording now replays exactly — roll counts, both sides' HP and the target's
+chosen move slot — in `tests/test_battle_compass_ground_truth_azelf.py`.
+
 ### 15.4 Nasty Plot and Amnesia — one table, not two branches
 
 Both are +2 self-raises whose effect script is a single `MOVE_SIDE_EFFECT_TO_ATTACKER` subscript
