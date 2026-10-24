@@ -106,8 +106,16 @@
   .field{margin-bottom:11px}
   .field label{display:block;font-size:12px;font-weight:600;color:var(--ink-soft);
     margin-bottom:4px;letter-spacing:.02em}
-  .field input,.field select{width:100%;padding:9px 11px;border:1px solid var(--line);
-    border-radius:7px;background:var(--bg);color:var(--ink);font:inherit}
+  .field input,.field select,.field textarea{width:100%;padding:9px 11px;
+    border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--ink);
+    font:inherit}
+  /* textarea was missing from the rule above, so every multi-line field fell back to the
+     browser's own control: a different border, no radius, the wrong background in dark mode and
+     a monospace-ish default font. `font:inherit` is what fixes the last of those, and
+     `box-sizing` keeps the padding from pushing a 100%-wide textarea past its column.
+     Vertical-only resize because a textarea dragged wider escapes its grid track. */
+  .field textarea{display:block;box-sizing:border-box;resize:vertical;line-height:1.5;
+    min-height:96px}
   /* WebKitGTK ignores background on native selects (white-on-light, unreadable),
      so opt out of native rendering and draw our own chevron. */
   .field select{appearance:none;-webkit-appearance:none;padding-right:30px;
@@ -138,7 +146,7 @@
   .rel-row .field{margin-bottom:0}
   .rel-row .btn{white-space:nowrap}
   @media(max-width:820px){.rel-row{grid-template-columns:1fr 1fr}}
-  .field input.invalid{border-color:var(--danger);color:var(--danger)}
+  .field input.invalid,.field textarea.invalid{border-color:var(--danger);color:var(--danger)}
   .actions{display:flex;gap:10px;margin-top:8px}
   .check{display:flex;align-items:center;gap:8px}
   .check input{width:auto}
@@ -167,7 +175,8 @@
   .nr-stack{display:flex;flex-direction:column;gap:14px;margin-top:8px}
   .panel.locked{opacity:.45;pointer-events:none}
   .panel h3{font-size:14px;margin-bottom:12px}
-  .field input:disabled,.field select:disabled{opacity:.5;cursor:not-allowed}
+  .field input:disabled,.field select:disabled,.field textarea:disabled{opacity:.5;
+    cursor:not-allowed}
   .status{font-family:ui-monospace,monospace;font-size:12.5px;margin-top:10px;color:var(--ink-soft)}
   .status b{color:var(--ink)}
   .info-line{font-family:ui-monospace,monospace;font-size:12px;background:var(--surface-2);
@@ -286,6 +295,14 @@
   /* Named in the same purple as the band it describes, and no longer muted: the words and the
      colour are one statement, which is also what keeps the band from being colour alone. */
   .hr-unsure{color:var(--hp-unsure);font-weight:600}
+  /* 1 HP on the target is the GOAL, not a wound, so it wears the success colour rather than the
+     danger one. The title attribute carries the meaning for anyone who cannot use the colour --
+     a bare green tick is not self-explanatory. */
+  .hr-at-one{color:var(--ok);font-weight:700}
+  /* A Seed's notes are the only free-form writing in the app and the reason a Seed is kept at
+     all (notes/glass.md), so the box is sized to be written in rather than dragged open on every
+     visit. Still resizable; this is the floor, not a cap. */
+  .gl-notes{min-height:180px}
   .ok-cta{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));
     background:color-mix(in srgb,var(--ok) 7%,var(--surface))}
 </style>
@@ -4250,6 +4267,31 @@ function huntKeySeedValue(){
 let _hsaSignal = {};
 function huntIsPlatinum(){ return _hsaSignal.kind === "flips_pitch"; }
 
+// Whether a Platinum hunt's advance frame is the UNCONFIGURED DEFAULT rather than a measurement.
+//
+// Platinum has no REL to compute, so the frame a freshly loaded save sits on is a per-venue,
+// per-procedure constant that has to be measured and entered (notes/platinum.md section 3.4 --
+// the Distortion World is 22 here, 11 if the Journal is reached without the menu). `start_frame`
+// defaults to 0, so a hunt nobody has configured renders a bare "frame 0" that looks like a
+// measurement and is really a blank. That reading is the one thing this page must not do: every
+// route the guide plans is counted FROM it, so a wrong anchor is a wrong route for the whole run.
+//
+// A venue whose real constant is 0 is indistinguishable from an unset one here, which is why the
+// note says "set it if you measured something else" rather than "this is wrong".
+function huntStartFrameIsDefault(){
+  return huntIsPlatinum() && !(_huntSetup && _huntSetup.start_frame);
+}
+
+// The annotation that keeps "frame 0" from reading as a measured zero. Empty on HGSS, where the
+// frame is identified from Elm calls rather than counted from a constant.
+function huntStartFrameNote(){
+  if (!huntStartFrameIsDefault()) return "";
+  return ` <span class="muted hr-small" title="Platinum counts advances from the frame a freshly
+    loaded save sits on, which is a per-venue constant this hunt has not been given. 0 is the
+    default, not a measurement -- set it under Configure if you measured something else.">—
+    the default, not a measured venue frame</span>`;
+}
+
 function huntValidateStartRel(){
   const el = $("hsa-startrel");
   if (el) el.classList.toggle("invalid", !_startRelValid(el.value));
@@ -4262,6 +4304,31 @@ function hsaElmKey(ev){
   ev.preventDefault();
   const c = _hsa.candidates?.candidates;
   if (c && c.length === 1) huntPickSeedA(c[0].seed);
+}
+
+// Persist the Seed A search inputs the moment they change, rather than only as a side effect of
+// a successful Generate.
+//
+// They are PREFERENCES -- the window you search in and whether you demand matching delay parity
+// -- and they were only ever written at the end of `huntGenerateSeedA`, after two API calls that
+// can fail. So a Generate that raised (a key seed the search rejects, a bad initial time) left
+// them untyped for next time, and so did changing a window and walking away without pressing
+// Generate at all. Neither is a state the player can distinguish from "it did not save".
+//
+// Fire-and-forget on purpose: nothing downstream waits on it, and a failed write of a preference
+// must not interrupt the run. It still reports, because silently losing them is what this is
+// fixing.
+async function huntRememberSeedADefaults(){
+  if (!_hsa || !_huntRunHunt) return;
+  const secs = $("hsa-secwin"), delays = $("hsa-delaywin"), parity = $("hsa-parity");
+  if (secs) _hsa.secondsWindow = Number(secs.value);
+  if (delays) _hsa.delayWindow = Number(delays.value);
+  if (parity) _hsa.matchParity = parity.checked;
+  try {
+    await api("hunt_save_seed_a_defaults", _huntRunHunt, {
+      startrel: _hsa.startrel || "", seconds_window: _hsa.secondsWindow,
+      delay_window: _hsa.delayWindow, match_parity: _hsa.matchParity });
+  } catch (e) { toast("Could not remember the Seed A search settings: " + (e.message || e)); }
 }
 
 async function huntGenerateSeedA(){
@@ -4388,12 +4455,15 @@ function renderHuntSeedA(){
         <input id="hsa-startrel" value="${esc(_hsa.startrel || "")}" placeholder="31 30 7  (- = not roaming)"
           oninput="huntValidateStartRel()" onkeydown="hsaSeedAKey(event)"></div>`}
       <div class="field"><label>± seconds</label><input id="hsa-secwin" type="number" min="0"
-        value="${_hsa.secondsWindow}" onkeydown="hsaSeedAKey(event)"></div>
+        value="${_hsa.secondsWindow}" onchange="huntRememberSeedADefaults()"
+        onkeydown="hsaSeedAKey(event)"></div>
       <div class="field"><label>± delays</label><input id="hsa-delaywin" type="number" min="0"
-        value="${_hsa.delayWindow}" onkeydown="hsaSeedAKey(event)"></div>
+        value="${_hsa.delayWindow}" onchange="huntRememberSeedADefaults()"
+        onkeydown="hsaSeedAKey(event)"></div>
       <button class="btn primary" onclick="huntGenerateSeedA()">Generate</button>
     </div>
-    <div class="field check"><input type="checkbox" id="hsa-parity" ${_hsa.matchParity?"checked":""}>
+    <div class="field check"><input type="checkbox" id="hsa-parity"
+      ${_hsa.matchParity?"checked":""} onchange="huntRememberSeedADefaults()">
       <label for="hsa-parity" style="margin:0">Even/Odd delay matches key seed</label></div>
     <div class="info-line" id="hsa-keyinfo">${!_hsa.keyInfo ? "key seed: —" : plat
       ? `key seed: flips <code>${esc((_hsa.keyInfo.flips||"").slice(0,12))}</code>`
@@ -4549,7 +4619,7 @@ function renderHuntFrameGuide(){
 
   const target = huntKeySeedTargetFrame();
   const pinned = `<div class="info-line done">Current advance frame:
-    <b>${_hsa.pinnedFrame}</b></div>`;
+    <b>${_hsa.pinnedFrame}</b>${huntStartFrameNote()}</div>`;
 
   if (target == null){
     // Nothing to route to, and that is the whole answer rather than a missing feature.
@@ -4584,7 +4654,8 @@ function renderHuntFrameGuide(){
   const dest = plat ? g.target_frame : g.encounter_frame;
   return `<h3>Seed A advances</h3>
     <div class="info-line">Current advance frame: <b>${g.current_frame}</b>${plat
-      ? ` — counted from where this save loads, not measured` : ""}</div>
+      ? ` — counted from where this save loads${huntStartFrameNote()
+          || ", not measured"}` : ""}</div>
     <div class="info-line done">${bulk > 0
       ? `${bulk} ${plat ? "Journal" : "chatot"} flip(s), then ` : ""}${margin}
       ${plat ? "Chatot cry/cries" : "Elm call(s)"} →
@@ -4929,12 +5000,28 @@ let _hrTurn = null;
 // "Aargh! Almost had it!" is TWO shakes and "Gah! It was so close, too!" is three -- and
 // test_app_hunt_run asserts this list matches the Python one exactly, because getting it wrong
 // would have the player report a shake count they never saw.
+//
+// HGSS's wording, and the FALLBACK only. The live ladder comes from the hunt's own
+// `shake_messages`, because Platinum's three-shake line opens "Shoot!" rather than "Gah!" --
+// see hrShakeMessages.
 const HR_SHAKE_MESSAGES = [
   "Oh, no! The Pok\u00e9mon broke free!",
   "Aww! It appeared to be caught!",
   "Aargh! Almost had it!",
   "Gah! It was so close, too!",
 ];
+
+// The ladder in the current hunt's wording, falling back to HGSS's.
+//
+// Read per render rather than captured once: the run page outlives a hunt switch, and a stale
+// ladder would show a Platinum player a line their screen never printed. The length check is
+// what keeps a malformed payload from silently losing a row -- the interview maps this list to
+// chips by INDEX, so a short list would quietly drop the three-shake option.
+function hrShakeMessages(){
+  const given = _hunt && _hunt.shake_messages;
+  return (Array.isArray(given) && given.length === HR_SHAKE_MESSAGES.length)
+    ? given : HR_SHAKE_MESSAGES;
+}
 
 function hrTurnReset(){
   _hrTurn = { action: null, ours: null, target: null, hp: "",
@@ -5511,8 +5598,13 @@ function hrSeedALabel(){
   const seed = _hsa && _hsa.seedA && _hsa.seedA.seed;
   if(seed == null) return "";
   const hex = "0x" + Number(seed).toString(16).padStart(8, "0");
+  // On Platinum the frame is counted from a venue constant rather than identified, so a bare
+  // number here would claim more than is known when that constant was never entered.
   const frame = (_hsa && _hsa.pinnedFrame != null)
-    ? ` <span class="muted hr-small">frame ${_hsa.pinnedFrame}</span>` : "";
+    ? ` <span class="muted hr-small"${huntStartFrameIsDefault()
+        ? ' title="Counted from this hunt\'s starting advance frame, which is still the default 0'
+          + ' — set it under Configure if the venue differs."' : ""
+      }>frame ${_hsa.pinnedFrame}${huntStartFrameIsDefault() ? "*" : ""}</span>` : "";
   return `<span class="muted hr-small" style="text-transform:none;font-weight:400;
     margin-left:auto">Seed A ${hrCopyable(hex, "Seed A")}${frame}</span>`;
 }
@@ -5879,7 +5971,7 @@ function hrInterview(){
   } else if (t.action === "C" || t.action === "P"){
     // Nobody counts wobbles -- they read the line that follows. So the MESSAGE is the label and
     // the count is the subtitle, which is the way round the player actually remembers it.
-    const opts = HR_SHAKE_MESSAGES.map((msg, n) => hrChip(
+    const opts = hrShakeMessages().map((msg, n) => hrChip(
       msg, `hrSet('ours',{result:'${n}'})`, t.ours?.result === String(n),
       `${n} shake${n === 1 ? "" : "s"}`));
     opts.push(hrChip("It was caught!", `hrSet('ours',{result:'c'})`, t.ours?.result === "c",
@@ -6370,6 +6462,32 @@ function hrBar(range, max, threshold){
     <div class="hr-bar-maybe" style="width:${high - low}%"></div></div>`;
 }
 
+// A fraction as a percentage, ROUNDED DOWN but never down to 0 while the Pokemon is alive.
+// Flooring is what a player wants from an HP read -- "at least this much" -- but flooring 1/214
+// gives 0%, and a bar that says 0% next to a Pokemon that is still standing is the one reading
+// that must never happen. Zero is reserved for actually fainted.
+function hrPercent(hp, max){
+  if (!max || hp === null || hp === undefined) return "";
+  if (hp <= 0) return "0%";
+  return `${Math.max(1, Math.floor(100 * hp / max))}%`;
+}
+
+// The percentage beside the HP, or a check mark for a target that is certainly on 1 HP.
+//
+// 1 HP is not a low number on the target's side, it is the GOAL -- Phase 2's precondition, the
+// thing every False Swipe is counted towards. A percentage there would read "1%", which says
+// "nearly dead" when what it means is "ready". The check mark is reserved for CERTAINTY: while
+// candidates still disagree the range is shown, because a run that acts on 1 HP it does not
+// actually have throws its capture ball a turn early.
+function hrHpPercent(range, max, isTarget){
+  if (!max) return "";
+  if (isTarget && range.certain && range.low === 1)
+    return `<span class="hr-at-one" title="At 1 HP — the Phase 2 precondition is met">✓</span>`;
+  const low = hrPercent(range.low, max);
+  if (range.certain) return `<span class="muted hr-small">${low}</span>`;
+  return `<span class="muted hr-small">${low}–${hrPercent(range.high, max)}</span>`;
+}
+
 function hrHpText(range, max){
   return range.certain ? `${range.low} / ${max}`
                        : `${range.low}–${range.high} / ${max}`;
@@ -6395,6 +6513,7 @@ function hrSide(label, m, danger, side, dangerIfWeather){
         title="The full stat spread this run is simulating — check it against the Pokémon">
         Spread</button>` : ""}</div>
     <div class="${low ? "hr-danger" : ""}">${hrHpText(range, m.max_hp)}
+      ${hrHpPercent(range, m.max_hp, side === "target")}
       ${low ? ` — in range of one hit (${danger})` : ""}
       ${lowIfWeather ? `<span class="muted hr-small"> — in range once weather is up
         (${dangerIfWeather})</span>` : ""}
@@ -7373,7 +7492,8 @@ function renderSeedPage(){
         </div>
         <div class="info-line" id="gl-readout">${glassReadoutHtml()}</div>
         <div class="field"><label>Notes</label>
-          <textarea id="gl-notes" rows="3" placeholder="anything you need to remember about this seed"
+          <textarea id="gl-notes" rows="8" class="gl-notes"
+            placeholder="anything you need to remember about this seed — the route you walked, what the clock read, which attempt this was"
             oninput="glassFieldInput()">${esc(f.notes)}</textarea></div>
         <div class="hr-small muted">Saved as you type.</div>
       </form>

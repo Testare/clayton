@@ -1040,7 +1040,8 @@ class HuntSession:
     def __init__(self, window: CandidateWindow, ours: Battler, target: Battler,
                  config: HuntConfig, *, solver_config: SolverConfig | None = None,
                  capture_ball: str = "", bench: tuple[Battler, ...] = (),
-                 target_nature: str = "", target_ivs: dict | None = None):
+                 target_nature: str = "", target_ivs: dict | None = None,
+                 game: str = ""):
         if not window.candidates:
             raise ValueError("no candidate seeds: widen the window or check the seed targeting")
         self.window = window
@@ -1062,6 +1063,10 @@ class HuntSession:
         self.target_ivs = dict(target_ivs or {})
         self.config = config
         self.capture_ball = capture_ball
+        #: Which game, for the one thing in this class that differs between them: the wording of
+        #: the shake-count ladder ("Shoot!" in Platinum, "Gah!" in HGSS). Nothing in the
+        #: simulation reads it -- every mechanic Battle Compass models is shared.
+        self.game = game
         #: One list of sentences per reported turn, accumulated at report time. See
         #: `explain_history` for why this is not derived from the current state.
         self._explanations: list[list[str]] = []
@@ -1722,7 +1727,7 @@ class HuntSession:
             tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
             target=state.target.name, target_moves=tuple(state.target.moves),
             capture_ball=self.capture_ball or "capture ball",
-            item_name=_item_name, party_name=_party_namer(state))
+            item_name=_item_name, party_name=_party_namer(state), game=self.game)
 
     def _explain_one(self, tokens) -> list[str]:
         """One turn explained against the CURRENT state -- i.e. the state it is about to leave.
@@ -1737,7 +1742,7 @@ class HuntSession:
             tuple(tokens), ours=state.ours.name, ours_moves=tuple(state.ours.moves),
             target=state.target.name, target_moves=tuple(state.target.moves),
             capture_ball=self.capture_ball or "capture ball", item_name=_item_name,
-            party_name=_party_namer(state))
+            party_name=_party_namer(state), game=self.game)
 
     def explain_history(self) -> list[list[str]]:
         """Every reported turn explained, one list of sentences per turn.
@@ -1772,7 +1777,7 @@ class HuntSession:
                 turn.tokens, ours=state.ours.name, ours_moves=tuple(state.ours.moves),
                 target=state.target.name, target_moves=tuple(state.target.moves),
                 capture_ball=self.capture_ball or "capture ball", item_name=_item_name,
-                party_name=_party_namer(state)))
+                party_name=_party_namer(state), game=self.game))
             session.observe(turn.action, turn.tokens, **turn.extra)
         self._explanations = list(out)
         return out

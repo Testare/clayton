@@ -65,6 +65,8 @@ SHAKES_TO_CAPTURE = 4
 #: it!" is TWO shakes and "Gah! It was so close, too!" is three. Drafting a test with both at
 #: three failed against a simulated P2 -- the test was wrong and the simulator right
 #: [verified: data/battle_logs/test2.jsonl, eight throws covering 0, 1 and 2].
+#:
+#: HGSS's wording. See `SHAKE_MESSAGES_PLATINUM` for the one line that differs.
 SHAKE_MESSAGES: tuple[str, ...] = (
     "Oh, no! The Pokémon broke free!",
     "Aww! It appeared to be caught!",
@@ -72,12 +74,45 @@ SHAKE_MESSAGES: tuple[str, ...] = (
     "Gah! It was so close, too!",
 )
 
+#: Platinum's, which differs from HGSS's in exactly one word: the three-shake line opens
+#: **"Shoot!"** rather than "Gah!" (`BattleStrings_Text_ShootItWasSoCloseToo`,
+#: res/text/battle_strings.json). The other three ids are byte-identical between the two.
+#:
+#: Worth carrying rather than rounding off, because this ladder is not decoration -- it is the
+#: list the interview asks the player to pick their throw's outcome from, and the shake count
+#: that comes back is a hard constraint on the seed. A player reading "Gah!" on a screen that
+#: said "Shoot!" has to guess which row the page means, and guessing wrong contradicts the
+#: true seed.
+SHAKE_MESSAGES_PLATINUM: tuple[str, ...] = (
+    SHAKE_MESSAGES[0],
+    SHAKE_MESSAGES[1],
+    SHAKE_MESSAGES[2],
+    "Shoot! It was so close, too!",
+)
 
-def shake_message(shakes: int) -> str:
+_SHAKE_MESSAGES_BY_GAME: dict[str, tuple[str, ...]] = {
+    "platinum": SHAKE_MESSAGES_PLATINUM,
+    "diamond": SHAKE_MESSAGES_PLATINUM,
+    "pearl": SHAKE_MESSAGES_PLATINUM,
+}
+
+
+def shake_messages(game_key: str | None = None) -> tuple[str, ...]:
+    """The four lines, in this game's wording. An unset game gets HGSS's.
+
+    Unset defaults the same way `balls_for_game` does and for the same reason: every profile
+    that predates the game field is HGSS.
+    """
+    from claytonlib.games import canonical_game_key
+    return _SHAKE_MESSAGES_BY_GAME.get(canonical_game_key(game_key), SHAKE_MESSAGES)
+
+
+def shake_message(shakes: int, game_key: str | None = None) -> str:
     """The line the game prints after `shakes` wobbles, 0-3."""
-    if not 0 <= shakes < len(SHAKE_MESSAGES):
+    messages = shake_messages(game_key)
+    if not 0 <= shakes < len(messages):
         raise ValueError(f"shake count out of range: {shakes}")
-    return SHAKE_MESSAGES[shakes]
+    return messages[shakes]
 # At or above this, the ROM skips the shake rolls entirely and the catch is guaranteed.
 GUARANTEED_CATCH_VALUE = 255
 

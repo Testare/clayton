@@ -19,6 +19,7 @@ from app.models import (
     Profile, Run, Seed, Target, _default_preferences,
 )
 from app.store import FileStore, Store
+from claytonlib.battle.catch import shake_messages
 from claytonlib.games import (
     ALL_TOOLS, GAMES, LEGACY_DEFAULT_SIGNAL, TOOL_GLASS, TOOL_HUNTS, UNSET_HINT,
     canonical_game_key, game as game_info,
@@ -711,6 +712,13 @@ class Facade:
             # chatot-pitch margin. The page asks the descriptor what to draw rather than asking
             # which game it is in.
             "seed_a_signal": _seed_a_signal(profile),
+            # The four lines the game prints after a throw, in THIS game's wording -- Platinum's
+            # three-shake line opens "Shoot!" where HGSS's opens "Gah!". Sent as data for the
+            # same reason `seed_a_signal` is: the page renders what it is given instead of
+            # branching on which game it is in. The interview asks the player to pick the line
+            # they saw, and the shake count that comes back constrains the seed -- so a ladder
+            # that does not match the screen is not cosmetic.
+            "shake_messages": list(shake_messages(profile.game)),
             # The advance frame a freshly loaded save sits on at this venue. In Platinum this is
             # the anchor for counting advances, since there is nothing to identify the frame FROM
             # (notes/platinum.md section 3.4).
@@ -944,7 +952,7 @@ class Facade:
         shown = spread or {"nature": h.target.nature, "ivs": dict(h.target.ivs or {})}
         session = HuntSession(window, ours, target, config, capture_ball=h.capture_ball,
                               bench=bench, target_nature=shown.get("nature", ""),
-                              target_ivs=shown.get("ivs") or {})
+                              target_ivs=shown.get("ivs") or {}, game=profile.game)
         session_id = self._hunt_sessions.add(hunt_id, session)
         return {"session_id": session_id, "hunt_id": hunt_id, "window": probe,
                 "snapshot": session.snapshot(),

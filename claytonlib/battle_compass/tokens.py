@@ -514,7 +514,7 @@ def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
 
 def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the target",
                  target_moves=(), capture_ball: str = "the capture ball",
-                 item_name=None, party_name=None) -> list[str]:
+                 item_name=None, party_name=None, game: str = "") -> list[str]:
     """One turn's tokens as plain sentences, in the order they happened.
 
     `item_name` maps an item code to its name; without it an ``Ihp`` token reads as its code,
@@ -537,7 +537,9 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
             if named:
                 return named
         return f"party slot {slot}"
-    from claytonlib.battle.catch import SHAKE_MESSAGES
+    from claytonlib.battle.catch import shake_messages
+    # The three-shake line is "Shoot!" in Platinum and "Gah!" in HGSS; an unset game gets HGSS's.
+    messages = shake_messages(game)
 
     out: list[str] = []
     active = ours
@@ -575,7 +577,7 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
         elif prefix in ("C", "P"):
             ball = f"the {capture_ball}" if prefix == "C" else "a Poké Ball"
             shakes = int(detail) if detail.isdigit() else 0
-            out.append(f"You threw {ball}: {SHAKE_MESSAGES[shakes]} "
+            out.append(f"You threw {ball}: {messages[shakes]} "
                        f"({shakes} shake{'' if shakes == 1 else 's'})")
         else:
             out.append(token)

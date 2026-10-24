@@ -12,7 +12,9 @@ import unittest
 
 from app.facade import Facade
 from app.store import FileStore
-from claytonlib.battle.catch import SHAKE_MESSAGES, shake_message
+from claytonlib.battle.catch import (
+    SHAKE_MESSAGES, SHAKE_MESSAGES_PLATINUM, shake_message, shake_messages,
+)
 from claytonlib.battle_compass import tokens as tok
 
 INDEX = pathlib.Path(__file__).resolve().parent.parent / "app" / "web" / "index.html"
@@ -52,8 +54,43 @@ class TestShakeMessages(unittest.TestCase):
         self.assertEqual(decoded, list(SHAKE_MESSAGES))
 
     def test_the_chips_are_labelled_by_message_with_the_count_as_the_hint(self):
-        self.assertIn("const opts = HR_SHAKE_MESSAGES.map((msg, n) => hrChip(", HTML)
+        self.assertIn("const opts = hrShakeMessages().map((msg, n) => hrChip(", HTML)
         self.assertIn("What did the game say?", HTML)
+
+    def test_platinum_says_shoot_where_hgss_says_gah(self):
+        """One word, and the only one of the four that differs
+        (`BattleStrings_Text_ShootItWasSoCloseToo`, res/text/battle_strings.json). It is the line
+        the interview asks the player to pick, so a ladder that does not match their screen makes
+        them guess which row is meant -- and the shake count that comes back constrains the seed.
+        """
+        self.assertEqual(shake_message(3, "platinum"), "Shoot! It was so close, too!")
+        self.assertEqual(shake_message(3, "heartgold"), "Gah! It was so close, too!")
+        for n in range(3):
+            self.assertEqual(shake_message(n, "platinum"), shake_message(n, "soulsilver"))
+
+    def test_an_unset_game_gets_the_hgss_ladder(self):
+        """Same default as `balls_for_game`: every profile that predates the game field is
+        HGSS."""
+        self.assertEqual(shake_messages(""), SHAKE_MESSAGES)
+        self.assertEqual(shake_messages(None), SHAKE_MESSAGES)
+
+    def test_diamond_and_pearl_share_platinums_wording(self):
+        """They are not supported for hunts, but the table should not imply they say "Gah!"."""
+        for key in ("diamond", "pearl"):
+            self.assertEqual(shake_messages(key), SHAKE_MESSAGES_PLATINUM)
+
+    def test_the_page_falls_back_rather_than_rendering_a_short_ladder(self):
+        """The interview maps the list to chips by INDEX, so a malformed payload that lost a row
+        would silently drop the three-shake option rather than fail visibly."""
+        self.assertIn("given.length === HR_SHAKE_MESSAGES.length", HTML)
+
+    def test_the_prose_renderer_follows_the_game_too(self):
+        """`explain_turn` is what the recommended turn, the history table and a contradiction
+        report all read from, so leaving it on HGSS's wording would contradict the chips."""
+        said = tok.explain_turn(["C3"], capture_ball="Dusk Ball", game="platinum")[0]
+        self.assertIn("Shoot!", said)
+        self.assertNotIn("Gah!", said)
+        self.assertIn("Gah!", tok.explain_turn(["C3"], capture_ball="Dusk Ball")[0])
 
     def test_the_count_is_still_shown_once_chosen(self):
         """Because the token is written in shakes, so the player should see the translation."""

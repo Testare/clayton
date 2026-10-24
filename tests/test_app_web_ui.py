@@ -5,6 +5,7 @@ reflection: a name that isn't a bound method on the Facade is simply absent, and
 fails at runtime in the browser with nothing logged on the Python side.  Nothing else in the
 suite would catch a typo or a rename, so these two checks do.
 """
+import math
 import re
 import shutil
 import subprocess
@@ -752,3 +753,208 @@ class TestTheHpBarColours(unittest.TestCase):
         css = self._css()
         rule = css[css.index(".hr-bar-sure.hp-low{"):]
         self.assertIn("var(--danger)", rule[:rule.index("}")])
+
+
+class TestTheHpPercentage(unittest.TestCase):
+    """The percentage beside each side's HP, and the check mark that replaces the target's at 1.
+
+    Two separate asks, and they pull in opposite directions. The percentage is a floor -- "at
+    least this much" -- which is what a player wants from an HP read. But flooring 1/214 gives
+    0%, and "0%" next to a Pokemon that is still standing is the one reading that must never
+    appear, so zero is reserved for actually fainted. On the target, 1 HP is not a wound at all:
+    it is Phase 2's precondition, the thing every False Swipe is counted towards, and "1%" says
+    "nearly dead" where the truth is "ready".
+    """
+
+    def test_it_floors_rather_than_rounding(self):
+        body = _function_body("hrPercent")
+        self.assertIn("Math.floor(100 * hp / max)", body)
+        self.assertNotIn("Math.round", body)
+
+    def test_a_living_pokemon_never_reads_zero_percent(self):
+        """`Math.max(1, ...)`, and the fainted branch has to come FIRST or 0 HP reads as 1%."""
+        body = _function_body("hrPercent")
+        self.assertIn("Math.max(1, Math.floor", body)
+        self.assertLess(body.index("hp <= 0"), body.index("Math.max(1,"),
+                        "0 HP must be answered before the floor-to-1 guard")
+        self.assertIn('return "0%"', body)
+
+    def test_the_arithmetic_is_what_a_player_would_work_out(self):
+        """A Python mirror of the JS, so the intent is pinned even though the page cannot be
+        executed here. 1/214 is the case the whole guard exists for."""
+        def percent(hp, max_hp):
+            if hp <= 0:
+                return "0%"
+            return f"{max(1, math.floor(100 * hp / max_hp))}%"
+        self.assertEqual(percent(214, 214), "100%")
+        self.assertEqual(percent(107, 214), "50%")
+        self.assertEqual(percent(45, 134), "33%")      # 33.58, floored
+        self.assertEqual(percent(1, 214), "1%")        # 0.46, floored would be 0
+        self.assertEqual(percent(2, 214), "1%")
+        self.assertEqual(percent(0, 214), "0%")
+
+    def test_the_check_mark_is_the_targets_alone(self):
+        """Our own 1 HP really is a wound; the target's is the goal."""
+        body = _function_body("hrHpPercent")
+        self.assertIn("isTarget", body)
+        self.assertIn("range.low === 1", body)
+        self.assertIn("hr-at-one", body)
+
+    def test_the_check_mark_waits_for_certainty(self):
+        """A run that acts on 1 HP it does not actually have throws its ball a turn early."""
+        body = _function_body("hrHpPercent")
+        mark = body[body.index("isTarget"):body.index("hr-at-one")]
+        self.assertIn("range.certain", mark)
+
+    def test_a_disagreeing_range_shows_both_ends(self):
+        body = _function_body("hrHpPercent")
+        self.assertIn("hrPercent(range.high, max)", body)
+
+    def test_both_sides_get_a_percentage(self):
+        """`hrSide` renders one panel for each side, so one call covers both -- and the target
+        flag is the same `side === "target"` the bar thresholds use."""
+        body = _function_body("hrSide")
+        self.assertIn('hrHpPercent(range, m.max_hp, side === "target")', body)
+
+    def test_the_check_mark_is_not_colour_alone(self):
+        """A bare green tick explains nothing; the title says what it means."""
+        body = _function_body("hrHpPercent")
+        self.assertIn("title=", body)
+        self.assertIn("Phase 2 precondition", body)
+        css = _HTML[:_HTML.index("</style>")]
+        self.assertIn(".hr-at-one{", css)
+        self.assertIn("var(--ok)", css[css.index(".hr-at-one{"):])
+
+
+class TestTheSeedASettingsPersistOnChange(unittest.TestCase):
+    """They used to be written only at the end of a SUCCESSFUL Generate.
+
+    Two API calls sit before that write, so a Generate that raised -- a key seed the search
+    rejects, an unparseable initial time -- left the windows and the parity flag unwritten; so did
+    changing one and walking away. Neither is distinguishable from "it did not save". See
+    clayton-6xu.8; the Python half is pinned in test_app_hunt_platinum.
+    """
+
+    def test_all_three_controls_persist_on_change(self):
+        for control in ("hsa-secwin", "hsa-delaywin", "hsa-parity"):
+            with self.subTest(control):
+                field = _HTML[_HTML.index(f'id="{control}"'):]
+                field = field[:field.index(">")]
+                self.assertIn("huntRememberSeedADefaults()", field)
+
+    def test_the_write_merges_so_one_control_does_not_clear_the_rest(self):
+        body = _function_body("huntRememberSeedADefaults")
+        for key in ("seconds_window", "delay_window", "match_parity", "startrel"):
+            with self.subTest(key):
+                self.assertIn(key, body)
+
+    def test_it_reads_the_live_fields_rather_than_trusting_state(self):
+        """The handler fires on the control that changed; the other two are read from the DOM so
+        a value typed and not yet committed elsewhere is not written back stale."""
+        body = _function_body("huntRememberSeedADefaults")
+        for el in ('$("hsa-secwin")', '$("hsa-delaywin")', '$("hsa-parity")'):
+            with self.subTest(el):
+                self.assertIn(el, body)
+
+    def test_a_failed_write_reports_rather_than_passing_silently(self):
+        """Silently losing a preference is the thing being fixed, so the failure path says so."""
+        body = _function_body("huntRememberSeedADefaults")
+        self.assertIn("catch", body)
+        self.assertIn("toast(", body)
+
+    def test_it_is_a_no_op_before_a_run_is_open(self):
+        body = _function_body("huntRememberSeedADefaults")
+        self.assertIn("if (!_hsa || !_huntRunHunt) return;", body)
+
+
+class TestThePlatinumStartFrameIsNotPresentedAsMeasured(unittest.TestCase):
+    """"It says frame 0 on platinum hunts."
+
+    Platinum has no REL to compute: the frame a freshly loaded save sits on is a per-venue,
+    per-procedure constant that has to be measured and entered (notes/platinum.md section 3.4).
+    `start_frame` defaults to 0, so an unconfigured hunt rendered a bare "frame 0" that reads as a
+    measurement. Every route the guide plans is counted FROM that number, so a wrong anchor is a
+    wrong route for the whole run.
+    """
+
+    def test_the_default_is_only_claimed_on_platinum(self):
+        body = _function_body("huntStartFrameIsDefault")
+        self.assertIn("huntIsPlatinum()", body)
+        self.assertIn("_huntSetup.start_frame", body)
+
+    def test_a_configured_frame_carries_no_caveat(self):
+        """A venue whose real constant is 0 is indistinguishable from an unset one, which is why
+        the note nudges rather than accusing -- but a hunt with a frame entered says nothing."""
+        body = _function_body("huntStartFrameNote")
+        self.assertIn("if (!huntStartFrameIsDefault()) return \"\";", body)
+
+    def test_the_pinned_readout_and_the_guide_both_carry_it(self):
+        guide = _function_body("renderHuntFrameGuide")
+        self.assertEqual(guide.count("huntStartFrameNote()"), 2)
+
+    def test_the_run_pages_seed_a_label_marks_it_too(self):
+        """The frame shows on the run page as well, long after the setup screen is gone."""
+        body = _function_body("hrSeedALabel")
+        self.assertIn("huntStartFrameIsDefault()", body)
+
+    def test_the_caveat_says_what_to_do_about_it(self):
+        note = _function_body("huntStartFrameNote")
+        self.assertIn("Configure", note)
+        self.assertIn("not a measurement", note)
+
+
+class TestTextareasMatchTheRestOfTheForm(unittest.TestCase):
+    """`textarea` was absent from the control rule, so every multi-line field fell back to the
+    browser's own: a different border, no radius, the wrong background in dark mode, and the
+    default textarea font instead of the page's.
+
+    Two fields are affected -- Glass's notes and the load-path box -- and the fix is one rule, so
+    the test is on the rule rather than on either field.
+    """
+
+    def _css(self) -> str:
+        return _HTML[:_HTML.index("</style>")]
+
+    def test_the_control_rule_covers_textarea(self):
+        css = self._css()
+        rule = css[css.index(".field input,.field select"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn(".field textarea", css[css.index(".field input,.field select"):][:80])
+        self.assertIn("font:inherit", rule)
+        self.assertIn("border:1px solid var(--line)", rule)
+        self.assertIn("background:var(--bg)", rule)
+
+    def test_it_is_box_sized_so_padding_does_not_overflow_the_column(self):
+        css = self._css()
+        rule = css[css.index("\n  .field textarea{"):]
+        rule = rule[:rule.index("}")]
+        self.assertIn("box-sizing:border-box", rule)
+
+    def test_resize_is_vertical_only(self):
+        """Dragged wider, a textarea escapes its grid track."""
+        rule = self._css()
+        rule = rule[rule.index("\n  .field textarea{"):]
+        self.assertIn("resize:vertical", rule[:rule.index("}")])
+
+    def test_the_disabled_and_invalid_states_cover_it_too(self):
+        css = self._css()
+        self.assertIn(".field textarea:disabled", css)
+        self.assertIn(".field textarea.invalid", css)
+
+    def test_every_textarea_on_the_page_is_inside_a_field(self):
+        """Which is what makes one rule enough. A textarea added outside `.field` would silently
+        go back to looking like the browser's."""
+        for match in re.finditer(r"<textarea\b", _HTML):
+            before = _HTML[max(0, match.start() - 400):match.start()]
+            with self.subTest(pos=match.start()):
+                self.assertIn('class="field"', before)
+
+    def test_glasss_notes_are_a_writing_surface(self):
+        """Reported as "too small, even if it is resizable" -- a box you have to drag open on
+        every visit is a box that is the wrong size."""
+        field = _HTML[_HTML.index('id="gl-notes"'):]
+        field = field[:field.index(">")]
+        self.assertIn('rows="8"', field)
+        self.assertIn("gl-notes", field)
+        css = self._css()
+        self.assertIn(".gl-notes{min-height:", css)

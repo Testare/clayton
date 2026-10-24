@@ -601,3 +601,57 @@ class TestBattleRunsFeedCalibration(HuntPlatinumCase):
         with self.assertRaises(ValueError) as caught:
             self.api.preview_calibration(self.platinum)
         self.assertIn("metronome", str(caught.exception))
+
+
+class TestTheSeedASearchSettingsPersist(HuntPlatinumCase):
+    """Reported as "not saving ... for platinum hunts", and the backend half is not the cause.
+
+    The three settings -- the +/- second and delay windows the Seed A search runs over, and
+    whether a candidate's delay parity has to match the key seed's -- are preferences, so losing
+    them means retyping on every attempt. This file rules out the Python side for good: the write
+    lands, it survives an app restart, and a later Configure round trip does not clobber it. See
+    clayton-6xu.8 for what was changed on the page and what is still open there.
+    """
+
+    def _saved(self, profile_id):
+        hunt = self._hunt(profile_id, name=f"H-{profile_id[:4]}")
+        self.api.hunt_save_seed_a_defaults(hunt["id"], {
+            "startrel": "", "seconds_window": 5, "delay_window": 77, "match_parity": True})
+        return hunt["id"]
+
+    def test_the_write_comes_back_on_the_next_setup(self):
+        for profile in (self.platinum, self.hgss):
+            with self.subTest(profile=profile):
+                hunt_id = self._saved(profile)
+                saved = self.api.hunt_run_setup(hunt_id)["seed_a_defaults"]
+                self.assertEqual(saved["seconds_window"], 5)
+                self.assertEqual(saved["delay_window"], 77)
+                self.assertIs(saved["match_parity"], True)
+
+    def test_it_survives_the_app_closing(self):
+        """A fresh Facade over the same store, which is what a restart is."""
+        hunt_id = self._saved(self.platinum)
+        reopened = Facade(FileStore(self._tmp.name)).hunt_run_setup(hunt_id)
+        self.assertEqual(reopened["seed_a_defaults"]["delay_window"], 77)
+        self.assertIs(reopened["seed_a_defaults"]["match_parity"], True)
+
+    def test_configuring_the_hunt_afterwards_does_not_drop_them(self):
+        """The Configure form posts the hunt doc back, so anything it does not carry is lost --
+        which is exactly how a setting saved elsewhere on the same record disappears."""
+        hunt_id = self._saved(self.platinum)
+        doc = dict(self.api.get_hunt(hunt_id))
+        self.assertIn("seed_a_defaults", doc)
+        doc["start_frame"] = 22
+        self.api.save_hunt(doc)
+        after = self.api.hunt_run_setup(hunt_id)["seed_a_defaults"]
+        self.assertEqual(after["delay_window"], 77)
+        self.assertIs(after["match_parity"], True)
+
+    def test_a_partial_write_merges_rather_than_replacing(self):
+        """The page writes all four together today, but a merge is what makes it safe for one
+        control to persist on its own -- which is how they are wired now."""
+        hunt_id = self._saved(self.platinum)
+        self.api.hunt_save_seed_a_defaults(hunt_id, {"match_parity": False})
+        after = self.api.hunt_run_setup(hunt_id)["seed_a_defaults"]
+        self.assertIs(after["match_parity"], False)
+        self.assertEqual(after["delay_window"], 77, "the other settings were dropped")
