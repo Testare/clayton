@@ -1312,6 +1312,8 @@ a party member surviving the chip phase and not — a critical Swift is 100 agai
 Power's all-stats secondary and so could not see it; it now reads `PRIMARY_SELF_RAISES` for the
 two *offensive* stages as well.
 
+The table has since taken a third row from the same family, on our own side — see §18.
+
 ### 15.5 The one derived advance position (clayton-6xu.7.1)
 
 Two of the end-of-turn condition states can now spend a roll: Yawn's sleep duration (state 24) and
@@ -1702,3 +1704,64 @@ Amnesia, Azelf's Nasty Plot and both of Heatran's two-stage drops, and **Haze** 
 thing neither of those can — a Giratina that has already boosted. Against Giratina specifically,
 note §15.6's caution still stands: Ancient Power is Rock vs Dark/Flying = ×2 into base Sp. Def 52,
 so Haze undoes the boosts but not the hit that applied them.
+
+---
+
+## 18. As built — Swords Dance, and a table that had already done the work (clayton-4wr.1.6)
+
+`effect_script_0050.s` is one line:
+
+```
+UpdateVar OPCODE_SET, BTLVAR_SIDE_EFFECT_FLAGS_DIRECT, MOVE_SIDE_EFFECT_TO_ATTACKER|MOVE_SUBSCRIPT_PTR_ATTACK_UP_2_STAGES
+End
+```
+
+Put `0053` (Nasty Plot) and `0054` (Amnesia) beside it and the three files differ **only** in the
+subscript pointer; all three resolve to `subscript_update_stat_stage`
+(`include/data/move_side_effect_subscripts.h:46-50`) [verified]. All three have accuracy 0 and no
+`Random` anywhere, so the move spends **zero rolls** and the turn costs 2 — the post-successful-move
+pair, the same as Haze. Cross-checked independently against
+`metronome_compass.effects._eff_swords_dance`, which is `atk+2` and nothing else [verified].
+
+So the whole change is one row in `PRIMARY_SELF_RAISES` and one in `MODELLED_OUR_EFFECTS`. Five
+behaviours follow from the table already being the single point of truth, and none of them needed
+code: `will_fail` refuses it at +6 (two fewer advances on the wasted turn), `execute_move` carries
+it as `self_stat_raise`, both act halves apply it, `battle.damage` reads `attack_stage`, and
+`reachable_attack_stages` counts any `atk_stage` self-raise as a booster — so a *target* that ever
+has the move raises the danger floor with no further work. §15.4 is where that table was argued
+for; this is the first time the argument paid.
+
+**Why it is worth carrying, not merely supported.** It raises the physical damage *we* deal, and
+False Swipe cannot take the target below 1 HP (effect 101) — so it is strictly fewer turns to the
+Phase 2 precondition with no risk of overshooting it. Measured against a Lv50 Azelf (138 HP) with
+the Lv64 Smeargle fixture:
+
+| our Attack | False Swipes to reach 1 HP | turns including the dances |
+|---|---|---|
+| +0 | 5 | **5** |
+| +2 | 3 | **4** |
+| +4 | 2 | **4** |
+| +6 | 2 | 5 |
+
+So **one dance pays for itself and a third is thrown away** — the count cannot go below 2, because
+a clamped hit still only takes the target to 1. A ceiling-first opening is not the fast line, which
+is the solver's problem rather than the move's.
+
+Two existing rules the boost leans on, both already right:
+
+* **A critical hit keeps a raised stage.** `battle.damage` discards the attacker's stage on a crit
+  only when it is *negative* (`if not (critical and attack_stage < 0)`, lines 499-502) — the Gen 4
+  rule. Had it discarded raises too, the move would be worth nothing on exactly the turns it
+  matters most.
+* **A burn still halves the boosted Attack.** Two independent multipliers, which is why a boosted
+  chipper is not automatically a faster one.
+
+**What was deliberately left out.** Barrier (51) and Agility (52) have the identical script shape,
+and Agility is *not* a free table row: Speed decides turn order, and a stage that lands the two
+sides on equal effective Speed creates a speed tie, which spends extra rolls
+(`notes/ss_rng/speed.md` — the reason Lagging Tail is mandated). Adding it would claim coverage for
+the one self-raise in the family that can change a turn's cost. Barrier is genuinely free and is
+simply not wanted yet.
+
+No configured encounter has Swords Dance, so it is listed for our side only — the same standing as
+Haze.

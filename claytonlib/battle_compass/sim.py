@@ -155,6 +155,9 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # a party member carrying either is modelled for free -- unlike Uproar, Yawn and Future Sight,
     # which are deliberately NOT listed: each needs state only the target's side maintains, and
     # nothing a party can carry has them.
+    # Swords Dance, which no encounter has -- listed for OUR side only, the way Haze is. Same
+    # table, same absence of rolls, same +6 failure.
+    50: "Swords Dance: our own Attack +2, which raises the physical damage WE deal",
     53: "Nasty Plot: our own Sp. Atk +2, which raises the special damage WE deal",
     54: "Amnesia: our own Sp. Def +2, which lowers every special hit we take",
     58: "lowers the target's Attack by two (Charm)",
@@ -1012,6 +1015,24 @@ def taunt_refuses(move: Move, actor: Battler) -> bool:
 #: user raising its own stage.
 PRIMARY_SELF_RAISES: dict[int, tuple[str, int]] = {
     16: ("evasion_stage", 1),            # Double Team -- Darkrai's
+    # Swords Dance, and ours: no configured encounter has it. Its effect script is byte-for-byte
+    # the shape the two below have -- `effect_script_0050.s` against `0053`/`0054`, differing only
+    # in the subscript pointer, all three resolving to `subscript_update_stat_stage` -- so it is a
+    # row here and nothing else. Corroborated independently by
+    # `metronome_compass.effects._eff_swords_dance`, which is atk+2 and no rolls.
+    #
+    # It earns its place on our side rather than being completeness: it raises the physical damage
+    # WE deal, and False Swipe cannot take the target below 1 HP (effect 101), so it is strictly
+    # fewer turns to the Phase 2 precondition with no risk of overshooting it. And the boost
+    # survives the turn it matters most on -- `battle.damage` discards the attacker's stage on a
+    # critical hit only when it is NEGATIVE.
+    #
+    # Note what is deliberately NOT here beside it. Barrier (51) and Agility (52) have the same
+    # script shape, but Agility is not a free table row: Speed decides turn ORDER, and a stage
+    # that lands the two sides on equal effective Speed creates a speed tie, which spends extra
+    # rolls (notes/ss_rng/speed.md -- the reason Lagging Tail is mandated). Adding it would be
+    # claiming coverage for the one self-raise that can change a turn's cost.
+    50: ("atk_stage", 2),                # Swords Dance -- ours, and it DOUBLES our physical damage
     53: ("spatk_stage", 2),              # Nasty Plot -- Azelf's, and it DOUBLES its special damage
     54: ("spdef_stage", 2),              # Amnesia -- Uxie's
 }
@@ -1721,8 +1742,9 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_nightmare=move.effect == EFFECT_NIGHTMARE,
             sets_drowsy=move.effect == EFFECT_YAWN,
             resets_all_stages=move.effect == EFFECT_HAZE,
-            # Double Team, Nasty Plot, Amnesia. Mist does not guard against any of them -- Mist
-            # blocks REDUCTIONS to its own side, and this is the user raising its own stage.
+            # Double Team, Swords Dance, Nasty Plot, Amnesia. Mist does not guard against any of
+            # them -- Mist blocks REDUCTIONS to its own side, and this is the user raising its own
+            # stage.
             self_stat_raise=PRIMARY_SELF_RAISES.get(move.effect),
             blocked_by_mist=blocked)
 
