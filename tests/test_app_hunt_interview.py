@@ -72,9 +72,35 @@ class TestTheSimulatorPredictsTheMissAlready(unittest.TestCase):
 class TestTheSnapshotCarriesWhatThePageNeeds(unittest.TestCase):
 
     def test_a_drop_move_publishes_which_stage_it_drops(self):
+        """A LIST since the two-stat family went in -- Tickle drops two -- so the page searches
+        it for the stage it cares about rather than indexing."""
         info = {m["name"]: m for m in move_info(ampharos(), hooh())}
-        self.assertEqual(info["Flash"]["stat_drop"], {"stat": "accuracy", "stages": 1})
+        self.assertEqual(info["Flash"]["stat_drop"], [{"stat": "accuracy", "stages": 1}])
         self.assertIsNone(info["Discharge"]["stat_drop"])
+
+    def test_a_two_stat_drop_publishes_both(self):
+        """Tickle. Nothing in a configured moveset has it; the shape is what is being pinned,
+        because publishing only the first stage would describe half the move."""
+        from claytonlib.battle_compass.state import Battler
+
+        tickler = Battler(name="T", level=50, types=("Normal",), stats={"hp": 100},
+                          moves=("Tickle",), pp=(20,))
+        info = {m["name"]: m for m in move_info(tickler, hooh())}
+        self.assertEqual(info["Tickle"]["stat_drop"],
+                         [{"stat": "atk", "stages": 1}, {"stat": "def", "stages": 1}])
+
+    def test_a_self_raise_move_publishes_what_it_raises(self):
+        """New alongside the rest of the family: a page that showed a drop but not a boost would
+        be describing half of a Dragon Dance turn."""
+        from claytonlib.battle_compass.state import Battler
+
+        dancer = Battler(name="D", level=50, types=("Normal",), stats={"hp": 100},
+                         moves=("Dragon Dance", "Swords Dance", "Discharge"), pp=(20, 30, 15))
+        info = {m["name"]: m for m in move_info(dancer, hooh())}
+        self.assertEqual(info["Dragon Dance"]["self_raise"],
+                         [{"stat": "atk", "stages": 1}, {"stat": "spe", "stages": 1}])
+        self.assertEqual(info["Swords Dance"]["self_raise"], [{"stat": "atk", "stages": 2}])
+        self.assertIsNone(info["Discharge"]["self_raise"])
 
     def test_punishment_is_unmissable_at_a_neutral_stage(self):
         """Which is exactly why the page has to work the turn out for itself."""
@@ -125,15 +151,16 @@ class TestThePageOffersTheMiss(unittest.TestCase):
                          "both the It-failed chip and the Missed chip")
 
     def test_it_reads_the_drop_our_move_just_landed(self):
+        """Searched rather than indexed, since `stat_drop` is a list of pairs now."""
         self.assertIn("function hrAccuracyDropWeJustApplied(){", self.html)
-        self.assertIn('info.stat_drop.stat !== "accuracy"', self.html)
+        self.assertIn('.find(d => d.stat === "accuracy")', self.html)
 
     def test_a_bypassing_move_is_still_unmissable(self):
         self.assertIn("if (!info.effective_accuracy) return false;", self.html)
 
     def test_a_missed_flash_drops_nothing(self):
         """`result === ""` is "it worked"; "-" is a miss, and a missed Flash moves no stage."""
-        self.assertIn('return t.ours.result === "" ? info.stat_drop.stages : 0;', self.html)
+        self.assertIn('return t.ours.result === "" ? acc.stages : 0;', self.html)
 
     def test_it_only_counts_when_we_moved_first(self):
         block = self.html.split("function hrAccuracyDropWeJustApplied(){")[1].split("\n}")[0]

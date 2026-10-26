@@ -1765,3 +1765,118 @@ simply not wanted yet.
 
 No configured encounter has Swords Dance, so it is listed for our side only — the same standing as
 Haze.
+
+---
+
+## 19. As built — the whole pure stat-stage family, and the ceiling that was modelled backwards (clayton-4wr.1.7)
+
+§18 added one row to `PRIMARY_SELF_RAISES`. This adds the rest of the family, and in doing so
+found that one of its rules had the wrong sign.
+
+### 19.1 The ROM makes it a family, so the code does too
+
+Scan `res/battle/scripts/effects` for a script that is exactly one `UpdateVar ...
+MOVE_SIDE_EFFECT_{TO_ATTACKER,TO_DEFENDER}|MOVE_SUBSCRIPT_PTR_<stat>_<UP|DOWN>_<n>_STAGE(S)`
+followed by `End`, and **23 effect ids** come back covering **33 moves** [verified]. Every one
+resolves to `subscript_update_stat_stage` (`include/data/move_side_effect_subscripts.h:22-57`),
+none contains a `Random`, and every self-raise has accuracy 0.
+
+| | one stat, +1 | one stat, +2 | two stats, +1 each |
+|---|---|---|---|
+| **ours** | 10 Meditate/Sharpen/Howl, 11 Harden/Withdraw, 13 Growth, 16 Double Team | 50 Swords Dance, 51 Barrier/Acid Armor/Iron Defense, **52 Agility/Rock Polish**, 53 Tail Glow/Nasty Plot, 54 Amnesia | 206 Cosmic Power/Defend Order, 208 Bulk Up, 211 Calm Mind, **212 Dragon Dance** |
+| **the target's** | 18 Growl, 19 Tail Whip/Leer, **20 String Shot**, 23 Sand Attack/Smoke Screen/Kinesis/Flash, 24 Sweet Scent | 58 Charm/Feather Dance, 59 Screech, **60 Cotton Spore/Scary Face**, 62 Fake Tears/Metal Sound | 205 Tickle |
+
+The nine single-stat drops were already modelled. What this adds is the five single-stat raises,
+the two remaining +2 raises, and the five two-stat moves — and the two tables' values became
+**tuples of pairs** so that one code path covers a move that moves two stats. The bold entries
+move SPEED; see §20.
+
+### 19.2 "It cannot go higher" is not a failure — measured
+
+`BtlCmd_ChangeStatStage` (`battle_script.c:2804-2975`) takes `jumpNoChange` when the stat is
+already at the limit **for a DIRECT side effect**, and `jumpNoChange` is
+`subscript_update_stat_stage`'s `_041`: print *"{0}'s {1} won't go higher/lower!"*, `End`, **no
+status flag**. Only `jumpBlockedBySubstitute` sets `MOVE_STATUS_FAILED` [verified].
+
+So a stat change that cannot happen is still a **successful** move and still spends the two
+post-successful-move advances.
+
+That is measured on the drop half. **`data/battle_logs/hooh1.jsonl` turns 34-37** are four Sweet
+Scents against an evasion already at -6 — *"The wild HO-OH's evasiveness won't go lower!"* — and
+each spends the full **15 rolls**. Modelling them as failures costs turn 34 two advances and
+desynchronises every turn after it; the 57-turn replay only matches with them successful.
+
+**`will_fail` had the mirror case backwards.** It returned True for a self-raise at +6, with
+§15.4's claim that *"an Azelf that has already Nasty Plotted three times spends two fewer advances
+on the fourth"*. That claim was derived, never measured, and the identical ROM instruction with
+the sign flipped says otherwise. It is corrected: a single-stat raise at the ceiling wastes the
+turn and costs the full price. Reachable, and not rarely — Azelf picks Nasty Plot roughly one turn
+in four, so a long run hits the ceiling and then keeps picking it.
+
+### 19.3 The two-stat moves really do fail, by a different route
+
+Each has a subscript of its own — `subscript_user_atk_and_def_up_1_stage.s` and its four
+siblings — which tests **every** stat before calling `ChangeStatStage` at all:
+
+```
+CompareMonDataToValue OPCODE_NEQ, ..., BATTLEMON_ATTACK_STAGE, 12, _011   // one free? do it
+CompareMonDataToValue OPCODE_EQU, ..., BATTLEMON_DEFENSE_STAGE, 12, _046  // both maxed? fail
+```
+
+`_046` sets `MOVE_STATUS_NO_MORE_WORK`, which `BattleControllerPlayer_CheckMoveFailure` routes to
+`LOOP_SPREAD_MOVES`, skipping `USE_MOVE` whole — so the post-move pair is not spent [verified in
+the ROM; **derived** as an advance count, since nothing in a configured moveset can reach it: it
+needs a two-stat move with *every* one of its stats at the limit]. `MULTI_STAT_EFFECTS` is the set
+that distinguishes the two rules, and Tickle is the mirror of it at the floor.
+
+One stat free is enough for the move to run, and the maxed stat then clamps silently inside its
+own `ChangeStatStage` call — which is why `apply_stat_raise` and `apply_stat_drop` clamp each pair
+independently rather than refusing the lot.
+
+---
+
+## 20. As built — speed ties your own moves can create (clayton-4wr.1.8)
+
+`readiness.speed_checks` asks *"could these two Pokemon tie as they stand"*, and enumerates every
+Speed stage the **target** can reach because Ancient Power is in two configured movesets. It holds
+our own Speed constant. §19 is what made that insufficient: six of the 33 moves move Speed.
+
+* **ours, upward**: Agility and Rock Polish (+2), Dragon Dance (+1)
+* **the target's, downward**: String Shot (-1), Cotton Spore and Scary Face (-2)
+
+Either direction can land the two sides on exactly equal effective Speed, and a tie spends rolls
+this simulator does not model (`notes/ss_rng/speed.md`) — so every turn after it is unmatchable.
+It is worse than a standing tie in one respect: it appears **mid-run, on a turn the player chose**,
+long after the configuration screen said the party was fine.
+
+`readiness.speed_move_ties` is the validation, and it is a **warning rather than a refusal**:
+only some stage combinations tie, and the move may be exactly the right play — a Cotton Spore is
+how a slow chipper gets to move first. What the player needs is to be told which stages to avoid.
+
+Four decisions worth writing down:
+
+* **Stages are enumerated by repetition and mixture**, not just the single step. Two Agilities is
+  +4; an Agility and a Dragon Dance is +3, which no single move reaches and which is exactly where
+  a tie hides.
+* **Our drops compose on top of the target's own boosts.** Cotton Spore moves two stages, so from
+  0 it can only reach -2/-4/-6 — the odd negative stages exist *only* if the target boosted itself
+  first, and the facade passes `target_own_speed_stages` for that reason.
+* **A target Speed drop is attributed to the whole party, not to its holder.** A wild target never
+  switches out, so the drop is permanent: the Pokemon that used Cotton Spore may be back on the
+  bench by the time the tie matters. The warning reads *"Cotton Spore (Smeargle's) can tie Krow"*.
+* **The paralyzed-target rows are gated on the party being able to paralyze**, the mirror of
+  `_target_can_paralyze_us`. Asked as "any party member" rather than "another": a Pokemon holding
+  both Agility and Thunder Wave reaches the same tie over two turns, and reading it strictly would
+  hide a real one.
+
+Ties nobody's move caused are **not** reported here — our stage 0 against a target stage the target
+reaches alone is `speed_checks`'s row, and crediting it to a String Shot that had nothing to do
+with it would be worse than silence.
+
+> **And an omission it exposed.** `can_inflict` treats an unrecognised ability as capable, which is
+> the right direction; `_INERT_ABILITIES` is what stops that swallowing everything, and
+> **Insomnia was not in it** — the headline ability of the wall this whole support kit is built
+> around. So any party containing a Honchkrow answered "yes, we can paralyze" on its ability
+> alone, and the gate above would have been ungated in practice. Insomnia and fifteen other
+> purely defensive abilities are now listed. No configured target has any of them, which is why
+> nothing else moved.

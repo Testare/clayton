@@ -593,11 +593,11 @@ class TestTheSelfRaises(unittest.TestCase):
 
     def test_both_are_in_the_self_raise_table_beside_double_teams_evasion(self):
         self.assertEqual(PRIMARY_SELF_RAISES[resolve_move("Nasty Plot").effect],
-                         ("spatk_stage", 2))
+                         (("spatk_stage", 2),))
         self.assertEqual(PRIMARY_SELF_RAISES[resolve_move("Amnesia").effect],
-                         ("spdef_stage", 2))
+                         (("spdef_stage", 2),))
         self.assertEqual(PRIMARY_SELF_RAISES[resolve_move("Double Team").effect],
-                         ("evasion_stage", 1))
+                         (("evasion_stage", 1),))
 
     def test_neither_spends_a_roll(self):
         """Each effect script is a single `MOVE_SIDE_EFFECT_TO_ATTACKER` subscript pointer, and
@@ -619,14 +619,33 @@ class TestTheSelfRaises(unittest.TestCase):
         state = simulate_turn(state, Action.MOVE_1, config)
         self.assertEqual(state.target.spdef_stage, 2)
 
-    def test_a_self_raise_at_plus_six_fails_and_so_costs_two_fewer_advances(self):
-        """Read off the table rather than naming Double Team, which is how Nasty Plot and Amnesia
-        got this for nothing. An Azelf that has Nasty Plotted three times spends two fewer
-        advances on the fourth."""
+    def test_a_self_raise_at_plus_six_still_costs_a_full_turn(self):
+        """**This asserted the opposite, and the opposite was wrong.** It claimed an Azelf that
+        had Nasty Plotted three times spent two fewer advances on the fourth; it does not.
+
+        `BtlCmd_ChangeStatStage` (battle_script.c:2841-2851) takes `jumpNoChange` for a DIRECT
+        side effect whose stat is already at `MAX_STAT_STAGE`, and `jumpNoChange` is
+        `subscript_update_stat_stage`'s `_041`: print "won't go higher!", end, no status flag.
+        Only the Substitute branch sets `MOVE_STATUS_FAILED`.
+
+        Measured on the MIRROR, which is the same instruction with the sign flipped:
+        data/battle_logs/hooh1.jsonl turns 34-37 are four Sweet Scents against an evasion already
+        at -6, each spending the full 15 rolls. Modelling those as failures costs turn 34 two
+        advances and desynchronises the rest of the log -- so the pair really is spent on a stat
+        change that cannot happen.
+
+        The two-stat boosters are the exception; see `TestTheTwoStatBoosters`.
+        """
         maxed = _lake("azelf", spatk_stage=6)
-        self.assertTrue(will_fail(resolve_move("Nasty Plot"), _ours(), None, actor=maxed))
+        self.assertFalse(will_fail(resolve_move("Nasty Plot"), _ours(), None, actor=maxed))
         self.assertFalse(will_fail(resolve_move("Nasty Plot"), _ours(), None,
                                    actor=_lake("azelf")))
+        config = _config()
+        at_zero = _state(_lake("azelf"), _ours(moves=("Nasty Plot",), pp=(20,)))
+        at_six = _state(_lake("azelf"), _ours(moves=("Nasty Plot",), pp=(20,),
+                                              spatk_stage=6))
+        self.assertEqual(simulate_turn(at_zero, Action.MOVE_1, config).rng_offset,
+                         simulate_turn(at_six, Action.MOVE_1, config).rng_offset)
 
     def test_both_are_usable_by_our_own_side_too(self):
         """Unlike Uproar, Yawn and Future Sight: the table is read on both halves of the turn, so

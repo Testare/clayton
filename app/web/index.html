@@ -4857,7 +4857,7 @@ function renderHuntSetup(){
         second ${w.second_centre} ±${w.second_window}</div>
       <div class="candtable" style="max-height:160px"><table>
         <tr><th>seed</th><th>frame</th><th>second</th></tr>
-        ${w.preview.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
+        ${w.preview.map(c => `<tr><td>${hrCopyableCell(c.seed, "this candidate seed")}</td>
           <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}</table></div>
       ${w.second_window > 0 ? `<div class="hr-small muted">A second window above 0 multiplies
         the set with candidates that take ~19 turns to separate — the move choice and the crit
@@ -5369,11 +5369,15 @@ function hrStatusTargetJustApplied(){
 // so a miss was predicted by the candidates and simply had no chip to report it (clayton-957.10.8).
 function hrAccuracyDropWeJustApplied(){
   const t = _hrTurn, info = hrOurMoveInfo();
-  if (!info || !info.stat_drop || info.stat_drop.stat !== "accuracy") return 0;
+  // `stat_drop` is a LIST now -- Tickle drops two stats -- so the accuracy entry is SEARCHED
+  // for rather than assumed to be the only one. Searching also means a future two-stat move
+  // that happens to include accuracy keeps working here with no change.
+  const acc = (info && info.stat_drop || []).find(d => d.stat === "accuracy");
+  if (!acc) return 0;
   if (!hrWeActFirst()) return 0;
   if (!t.ours || t.ours.prevented) return 0;
   if (info.guaranteed_fail) return 0;
-  return t.ours.result === "" ? info.stat_drop.stages : 0;     // "-" is a miss
+  return t.ours.result === "" ? acc.stages : 0;                // "-" is a miss
 }
 
 // Whether a move of the TARGET's can miss this turn: its own flag, plus an accuracy drop we
@@ -6142,6 +6146,19 @@ function hrCopyable(text, what){
     onclick="hrCopy(this, ${JSON.stringify(String(text))})">${esc(text)}</code>`;
 }
 
+// A copyable cell inside a table, which is `hrCopyable` plus one thing: it stops the click from
+// reaching the row.
+//
+// `.candtable tr.pick` rows are click-to-select, so without `stopPropagation` copying a seed out
+// of a candidate list would also PICK that candidate -- identifying a seed the player was only
+// trying to read. The two read-only tables this is used in have no pick handler today; the guard
+// is here so adding one later cannot turn a copy into a commitment.
+function hrCopyableCell(text, what){
+  return `<code class="hr-copy" title="Click to copy ${esc(what || "this")}"
+    onclick="event.stopPropagation();hrCopy(this, ${JSON.stringify(String(text))})"
+    >${esc(text)}</code>`;
+}
+
 function hrCopy(el, text){
   const done = () => {
     const was = el.textContent;
@@ -6662,7 +6679,7 @@ function renderHuntRun(){
          <th title="Signed miss in frames from the frame this window was centred on.">Δframe</th>
          <th>second</th>
          <th title="Signed miss in RTC seconds from the second this window was centred on.">Δsec</th></tr>
-       ${s.candidates.map(c => `<tr><td><code>${esc(c.seed)}</code></td>
+       ${s.candidates.map(c => `<tr><td>${hrCopyableCell(c.seed, "this candidate seed")}</td>
            <td>${c.frame}</td><td>${signed(c.frame_delta)}</td>
            <td>${c.second}</td><td>${signed(c.second_delta)}</td></tr>`).join("")}
        ${s.candidates_truncated ? `<tr><td colspan="5" class="muted">
@@ -7101,11 +7118,21 @@ function huntReadinessPanel(r){
   }
   let speed = "";
   if(r.speed){
+    // Two kinds of tie, and they are different advice. The first list is the party AS IT STANDS
+    // -- change a stat or you cannot run this at all. The second is a tie one of your own moves
+    // can CREATE: the party is fine until you use Agility or Cotton Spore at the wrong stage,
+    // which is a thing to remember mid-run rather than a thing to fix now. Shown separately so
+    // the second does not read as a configuration error, and kept below the first because a
+    // standing tie has to be dealt with before a conditional one matters.
+    const moveTies = r.speed.move_tie_warnings || [];
     speed = `<div class="field"><label>Speed order</label>
       ${r.speed.warnings.length
         ? r.speed.warnings.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")
         : `<div><span class="badge ok">no ties</span>
-            <span class="muted"> · target's Speed is ${r.speed.target_speed}</span></div>`}</div>`;
+            <span class="muted"> · target's Speed is ${r.speed.target_speed}</span></div>`}
+      ${moveTies.length ? `<div class="hr-small muted" style="margin-top:8px">Your own Speed
+        moves can create one:</div>
+        ${moveTies.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}` : ""}</div>`;
   }
   // Getting THERE, which is a separate question from winning and the only one of these that can
   // be answered before a party exists.

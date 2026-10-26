@@ -349,3 +349,200 @@ def _boost_note(check: SpeedCheck) -> str:
     if check.target_speed_stage == 6:
         return " (at +6 Speed, where the boost cancels paralysis exactly)"
     return f" (at +{check.target_speed_stage} Speed, reachable via Ancient Power)"
+
+
+# --- speed ties a Speed MOVE can create ---------------------------------------------------------
+#
+# The checks above ask "could these two Pokemon tie as they stand". This asks a different and
+# nastier question: **could a move in our own party put us on a tie that was not there before?**
+#
+# It had no answer at all, and the gap was the wrong shape. `speed_checks` enumerates every Speed
+# stage the TARGET can reach, because Ancient Power is in two configured movesets -- but it treats
+# our own Speed as a constant and the target's as moved only by the target. Both halves are wrong
+# the moment a party carries Agility, Rock Polish, Dragon Dance, String Shot, Cotton Spore or
+# Scary Face: the first three raise OUR Speed in steps and the last three lower the target's, and
+# either can land the two sides on exactly equal effective Speed.
+#
+# A tie is not a small error. It spends extra rolls that this simulator does not model
+# (notes/ss_rng/speed.md, sec 11.4), so every turn after it is unmatchable -- and unlike a tie
+# that exists at stage 0, this one appears mid-run, on a turn the player chose, long after the
+# configuration screen said the party was fine.
+#
+# Hence a warning rather than a refusal. The move may be exactly the right play (a Cotton Spore
+# that puts the target two stages down is how a slow chipper gets to move first), and only some
+# stage combinations tie. What the player needs is to be told which ones.
+
+#: Effects that move SPEED by a stat stage, as ``effect -> (whose, stages)``. Positive stages are
+#: raises, negative are drops; "self" means the user, "target" the move's victim.
+#:
+#: Declared here rather than imported from `battle_compass.sim`, because `battle/` is the shared
+#: core that `battle_compass` builds on and not the other way round -- the same reason
+#: `LEFTOVERS_DIVISOR` lives here. `tests/test_battle_compass_speed_moves.py` asserts the two
+#: agree, so a Speed move added to one table cannot go missing from this one.
+SPEED_STAGE_EFFECTS: dict[int, tuple[str, int]] = {
+    20: ("target", -1),      # String Shot
+    52: ("self", 2),         # Agility, Rock Polish
+    60: ("target", -2),      # Cotton Spore, Scary Face
+    212: ("self", 1),        # Dragon Dance -- Attack too, but Speed is what matters here
+}
+
+
+def speed_moves(moves) -> list[tuple[Move, str, int]]:
+    """``(move, whose, stages)`` for each move in `moves` that shifts a Speed stage."""
+    out = []
+    for move in moves:
+        entry = SPEED_STAGE_EFFECTS.get(getattr(move, "effect", None))
+        if entry is not None:
+            out.append((move, entry[0], entry[1]))
+    return out
+
+
+def _reachable_stages(steps: tuple[int, ...], *, start: int = 0,
+                      low: int = -6, high: int = 6) -> tuple[int, ...]:
+    """Every stage reachable from `start` by repeating any of `steps`, clamped to [`low`, `high`].
+
+    Repeating, because a move can be used more than once: two Agilities is +4 and three is +6.
+    Mixed, because a Pokemon can carry two of them -- Dragon Dance then Agility is +3, which no
+    single move reaches and which is exactly the kind of stage a tie hides at.
+
+    `start` is included even when a step is available: not using the move is always an option,
+    and the stage-0 row is the one `speed_checks` already covers.
+    """
+    seen = {max(low, min(high, start))}
+    frontier = set(seen)
+    while frontier:
+        nxt = set()
+        for stage in frontier:
+            for step in steps:
+                moved = max(low, min(high, stage + step))
+                if moved not in seen:
+                    seen.add(moved)
+                    nxt.add(moved)
+        frontier = nxt
+    return tuple(sorted(seen))
+
+
+@dataclass(frozen=True)
+class SpeedMoveTie:
+    """One (our stage x target stage x target status) combination that ties.
+
+    `via` names the move that gets there and `via_owner` who holds it, which are different
+    questions once a target-speed drop is involved: the drop is permanent on a wild target, so a
+    Cotton Spore from one party member can tie a DIFFERENT one that is sent out later.
+    """
+    ours: str
+    our_speed: int
+    our_stage: int
+    target_speed: int
+    target_stage: int
+    target_paralyzed: bool
+    via: str
+    via_owner: str
+
+
+def speed_move_ties(our_speeds: dict[str, int], movesets: dict[str, list[Move]],
+                    target_speed: int, *, target_can_be_paralyzed: bool = False,
+                    target_own_speed_stages: tuple[int, ...] = (0,)) -> list[SpeedMoveTie]:
+    """Every speed tie a Speed move in this party could create.
+
+    `our_speeds` and `movesets` are keyed the same way (by the player's name for each Pokemon).
+    `target_can_be_paralyzed` turns on the paralyzed-target rows: paralysis quarters the target's
+    Speed, which is a whole second set of stage combinations to tie at, and it is only reachable
+    if somebody in the party can actually inflict it. `target_own_speed_stages` is what the target
+    can do to its own Speed -- Ancient Power's all-stats secondary.
+
+    **Only ties the move is responsible for are reported.** A combination at (our stage 0, target
+    stage 0) is the configuration as it stands and `speed_checks` already reports it; repeating it
+    here would bury the new information under the old.
+
+    **A self-raise is attributed to its holder; a target drop is attributed to everybody.** A
+    wild target never switches out, so a Speed drop on it is permanent -- the Pokemon that used
+    Cotton Spore may well be back on the bench by the time the tie matters.
+    """
+    from claytonlib.battle.damage import apply_stage
+
+    # Our own raises, per Pokemon: only the holder's Speed moves.
+    # The target's drops, pooled: once applied they outlive whoever applied them.
+    target_drops: list[tuple[int, str, str]] = []
+    for name, moves in movesets.items():
+        for move, whose, stages in speed_moves(moves):
+            if whose == "target":
+                target_drops.append((stages, move.name, name))
+
+    ties: list[SpeedMoveTie] = []
+    for name, speed in our_speeds.items():
+        raisers = [move.name for move, whose, _ in speed_moves(movesets.get(name, []))
+                   if whose == "self"]
+        own = tuple(stages for _, whose, stages in speed_moves(movesets.get(name, []))
+                    if whose == "self")
+        our_stages = _reachable_stages(own, low=0) if own else (0,)
+        # Named as a group rather than per stage. A stage of +4 is two Agilities, or an Agility
+        # and two Dragon Dances -- attributing it to one of them would be a guess, and the
+        # player's question is "which of my moves can do this", which the group answers exactly.
+        raised_by = " + ".join(sorted(raisers))
+        # Every target stage within reach: its own boosters upward, our drops downward.
+        drop_steps = tuple(stages for stages, _, _ in target_drops)
+        reachable_target = set(target_own_speed_stages)
+        for base in tuple(reachable_target):
+            reachable_target.update(_reachable_stages(drop_steps, start=base, high=max(
+                target_own_speed_stages)) if drop_steps else (base,))
+        for our_stage in our_stages:
+            ours_at = apply_stage(speed, our_stage)
+            for target_stage in sorted(reachable_target):
+                theirs = apply_stage(target_speed, target_stage)
+                for paralyzed in (False, True) if target_can_be_paralyzed else (False,):
+                    theirs_at = theirs // PARALYSIS_SPEED_DIVISOR if paralyzed else theirs
+                    if ours_at != theirs_at:
+                        continue
+                    # Only ties our own moves are RESPONSIBLE for. A combination we did not
+                    # move -- stage 0 on our side and a target stage the target reaches on its
+                    # own -- belongs to `speed_checks`, which enumerates exactly those; repeating
+                    # them here would both bury the new information and credit the tie to a move
+                    # that had nothing to do with it.
+                    if our_stage == 0 and target_stage in set(target_own_speed_stages):
+                        continue
+                    if our_stage > 0:
+                        via, owner = raised_by, name
+                    else:
+                        # The drop that gets there, by the party member that holds it. Named
+                        # smallest-step-first so a String Shot is credited over a Cotton Spore
+                        # when either reaches the stage.
+                        _, via, owner = min(target_drops, key=lambda d: abs(d[0]))
+                    ties.append(SpeedMoveTie(
+                        ours=name, our_speed=ours_at, our_stage=our_stage,
+                        target_speed=theirs_at, target_stage=target_stage,
+                        target_paralyzed=paralyzed, via=via, via_owner=owner))
+    return ties
+
+
+def speed_move_warnings(ties: list[SpeedMoveTie]) -> list[str]:
+    """One line per Speed move that can tie, naming the stages it ties at.
+
+    Grouped by (Pokemon, move) rather than one line per combination: a party with Agility and a
+    paralysable target produces up to fourteen rows, and fourteen lines saying the same thing is
+    how a real warning gets scrolled past.
+    """
+    grouped: dict[tuple[str, str, str], list[SpeedMoveTie]] = {}
+    for tie in ties:
+        grouped.setdefault((tie.ours, tie.via, tie.via_owner), []).append(tie)
+    messages = []
+    for (ours, via, owner), rows in grouped.items():
+        where = []
+        for tie in rows:
+            parts = []
+            if tie.our_stage:
+                parts.append(f"{ours} at +{tie.our_stage}")
+            if tie.target_stage:
+                sign = "+" if tie.target_stage > 0 else ""
+                parts.append(f"the target at {sign}{tie.target_stage}")
+            if tie.target_paralyzed:
+                parts.append("paralyzed")
+            where.append(" / ".join(parts) + f" — both {tie.our_speed}")
+        held = "" if owner == ours else f" ({owner}'s)"
+        messages.append(
+            f"{via}{held} can tie {ours} with the target's Speed: "
+            + "; ".join(sorted(set(where)))
+            + ". A tie spends rolls the simulator does not model, so the run stops matching from "
+              "that turn on — use the move only at a stage that does not tie, or change a Speed "
+              "stat.")
+    return messages

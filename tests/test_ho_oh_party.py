@@ -76,12 +76,12 @@ class TestFlashActuallyLowersAccuracy(unittest.TestCase):
     """The unsound one. A dropped accuracy stage must reach the hit check."""
 
     def test_the_table_knows_flash(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Flash")), ("accuracy_stage", 1))
+        self.assertEqual(primary_stat_drop(resolve_move("Flash")), (("accuracy_stage", 1),))
 
     def test_six_flashes_reach_minus_six_and_stop(self):
         mon = hooh()
         for _ in range(8):
-            mon = apply_stat_drop(mon, ("accuracy_stage", 1))
+            mon = apply_stat_drop(mon, (("accuracy_stage", 1),))
         self.assertEqual(mon.accuracy_stage, -6, "the floor is -6, not unbounded")
 
     def test_a_flash_turn_moves_the_targets_stage(self):
@@ -104,21 +104,21 @@ class TestFlashActuallyLowersAccuracy(unittest.TestCase):
         stays usable filler -- unlike a second Rain Dance, which really does fail."""
         maxed = hooh()
         for _ in range(6):
-            maxed = apply_stat_drop(maxed, ("accuracy_stage", 1))
+            maxed = apply_stat_drop(maxed, (("accuracy_stage", 1),))
         self.assertFalse(will_fail(resolve_move("Flash"), maxed, None, actor=ampharos()))
 
 
 class TestScreechAndCharm(unittest.TestCase):
     def test_screech_is_two_stages_of_defence(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Screech")), ("def_stage", 2))
+        self.assertEqual(primary_stat_drop(resolve_move("Screech")), (("def_stage", 2),))
 
     def test_charm_is_two_stages_of_attack(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Charm")), ("atk_stage", 2))
+        self.assertEqual(primary_stat_drop(resolve_move("Charm")), (("atk_stage", 2),))
 
     def test_leer_is_a_worse_screech_and_the_data_says_so(self):
         """Half the drop, same -6 floor, so three Screeches already reach the cap."""
-        self.assertEqual(primary_stat_drop(resolve_move("Leer")), ("def_stage", 1))
-        self.assertEqual(primary_stat_drop(resolve_move("Tail Whip")), ("def_stage", 1))
+        self.assertEqual(primary_stat_drop(resolve_move("Leer")), (("def_stage", 1),))
+        self.assertEqual(primary_stat_drop(resolve_move("Tail Whip")), (("def_stage", 1),))
 
     def test_three_screeches_cut_false_swipe_from_ten_hits_to_three(self):
         """The reason Screech is worth two switch-ins: it is Smeargle's exposure, not its damage."""
@@ -192,11 +192,18 @@ class TestOurMoveCoverageIsCheckedAtAll(unittest.TestCase):
         self.assertIn("doing nothing", why, "Belly Drum is a status move")
 
     def test_every_table_entry_resolves_to_a_real_effect(self):
-        """Guards against a typo'd effect id silently covering nothing."""
-        for effect in PRIMARY_STAT_DROPS:
-            field, stages = PRIMARY_STAT_DROPS[effect]
-            self.assertTrue(hasattr(hooh(), field), f"effect {effect} names no such stage")
-            self.assertIn(stages, (1, 2))
+        """Guards against a typo'd effect id silently covering nothing.
+
+        Every value is a TUPLE of pairs since the two-stat family went in, so a row that is
+        still a bare pair would read as two one-character field names here and fail loudly
+        rather than silently naming no stage.
+        """
+        for effect, drops in PRIMARY_STAT_DROPS.items():
+            self.assertTrue(drops, f"effect {effect} drops nothing")
+            for field, stages in drops:
+                self.assertTrue(hasattr(hooh(), field),
+                                f"effect {effect} names no such stage: {field!r}")
+                self.assertIn(stages, (1, 2))
 
 
 # --- clayton-957.10.3: Intimidate ---------------------------------------------------------------
@@ -579,14 +586,15 @@ class TestTheSupportSlotsAreConfigurable(unittest.TestCase):
 
 class TestChatotsGrowlAndSing(unittest.TestCase):
     def test_growl_is_already_covered_and_lowers_attack(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Growl")), ("atk_stage", 1))
+        self.assertEqual(primary_stat_drop(resolve_move("Growl")), (("atk_stage", 1),))
         state = state_with(chatot(), hooh(status=Status.PARALYSIS), phase=1)
         nxt = simulate_turn(state, Action.MOVE_1, HUNT)
         self.assertEqual(nxt.target.atk_stage, -1)
 
     def test_growl_stacks_with_intimidate_and_charm_toward_the_same_floor(self):
         mon = hooh()
-        for drop in (("atk_stage", 1), ("atk_stage", 2), ("atk_stage", 2), ("atk_stage", 1)):
+        for drop in ((("atk_stage", 1),), (("atk_stage", 2),),
+                     (("atk_stage", 2),), (("atk_stage", 1),)):
             mon = apply_stat_drop(mon, drop)
         self.assertEqual(mon.atk_stage, -6)
 

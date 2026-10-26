@@ -958,3 +958,48 @@ class TestTextareasMatchTheRestOfTheForm(unittest.TestCase):
         self.assertIn("gl-notes", field)
         css = self._css()
         self.assertIn(".gl-notes{min-height:", css)
+
+
+class TestTheCandidateSeedsAreCopyable(unittest.TestCase):
+    """A candidate seed's whole purpose is to be pasted somewhere else.
+
+    The one that matters most is the emulator: `plbattlelog 0x4c1504dc <label>` forces a seed at
+    battle start, and `int(parts[0], 16)` in the reader accepts exactly the `{seed:#010x}` form
+    the facade publishes -- so a copied cell goes straight into the command with no retyping. Ten
+    hex digits dragged across by hand is where a wrong character comes from, and a forced-seed
+    capture against the wrong seed looks like a model bug.
+    """
+
+    def test_the_run_pages_candidate_table_copies_its_seeds(self):
+        body = _function_body("renderHuntCandidates") if "function renderHuntCandidates(" \
+            in _HTML else _HTML
+        self.assertIn('hrCopyableCell(c.seed, "this candidate seed")', body)
+        self.assertNotIn("<td><code>${esc(c.seed)}</code></td>", _HTML,
+                         "a bare seed cell is left in a candidate table")
+
+    def test_the_setup_pages_window_preview_copies_them_too(self):
+        """The same list before the run opens, which is where a player picking a window to aim
+        at would grab one from."""
+        self.assertEqual(_HTML.count('hrCopyableCell(c.seed, "this candidate seed")'), 2)
+
+    def test_the_cell_stops_the_click_reaching_its_row(self):
+        """`.candtable tr.pick` rows are click-to-select. Neither table using this has a pick
+        handler today, and the guard is what stops adding one from turning a copy into a
+        commitment -- identifying a seed the player was only trying to read."""
+        body = _function_body("hrCopyableCell")
+        self.assertIn("event.stopPropagation()", body)
+        self.assertIn("hrCopy(this,", body)
+
+    def test_it_reuses_the_existing_copy_machinery(self):
+        """One clipboard path, one "copied" flash, one fallback to selecting the text."""
+        body = _function_body("hrCopyableCell")
+        self.assertIn('class="hr-copy"', body)
+        self.assertIn("title=", body)
+        css = _HTML[:_HTML.index("</style>")]
+        self.assertIn(".hr-copy", css)
+
+    def test_the_plain_helper_is_untouched(self):
+        """`hrCopyable` is used outside tables -- the pinned seed, the IV spread, the path -- and
+        must not start swallowing clicks it never swallowed."""
+        body = _function_body("hrCopyable")
+        self.assertNotIn("stopPropagation", body)

@@ -155,9 +155,39 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # a party member carrying either is modelled for free -- unlike Uproar, Yawn and Future Sight,
     # which are deliberately NOT listed: each needs state only the target's side maintains, and
     # nothing a party can carry has them.
-    # Swords Dance, which no encounter has -- listed for OUR side only, the way Haze is. Same
-    # table, same absence of rolls, same +6 failure.
+    # --- the pure stat-stage family, in full ---
+    #
+    # Every effect whose script is a single `MOVE_SIDE_EFFECT_*|MOVE_SUBSCRIPT_PTR_<stat>_<up or
+    # down>_<n>_STAGE(S)` plus `End`. There are 23 of them and they are listed exhaustively
+    # rather than as the ones a party happens to carry, because the whole family costs the same
+    # nothing and reaches the same two tables -- so a player who brings Bulk Up should not be
+    # told it is unmodelled when the only reason it was absent is that nobody had typed it.
+    #
+    # None of them spends a roll: the subscripts contain no `Random`, and every self-raise has
+    # accuracy 0 (the TARGET-facing drops have real accuracies and spend an accuracy roll, which
+    # they already did). `will_fail` covers the ceiling and floor cases; see it for the
+    # single-stat / two-stat asymmetry, which is the one place they differ from each other.
+    10: "Meditate, Sharpen, Howl: our own Attack +1",
+    11: "Harden, Withdraw: our own Defence +1",
+    13: "Growth: our own Sp. Atk +1",
+    # Double Team was listed for the TARGET only, because Darkrai is where it came from. It is
+    # the same table row either way, and a party member really can carry the TM -- raising our
+    # own evasion makes the target's moves missable, which `_effective_accuracy` already reads.
+    16: "Double Team: our own evasion +1, which makes the target's moves missable",
     50: "Swords Dance: our own Attack +2, which raises the physical damage WE deal",
+    51: "Barrier, Acid Armor, Iron Defense: our own Defence +2",
+    # Agility and Rock Polish. The one entry in the family that can change a turn's COST rather
+    # than only its damage, because Speed decides order and an effective-Speed tie spends extra
+    # rolls. Modelled, with `readiness.speed_move_ties` warning before one is walked into.
+    52: "Agility, Rock Polish: our own Speed +2 — and the tie risk that comes with it",
+    # The four two-stat boosters. Same zero cost, different failure: their own subscript tests
+    # every stat before calling `ChangeStatStage` at all.
+    206: "Cosmic Power, Defend Order: our own Defence and Sp. Def +1",
+    208: "Bulk Up: our own Attack and Defence +1",
+    211: "Calm Mind: our own Sp. Atk and Sp. Def +1",
+    212: "Dragon Dance: our own Attack and Speed +1 — Speed, so the tie risk applies",
+    # Tickle, the only two-stat drop, and the mirror of the four above.
+    205: "Tickle: the target's Attack and Defence −1",
     53: "Nasty Plot: our own Sp. Atk +2, which raises the special damage WE deal",
     54: "Amnesia: our own Sp. Def +2, which lowers every special hit we take",
     58: "lowers the target's Attack by two (Charm)",
@@ -390,9 +420,10 @@ class MoveOutcome:
     traps: bool = False
     sets_water_sport: bool = False
     sets_safeguard: bool = False
-    #: ``(stage field, stages)`` this move drops on its target, or None. Applied by
+    #: The ``(stage field, stages)`` pairs this move drops on its target, or None. Applied by
     #: `simulate_turn`, which owns the state -- and which knows which side the target is.
-    stat_drop: tuple[str, int] | None = None
+    #: A tuple because Tickle drops two stats; everything else in the family drops one.
+    stat_drop: tuple[tuple[str, int], ...] | None = None
     #: A screen this move put up on the user's side, and for how many turns (Light Clay).
     sets_reflect: bool = False
     sets_light_screen: bool = False
@@ -409,10 +440,11 @@ class MoveOutcome:
     starts_charge: int | None = None
     #: Set on the turn a charged move actually fires, so the lock and the vanish come off.
     ends_charge: bool = False
-    #: ``(stage field, stages)`` this move raises on its OWN USER -- Double Team's evasion. The
-    #: mirror of `stat_drop`, and a separate field for the same reason `attacker_status` is: the
-    #: side it lands on is the opposite one, and `simulate_turn` is what knows which side that is.
-    self_stat_raise: tuple[str, int] | None = None
+    #: The ``(stage field, stages)`` pairs this move raises on its OWN USER -- Double Team's
+    #: evasion, Swords Dance's Attack, Dragon Dance's Attack AND Speed. The mirror of
+    #: `stat_drop`, and a separate field for the same reason `attacker_status` is: the side it
+    #: lands on is the opposite one, and `simulate_turn` is what knows which side that is.
+    self_stat_raise: tuple[tuple[str, int], ...] | None = None
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
@@ -629,17 +661,36 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         # cannot sequence its own moves, so it throws Nightmare at a wide-awake party member
         # roughly a quarter of the turns it acts.
         return defender.status is not Status.SLEEP or defender.nightmare
-    if (raise_ := PRIMARY_SELF_RAISES.get(move.effect)) is not None:
-        # A stat already at +6 cannot go higher, and the move fails outright rather than landing
-        # for nothing -- which is an advance difference, not a cosmetic one.
-        # Self-targeting, so it reads `actor` the way Refresh does -- and no actor means "cannot
-        # tell" rather than a guess about the defender's stages.
+    if (raises := PRIMARY_SELF_RAISES.get(move.effect)) is not None:
+        # **A single-stat raise at +6 does NOT fail.** This used to return True for it, and that
+        # was wrong by two advances a turn. `BtlCmd_ChangeStatStage` (battle_script.c:2841-2851)
+        # takes `jumpNoChange` when the stat is already at `MAX_STAT_STAGE` for a DIRECT side
+        # effect, and `jumpNoChange` is `subscript_update_stat_stage`'s `_041`: it prints
+        # "{0}'s {1} won't go higher!" and ends, setting no status flag. Only
+        # `jumpBlockedBySubstitute` sets `MOVE_STATUS_FAILED`.
         #
-        # Read off `PRIMARY_SELF_RAISES` rather than naming Double Team, so Nasty Plot and
-        # Amnesia got this for nothing: an Azelf that has already Nasty Plotted three times
-        # spends two fewer advances on the fourth, and a simulator that missed that would
-        # desynchronise from the one turn in four Azelf wastes on it.
-        return actor is not None and getattr(actor, raise_[0]) >= STAT_STAGE_CEILING
+        # Measured on the MIRROR, which runs the identical instruction with the sign flipped:
+        # data/battle_logs/hooh1.jsonl turns 34-37 are four Sweet Scents against an evasion
+        # already at -6, each spending the full 15 rolls. Treating them as failures costs turn 34
+        # two advances and desynchronises every turn after it, so the game really does spend the
+        # post-successful-move pair on a stat change that cannot happen.
+        #
+        # The TWO-stat boosters are the exception and go the other way, because they do not reach
+        # `ChangeStatStage` at all when every stat is maxed: their own subscript tests both stats
+        # first and sets `MOVE_STATUS_NO_MORE_WORK`
+        # (`subscript_user_atk_and_def_up_1_stage.s` `_046` and its three siblings), which routes
+        # to `LOOP_SPREAD_MOVES` and skips `USE_MOVE` whole. [derived -- nothing in a configured
+        # moveset can reach it, since it needs a two-stat booster with BOTH stats at the ceiling.]
+        if move.effect not in MULTI_STAT_EFFECTS or actor is None:
+            return False
+        return all(getattr(actor, field) >= STAT_STAGE_CEILING for field, _ in raises)
+    if (drops := PRIMARY_STAT_DROPS.get(move.effect)) is not None:
+        # The same asymmetry, same way round. A single-stat drop at -6 is the measured case above
+        # and is NOT a failure; Tickle with both stats at -6 is, by the mirror of the two-stat
+        # argument (`subscript_target_atk_and_def_down_1_stage.s` `_050`).
+        if move.effect not in MULTI_STAT_EFFECTS:
+            return False
+        return all(getattr(defender, field) <= STAT_STAGE_FLOOR for field, _ in drops)
     if move.effect == EFFECT_REFRESH:
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
@@ -1013,8 +1064,12 @@ def taunt_refuses(move: Move, actor: Battler) -> bool:
 #:
 #: Mist does not guard against these: Mist blocks REDUCTIONS to its own side, and this is the
 #: user raising its own stage.
-PRIMARY_SELF_RAISES: dict[int, tuple[str, int]] = {
-    16: ("evasion_stage", 1),            # Double Team -- Darkrai's
+PRIMARY_SELF_RAISES: dict[int, tuple[tuple[str, int], ...]] = {
+    # --- one stat, one stage ---
+    10: (("atk_stage", 1),),             # Meditate, Sharpen, Howl
+    11: (("def_stage", 1),),             # Harden, Withdraw
+    13: (("spatk_stage", 1),),           # Growth
+    16: (("evasion_stage", 1),),         # Double Team -- Darkrai's
     # Swords Dance, and ours: no configured encounter has it. Its effect script is byte-for-byte
     # the shape the two below have -- `effect_script_0050.s` against `0053`/`0054`, differing only
     # in the subscript pointer, all three resolving to `subscript_update_stat_stage` -- so it is a
@@ -1026,15 +1081,28 @@ PRIMARY_SELF_RAISES: dict[int, tuple[str, int]] = {
     # fewer turns to the Phase 2 precondition with no risk of overshooting it. And the boost
     # survives the turn it matters most on -- `battle.damage` discards the attacker's stage on a
     # critical hit only when it is NEGATIVE.
+    # --- one stat, two stages ---
+    50: (("atk_stage", 2),),             # Swords Dance -- ours, and it DOUBLES our physical damage
+    51: (("def_stage", 2),),             # Barrier, Acid Armor, Iron Defense
+    # Agility and Rock Polish. The one self-raise that can change a TURN'S COST rather than only
+    # its damage, because Speed decides order and an effective-Speed tie spends extra rolls
+    # (notes/ss_rng/speed.md). Modelled, and `readiness.speed_move_ties` is what warns before a
+    # player walks into one -- see that function for why a warning rather than a refusal.
+    52: (("speed_stage", 2),),           # Agility, Rock Polish
+    53: (("spatk_stage", 2),),           # Nasty Plot -- Azelf's, and it DOUBLES its special damage
+    54: (("spdef_stage", 2),),           # Amnesia -- Uxie's
+    # --- two stats, one stage each ---
     #
-    # Note what is deliberately NOT here beside it. Barrier (51) and Agility (52) have the same
-    # script shape, but Agility is not a free table row: Speed decides turn ORDER, and a stage
-    # that lands the two sides on equal effective Speed creates a speed tie, which spends extra
-    # rolls (notes/ss_rng/speed.md -- the reason Lagging Tail is mandated). Adding it would be
-    # claiming coverage for the one self-raise that can change a turn's cost.
-    50: ("atk_stage", 2),                # Swords Dance -- ours, and it DOUBLES our physical damage
-    53: ("spatk_stage", 2),              # Nasty Plot -- Azelf's, and it DOUBLES its special damage
-    54: ("spdef_stage", 2),              # Amnesia -- Uxie's
+    # These fail differently from the single-stat rows above, and the difference is an advance
+    # difference. Each has its own subscript (`subscript_user_atk_and_def_up_1_stage.s` and
+    # friends) which tests BOTH stats first and, when both are already at +6, sets
+    # `MOVE_STATUS_NO_MORE_WORK` and never reaches `ChangeStatStage` at all. A single-stat raise
+    # at the ceiling takes `ChangeStatStage`'s `jumpNoChange` branch instead, which sets no flag.
+    # See `will_fail` for what that costs.
+    206: (("def_stage", 1), ("spdef_stage", 1)),      # Cosmic Power, Defend Order
+    208: (("atk_stage", 1), ("def_stage", 1)),        # Bulk Up
+    211: (("spatk_stage", 1), ("spdef_stage", 1)),    # Calm Mind
+    212: (("atk_stage", 1), ("speed_stage", 1)),      # Dragon Dance -- also a Speed mover
 }
 
 
@@ -1106,6 +1174,14 @@ _INERT_ABILITIES = frozenset({
     # Heatran's, and the same reasoning: Flash Fire eats a Fire move aimed AT it
     # (`ABSORBED_MOVE_TYPES`) and does nothing to whoever touches it.
     "flash fire",
+    # The defensive abilities this project already names elsewhere, every one of which is about
+    # what its holder is immune TO rather than what touching it does. Insomnia in particular was
+    # a real omission: it is the headline ability of the wall the whole support kit is built
+    # around (`SLEEP_BLOCKING_ABILITIES`), so leaving it out of this set made every party
+    # containing one answer "yes, we can paralyze" on the strength of its ability alone.
+    "insomnia", "vital spirit", "limber", "water veil", "immunity", "magma armor",
+    "inner focus", "shield dust", "clear body", "white smoke", "hyper cutter", "soundproof",
+    "super luck", "sniper", "scrappy",
 })
 
 
@@ -1213,17 +1289,30 @@ VARIABLE_POWER_EFFECTS = frozenset({EFFECT_PUNISHMENT})
 # Distinct from the SECONDARY drops below, which ride on a damaging move and are applied off
 # `outcome.secondary`. These are the move's whole purpose, so they land whenever it succeeds.
 #: effect id -> (`Battler` stage field, how many stages it drops)
-PRIMARY_STAT_DROPS: dict[int, tuple[str, int]] = {
-    18: ("atk_stage", 1),        # Growl
-    19: ("def_stage", 1),        # Tail Whip, Leer
-    20: ("speed_stage", 1),      # String Shot
-    23: ("accuracy_stage", 1),   # Flash, Sand Attack, Kinesis
-    24: ("evasion_stage", 1),    # Sweet Scent
-    58: ("atk_stage", 2),        # Charm, Feather Dance
-    59: ("def_stage", 2),        # Screech
-    60: ("speed_stage", 2),      # Scary Face
-    62: ("spdef_stage", 2),      # Fake Tears, Metal Sound
+PRIMARY_STAT_DROPS: dict[int, tuple[tuple[str, int], ...]] = {
+    18: (("atk_stage", 1),),      # Growl
+    19: (("def_stage", 1),),      # Tail Whip, Leer
+    # String Shot, and a Speed mover: it slows the TARGET, which moves the order for every
+    # Pokemon we have rather than only the one that used it -- a wild target never switches out,
+    # so the drop is permanent. `readiness.speed_move_ties` is what warns about it.
+    20: (("speed_stage", 1),),    # String Shot
+    23: (("accuracy_stage", 1),), # Flash, Sand Attack, Smoke Screen, Kinesis
+    24: (("evasion_stage", 1),),  # Sweet Scent
+    58: (("atk_stage", 2),),      # Charm, Feather Dance
+    59: (("def_stage", 2),),      # Screech
+    60: (("speed_stage", 2),),    # Cotton Spore, Scary Face -- Speed movers, as 20 above
+    62: (("spdef_stage", 2),),    # Fake Tears, Metal Sound
+    # Tickle, the only two-stat DROP, and the mirror of 206/208/211/212 above in every respect
+    # including how it fails: `subscript_target_atk_and_def_down_1_stage.s` tests both stats and
+    # sets `MOVE_STATUS_NO_MORE_WORK` only when BOTH are already at -6.
+    205: (("atk_stage", 1), ("def_stage", 1)),        # Tickle
 }
+
+#: The effects above whose subscript tests every stat FIRST and refuses the move outright when
+#: none of them can move -- as opposed to the single-stat rows, which run `ChangeStatStage` and
+#: take its no-change branch. The distinction is worth a set of its own because it is the only
+#: thing separating "the move did nothing and cost a full turn" from "the move did not happen".
+MULTI_STAT_EFFECTS: frozenset[int] = frozenset({205, 206, 208, 211, 212})
 
 #: effect id -> the stage a DAMAGING move drops on its victim when its secondary procs.
 #:
@@ -1235,12 +1324,12 @@ PRIMARY_STAT_DROPS: dict[int, tuple[str, int]] = {
 #: **Crunch (69) drops DEFENCE in Gen 4.** It dropped Sp. Def in Gen 3 and the change is exactly
 #: the kind of thing a modern reference gets wrong for this project -- taken from
 #: `effect_script_0069.s`, whose subscript is `MOVE_SUBSCRIPT_PTR_DEFENSE_DOWN_1_STAGE`.
-SECONDARY_STAT_DROPS: dict[int, tuple[str, int]] = {
-    68: ("atk_stage", 1),        # Aurora Beam
-    69: ("def_stage", 1),        # Crunch
-    70: ("speed_stage", 1),      # Rock Tomb, Icy Wind, Bubble
-    71: ("spatk_stage", 1),      # Mist Ball
-    72: ("spdef_stage", 1),      # Luster Purge, Shadow Ball
+SECONDARY_STAT_DROPS: dict[int, tuple[tuple[str, int], ...]] = {
+    68: (("atk_stage", 1),),     # Aurora Beam
+    69: (("def_stage", 1),),     # Crunch
+    70: (("speed_stage", 1),),   # Rock Tomb, Icy Wind, Bubble
+    71: (("spatk_stage", 1),),   # Mist Ball
+    72: (("spdef_stage", 1),),   # Luster Purge, Shadow Ball
 }
 STAT_STAGE_FLOOR = -6
 STAT_STAGE_CEILING = 6
@@ -1266,38 +1355,56 @@ FALSE_SWIPE_EFFECT = 101
 RUN_ENDING_EFFECTS = frozenset({153, 28})
 
 
-def primary_stat_drop(move: Move) -> tuple[str, int] | None:
+def primary_stat_drop(move: Move) -> tuple[tuple[str, int], ...] | None:
     """``(stage field, stages)`` this status move drops on its target, or None."""
     return PRIMARY_STAT_DROPS.get(move.effect)
 
 
-def apply_stat_drop(battler: Battler, drop: tuple[str, int]) -> Battler:
-    """`battler` with `drop` applied, clamped at the -6 floor.
+def apply_stat_drop(battler: Battler, drops: tuple[tuple[str, int], ...]) -> Battler:
+    """`battler` with every pair in `drops` applied, each clamped at the -6 floor.
 
-    **Clamped rather than refused.** A drop against a stat already at -6 does nothing, and the
-    player reports that it does not change the turn's roll count either -- so unlike the field
-    conditions it is NOT a `will_fail` case, and Flash stays a usable filler action all the way
-    down. Worth a ground-truth capture if it ever becomes load-bearing; for now the clamp is the
-    whole of it.
+    A SEQUENCE rather than one pair, because Tickle drops two stats and so does every one of the
+    four two-stat boosters on the other side. One pair was the shape while every stat move in
+    play moved exactly one stat; making it a sequence is what let the rest of the family in
+    without a second code path per move.
+
+    **Clamped rather than refused.** A drop against a stat already at -6 does nothing, and does
+    not change the turn's roll count -- so unlike the field conditions it is NOT a `will_fail`
+    case, and Flash stays a usable filler action all the way down.
+    [verified: data/battle_logs/hooh1.jsonl turns 34-37, four Sweet Scents against an evasion
+    already at -6, each spending the full 15 rolls. Modelling them as failures costs turn 34 two
+    advances and desynchronises everything after it.]
+
+    A stat at the floor still clamps silently here even when another stat in the same `drops`
+    moves, which is exactly what the ROM does: the two-stat subscripts call `ChangeStatStage`
+    once per stat and each call takes its own no-change branch.
     """
-    field, stages = drop
-    current = getattr(battler, field)
-    return replace(battler, **{field: max(STAT_STAGE_FLOOR, current - stages)})
+    for field, stages in drops:
+        current = getattr(battler, field)
+        battler = replace(battler, **{field: max(STAT_STAGE_FLOOR, current - stages)})
+    return battler
 
 
-def apply_stat_raise(battler: Battler, raise_: tuple[str, int]) -> Battler:
-    """`battler` with `raise_` applied to its own stage, clamped at the +6 ceiling.
+def apply_stat_raise(battler: Battler, raises: tuple[tuple[str, int], ...]) -> Battler:
+    """`battler` with every pair in `raises` applied, each clamped at the +6 ceiling.
 
-    The mirror of `apply_stat_drop`, with one asymmetry worth stating: a raise at the ceiling
-    really does make the move FAIL (`will_fail`), so the clamp here is belt-and-braces rather
-    than the rule -- where a drop at the floor merely does nothing and keeps costing a full turn.
+    The mirror of `apply_stat_drop`, and symmetric with it in the way that matters: a raise
+    against a stat already at +6 does nothing and still costs a full turn. That is the opposite
+    of what this said before -- see `will_fail` for the correction and its evidence.
 
     **Permanent.** A wild target never switches out, so the ROM's stat reset never runs on it:
     every Double Team Darkrai gets off is one our 100%-accuracy moves keep paying for.
     """
-    field, stages = raise_
-    current = getattr(battler, field)
-    return replace(battler, **{field: min(STAT_STAGE_CEILING, current + stages)})
+    for field, stages in raises:
+        current = getattr(battler, field)
+        battler = replace(battler, **{field: min(STAT_STAGE_CEILING, current + stages)})
+    return battler
+
+
+def primary_self_raise(move: Move) -> tuple[tuple[str, int], ...] | None:
+    """The stage raises a status move puts on its own user, or None. Mirror of
+    `primary_stat_drop`."""
+    return PRIMARY_SELF_RAISES.get(move.effect)
 
 
 # --- screens -----------------------------------------------------------------------------------
@@ -1318,7 +1425,7 @@ ABILITY_STATIC = "static"
 #: Intimidate drops one stage of Attack. It spends NO advances -- `sendOutState` case 3
 #: (src/battle/overlay_12_0224E4FC.c:3253) sets BATTLE_SUBSCRIPT_INTIMIDATE with no
 #: `BattleSystem_Random` in the branch at all.
-INTIMIDATE_DROP = ("atk_stage", 1)
+INTIMIDATE_DROP = (("atk_stage", 1),)
 #: Static's paralysis chance, as the ROM writes it: ``BattleSystem_Random() % 10 < 3``.
 STATIC_MODULUS = 10
 STATIC_THRESHOLD = 3

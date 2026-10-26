@@ -309,7 +309,7 @@ class TestDoubleTeam(unittest.TestCase):
     def test_it_raises_the_users_own_evasion(self):
         _, outcome = execute_move(0x1234_5678, resolve_move("Double Team"), _darkrai(), _ours(),
                                   actor="E", slot=3)
-        self.assertEqual(outcome.self_stat_raise, ("evasion_stage", 1))
+        self.assertEqual(outcome.self_stat_raise, (("evasion_stage", 1),))
 
     def test_the_stage_lands_on_the_target_not_on_us(self):
         config = _config()
@@ -335,9 +335,18 @@ class TestDoubleTeam(unittest.TestCase):
         self.assertFalse(can_miss(false_swipe, neutral))
         self.assertTrue(can_miss(false_swipe, boosted))
 
-    def test_it_fails_at_the_ceiling(self):
+    def test_at_the_ceiling_it_does_nothing_and_still_costs_a_full_turn(self):
+        """This asserted the opposite until the ROM was read properly, and the opposite was wrong
+        by two advances a turn.
+
+        `BtlCmd_ChangeStatStage` takes `jumpNoChange` when the stat is already at
+        `MAX_STAT_STAGE` for a DIRECT side effect, and that branch prints "won't go higher!" and
+        ends -- setting no status flag, so the move still counts as successful. Measured on the
+        mirror instruction: data/battle_logs/hooh1.jsonl turns 34-37 are four Sweet Scents against
+        an evasion already at -6 and each spends the full 15 rolls.
+        """
         maxed = _darkrai(evasion_stage=6)
-        self.assertTrue(will_fail(resolve_move("Double Team"), _ours(), actor=maxed))
+        self.assertFalse(will_fail(resolve_move("Double Team"), _ours(), actor=maxed))
         self.assertFalse(will_fail(resolve_move("Double Team"), _ours(), actor=_darkrai()))
 
     def test_no_actor_means_cannot_tell_rather_than_a_guess(self):

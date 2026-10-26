@@ -69,21 +69,25 @@ class TestWhatItIs(unittest.TestCase):
 
     def test_it_is_a_primary_self_raise_of_two_attack_stages(self):
         self.assertEqual(SWORDS_DANCE.effect, EFFECT_SWORDS_DANCE)
-        self.assertEqual(PRIMARY_SELF_RAISES[EFFECT_SWORDS_DANCE], ("atk_stage", 2))
+        self.assertEqual(PRIMARY_SELF_RAISES[EFFECT_SWORDS_DANCE], (("atk_stage", 2),))
 
     def test_it_sits_in_the_same_table_as_nasty_plot_and_amnesia(self):
         """The three effect scripts differ only in the subscript pointer, so three table rows is
         the whole of the difference between them in this simulator too."""
-        self.assertEqual(PRIMARY_SELF_RAISES[53], ("spatk_stage", 2))
-        self.assertEqual(PRIMARY_SELF_RAISES[54], ("spdef_stage", 2))
+        self.assertEqual(PRIMARY_SELF_RAISES[53], (("spatk_stage", 2),))
+        self.assertEqual(PRIMARY_SELF_RAISES[54], (("spdef_stage", 2),))
 
-    def test_agility_is_deliberately_not_in_the_table(self):
-        """Effect 52 has the identical script shape and is NOT a free row: Speed decides turn
-        order, and a stage that lands the sides on equal effective Speed makes a speed tie, which
-        spends extra rolls (notes/ss_rng/speed.md). Listing it would claim coverage for the one
-        self-raise that can change a turn's cost."""
-        self.assertNotIn(52, PRIMARY_SELF_RAISES)
-        self.assertNotIn(52, MODELLED_OUR_EFFECTS)
+    def test_agility_is_in_the_table_too_now_with_a_warning_beside_it(self):
+        """Effect 52 was held back when this file was written, on the grounds that Speed decides
+        turn order and a stage landing the sides on equal effective Speed makes a speed tie.
+
+        That reasoning was right about the hazard and wrong about the remedy: the move is the
+        same zero-roll table row as the rest, and refusing to model it did not stop a player
+        bringing one -- it only stopped the simulator knowing. It is modelled now, and
+        `readiness.speed_move_ties` is what warns before a tie is walked into.
+        """
+        self.assertEqual(PRIMARY_SELF_RAISES[52], (("speed_stage", 2),))
+        self.assertIn(52, MODELLED_OUR_EFFECTS)
 
     def test_it_is_modelled_for_our_side_only(self):
         """No configured encounter has it, so the target half is wired for symmetry — the same
@@ -109,7 +113,7 @@ class TestWhatItCosts(unittest.TestCase):
         self.assertEqual(outcome.rolls, 0)
         self.assertEqual(after, rng, "the stream moved on a move that rolls nothing")
         self.assertTrue(outcome.successful)
-        self.assertEqual(outcome.self_stat_raise, ("atk_stage", 2))
+        self.assertEqual(outcome.self_stat_raise, (("atk_stage", 2),))
 
     def test_it_renders_as_the_bare_slot(self):
         """A status move that lands has no hit marker, so the interview must not ask whether it
@@ -118,11 +122,17 @@ class TestWhatItCosts(unittest.TestCase):
                                   actor="M", slot=1)
         self.assertEqual(outcome.tokens, ("M2",))
 
-    def test_at_the_ceiling_it_fails_and_costs_two_fewer_advances(self):
-        """A stat at +6 cannot go higher and the move fails outright rather than landing for
-        nothing, so the post-successful-move pair is not spent. An advance difference, not a
-        cosmetic one."""
-        self.assertTrue(will_fail(SWORDS_DANCE, _target(), actor=_ours(atk_stage=6)))
+    def test_at_the_ceiling_it_does_nothing_and_still_costs_a_full_turn(self):
+        """**This file asserted the opposite when it was written, and the opposite was wrong.**
+
+        `BtlCmd_ChangeStatStage` takes `jumpNoChange` for a DIRECT side effect whose stat is
+        already at `MAX_STAT_STAGE`, and that branch prints "won't go higher!" and ends without
+        setting a status flag -- so the move still counts as successful and still spends the
+        post-successful-move pair. Measured on the mirror instruction: data/battle_logs/
+        hooh1.jsonl turns 34-37 are four Sweet Scents against an evasion already at -6, each
+        spending the full 15 rolls.
+        """
+        self.assertFalse(will_fail(SWORDS_DANCE, _target(), actor=_ours(atk_stage=6)))
         self.assertFalse(will_fail(SWORDS_DANCE, _target(), actor=_ours(atk_stage=4)))
         config = _config()
         base = BattleState(ours=_ours(atk_stage=4), target=_target(),
@@ -130,8 +140,9 @@ class TestWhatItCosts(unittest.TestCase):
         at_ceiling = BattleState(ours=_ours(atk_stage=6), target=_target(),
                                  rng=opening_rng(0x0C0E02CA, config))
         lands = simulate_turn(base, Action.MOVE_2, config)
-        fails = simulate_turn(at_ceiling, Action.MOVE_2, config)
-        self.assertEqual(lands.rng_offset - fails.rng_offset, 2)
+        wasted = simulate_turn(at_ceiling, Action.MOVE_2, config)
+        self.assertEqual(lands.rng_offset, wasted.rng_offset)
+        self.assertEqual(wasted.ours.atk_stage, 6, "the clamp let it overflow")
 
     def test_a_taunt_refuses_it_because_it_has_no_power(self):
         """By POWER, which is the ROM's own test — so our booster is exactly what a Taunt aimed
@@ -153,7 +164,7 @@ class TestTheBoostItself(unittest.TestCase):
             self.assertEqual(state.ours.atk_stage, expected)
 
     def test_it_clamps_at_the_ceiling_rather_than_overflowing(self):
-        self.assertEqual(apply_stat_raise(_ours(atk_stage=5), ("atk_stage", 2)).atk_stage,
+        self.assertEqual(apply_stat_raise(_ours(atk_stage=5), (("atk_stage", 2),)).atk_stage,
                          STAT_STAGE_CEILING)
 
     def test_haze_takes_it_straight_back_off(self):

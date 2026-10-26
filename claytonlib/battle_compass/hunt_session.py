@@ -137,7 +137,8 @@ def reachable_attack_stages(target: Battler) -> tuple[int, ...]:
     boosts = any(
         (m := target.move(slot)) is not None
         and (m.effect == EFFECT_ALL_STATS_UP
-             or (PRIMARY_SELF_RAISES.get(m.effect) or ("", 0))[0] in offensive)
+             or any(field in offensive
+                    for field, _ in PRIMARY_SELF_RAISES.get(m.effect) or ()))
         for slot in range(len(target.moves)))
     start = max(target.atk_stage, target.spatk_stage)
     if not boosts:
@@ -649,9 +650,11 @@ def reachable_defensive_drops(ours: Battler, target: Battler) -> tuple[int, int]
         if move is None:
             continue
         for table in (PRIMARY_STAT_DROPS, SECONDARY_STAT_DROPS):
-            drop = table.get(move.effect)
-            if drop is not None and drop[0] in ("def_stage", "spdef_stage"):
-                fields.add(drop[0])
+            # Every pair, not the first: a two-stat drop (Tickle) touches two stages, and reading
+            # only `[0]` would have priced us at the wrong floor for the second one.
+            for field, _ in table.get(move.effect) or ():
+                if field in ("def_stage", "spdef_stage"):
+                    fields.add(field)
     return (STAT_STAGE_FLOOR if "def_stage" in fields else ours.def_stage,
             STAT_STAGE_FLOOR if "spdef_stage" in fields else ours.spdef_stage)
 
@@ -849,13 +852,35 @@ def stat_stages(battler: Battler) -> dict[str, int]:
 STAGE_LABELS: dict[str, str] = {field: label for label, field in STAGE_FIELDS}
 
 
-def _stat_drop_info(move) -> dict | None:
-    """A move's primary stat drop as ``{"stat": label, "stages": n}``, or None."""
-    drop = primary_stat_drop(move)
-    if drop is None:
+def _stat_drops_info(move) -> list[dict] | None:
+    """A move's primary stat drops as ``[{"stat": label, "stages": n}, ...]``, or None.
+
+    A LIST rather than one pair, because Tickle drops two stats. The page reads it by searching
+    for the stage it cares about (accuracy, for the mid-turn question a Flash raises) rather than
+    by indexing, so a two-stat move needs no second field and no second code path there.
+    """
+    drops = primary_stat_drop(move)
+    if drops is None:
         return None
-    field, stages = drop
-    return {"stat": STAGE_LABELS.get(field, field), "stages": stages}
+    return [{"stat": STAGE_LABELS.get(field, field), "stages": stages}
+            for field, stages in drops]
+
+
+def _self_raises_info(move) -> list[dict] | None:
+    """The stage raises a move puts on its own user, same shape as `_stat_drops_info`.
+
+    New alongside the rest of the stat family. Nothing in the page needed it while the only
+    self-raise our side could carry was Double Team, which no party has -- and it is published
+    now because Swords Dance, Dragon Dance, Bulk Up and Calm Mind are moves a player really does
+    bring, and a run page that showed a drop but not a boost would be describing half the turn.
+    """
+    from claytonlib.battle_compass.sim import primary_self_raise
+
+    raises = primary_self_raise(move)
+    if raises is None:
+        return None
+    return [{"stat": STAGE_LABELS.get(field, field), "stages": stages}
+            for field, stages in raises]
 
 
 def _burn_tick_of(battler: Battler) -> int:
@@ -902,7 +927,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
-                        "secondary_side": None, "stat_drop": None, "makes_contact": False,
+                        "secondary_side": None, "stat_drop": None, "self_raise": None,
+                        "makes_contact": False,
                         "effect_chance": 0, "priority": 0, "pp": 0,
                         "unselectable_reason": None})
             continue
@@ -985,7 +1011,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # needs it because a drop we land resolves before the target's half of the turn:
             # one Flash makes Punishment missable on the very turn the Flash is used, and the
             # snapshot's `can_miss` is read off the turn's OPENING state (clayton-957.10.8).
-            "stat_drop": _stat_drop_info(move),
+            "stat_drop": _stat_drops_info(move),
+            "self_raise": _self_raises_info(move),
             #: Priority decides turn order before Speed does, so the page needs it to know
             #: which side's tokens come first.
             "priority": move.priority,

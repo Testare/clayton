@@ -104,10 +104,10 @@ class TestTheTwoStageDrops(unittest.TestCase):
                 self.assertIn(resolve_move(name).effect, MODELLED_TARGET_EFFECTS)
 
     def test_metal_sound_takes_two_sp_def_stages(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Metal Sound")), ("spdef_stage", 2))
+        self.assertEqual(primary_stat_drop(resolve_move("Metal Sound")), (("spdef_stage", 2),))
 
     def test_scary_face_takes_two_speed_stages(self):
-        self.assertEqual(primary_stat_drop(resolve_move("Scary Face")), ("speed_stage", 2))
+        self.assertEqual(primary_stat_drop(resolve_move("Scary Face")), (("speed_stage", 2),))
 
     def test_both_can_miss_which_is_what_separates_rtc_second_siblings(self):
         """Accuracy 85 and 90. A sub-100 move on the target's side resolves the second axis from
@@ -153,15 +153,15 @@ class TestCrunchAndTheSecondaryTable(unittest.TestCase):
         wrong for this project. `effect_script_0069.s` loads
         `MOVE_SUBSCRIPT_PTR_DEFENSE_DOWN_1_STAGE`.
         """
-        self.assertEqual(SECONDARY_STAT_DROPS[resolve_move("Crunch").effect], ("def_stage", 1))
+        self.assertEqual(SECONDARY_STAT_DROPS[resolve_move("Crunch").effect], (("def_stage", 1),))
 
     def test_the_secondary_is_a_table_rather_than_a_branch_per_effect(self):
         """It was three hand-written branches, two of which only existed on the target's half of
         the turn. Crunch would have been a fourth."""
-        for move, expected in (("Aurora Beam", ("atk_stage", 1)),
-                               ("Crunch", ("def_stage", 1)),
-                               ("Mist Ball", ("spatk_stage", 1)),
-                               ("Luster Purge", ("spdef_stage", 1))):
+        for move, expected in (("Aurora Beam", (("atk_stage", 1),)),
+                               ("Crunch", (("def_stage", 1),)),
+                               ("Mist Ball", (("spatk_stage", 1),)),
+                               ("Luster Purge", (("spdef_stage", 1),))):
             with self.subTest(move):
                 self.assertEqual(SECONDARY_STAT_DROPS[resolve_move(move).effect], expected)
 

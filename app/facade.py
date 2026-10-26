@@ -672,6 +672,37 @@ class Facade:
                         moves=moves, pp=(1,) * len(moves), ability=ability)
         return can_inflict(probe, Status.PARALYSIS)
 
+    @staticmethod
+    def _party_can_paralyze(hunt, profile) -> bool:
+        """Whether ANY configured party member can paralyze the target.
+
+        Gates the paralyzed-target half of `speed_move_ties`. The mirror of
+        `_target_can_paralyze_us`, and it errs the same way for the same reason: an unknown move
+        or ability is treated as capable, because a spurious warning costs a line and a missing
+        one costs an unmodelled desync.
+
+        **"Any", not "another".** The ask was phrased as another party member, and in practice
+        the distinction does not exist: a Pokemon holding both Agility and Thunder Wave can use
+        them on successive turns and reach exactly the same tie. Reading it strictly would hide a
+        reachable one.
+        """
+        from claytonlib.battle_compass.sim import can_inflict
+        from claytonlib.battle_compass.state import Battler, Status
+        from claytonlib.moves import resolve_move
+
+        for slot in hunt.party:
+            pokemon = profile.get_party_pokemon(slot.pokemon_id)
+            if pokemon is None:
+                continue
+            moves = tuple(m.name for m in
+                          (resolve_move(name) for name in pokemon.moveset) if m)
+            probe = Battler(name=pokemon.name or "?", level=1, types=("Normal",), stats={},
+                            moves=moves, pp=(1,) * len(moves),
+                            ability=(pokemon.ability or ""))
+            if can_inflict(probe, Status.PARALYSIS):
+                return True
+        return False
+
     def hunt_run_setup(self, hunt_id: str) -> dict:
         """What the run page needs to open, before any seed has been looked for.
 
@@ -1212,8 +1243,8 @@ class Facade:
         Only the first blocks; the rest are warnings the player may knowingly accept.
         """
         from claytonlib.battle.readiness import (
-            alphabet_report, speed_after_item, speed_checks, speed_warnings,
-            unmodelled_held_items,
+            alphabet_report, speed_after_item, speed_checks, speed_move_ties,
+            speed_move_warnings, speed_warnings, unmodelled_held_items,
         )
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
@@ -1266,6 +1297,8 @@ class Facade:
         held_items: dict[str, str] = {}
         party_species: dict[str, str] = {}
         our_speeds: dict[str, int] = {}
+        #: Speed-check label -> the Pokemon's own name, for joining the two dicts above.
+        speed_labels: dict[str, str] = {}
         for slot in h.party:
             pokemon = profile.get_party_pokemon(slot.pokemon_id)
             if pokemon is None:
@@ -1294,6 +1327,10 @@ class Facade:
                 label = (f"{pokemon.name} ({slot.held_item})"
                          if effective != pokemon.speed else pokemon.name)
                 our_speeds[label] = effective
+                # `our_speeds` is keyed by a LABEL that may carry the held item; the movesets are
+                # keyed by the bare name. `speed_move_ties` needs the two keyed alike, so the
+                # mapping is kept rather than the label being parsed back apart.
+                speed_labels[label] = pokemon.name
 
         # Asked of the target regardless of whether a party is configured yet: "you will need
         # Surf and Whirlpool" is most useful BEFORE the party is picked, not after.
@@ -1332,8 +1369,33 @@ class Facade:
                         # Half the table assumed our paralysis against a target with no way to
                         # inflict it (clayton-36b).
                         include_our_paralysis=self._target_can_paralyze_us(h.target))
+                    # Ties a move in OUR OWN party could create, which is a different question
+                    # from the one above: `speed_checks` holds our Speed constant and the
+                    # target's at whatever the target can do to itself. An Agility, a Dragon
+                    # Dance or a Cotton Spore moves one of those mid-run, on a turn the player
+                    # chose, long after this screen said the party was fine.
+                    move_ties = speed_move_ties(
+                        our_speeds,
+                        {label: movesets.get(name, [])
+                         for label, name in speed_labels.items()},
+                        stats["spe"],
+                        # The paralyzed-target rows are a second full set of stage combinations
+                        # to tie at, and they are only reachable if somebody in the party can
+                        # actually inflict it -- the same reasoning `_target_can_paralyze_us`
+                        # applies in the other direction.
+                        target_can_be_paralyzed=self._party_can_paralyze(h, profile),
+                        target_own_speed_stages=self._target_speed_stages(h.target))
                     result["speed"] = {
                         "target_speed": stats["spe"],
+                        "move_tie_warnings": speed_move_warnings(move_ties),
+                        "move_ties": [
+                            {"ours": t.ours, "our_speed": t.our_speed,
+                             "our_stage": t.our_stage, "target_speed": t.target_speed,
+                             "target_stage": t.target_stage,
+                             "target_paralyzed": t.target_paralyzed,
+                             "via": t.via, "via_owner": t.via_owner}
+                            for t in move_ties
+                        ],
                         "checks": [
                             {"ours": c.ours, "our_speed": c.our_speed,
                              "target_state": c.target_state, "target_speed": c.target_speed,
