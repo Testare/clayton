@@ -218,6 +218,22 @@ class Battler:
     #: ``Random 2, 3``, decremented by `MON_COND_CHECK_STATE_TAUNT` (state 20 of the end-of-turn
     #: condition walk, between Uproar at 14 and Yawn at 24), and it spends nothing on the way out.
     taunted_turns: int = 0
+    #: Heal Block's countdown, on whoever the move was aimed at -- so ours, since Dialga and
+    #: Palkia are the only carriers and they aim it at us.
+    #:
+    #: **It blocks far less than its name suggests, and that is the fact worth recording here.**
+    #: `Move_HealBlocked` (battle_lib.c:3427-3440) tests a hardcoded list of FOURTEEN MOVES --
+    #: Recover, Softboiled, Rest, Milk Drink, Morning Sun, Synthesis, Moonlight, Swallow, Heal
+    #: Order, Slack Off, Roost, Lunar Dance, Healing Wish, Wish -- plus the Ingrain and Aqua Ring
+    #: residuals. It does **not** block items and does **not** block Leftovers [verified:
+    #: `healBlockTurns` is read at exactly those sites and its own countdown, nowhere else]. So
+    #: Hyper Potions, Full Restores and Revives work straight through it and the solver's healing
+    #: plan is untouched.
+    #:
+    #: Which means it is tracked for what it COSTS rather than what it stops: a second Heal Block
+    #: fails, and a failing move is two advances cheaper than a successful one. The one party it
+    #: bites is a Rest or Roost wall, which is a plausible answer to Dialga's damage.
+    heal_block_turns: int = 0
     #: A Foresight or Odor Sleuth has landed on this battler -- the ROM's
     #: `VOLATILE_CONDITION_FORESIGHT`, set on the move's DEFENDER by `subscript_foresight.s`.
     #:
@@ -370,14 +386,16 @@ class Battler:
         if landed == 0 and (self.status is not Status.NONE or self.nightmare
                             or self.charging_slot is not None
                             or self.uproar_turns or self.drowsy_turns
-                            or self.taunted_turns or self.identified):
+                            or self.taunted_turns or self.identified
+                            or self.heal_block_turns):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
             # drowsy from a Yawn it will never now fall asleep from.
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
-                           drowsy_turns=0, taunted_turns=0, identified=False)
+                           drowsy_turns=0, taunted_turns=0, identified=False,
+                           heal_block_turns=0)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":

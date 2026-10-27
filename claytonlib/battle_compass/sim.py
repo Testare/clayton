@@ -124,6 +124,11 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # one-line addition Double Team's mirror was. +1 Sp. Atk on a Lv30 Shaymin whose only attack
     # is a 60-power Magical Leaf is close to harmless.
     13: "Growth: Sp. Atk +1 on the target itself",
+    # Heal Block, Dialga's and Palkia's. Modelled for its COST -- the accuracy roll, the five-turn
+    # counter, and a second one failing two advances cheaper -- rather than for its effect, which
+    # against every planned party is nothing at all: it stops fourteen named moves plus Ingrain
+    # and Aqua Ring, and touches neither items nor Leftovers.
+    236: "Heal Block: the 5-turn counter, and a second one fails",
     210: "Water Sport: a per-battler volatile flag, so a second one fails",
     245: "Punishment: power computed from our positive stages (`punishment_power`)",
     # Uxie's and Azelf's. Three of the five are the first of their kind on either side, and the
@@ -453,6 +458,9 @@ class MoveOutcome:
     traps: bool = False
     sets_water_sport: bool = False
     sets_safeguard: bool = False
+    #: Heal Block landed, so the move's VICTIM cannot use its healing moves for five turns.
+    #: Aimed at the other side, like `stat_drop`, so `simulate_turn` applies it.
+    sets_heal_block: bool = False
     #: The ``(stage field, stages)`` pairs this move drops on its target, or None. Applied by
     #: `simulate_turn`, which owns the state -- and which knows which side the target is.
     #: A tuple because Tickle drops two stats; everything else in the family drops one.
@@ -712,6 +720,12 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
                 or uproar_active(field)
                 or defender.status is not Status.NONE
                 or defender.drowsy_turns > 0)
+    if move.effect == EFFECT_HEAL_BLOCK:
+        # A second Heal Block against an already-blocked victim fails. Keyed on the DEFENDER
+        # rather than the field, because the ROM keeps `healBlockTurns` in the victim's own
+        # `moveEffectsData` -- unlike Safeguard, which is a side condition. The accuracy roll is
+        # still spent, as it is for every other failure in this function.
+        return defender.heal_block_turns > 0
     if move.effect == EFFECT_TAUNT:
         # A second Taunt fails, and fails FREE of the duration roll -- `subscript_taunt_start.s`
         # tests `BATTLEMON_TAUNTED_TURNS != 0` before reaching its Random. The accuracy roll is
@@ -844,6 +858,23 @@ EFFECT_ALL_STATS_UP = 140
 #: Safeguard: protects its own side from new non-volatile statuses for five turns.
 EFFECT_SAFEGUARD = 124
 SAFEGUARD_TURNS = 5
+#: Heal Block (BATTLE_EFFECT_HEAL_BLOCK). Dialga's and Palkia's, aimed at us. 100 accuracy, so an
+#: accuracy roll; five turns; and a second one against an already-blocked victim FAILS, which is
+#: the half that costs advances rather than HP. See `Battler.heal_block_turns` for the list of
+#: fourteen moves it actually stops and the two things it does not (items, Leftovers).
+EFFECT_HEAL_BLOCK = 236
+HEAL_BLOCK_TURNS = 5
+#: The fourteen moves `Move_HealBlocked` names (battle_lib.c:3415-3429), lowercased. Carried as a
+#: set of NAMES rather than of effect ids because the ROM's own test is by move id -- Rest and
+#: Roost do not share an effect, and a rule written on effects would be a translation rather than
+#: a transcription.
+#:
+#: Nothing reads this yet: no configured party carries one. It is here so that the day a Roost or
+#: Rest wall is brought against Dialga, the refusal is a lookup rather than a discovery.
+HEAL_BLOCKED_MOVES = frozenset({
+    "recover", "softboiled", "rest", "milk drink", "morning sun", "synthesis", "moonlight",
+    "swallow", "heal order", "slack off", "roost", "lunar dance", "healing wish", "wish",
+})
 #: Double Team (BATTLE_EFFECT_EVA_UP). One stage on the USER, no roll of its own -- the move's
 #: accuracy is 0, so not even an accuracy roll [res/battle/scripts/effects/effect_script_0016.s].
 EFFECT_EVASION_UP = 16
@@ -1987,6 +2018,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             traps=move.effect == EFFECT_MEAN_LOOK,
             sets_water_sport=move.effect == EFFECT_WATER_SPORT,
             sets_safeguard=move.effect == EFFECT_SAFEGUARD,
+            sets_heal_block=move.effect == EFFECT_HEAL_BLOCK,
             sets_reflect=move.effect == EFFECT_REFLECT,
             sets_light_screen=move.effect == EFFECT_LIGHT_SCREEN,
             screen_turns=(screen_turns_for(attacker.held_item)
@@ -3047,6 +3079,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # and the ROM's stat reset runs only on the Pokemon being sent out -- which is what
             # makes six Flashes worth more than any five-turn field condition.
             new.target = apply_stat_drop(new.target, outcome.stat_drop)
+        if outcome.sets_heal_block:
+            # The mirror, and unreachable: `MODELLED_OUR_EFFECTS` omits 236, so a Heal Block of
+            # ours is refused at the point of use. Wired for the same reason Nightmare's mirror
+            # is -- the two halves of a turn should differ only in which side they read.
+            new.target = replace(new.target, heal_block_turns=HEAL_BLOCK_TURNS)
         if outcome.identifies:
             # Foresight or Odor Sleuth. **Permanent, for the same reason a stat drop on a wild
             # target is**: the ROM clears `statusVolatile` only when the Pokemon leaves the field
@@ -3215,6 +3252,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # because no configured target had a status move.
             new.ours = new.ours.with_status(outcome.applied_status,
                                             sleep_turns=outcome.sleep_turns)
+        if outcome.sets_heal_block:
+            # Dialga's and Palkia's, aimed at us -- the reachable direction.
+            new.ours = replace(new.ours, heal_block_turns=HEAL_BLOCK_TURNS)
         if outcome.identifies:
             # The mirror, and unreachable: no configured target has Foresight or Odor Sleuth.
             # Wired for the same reason Nightmare's and Taunt's mirrors are -- the two halves of a
@@ -3419,6 +3459,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         new.rain_turns = max(0, new.rain_turns - 1)
         new.mist_turns = max(0, new.mist_turns - 1)
         new.safeguard_turns = max(0, new.safeguard_turns - 1)
+        # Heal Block, on whichever side carries it. `MON_COND_CHECK_STATE_HEAL_BLOCK` decrements
+        # it in the same end-of-turn walk (battle_controller_player.c:1660-1661) and spends
+        # nothing on the way out, exactly as Safeguard and Taunt do. Inside the `battle_halted`
+        # guard with the rest: a turn that ended the battle runs no end-of-turn walk at all.
+        if new.ours.heal_block_turns:
+            new.ours = replace(new.ours, heal_block_turns=new.ours.heal_block_turns - 1)
+        if new.target.heal_block_turns:
+            new.target = replace(new.target,
+                                 heal_block_turns=new.target.heal_block_turns - 1)
         new.reflect_turns = max(0, new.reflect_turns - 1)
         new.light_screen_turns = max(0, new.light_screen_turns - 1)
 

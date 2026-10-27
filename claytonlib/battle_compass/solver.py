@@ -657,16 +657,25 @@ def solve(state: BattleState, hunt: HuntConfig,
     # is the costliest wrong answer this tool can give -- `proven=False` or not, it is what stops
     # them trying.
     #
-    # **Burn and poison are still refused, and for a different reason than they used to be.**
-    # Not because "a status is required" -- it is not -- but because they kill the prize. The tick
-    # is a fixed fraction of max HP every turn, and at 1 HP it faints the target before any ball
-    # can land.
+    # **Burn and poison are still refused, and the reason is not the one this comment used to
+    # lead with.**
     #
-    # There is no reason to ever burn or poison a Pokemon you are trying to catch: the x1.5 catch
-    # bonus is exactly paralysis's, and it arrives attached to a clock. So the target's own tick
-    # is deliberately NOT simulated -- `simulate_turn` ticks our burn and never the target's --
-    # and this refusal is the answer rather than a placeholder for machinery somebody should
-    # write later.
+    # It led with the faint: the tick is a fixed fraction of max HP every turn, and at 1 HP it
+    # kills the prize before any ball can land. True, and it reads as though the refusal were a
+    # consequence of the 1 HP precondition -- so that when the precondition relaxes (and it is
+    # relaxing: see the HP gate above), this gate looks like it should relax with it. It should
+    # not, and the right argument never mentioned HP at all:
+    #
+    #   **Burn and poison give exactly the x1.5 that paralysis gives, and arrive attached to a
+    #   clock. There is no HP at which that is the right trade.**
+    #
+    # Above 1 HP the clock is slower, not absent, and a target on a timer is strictly worse than
+    # the same target not on one -- for an identical catch bonus. So there is no reason to ever
+    # burn or poison a Pokemon you are trying to catch, at any HP.
+    #
+    # That is why the target's own tick is deliberately NOT simulated -- `simulate_turn` ticks our
+    # burn and never the target's -- and why this refusal is the answer rather than a placeholder
+    # for machinery somebody should write later.
     #
     # It has to stay a GATE for that reason. Without it the search runs against a target the
     # simulator believes is healthy and returns a confident plan: removing it produced

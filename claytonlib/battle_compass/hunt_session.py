@@ -543,6 +543,11 @@ BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
     # remaining turns are exactly how long the status half of its moveset stays shut.
     ("target", "taunted_turns", "Taunt"),
     ("ours", "taunted_turns", "Taunt"),
+    # Heal Block, which the target lands on us. In the banner because nothing else shows it and
+    # because what it gates is invisible until you try: a Rest or Roost wall simply refuses to
+    # heal for five turns. It blocks no ITEM, so the panel must not imply the bag is shut.
+    ("ours", "heal_block_turns", "Heal Block"),
+    ("target", "heal_block_turns", "Heal Block"),
     ("ours", "drowsy_turns", "Drowsy"),
     ("target", "drowsy_turns", "Drowsy"),
 )
