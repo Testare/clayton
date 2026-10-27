@@ -421,7 +421,7 @@ Ordered so each item is useful on its own. Bead ids where filed.
 |---|---|---|
 | 1.1 | **Generalise Phase 2 off `hp == 1`** — `solve`'s gate, `state.target.hp` into `_dominance_key`, `identify.solver_blockers` wording, and the prose in `__init__`/`state`. | `clayton-6xu.9.1`. Capture maths is already HP-general. Precondition becomes "HP known and the plan does not change it". |
 | 1.2 | **Ball-and-HP readout**: what the configured capture ball is worth at full HP, at 1 HP, and at the current HP, per status. | The deliverable that replaces the deleted "always solve at full HP" rule (§4D). Turns a design question into a number the player reads. `_ball_readout` already exists to extend. |
-| 1.3 | **Re-read the burn/poison gate** above 1 HP. It is refused because the tick faints the target before a ball lands — true at 1 HP, false at full. | Do not just copy the gate forward. |
+| ~~1.3~~ | ~~Re-read the burn/poison gate above 1 HP.~~ **Withdrawn — the gate is correct as it stands.** | See the note below. |
 
 ### Tier 2 — advice, which is where the leverage now is
 
@@ -430,6 +430,16 @@ Ordered so each item is useful on its own. Bead ids where filed.
 | 2.1 | **`chip_warnings` learns arithmetic**: hits needed, PP available, and the Pressure doubling. "Your False Swipe needs 27 hits and Pressure leaves you 20" is the warning that would have produced §4A without this analysis. | Needs target Def/HP and our Atk — all available at configure time. Highest-value single item on this page. |
 | 2.2 | **Survivability before chipping, for high-catch-rate targets.** The binding constraint is turns alive, not HP removed: at x1 full HP Dialga is ~12 stream positions, so the party has to last ~12+ turns against a move that one-shots a Smeargle. | Reorders what the readiness panel leads with, and should say *how many turns* each party member survives rather than only "dies to a Roar of Time". |
 | 2.3 | **Speed warning is load-bearing now.** Dialga 167 and Palkia 182 both outspeed the fixture Smeargle (160) — the first targets to do so. `speed_checks` fires, but the advice ("paralyse first") is no longer optional. | |
+
+**On the burn/poison gate, which this page briefly proposed re-opening.** The gate stays
+[Testare]. My argument for revisiting it was that its stated *reason* weakens above 1 HP — the
+tick no longer faints the target before a ball can land — and that is both true and beside the
+point. The real argument against burn and poison never depended on 1 HP: they give the **same
+x1.5 as paralysis** and arrive attached to a clock, so there is no HP at which they are the right
+trade. Above 1 HP the clock is slower, not absent, and a target on a timer is strictly worse than
+the same target not on one. `solver.solve` keeps refusing them — what is worth changing is the
+comment, which should lead with "no benefit paralysis does not also give" rather than with the
+faint, so the next reader does not mistake the reason for the rule.
 
 ### Tier 3 — the four target-side effects
 
