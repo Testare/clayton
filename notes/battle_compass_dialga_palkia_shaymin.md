@@ -15,12 +15,19 @@ Three conclusions, in descending order of how much they change the plan.
 
 1. **Dialga cannot be brought to 1 HP at all.** It needs 20–27 False Swipes and Pressure leaves
    us 20. That is arithmetic, not a tuning problem (§4A).
-2. **So Phase 2 has to work at HP above 1** — and that is the right call for all three anyway, on
-   grounds that have nothing to do with Dialga's PP. The capture maths is already HP-general; the
-   blocker is a single gate in `solver.solve` plus one missing field in the dominance key (§3).
+2. **So Phase 2 has to work at HP above 1.** The capture maths is already HP-general; the blocker
+   is a single gate in `solver.solve` plus one missing field in the dominance key (§3).
 3. **The move work is small**: four genuinely new effects across all three targets, and only one
    of them (Leech Seed) is structurally novel. Earth Power, Slash, Spacial Rend and Magical Leaf
    are already modelled (§2).
+
+**Corrected since first writing.** This page originally argued the 1 HP phase was a *downgrade*
+for these targets. That was wrong, and wrong because it compared the wrong things — see §4D. The
+capture ball is a **requirement of the hunt, not a lever the solver pulls**: the point of Battle
+Compass is a specific Pokemon in a specific ball, and most decorative balls are x1. At x1 the chip
+phase is still worth 3x, so it is a lever the player chooses rather than one we can remove. What
+survives is the weaker and still-decisive claim in (1) and (2): the design must span the whole HP
+range, because Dialga cannot reach the bottom of it and a x3.5 ball does not need to.
 
 The difficulty is *not* where it was for Suicune. Suicune was hard to catch (rate 3) and harmless.
 Dialga and Palkia are **ten times easier to catch and lethal** — every damaging move they have
@@ -233,7 +240,8 @@ party slot or an unmodelled item to buy a phase we do not need.
 
 Against that: **Dialga at FULL HP, asleep, in a Dusk Ball is `a=70`, `b=47661`, 27.97% a throw** —
 about one capture window every 3.6 stream positions, against **7.10%** for Suicune at 1 HP asleep
-in the same ball. The 1 HP phase is not merely expensive here, it is a *downgrade*.
+in the same ball. So a Dusk Ball hunt needs no chip phase at all. A **x1 ball hunt is a different
+question** and is answered in §4D.
 
 **Danger.** Against a 154 HP Smeargle, all three damaging moves are lethal on a crit, and Roar of
 Time is lethal without one:
@@ -314,6 +322,64 @@ so a single row keyed `shaymin` with no `forme` is right and `stats_key` lands o
 Giratina this needs no forme split, but it deserves the same test
 (`test_a_forme_encounter_is_keyed_by_its_forme`), because the colliding row exists.
 
+### D. The ball decides whether the chip phase is worth it
+
+**The capture ball is a hunt requirement, not a solver choice.** The whole point is a specific
+Pokemon in a specific ball, and most balls somebody *wants* a legendary in — Premier, Luxury,
+Cherish, a plain Poke Ball — are **x1**. So the honest table is two-dimensional, and the figure
+that matters is whichever cell the player's ball lands in. Asleep, at both HP extremes:
+
+| target | x1 (Premier) full → 1 HP | x2 (Ultra) full → 1 HP | x3.5 (Dusk) full → 1 HP |
+|---|---|---|---|
+| Shaymin (45) | 12.33% → **40.96%** | 27.97% → 78.46% | 40.96% → **GUARANTEED** |
+| Dialga / Palkia (30) | 8.09% → **23.42%** | 16.78% → 50.28% | 27.97% → 99.99% |
+| Suicune (3), for scale | 0.83% → 1.60% | 1.60% → 4.37% | 2.56% → 7.10% |
+
+Read down the x1 column: **the chip phase is worth about 3x**, which is the difference between a
+window every 12 stream positions and every 4. That is not a rounding error, and it is why "solve
+at full HP" is a *lever* rather than a replacement. Read across the Dusk row instead and the chip
+phase buys almost nothing, because full HP is already 28%.
+
+So the design requirement is **span**, not a new fixed point: support any HP, and tell the player
+what their chosen ball costs them at each end so they can decide how much chipping to do. The
+thing to build is the *readout*, not a second hard-coded precondition.
+
+Two corollaries worth noting. **Shaymin at 1 HP asleep in a Dusk Ball exceeds `a=255`**, so the ROM
+skips the shake rolls entirely — and `shake_threshold(255)` saturates at 65536, which
+`capture_windows_in_horizon` already handles (every position is a window, verified). And **the
+turn-1 Quick Ball x4 is only interesting if a Quick Ball is what you wanted**; as an argument for
+full-HP solving it was misdirected, because it is not available to a hunt that specifies any other
+ball.
+
+### E. Making False Swipe feasible is a party problem, and it is solvable
+
+Dialga's 20–27 hits assume a Smeargle. A prepped physical attacker changes the arithmetic
+completely. Worked for a **Lv100 Adamant max-Atk/EV Gallade** (Atk 383) against Dialga's 194 Def,
+with Screech stacking:
+
+| | no Choice Band | with Choice Band (x1.5 Atk) |
+|---|---|---|
+| no Screech | 34 (14% of HP) | 50 (21%) |
+| 1 Screech | 67 (28%) | 100 (42%) |
+| 2 Screeches | 101 (42%) | 151 (63%) |
+| **3 Screeches (−6 Def)** | 135 (56%) | **201 (83%)** |
+
+So three Screeches and a Choice Band bring Dialga to 1 HP in **two False Swipes**, 4 PP under
+Pressure. The PP wall disappears entirely.
+
+Two things that has to respect:
+
+* **A Choice Band locks its holder into False Swipe**, so the Screeches come from somebody else.
+  `choice_locked_slot` already models the lock. Screech lowers the *target's* Defence, which is
+  permanent on a wild Pokemon, so "Screech x3, switch, False Swipe x2" works — switching resets
+  *our* stages, not theirs. Screech caps at −6 after exactly three uses [verified].
+* **The Choice Band's x1.5 Attack is NOT MODELLED** (§5). Until it is, this plan is simulated at
+  the left-hand column and every predicted HP after the first hit is wrong.
+
+And **the premise may be worth questioning**: all that preparation buys a 3x better throw in a x1
+ball. Given a catch rate of 30, the party slot might be better spent on something that survives
+Roar of Time, since the binding constraint is turns alive, not HP removed.
+
 ---
 
 ## 5. Gotchas not yet mentioned
@@ -338,7 +404,60 @@ Giratina this needs no forme split, but it deserves the same test
 
 ---
 
-## 6. Suggested order
+## 6. The work list
+
+Ordered so each item is useful on its own. Bead ids where filed.
+
+### Tier 0 — correctness bugs, independent of these targets
+
+| # | work | why now |
+|---|---|---|
+| 0.1 | **Choice Band / Choice Specs x1.5** in `battle.damage`. Modelled for the move LOCK only; the stat multiplier is inert [verified: identical damage with and without the item]. | Under-predicts OUR damage, so predicted target HP is wrong from the first hit and every candidate is eliminated. Same soundness class as the Scrappy hole. Blocks §4E outright. |
+| 0.2 | **Our side's chip-move coverage.** Audited: Psycho Cut, Night Slash, Leaf Blade, Shadow Claw, X-Scissor, Zen Headbutt, Rock Slide, Body Slam, Screech, Swords Dance all pass. Refused: **Aerial Ace (17)**, **Earthquake (147)**, Brick Break (186), Close Combat (229), Superpower (182), Drain Punch (3), Return (121). | 17 and 147 are **one-line table rows** — both are already modelled target-side (Swift/Magical Leaf; Gust/Surf) and refused only on our half. The rest are what a real physical attacker carries. |
+
+### Tier 1 — the architecture these targets need
+
+| # | work | notes |
+|---|---|---|
+| 1.1 | **Generalise Phase 2 off `hp == 1`** — `solve`'s gate, `state.target.hp` into `_dominance_key`, `identify.solver_blockers` wording, and the prose in `__init__`/`state`. | `clayton-6xu.9.1`. Capture maths is already HP-general. Precondition becomes "HP known and the plan does not change it". |
+| 1.2 | **Ball-and-HP readout**: what the configured capture ball is worth at full HP, at 1 HP, and at the current HP, per status. | The deliverable that replaces the deleted "always solve at full HP" rule (§4D). Turns a design question into a number the player reads. `_ball_readout` already exists to extend. |
+| 1.3 | **Re-read the burn/poison gate** above 1 HP. It is refused because the tick faints the target before a ball lands — true at 1 HP, false at full. | Do not just copy the gate forward. |
+
+### Tier 2 — advice, which is where the leverage now is
+
+| # | work | notes |
+|---|---|---|
+| 2.1 | **`chip_warnings` learns arithmetic**: hits needed, PP available, and the Pressure doubling. "Your False Swipe needs 27 hits and Pressure leaves you 20" is the warning that would have produced §4A without this analysis. | Needs target Def/HP and our Atk — all available at configure time. Highest-value single item on this page. |
+| 2.2 | **Survivability before chipping, for high-catch-rate targets.** The binding constraint is turns alive, not HP removed: at x1 full HP Dialga is ~12 stream positions, so the party has to last ~12+ turns against a move that one-shots a Smeargle. | Reorders what the readiness panel leads with, and should say *how many turns* each party member survives rather than only "dies to a Roar of Time". |
+| 2.3 | **Speed warning is load-bearing now.** Dialga 167 and Palkia 182 both outspeed the fixture Smeargle (160) — the first targets to do so. `speed_checks` fires, but the advice ("paralyse first") is no longer optional. | |
+
+### Tier 3 — the four target-side effects
+
+| # | work | notes |
+|---|---|---|
+| 3.1 | **Growth** (13) | One `MODELLED_TARGET_EFFECTS` row; `PRIMARY_SELF_RAISES` already has it. |
+| 3.2 | **Synthesis** (132) | Weather heal `maxHP/2` · `maxHP*20/30` · `maxHP/4`, and **fails at full HP** — a `will_fail` row keyed on the ACTOR's HP, which is a new shape. |
+| 3.3 | **Heal Block** (236) | Cost only: accuracy roll, 5-turn counter, second use fails. Blocks 14 named moves + Ingrain/Aqua Ring; **not items, not Leftovers**. |
+| 3.4 | **Leech Seed** (84) | Drain `maxHP/8` off us next to the Leftovers tick, same figure healing the target; Grass immune; already-seeded fails. The only structurally new one. |
+| 3.5 | **Roar of Time** (80) | Recharge turn: no selection roll, no paralysis roll (state 4 vs 12), not a `move_failed`. Copy `charging_slot`. |
+
+### Tier 4 — rows and data
+
+| # | work |
+|---|---|
+| 4.1 | `ENCOUNTERS` rows for `dialga`, `palkia`, `shaymin` (§1), plus the forme test for the `shaymin-sky` row that exists but is not encounterable. |
+| 4.2 | `ENCOUNTER_ACCESS` for Spear Pillar (Strength / Rock Climb / Surf / Defog) and Flower Paradise (Surf; Oak's Letter is a story flag, so no row). |
+| 4.3 | **Spear Pillar's terrain** — if it is `TERRAIN_CAVE`, Dialga and Palkia get a x3.5 Dusk Ball at any hour, which per §4D removes their chip phase. Worth a real answer. |
+
+### Tier 5 — owed a capture
+
+| # | work |
+|---|---|
+| 5.1 | **The recharge turn's post-move advances.** A charge turn is `successful=True` and gets the two; a *disrupted* move looks more like the taunt refusal that spends nothing. Two advances a turn, and a run shows it immediately. |
+
+---
+
+## 7. Which target first
 
 1. **Generalise Phase 2 off 1 HP** — the gate, the dominance key entry, and the workflow wording.
    Nothing else on this page is useful without it, and it is the smallest change of the three.
@@ -350,7 +469,7 @@ Giratina this needs no forme split, but it deserves the same test
 4. **Dialga**: Roar of Time's recharge, plus whatever the survivability answer turns out to be.
    Last because it is the only one where the party, not the simulator, is the hard part.
 
-## 7. Owed a capture
+## 8. Owed a capture
 
 Nothing on this page needs one to *start*, which is worth saying because the last three mechanics
 did. The recharge turn's zero-roll claim rests on `Battler_CanPickCommand` and
