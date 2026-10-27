@@ -664,7 +664,23 @@ def _dominance_key(state: BattleState) -> tuple:
             # costs nothing today. It is here so the invariant is enforced by the search rather
             # than assumed by it -- if a future change lets a plan chip, the search stays correct
             # instead of silently merging states with different capture odds.
-            state.target.hp)
+            state.target.hp,
+            # **The target's move LOCKS, because a locked battler spends no selection roll.**
+            # `Battler_CanPickCommand` returns FALSE while it is mid-charge or mid-Uproar
+            # (battle_lib.c:6225-6236), so `select_target_move` skips the roll entirely -- which
+            # means two states at one offset that disagree about the lock reach DIFFERENT offsets
+            # next turn. That is exactly the argument the field conditions above are here for.
+            #
+            # Reachable: Giratina can Shadow Force during Phase 2 and Azelf can be mid-Uproar, so
+            # merging a charging state with a non-charging one would have the search plan against
+            # an advance count the battle does not spend. `uproar_slot` joins `uproar_turns`
+            # because it decides WHICH move fires, and the two moves need not cost the same.
+            #
+            # Our own side is deliberately absent: nothing a party may carry has a charge or an
+            # Uproar (`MODELLED_OUR_EFFECTS` omits 272 and 159), so a row for it could never fire.
+            state.target.charging_slot,
+            state.target.uproar_turns,
+            state.target.uproar_slot)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:

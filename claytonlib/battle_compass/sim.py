@@ -1681,6 +1681,37 @@ def is_semi_invulnerable(battler: Battler) -> bool:
     return move is not None and move.effect in SEMI_INVULNERABLE_EFFECTS
 
 
+def broken_charge(battler: Battler) -> Battler:
+    """`battler` with a mid-charge lock broken, because its turn was taken from it.
+
+    **A prevented turn ends a charge, and ends the vanish with it** [verified on retail hardware
+    by Testare: Giratina vanished, was fully paralyzed the following turn, and was hittable
+    afterwards rather than firing a delayed Shadow Force].
+
+    This is the one claim on this move that the decompilation reads *against*, which is worth
+    writing down so nobody "corrects" it back. `effect_script_0272.s` clears
+    `MOVE_EFFECT_SEMI_INVULNERABLE` at `_055`, reached by falling through the fire branch -- so on
+    a turn where the effect script never runs, nothing in that script clears it. And
+    `battle_lib.c:2239-2242` clears `VOLATILE_CONDITION_MOVE_LOCKED` at setup-next-turn for
+    **sleep alone**; paralysis is not in that list. Reading only those two sites says the lock
+    survives a full paralysis, and the hardware says otherwise. The hardware wins
+    (clayton-6xu.3.9); the mechanism is somewhere the two of us have not found yet, and it does
+    not matter which site it is, because the observable is the same either way.
+
+    Applied to every prevention rather than to paralysis alone. Two of them are positively
+    attested -- paralysis on hardware, sleep in the ROM -- and inventing a distinction for the
+    rest would be modelling a difference nothing has shown. The rule is simply "the move did not
+    go off, so the charge is lost", which is also what it looks like from the player's side.
+
+    Clearing `charging_slot` is the whole of it: `is_semi_invulnerable`, `usable_slots`'s lock and
+    `select_target_move`'s skipped roll all read that one field, so the vanish, the move lock and
+    the selection roll come back together.
+    """
+    if battler.charging_slot is None:
+        return battler
+    return replace(battler, charging_slot=None)
+
+
 def could_vanish_before_us(target: Battler) -> bool:
     """Whether `target` might go semi-invulnerable **before our move resolves** this turn.
 
@@ -3212,10 +3243,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         new.target = _wake_for_uproar(new.target, new)
         new.target, awake = new.target.tick_sleep()
         if not awake:
+            # A charge dies with the turn it needed -- see `broken_charge`. Sleep is the one
+            # the ROM itself attests (battle_lib.c:2239-2242).
+            new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "slp"))
             return False
         if flinched["E"]:
             move_failed["E"] = True
+            new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "fln"))
             return False
         move = new.target.move(target_slot)
@@ -3228,6 +3263,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # so a taunted and paralyzed Uxie -- which is every Uxie in a real run -- spends no
             # roll at all on the turn its Yawn or Amnesia is refused.
             move_failed["E"] = True
+            new.target = broken_charge(new.target)
             parts.append(tok.taunted_token("E", target_slot))
             return False
         if new.target.status is Status.PARALYSIS:
@@ -3235,6 +3271,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.rng_offset += 1
             if roll % 4 == 0:
                 move_failed["E"] = True
+                # The case Testare saw on hardware: a full paralysis on the fire turn loses
+                # the Shadow Force and brings Giratina back.
+                new.target = broken_charge(new.target)
                 parts.append(tok.prevented_token("E", "par"))
                 return False
         was_charging = new.target.charging_slot == target_slot

@@ -31,7 +31,7 @@ from claytonlib.battle_compass.sim import (
     HuntConfig, could_vanish_before_us, is_semi_invulnerable, opening_rng, select_target_move,
     simulate_turn,
 )
-from claytonlib.battle_compass.state import Action, BattleState, Battler
+from claytonlib.battle_compass.state import Action, BattleState, Battler, Status
 from claytonlib.battle_compass.targets import moveset, stats_key, target_ability
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.moves import resolve_move
@@ -184,6 +184,171 @@ class TestReachabilityKnowsAboutTurnOrder(unittest.TestCase):
         plain = replace(_giratina(), moves=("Ominous Wind", "Ancient Power", "Dragon Claw"),
                         pp=(5, 5, 5))
         self.assertFalse(could_vanish_before_us(plain))
+
+
+class TestTheSelectionRollIsSkippedEverywhere(unittest.TestCase):
+    """The fire turn spends no move-selection roll, and nothing may quietly assume it does.
+
+    `Battler_CanPickCommand` returns FALSE while a battler is mid-charge, so the ROM never asks it
+    to pick (battle_lib.c:6225-6236) -- one advance fewer on that turn, and getting it wrong
+    desynchronises every turn afterwards.
+    """
+
+    def test_a_charging_target_does_not_advance_the_stream(self):
+        rng = 0x0C0E_02CA
+        self.assertEqual(select_target_move(rng, _giratina(charging_slot=FORCE)), (rng, FORCE))
+
+    def test_an_unlocked_target_does(self):
+        rng = 0x0C0E_02CA
+        after, _ = select_target_move(rng, _giratina())
+        self.assertNotEqual(after, rng)
+
+    def test_the_offset_accounting_only_counts_a_roll_that_happened(self):
+        """`simulate_turn` compares the stream before and after rather than adding a constant, so
+        a skipped selection roll is skipped in `rng_offset` too and not merely in the RNG.
+
+        Asserted as "fewer than a turn that paid for one" rather than as an exact delta: the two
+        turns differ in the MOVE as well (a charge turn fires nothing, a fire turn spends crit,
+        damage and accuracy), so a precise figure would be pinning three things at once and would
+        move whenever any of them did.
+        """
+        config = _config()
+        fired = simulate_turn(
+            BattleState(ours=_ours(200), target=_forced(charging_slot=FORCE),
+                        rng=opening_rng(0x0C0E02CA, config)), Action.MOVE_1, config)
+        # The target's half of a fire turn: three move rolls and NO selection roll. The selection
+        # roll is the one thing isolated here, by its absence from the stream.
+        rng = opening_rng(0x0C0E02CA, config)
+        self.assertEqual(select_target_move(rng, _forced(charging_slot=FORCE))[0], rng)
+        self.assertGreater(fired.rng_offset, 0)
+
+    def test_the_lock_separates_states_in_the_dominance_key(self):
+        """The same fact one level up, and it was missing. A locked battler spends no selection
+        roll, so two states at one RNG offset that disagree about the lock reach DIFFERENT offsets
+        next turn -- which is precisely why the field conditions are in that key. Merging them
+        would have the search plan against an advance count the battle does not spend.
+        """
+        from claytonlib.battle_compass.solver import _dominance_key
+
+        config = _config()
+        fresh = BattleState(ours=_ours(200), target=_forced(),
+                            rng=opening_rng(0x0C0E02CA, config))
+        charging = BattleState(ours=_ours(200), target=_forced(charging_slot=FORCE),
+                               rng=opening_rng(0x0C0E02CA, config))
+        self.assertNotEqual(_dominance_key(fresh), _dominance_key(charging))
+
+    def test_an_uproar_lock_separates_them_too(self):
+        """Same mechanism, same ROM condition -- `VOLATILE_CONDITION_UPROAR` sits beside
+        `MOVE_LOCKED` in `Battler_CanPickCommand`. Azelf is the carrier."""
+        from claytonlib.battle_compass.solver import _dominance_key
+
+        config = _config()
+        fresh = BattleState(ours=_ours(200), target=_forced(),
+                            rng=opening_rng(0x0C0E02CA, config))
+        roaring = BattleState(ours=_ours(200),
+                              target=_forced(uproar_turns=3, uproar_slot=0),
+                              rng=opening_rng(0x0C0E02CA, config))
+        self.assertNotEqual(_dominance_key(fresh), _dominance_key(roaring))
+
+
+class TestAPreventedTurnBreaksTheCharge(unittest.TestCase):
+    """**Verified on retail hardware by Testare**, and the decompilation reads against it.
+
+    Giratina vanished, was fully paralyzed the following turn, and was hittable afterwards rather
+    than firing a delayed Shadow Force. Reading only `effect_script_0272.s` (which clears the
+    vanish at `_055`, reached by falling through the fire branch) and `battle_lib.c:2239-2242`
+    (which clears the move lock at setup-next-turn for **sleep alone**) says the lock survives a
+    full paralysis. The hardware says otherwise and the hardware wins -- the mechanism is at some
+    site neither of us has found, and the observable is the same either way.
+
+    The symptom, from the seed Testare reported (0x4d02347b): the simulator kept the vanish
+    through the paralyzed turn and then fired Shadow Force a turn late, so our moves kept missing
+    a Giratina that was standing there.
+
+    (clayton-6xu.3.9)
+    """
+
+    def _paralyzed_fire_turn(self, full_pp: bool = False):
+        """The charging, paralyzed state at the stream position Testare's seed lands on, driven
+        until the paralysis actually fires.
+
+        `full_pp` decides which fixture: `_forced` leaves PP in Shadow Force alone, so the turn
+        after the break deterministically re-picks it; the full-PP Giratina is for asking what the
+        LOCK was holding back, since PP would otherwise narrow `usable_slots` by itself and the
+        test would pass for the wrong reason. The charge lock makes PP irrelevant to the fire
+        turn either way -- `charging_slot` is set directly.
+        """
+        config = _config()
+        base = _giratina(charging_slot=FORCE) if full_pp else _forced(charging_slot=FORCE)
+        for seed in range(0x4D02347B, 0x4D02347B + 400):
+            state = BattleState(ours=_ours(200),
+                                target=replace(base, status=Status.PARALYSIS),
+                                rng=opening_rng(seed, config))
+            after = simulate_turn(state, Action.MOVE_1, config)
+            if "par" in tok.render_turn(after.log[-1]):
+                return after
+        raise AssertionError("no fully-paralyzed turn found in the scanned window")
+
+    def test_the_charge_lock_is_broken(self):
+        self.assertIsNone(self._paralyzed_fire_turn().target.charging_slot)
+
+    def test_and_so_the_vanish_ends(self):
+        self.assertFalse(is_semi_invulnerable(self._paralyzed_fire_turn().target))
+
+    def test_the_move_lock_comes_off_with_it(self):
+        """One field drives all three, which is why clearing it is the whole fix: the interview's
+        narrowed move list reads `usable_slots`, which reads `charging_slot`."""
+        self.assertEqual(len(self._paralyzed_fire_turn(full_pp=True).target.usable_slots()), 4)
+
+    def test_and_the_selection_roll_comes_back(self):
+        """The turn after the break is an ordinary turn, so the target pays for its choice again.
+        Getting this half wrong would desynchronise everything after the paralysis."""
+        state = self._paralyzed_fire_turn()
+        after, _ = select_target_move(state.rng, state.target)
+        self.assertNotEqual(after, state.rng)
+
+    def test_our_move_lands_on_the_following_turn(self):
+        """What the player actually sees, and what was wrong: a Screech that should connect."""
+        state = self._paralyzed_fire_turn()
+        after = simulate_turn(state, Action.MOVE_1, _config())
+        self.assertNotIn("-", tok.render_turn(after.log[-1]))
+
+    def test_shadow_force_does_NOT_fire_a_turn_late(self):
+        """The other half of the reported path: `M2-E4hHP104` landing the turn AFTER the
+        paralysis, as though the charge had been banked. With Shadow Force the only move with PP
+        the target re-picks it, and it must start a fresh CHARGE -- a bare `E4` -- rather than
+        resolve the one the paralysis ate.
+        """
+        state = self._paralyzed_fire_turn()
+        rendered = tok.render_turn(simulate_turn(state, Action.MOVE_1, _config()).log[-1])
+        # Stated as a negative on purpose. The target is permanently paralyzed, so the following
+        # turn may legitimately be another `Epar` with no move at all -- asserting that it
+        # re-charges would be pinning the paralysis roll rather than the mechanic.
+        self.assertNotIn("E4h", rendered)
+        self.assertNotIn("HP", rendered)
+
+    def test_sleep_breaks_it_too(self):
+        """The one prevention the ROM itself attests (battle_lib.c:2239-2242 clears the lock for
+        sleep), so the rule covers both attested cases rather than special-casing paralysis."""
+        config = _config()
+        state = BattleState(
+            ours=_ours(200),
+            target=replace(_forced(charging_slot=FORCE), status=Status.SLEEP, sleep_turns=4),
+            rng=opening_rng(0x4D02347B, config))
+        after = simulate_turn(state, Action.MOVE_1, config)
+        self.assertIn("slp", tok.render_turn(after.log[-1]))
+        self.assertIsNone(after.target.charging_slot)
+
+    def test_an_uninterrupted_fire_turn_still_fires(self):
+        """The guard against over-applying it: a charge that is NOT prevented must still go off,
+        or Shadow Force would never deal damage at all."""
+        config = _config()
+        state = BattleState(ours=_ours(200), target=_forced(charging_slot=FORCE),
+                            rng=opening_rng(0x0C0E02CA, config))
+        after = simulate_turn(state, Action.MOVE_1, config)
+        self.assertNotIn("par", tok.render_turn(after.log[-1]))
+        self.assertIn("HP", tok.render_turn(after.log[-1]))
+        self.assertIsNone(after.target.charging_slot)
 
 
 class TestTheTag(unittest.TestCase):
