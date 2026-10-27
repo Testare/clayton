@@ -1681,6 +1681,30 @@ def is_semi_invulnerable(battler: Battler) -> bool:
     return move is not None and move.effect in SEMI_INVULNERABLE_EFFECTS
 
 
+def could_vanish_before_us(target: Battler) -> bool:
+    """Whether `target` might go semi-invulnerable **before our move resolves** this turn.
+
+    Only meaningful when the target moves FIRST. Then a charge turn it starts is over by the time
+    we act, so our move cannot reach it -- even a move with accuracy 0, which `can_miss` would
+    otherwise report as unmissable. That is the mirror of the bug this pairs with: the page used
+    to assert a miss whenever the target was away at the START of a turn, which is right only when
+    we move first.
+
+    Deliberately a MAY and not a WILL: whether it picks the vanishing move is a per-candidate
+    question, so the interview has to offer "missed" as a possibility rather than assert it. The
+    one thing it must not do is suppress the option, because then a turn the player really saw
+    becomes unreportable.
+
+    False once it is already charging -- that turn is the FIRE turn, and firing clears the vanish
+    (`effect_script_0272.s` `_055`), so a target that moves first reappears and our move lands.
+    """
+    if target.charging_slot is not None:
+        return False
+    return any((move := target.move(slot)) is not None
+               and move.effect in SEMI_INVULNERABLE_EFFECTS
+               for slot in target.usable_slots())
+
+
 def starts_charge_turn(battler: Battler, slot: int) -> bool:
     """Whether picking `slot` right now is the CHARGE turn of a two-turn move.
 

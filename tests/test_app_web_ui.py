@@ -406,17 +406,35 @@ class TestTheVanishedTargetIsExplained(unittest.TestCase):
     with no explanation reads as a broken tool. And it is a MISS, not a prevention: the move
     happened and spent its rolls, so it cannot ride on `guaranteed_fail`, which renders as a bare
     slot token (clayton-6xu.3.4).
+
+    **Gated on `unreachable_now`, not on `vanished`.** This asserted `vanished`, which is a fact
+    about the turn's OPENING state and answers the wrong question: when the target moves FIRST, a
+    turn that opens with it away is its fire turn, it reappears to attack, and our move lands. The
+    page asserted a miss there and returned, so a hit the player had watched was unreportable
+    (clayton-6xu.3.8).
     """
 
-    def test_our_outcome_block_short_circuits_on_a_vanished_target(self):
+    def test_our_outcome_block_short_circuits_only_when_the_miss_is_certain(self):
         body = _function_body("hrOurOutcomeBlock")
-        self.assertIn("s.target.vanished", body)
+        self.assertIn("s.target.unreachable_now", body)
         self.assertIn("is away", body)
+
+    def test_it_no_longer_short_circuits_on_the_opening_state_alone(self):
+        """The regression guard: `vanished` must not be what drives the assertion."""
+        body = _function_body("hrOurOutcomeBlock")
+        self.assertNotIn("if (s.target.vanished)", body)
 
     def test_it_records_a_miss_rather_than_a_prevention(self):
         body = _function_body("hrOurOutcomeBlock")
-        vanished = body[body.index("s.target.vanished"):]
+        vanished = body[body.index("s.target.unreachable_now"):]
         self.assertIn('result: "-"', vanished[:400])
+
+    def test_the_mirror_case_widens_the_options_instead(self):
+        """When the target moves first and has not vanished yet, our move can miss however
+        unmissable it looks -- so that case ADDS an option rather than asserting one."""
+        body = _function_body("hrOurOutcomeBlock")
+        self.assertIn("s.target.may_vanish_first", body)
+        self.assertIn("vanished first", body)
 
 
 if __name__ == "__main__":

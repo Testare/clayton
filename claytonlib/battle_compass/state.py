@@ -354,6 +354,15 @@ class Battler:
         **By POWER, not by category**, which is the ROM's own test. The same set in practice for
         every configured moveset, but transcribed rather than translated.
         """
+        # **A mid-charge lock comes first, and unlike the Choice lock it ignores PP.** The ROM
+        # relocks into the charging move without consulting it -- the PP was already spent on the
+        # charge turn, and `Battler_CanPickCommand` returns FALSE so nothing is picked at all
+        # (battle_lib.c:6225-6236). `sim.select_target_move` short-circuits on the same field
+        # BEFORE it reaches this method, so adding it here cannot change the selection roll's
+        # modulus; what it fixes is the INTERVIEW, which read `usable_slots` and so offered all
+        # four of Giratina's moves on a turn it can only continue Shadow Force.
+        if self.charging_slot is not None and self.move(self.charging_slot) is not None:
+            return (self.charging_slot,)
         if self.choice_locked_slot is not None:
             slot = self.choice_locked_slot
             return (slot,) if self.move(slot) is not None and self.pp_left(slot) > 0 else ()

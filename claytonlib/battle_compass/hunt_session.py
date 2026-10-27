@@ -48,8 +48,8 @@ from claytonlib.battle_compass.sim import (
     HuntConfig,
     SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
-    can_flinch, can_inflict, can_miss, deals_nothing, is_semi_invulnerable,
-    pending_future_sight, starts_charge_turn,
+    can_flinch, can_inflict, can_miss, could_vanish_before_us, deals_nothing,
+    is_semi_invulnerable, pending_future_sight, starts_charge_turn,
     effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
     secondary_status,
     simulate_turn,
@@ -595,6 +595,19 @@ def field_conditions(state) -> list[dict]:
     for side, attr, label in BATTLER_FLAGS:
         if getattr(getattr(state, side, None), attr, False):
             out.append({"name": label, "turns": None, "whose": side})
+    # Vanished, which is COMPUTED rather than stored -- `is_semi_invulnerable` reads the charging
+    # slot and the move in it, so there is no field for `BATTLER_FLAGS` to name. Handled here
+    # rather than given a field of its own, because a second copy of that state could drift from
+    # the one `execute_move` reads.
+    #
+    # In the banner because the player asked for it and because it is the condition hardest to
+    # keep in your head: it lasts exactly one turn, it is announced once ("Giratina vanished
+    # instantly!"), and while it is up it changes both what the target can pick and whether your
+    # move can reach it. Both sides are listed; only the target can reach it today.
+    for side in ("target", "ours"):
+        battler = getattr(state, side, None)
+        if battler is not None and is_semi_invulnerable(battler):
+            out.append({"name": "Vanished", "turns": None, "whose": side})
     return out
 
 
@@ -2059,6 +2072,23 @@ class HuntSession:
                        # spends its rolls, so the candidate filtering is unaffected; what the
                        # page does with this is say why.
                        "vanished": is_semi_invulnerable(state.target),
+                       # **Whether our move can reach it THIS turn, which is not the same
+                       # question** -- and the page used to conflate them, asserting a miss and
+                       # removing the question whenever `vanished` was true. That is right only
+                       # when we move FIRST. When the target moves first, a turn that opens with
+                       # it away is its FIRE turn: it reappears to attack, clearing the vanish
+                       # (`effect_script_0272.s` `_055`), and our move lands. Forcing a miss
+                       # there made a Screech the player had watched connect unreportable.
+                       #
+                       # Only ever true of a certainty, so the page may still assert on it.
+                       "unreachable_now": (we_first
+                                           and is_semi_invulnerable(state.target)),
+                       # ...and the mirror: the target moves first and might vanish before we
+                       # act, so even an accuracy-0 move of ours can miss. A MAY, because which
+                       # move it picks is per-candidate -- so this widens what the interview will
+                       # accept rather than narrowing it.
+                       "may_vanish_first": (not we_first
+                                            and could_vanish_before_us(state.target)),
                        "move_info": move_info(state.target, state.ours)},
             # Every field condition the simulator tracks, with its remaining turns. None of it
             # was shown, so the player was holding counters in their head -- and several of these

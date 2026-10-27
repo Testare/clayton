@@ -5650,14 +5650,20 @@ function hrOurOutcomeBlock(){
     return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(hrActive().name)}
         fell asleep before its turn, so it could not move — nothing to report.</div></div>`;
   }
-  // Away mid-charge (Shadow Force's first turn), so nothing we do can reach it. One option, like
-  // the sleep above -- but a MISS rather than a prevention: the move happened, it spent its rolls
-  // and it could not land. "It missed" and "it went ahead and did nothing" are different tokens,
-  // which is why this cannot ride on `guaranteed_fail`.
-  if (s.target.vanished){
+  // Away mid-charge AND we move first, so nothing we do can reach it. One option, like the sleep
+  // above -- but a MISS rather than a prevention: the move happened, it spent its rolls and it
+  // could not land. "It missed" and "it went ahead and did nothing" are different tokens, which
+  // is why this cannot ride on `guaranteed_fail`.
+  //
+  // **`unreachable_now`, not `vanished`.** This used to read `vanished`, which is a fact about
+  // the turn's OPENING state and answers the wrong question. When the target moves first, a turn
+  // that opens with it away is its FIRE turn: it reappears to attack, the vanish comes off, and
+  // our move lands. Asserting a miss there -- and returning, so the question vanished with it --
+  // made a Screech the player had just watched connect impossible to report.
+  if (s.target.unreachable_now){
     if (!t.ours || t.ours.result !== "-") t.ours = {result: "-"};
     return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
-        is away — ${esc(info.name)} could not reach it, so it missed.</div></div>`;
+        is away and moves after you — ${esc(info.name)} cannot reach it, so it missed.</div></div>`;
   }
   // `guaranteed_fail` before `damaging`, the same way round as the target's block and for the
   // same reason: the two are not exclusive. See `hrTargetBlocks`.
@@ -5683,6 +5689,19 @@ function hrOurOutcomeBlock(){
   }
   if (info.can_miss)
     opts.push(hrChip("Missed", `hrSet('ours',{result:'-'})`, t.ours?.result === "-"));
+  // ...and when the TARGET moves first and might vanish before we act, our move can miss however
+  // unmissable it looks: a Mean Look at accuracy 0 cannot fail an accuracy check and still cannot
+  // reach something that is not there. So this is the one route to a miss that `can_miss` does
+  // not cover, and leaving it out made such a turn unreportable.
+  //
+  // `may_vanish_first` is a MAY -- which move the target picks is a per-candidate question -- so
+  // this WIDENS the options rather than asserting one, which is the opposite of what the
+  // `vanished` force-miss above used to do.
+  else if (s.target.may_vanish_first)
+    opts.push(hrChip("Missed — it vanished first", `hrSet('ours',{result:'-'})`,
+                     t.ours?.result === "-",
+                     `${s.target.name} moves before you and could vanish, which no accuracy `
+                     + `roll would save you from.`));
   // Only what state allows: an unparalyzed Pokemon cannot be fully paralyzed, and it cannot
   // flinch unless the other side has a flinching move and moved first. The snapshot's list is
   // built from the turn's opening state and so can only check the MOVESET; "flinched" is then
