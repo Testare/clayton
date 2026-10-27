@@ -271,15 +271,22 @@ class TestWhatItCosts(unittest.TestCase):
                                   _giratina(), actor="M", slot=1)
         self.assertEqual(outcome.tokens, ("M2",))
 
-    def test_it_is_three_advances_cheaper_than_the_false_swipe_it_enables(self):
-        """Worth pinning as a figure rather than as "fewer": the immune False Swipe still spends
-        crit, damage and accuracy, so the identifying turn is the cheapest turn in the run."""
+    def test_it_is_one_advance_cheaper_than_the_false_swipe_it_enables(self):
+        """Worth pinning as a figure rather than as "fewer", and the figure moved once ground
+        truth arrived: **one**, not three.
+
+        The two turns differ in two places that nearly cancel. The immune False Swipe spends three
+        rolls that Odor Sleuth does not (crit, damage, accuracy) -- but it is INEFFECTIVE, so it
+        is not a successful move and forfeits the two post-move advances that Odor Sleuth, which
+        succeeds, collects. Three out, two back: one (clayton-6xu.3.12,
+        data/battle_logs/giratina2.jsonl).
+        """
         config = _config()
         state = BattleState(ours=_ours(), target=_giratina(),
                             rng=opening_rng(0x0C0E02CA, config))
         swiped = simulate_turn(state, Action.MOVE_1, config)
         sleuthed = simulate_turn(state, Action.MOVE_2, config)
-        self.assertEqual(swiped.rng_offset - sleuthed.rng_offset, 3)
+        self.assertEqual(swiped.rng_offset - sleuthed.rng_offset, 1)
 
 
 class TestItCannotFail(unittest.TestCase):

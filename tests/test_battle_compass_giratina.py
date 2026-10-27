@@ -185,7 +185,12 @@ class TestTheChargeTurn(unittest.TestCase):
         _, forced = execute_move(0x1234_5678, resolve_move("Shadow Force"), charging, _ours(),
                                 actor="E", slot=FORCE)
         self.assertEqual(forced.damage, 0)
-        self.assertTrue(forced.successful)           # it connected; it just did nothing
+        # "It connected; it just did nothing" is how this read, and it was true of the animation
+        # and false of the stream: an ineffective hit is NOT successful and gets none of the two
+        # post-move advances [data/battle_logs/giratina2.jsonl turn 6]. The ROM groups
+        # MOVE_STATUS_INEFFECTIVE under MOVE_STATUS_DID_NOT_HIT, which is the same answer
+        # soundproof already gave.
+        self.assertFalse(forced.successful)
         _, wind = execute_move(0x1234_5678, resolve_move("Ominous Wind"), _giratina(), _ours(),
                               actor="E", slot=0)
         self.assertEqual(wind.damage, 0)
@@ -302,8 +307,13 @@ class TestATurnPair(unittest.TestCase):
         _, missed = execute_move(rng, false_swipe, _ours(), _giratina(charging_slot=FORCE),
                                 actor="M", slot=0)
         self.assertEqual(landed.rolls, missed.rolls)
-        self.assertTrue(landed.successful)
+        # Neither is "successful": the reachable one is a Normal move against a Ghost, so it is
+        # INEFFECTIVE, and the other could not reach a vanished target. The roll COUNT is what
+        # this test is about, and it is the same either way -- see
+        # `TestASecondaryDoesNotProcOnAnImmuneHit` for why an immune hit is not successful.
+        self.assertFalse(landed.successful)
         self.assertFalse(missed.successful)
+        self.assertNotIn("-", landed.tokens)
         self.assertIn("-", missed.tokens)
 
     def test_an_accuracy_zero_move_of_ours_cannot_reach_it_either(self):
@@ -572,18 +582,37 @@ class TestASecondaryDoesNotProcOnAnImmuneHit(unittest.TestCase):
         return replace(_hittable(),
                        stats={"hp": 300, "atk": 65, "def": 70, "spa": 40, "spd": 77, "spe": 100})
 
-    def test_the_roll_is_still_spent(self):
-        """The half that is NOT changed, asserted as strictly as the half that is: same roll
-        count and the same RNG state afterwards, immune or not. Skipping the roll was the reading
-        that would have needed an emulator capture, and it was the wrong one.
+    def test_the_roll_is_NOT_spent(self):
+        """**Reversed by ground truth**, and the reversal is the point.
+
+        This asserted the opposite -- that the proc roll is spent and only the effect suppressed --
+        on the strength of `BattleSystem_TriggerSecondaryEffect` putting its `Random` outside the
+        `MOVE_STATUS_NO_EFFECTS` guard. That reading assumed the function is REACHED on an
+        ineffective hit, and it is not: `BtlCmd_CheckMoveHit` jumps past the side-effect subscript
+        when `MOVE_STATUS_DID_NOT_HIT` is set, which was the FIRST reading and the right one.
+
+        data/battle_logs/giratina2.jsonl settles it. Ominous Wind against the Electric/Steel lead
+        on turn 1 spends CRIT, DMG, ACC and SEC; the same move against the Normal-typed Smeargle on
+        turn 6 spends CRIT, DMG, ACC and stops. One roll fewer, same move, same 10%
+        (clayton-6xu.3.12).
         """
         wind = resolve_move("Ominous Wind")
-        immune_rng, immune = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
-                                          _ours(), actor="E", slot=0)
-        hit_rng, landed = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
-                                       self._bulky(), actor="E", slot=0)
-        self.assertEqual(immune.rolls, landed.rolls)
-        self.assertEqual(immune_rng, hit_rng)
+        _, immune = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                 _ours(), actor="E", slot=0)
+        _, landed = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                 self._bulky(), actor="E", slot=0)
+        self.assertEqual(immune.rolls, landed.rolls - 1)
+
+    def test_and_it_is_not_a_successful_move_either(self):
+        """So it gets none of the two post-move advances. Same log, same pair of turns: turn 6
+        spends 4 trailing advances where turn 1's connecting Ominous Wind spends 6."""
+        wind = resolve_move("Ominous Wind")
+        _, immune = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                 _ours(), actor="E", slot=0)
+        _, landed = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                 self._bulky(), actor="E", slot=0)
+        self.assertFalse(immune.successful)
+        self.assertTrue(landed.successful)
 
     def test_the_proc_that_would_have_landed_does_not(self):
         """Same seed, same roll, opposite verdict -- so this is the immunity doing it and not a

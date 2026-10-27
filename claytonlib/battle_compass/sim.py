@@ -2216,14 +2216,20 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             dealt = min(dealt, max(0, defender.hp - 1))
 
     secondary = False
-    if move.effect_chance > 0:
+    if move.effect_chance > 0 and not ineffective:
         rng, proc_roll = advance(rng)
         used += 1
-        # **The roll is spent even on an ineffective hit; the effect is not applied.** Both halves
-        # come from one function, `BattleSystem_TriggerSecondaryEffect` (battle_lib.c:1519). It
-        # runs from the controller loop rather than from the effect script -- which is why it is
-        # reached at all after a move that did not connect -- and its generic branch
-        # (battle_lib.c:1569-1586) reads:
+        # **An ineffective hit spends no proc roll at all** [verified:
+        # data/battle_logs/giratina2.jsonl]. Ominous Wind against the Electric/Steel lead on turn 1
+        # spends CRIT, DMG, ACC *and* SEC; the same move against the Normal-typed Smeargle on turn
+        # 6 spends CRIT, DMG, ACC and stops. Same move, same 10% chance, one roll fewer.
+        #
+        # **I had this right and then talked myself out of it**, so the reasoning is worth keeping.
+        # The first reading was `BtlCmd_CheckMoveHit` (battle_script.c:6128), which takes
+        # `jumpOnMiss` when `moveStatusFlags & MOVE_STATUS_DID_NOT_HIT` and so jumps past the
+        # side-effect subscript entirely -- `MOVE_STATUS_INEFFECTIVE` being a member of that group.
+        # I then replaced it with `BattleSystem_TriggerSecondaryEffect` (battle_lib.c:1519), whose
+        # generic branch puts its `Random` outside the `MOVE_STATUS_NO_EFFECTS` guard:
         #
         #     if (BattleSystem_RandNext(battleSys) % 100 < effectChance) {
         #         SetupSideEffect(...);
@@ -2231,25 +2237,13 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         #             && (moveStatusFlags & MOVE_STATUS_NO_EFFECTS) == FALSE) { result = TRUE; }
         #     }
         #
-        # The `Random` is outside every guard, so the advance is unconditional; `result` is what
-        # runs the subscript. `MOVE_STATUS_NO_EFFECTS` contains `MOVE_STATUS_DID_NOT_HIT`, which
-        # contains `MOVE_STATUS_INEFFECTIVE` (include/constants/battle/moves.h:80-83) -- so a
-        # type immunity suppresses the effect and prints nothing.
+        # ...and concluded the advance was unconditional. The mistake was assuming that function
+        # is REACHED on an ineffective hit. The jump above means it is not, and the log is the
+        # arbiter: the roll is simply absent (clayton-6xu.3.12).
         #
-        # **That makes this an outcome-only correction with no advance-count change**, which is
-        # why it needed no capture (clayton-957.26.6). Getting it the other way round -- skipping
-        # the roll -- was the reading that WOULD have needed one, and it was wrong.
-        #
-        # Every chance-based secondary in every configured moveset lands in that branch: the two
-        # branches that skip the `NO_EFFECTS` gate are `MOVE_SIDE_EFFECT_PROBABILISTIC` (used by
-        # effects 253 and 262 alone -- Flare Blitz and Volt Tackle, in nobody's moveset) and
-        # `MOVE_SIDE_EFFECT_CHECK_HP`, which reads no `effectChance` at all and so cannot be a
-        # chance-based one. `tests/test_battle_compass_giratina.py` pins that.
-        #
-        # It applies whatever side the effect lands on. Ancient Power and Ominous Wind boost
-        # their own USER, and the ROM gates them on the same flag -- so an Ominous Wind that does
-        # nothing to a Normal-typed lead raises none of Giratina's five stats, Speed included.
-        secondary = proc_roll % 100 < move.effect_chance and not ineffective
+        # So the gate is on spending the roll, not on applying the effect -- which also makes the
+        # effect suppression automatic, since nothing was rolled to apply.
+        secondary = proc_roll % 100 < move.effect_chance
         if secondary:
             parts.append(tok.SECONDARY)
 
@@ -2275,7 +2269,13 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # None for every case where it could not, so there is nothing to suppress afterwards.
         parts.append(tok.STATIC)
 
-    return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=True,
+    # **`successful=False` for an ineffective hit, which costs it the two post-move advances**
+    # [verified: data/battle_logs/giratina2.jsonl turn 6 spends 4 trailing advances where turn 1's
+    # connecting Ominous Wind spends 6]. This was left as True on the reasoning that the move
+    # "connected; it just did nothing" -- true of the animation and false of the stream. It is the
+    # same answer soundproof already gave, and for the same reason: `MOVE_STATUS_INEFFECTIVE` is a
+    # member of `MOVE_STATUS_DID_NOT_HIT`, so the ROM does not treat the move as having gone off.
+    return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=not ineffective,
                             damage=dealt, secondary=secondary,
                             attacker_status=attacker_status,
                             starts_uproar=starts_uproar,
