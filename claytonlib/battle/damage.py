@@ -512,7 +512,7 @@ def effective_power(move: Move, attacker: Attacker, *, base: int | None = None) 
     `state.choice_locked_slot`) while the multiplier was silently inert, so a Choice Band chipper's
     damage was under-predicted by half again -- and under-predicting OUR damage is unsound rather
     than cautious: the predicted target HP is wrong from the first hit and every candidate is
-    eliminated with no contradiction raised (clayton-6xi.7).
+    eliminated with no contradiction raised (clayton-6xi.3).
     """
     power = move.power if base is None else base
     ability = attacker.ability.strip().lower()

@@ -19,7 +19,7 @@ place and given different numbers wherever the two truncate differently.
 Live case: the planned Dialga chipper is a Lv100 max-Atk Gallade with a Choice Band, which cannot
 reach 1 HP at all without it (notes/battle_compass_dialga_palkia_shaymin.md §4A, §4E).
 
-(clayton-6xi.7)
+(clayton-6xi.3)
 """
 import unittest
 

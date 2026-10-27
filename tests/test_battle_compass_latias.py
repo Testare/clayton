@@ -624,16 +624,22 @@ class TestThePreconditionAcceptsSleep(unittest.TestCase):
             self.assertNotIn("nothing left in our moveset", result.reason)
             self.assertNotIn("out of reach", result.reason)
 
-    def test_the_wrong_hp_is_still_refused(self):
-        """A misconfigured start rather than a recoverable state: we never damage the target
-        again, so a target above 1 HP is not something a path can fix."""
+    def test_a_higher_hp_is_no_longer_refused(self):
+        """This asserted the opposite, on the reasoning that "we never damage the target again, so
+        a target above 1 HP is not something a path can fix". The path does not have to fix it: a
+        higher HP is a smaller ``b``, and the window search runs at the smaller figure, exactly as
+        it already did for an unstatused target. Some targets cannot reach 1 HP at all
+        (clayton-6xu.9.1).
+        """
         from claytonlib.battle_compass.solver import SolverConfig, Unreachable, solve
 
         state = BattleState(ours=_ours(), rng=0xEC1504DC, phase=2,
                             target=_latias(hp=40).with_status(Status.SLEEP, sleep_turns=3))
         result = solve(state, HUNT, SolverConfig(danger_floor=56))
-        self.assertIsInstance(result, Unreachable)
-        self.assertIn("not 1", result.reason)
+        if isinstance(result, Unreachable):
+            # An honest empty search is fine; a precondition refusal is what must be gone.
+            self.assertNotIn("not 1", result.reason)
+            self.assertNotIn("precondition", result.reason)
 
     def test_the_holding_statuses_are_one_list(self):
         """The solver asks which of them it could APPLY, so the set cannot live only inside the
@@ -869,10 +875,16 @@ class TestTheDeclaredHpIsGospel(unittest.TestCase):
         session.enter_pinning()
         self.assertEqual(session.snapshot()["target"]["hp"], 1)
 
-    def test_and_so_clears_the_blocker_it_used_to_raise(self):
+    def test_and_so_sets_it_without_an_hp_blocker_to_clear(self):
+        """There is no HP blocker left to clear -- `solver_blockers` stopped requiring 1 HP when
+        `solve` stopped requiring it. What `enter_pinning` still does is ADOPT the declaration,
+        which is the half that matters: the player's HP bar beats our model, and a run that chips
+        to 1 wants the solver pricing throws against 1.
+        """
         session = self._session(target_hp=37)
-        self.assertTrue(any("HP" in b for b in session.solver_blockers()))
+        self.assertFalse([b for b in session.solver_blockers() if "HP" in b])
         session.enter_pinning()
+        self.assertEqual(session.snapshot()["target"]["hp"], 1)
         self.assertFalse([b for b in session.solver_blockers() if "HP" in b])
 
     def test_a_target_already_at_one_is_untouched(self):

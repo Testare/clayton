@@ -505,6 +505,43 @@ def can_faint_target(move, ours, target, *, field=None) -> bool:
     return high >= target.hp
 
 
+def holds_target_hp(move, state: BattleState) -> bool:
+    """Whether playing `move` leaves the target's HP exactly where it is.
+
+    **The invariant Phase 2 runs on, and the reason it can run at any HP at all.** `b` is computed
+    from the target's current HP (`target_threshold`), and `max_reachable_threshold` maximises over
+    every status a path can reach but *not* over every HP -- so a plan that lowered the target's HP
+    could reach a larger `b` than the window precomputation priced, and pruning at the smaller
+    figure can prove unreachability that the larger one disproves. That is the same unsoundness the
+    status version of this gate was fixed for, and `proven=True` is what justifies a soft reset, so
+    an unsound proof costs the player the run rather than a path.
+
+    Rather than teach the precomputation to maximise over HP as well, Phase 2 simply does not
+    move it: **chipping is Phase 1's job**, which is player-driven and already where it happens.
+    So this is a narrowing of the filler alphabet, not a loss of a capability.
+
+    At 1 HP it changes nothing, which is what keeps every pre-existing run bit-for-bit identical:
+    False Swipe's floor (effect 101) already made it deal exactly 0 there, so it stayed legal as
+    unlimited filler and still does.
+
+    Two kinds of move hold the line:
+
+    * a status move, which deals no damage at all; and
+    * a damaging move the target is **immune** to, which the type chart zeroes -- a False Swipe at
+      an unidentified Giratina is a genuine constant-cost filler, and refusing it would be refusing
+      a turn the game plays perfectly happily.
+    """
+    from claytonlib.battle_compass.sim import FALSE_SWIPE_EFFECT, deals_nothing
+    from claytonlib.moves import CATEGORY_STATUS
+
+    if move is None or move.category == CATEGORY_STATUS:
+        return True
+    if deals_nothing(move, state.target, state.ours):
+        return True
+    # False Swipe at 1 HP: the floor makes it deal exactly zero, so it moves nothing.
+    return state.target.hp <= 1 and move.effect == FALSE_SWIPE_EFFECT
+
+
 def _legal_actions(state: BattleState, config: SolverConfig,
                    hunt: HuntConfig) -> list[tuple[Action, int, str | None]]:
     """(action, distance, item) triples available from `state` — sec 12.5's seven actions.
@@ -556,6 +593,12 @@ def _legal_actions(state: BattleState, config: SolverConfig,
             continue
         move = state.ours.move(slot)
         if can_faint_target(move, state.ours, state.target, field=state):
+            continue
+        # ...and a move that merely CHIPS the target is out too, above 1 HP. Not because it is
+        # dangerous -- `can_faint_target` has already taken the dangerous ones -- but because it
+        # would move `b` out from under the window precomputation. See `holds_target_hp`, which
+        # is also why this is a no-op for every run that reaches Phase 2 at 1 HP.
+        if not holds_target_hp(move, state):
             continue
         if ends_the_run(move):
             continue
@@ -611,7 +654,17 @@ def _dominance_key(state: BattleState) -> tuple:
             # it reach different offsets next turn. Its Attack stage is NOT here: it changes how
             # hard the target hits, which `_dominates` already weighs through our HP, not how many
             # advances the turn costs.
-            state.target.accuracy_stage)
+            state.target.accuracy_stage,
+            # The target's HP, because `b` is computed from it: two states at one offset that
+            # disagree about it are not interchangeable, and it is not better-or-worse either --
+            # lower HP is a bigger `b` but also fewer legal filler moves, so it belongs in the
+            # KEY rather than in `_dominates`.
+            #
+            # Constant along any path `_legal_actions` will build (`holds_target_hp`), so this
+            # costs nothing today. It is here so the invariant is enforced by the search rather
+            # than assumed by it -- if a future change lets a plan chip, the search stays correct
+            # instead of silently merging states with different capture odds.
+            state.target.hp)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:
@@ -631,11 +684,35 @@ def solve(state: BattleState, hunt: HuntConfig,
     greater accumulated distance makes the other pointless to explore.
     """
     config = config or SolverConfig()
-    if state.target.hp != 1:
+    # **Any HP, not just 1.** The precondition is that the target's HP is KNOWN and that the plan
+    # does not change it -- not that it is 1. The capture arithmetic never assumed 1: `throw_ball`
+    # and `target_threshold` both read `cur_hp` off the live state, so `b` has always been
+    # computed from whatever HP the target actually has.
+    #
+    # This is the third time this gate has relaxed, and each time for the same reason. It began as
+    # "1 HP and permanently paralyzed", which made `b` a single constant (sec 2.2). Sleep broke the
+    # constant and the solver was taught to cope. Then "some holding status" went, because a target
+    # we cannot status is not unreachable, only a smaller `b`. HP is that argument once more: a
+    # target at full HP is not unreachable, only a smaller `b`, and the window search simply runs
+    # at the smaller figure.
+    #
+    # For these Platinum targets it is not even smaller. Dialga and Palkia are catch rate 30 and
+    # Shaymin 45, so full HP asleep in a Dusk Ball is b=47661 and b=52428 against 33824 for
+    # Suicune at 1 HP in the same ball. And Dialga **cannot reach 1 HP at all** with a Smeargle:
+    # Steel resists False Swipe, and Pressure halves 40 PP to 20 uses against the 20-27 hits it
+    # needs (notes/battle_compass_dialga_palkia_shaymin.md sec 4A).
+    #
+    # What the relaxation costs is the chip phase as *filler*: `_legal_actions` now refuses a move
+    # that would move the target's HP, because `max_reachable_threshold` maximises over status and
+    # not over HP. See `holds_target_hp` -- and note it is a no-op at 1 HP, so every run that
+    # reaches Phase 2 the old way is unchanged.
+    #
+    # A FAINTED target is still refused, and that is not a precondition but an observation: there
+    # is nothing left to catch.
+    if state.target.hp <= 0:
         return Unreachable(
-            reason=(f"the solver's precondition does not hold: the target is at "
-                    f"{state.target.hp} HP, not 1"),
-            proven=False, states_explored=0)
+            reason="the target has fainted, so there is nothing left to catch",
+            proven=True, states_explored=0)
     # An unstatused target is not a dead end -- it is the ordinary consequence of a sleep wearing
     # off, and the fix is a turn of the search rather than the end of the run.
     #

@@ -11,9 +11,13 @@ threshold, so a flat x1 and the hardest multiplier case there is.
 Modules:
 
 * ``state`` — battlers, actions, and the battle state, deliberately small because Phase 2's
-  target is at 1 HP. **That is the only precondition** -- no status is required, since a
-  status can be applied mid-path and `b` already varies along one. Burn and poison are
-  refused, not as a status rule but because their tick faints a 1 HP target.
+  target barely moves. **No precondition on its HP or its status** -- both were requirements
+  once and both went the same way: a target we cannot status, or cannot bring to 1 HP, is not
+  unreachable, only a smaller `b`, and the window search runs at the smaller figure. Some
+  targets cannot reach 1 HP at all (Dialga resists False Swipe and halves our PP). What Phase 2
+  does require is that the plan HOLD the target's HP still, which is why chipping stays in
+  Phase 1 (`solver.holds_target_hp`). Burn and poison are refused, and not as a status rule:
+  they give exactly paralysis's x1.5 with a clock attached, so no HP makes them worth it.
 * ``tokens`` — the reporting grammar (sec 13).  Its job is *canonical rendering*: a candidate
   seed is simulated forwards to produce the tokens it would emit, and filtering is a comparison
   against what the player reported.

@@ -273,7 +273,12 @@ class Battler:
 
     @property
     def frozen_for_phase2(self) -> bool:
-        """Whether this status leaves the target's state still, which is what Phase 2 needs.
+        """Whether this status leaves the target's state still.
+
+        **Not a precondition any more** -- `solver.solve` searches an unstatused target, and a
+        target at any HP. This is now a question a caller may ask (the readiness advice does, to
+        say what a status would be worth) rather than a gate anything enforces. The name is kept
+        because the question is unchanged; only its authority went.
 
         Not "has any status". Three of the six qualify and three do not, for reasons that matter:
 
@@ -449,7 +454,10 @@ class BattleState:
     #: Phase 2's precondition guarantees the right Pokemon is already out (sec 12.5).
     bench: tuple[Battler, ...] = ()
     turn: int = 0
-    #: Set once the target is at 1 HP and paralyzed; the solver asserts it (sec 2 / sec 15.3).
+    #: Which phase the run is in. **No longer an assertion about the target**: the solver once
+    #: required 1 HP and paralysis, then 1 HP, and now neither -- see `solver.solve`. What Phase 2
+    #: requires is that the plan not MOVE the target's HP (`solver.holds_target_hp`), which is a
+    #: property of the plan rather than of the state.
     phase: int = 1
     #: Reports our Attack stage. A PROPERTY now, delegating to `ours.atk_stage`: the stage has
     #: to live on the Battler, because that is what `execute_move` reads and what survives a

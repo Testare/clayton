@@ -9,7 +9,7 @@ from dataclasses import replace
 
 from claytonlib.battle.stats import derive_species_stats, species
 from claytonlib.battle.turn import max_turn_advances
-from claytonlib.battle_compass.sim import HuntConfig
+from claytonlib.battle_compass.sim import HuntConfig, simulate_turn
 from claytonlib.battle_compass.solver import (
     BALL_PRICE, BASE_DISTANCE, COST_DIVISOR, ITEM_PRICES, Solution, SolverConfig, Unreachable,
     TURNS_PER_PP, capture_windows_in_horizon, choose_item, distance_of, remaining_target_pp,
@@ -135,11 +135,44 @@ class TestPreconditions(unittest.TestCase):
     unsimulated and the state is refused instead.
     """
 
-    def test_a_target_above_one_hp_is_refused(self):
+    def test_a_target_above_one_hp_is_SEARCHED(self):
+        """This used to refuse, and it was the old precondition's last holdout. HP is the same
+        argument status was: a target above 1 HP is not unreachable, only a smaller ``b``, and the
+        window search runs at the smaller figure. Refusing reported "no solution" for a battle the
+        player could win -- and for Dialga it refused one the player cannot even *reach* 1 HP in,
+        since Steel resists False Swipe and Pressure halves the PP (clayton-6xu.9.1).
+        """
         result = solve(_state(hp=50), HUNT, _config())
+        self.assertNotIsInstance(result, Unreachable)
+
+    def test_a_full_hp_target_is_searched_too(self):
+        """Not merely "above 1" -- the whole range. Full HP is the configuration the Platinum
+        statics are actually caught at."""
+        full = _state()
+        result = solve(_state(hp=full.target.max_hp), HUNT, _config())
+        self.assertNotIsInstance(result, Unreachable)
+
+    def test_a_fainted_target_is_refused_and_that_IS_proven(self):
+        """The one HP the gate still refuses, and it is an observation rather than a
+        precondition: there is nothing left to catch, so no stream position helps."""
+        result = solve(_state(hp=0), HUNT, _config())
         self.assertIsInstance(result, Unreachable)
-        self.assertFalse(result.proven)
-        self.assertIn("not 1", result.reason)
+        self.assertTrue(result.proven)
+        self.assertIn("fainted", result.reason)
+
+    def test_the_plan_never_moves_the_targets_hp(self):
+        """The invariant that licenses searching at any HP: ``b`` is computed from the current HP
+        and `max_reachable_threshold` maximises over status but NOT over HP, so a plan that chipped
+        could reach a larger ``b`` than the window precomputation priced. `holds_target_hp` keeps
+        chipping in Phase 1, where it already belongs.
+        """
+        result = solve(_state(hp=50), HUNT, _config())
+        self.assertNotIsInstance(result, Unreachable)
+        state = _state(hp=50)
+        for step in result.steps:
+            state = simulate_turn(state, step.action, HUNT, item_code=step.item)
+            self.assertIn(state.target.hp, (50, 0),
+                          "a Phase 2 plan chipped the target, which moves b")
 
     def test_an_unstatused_target_is_re_slept_rather_than_refused(self):
         """It is what every sleep wearing off mid-run looks like. Refusing there told a player
@@ -188,8 +221,14 @@ class TestPreconditions(unittest.TestCase):
             self.assertNotIn("preconditions do not hold", result.reason)
 
     def test_refusal_is_not_reported_as_a_proof(self):
-        """It says nothing about the seed, so it must not look like unreachability."""
-        self.assertFalse(solve(_state(hp=50), HUNT, _config()).proven)
+        """It says nothing about the seed, so it must not look like unreachability.
+
+        Driven by the BURN refusal rather than by an HP one, which is the only `proven=False`
+        refusal left now that any HP is searched. Burn and poison stay refused for a reason that
+        never depended on 1 HP: they give exactly paralysis's x1.5 and arrive attached to a clock,
+        so there is no HP at which that is the right trade.
+        """
+        self.assertFalse(solve(_state(status=Status.BURN), HUNT, _config()).proven)
 
 
 class TestSolving(unittest.TestCase):
@@ -435,7 +474,7 @@ class TestAWindowIsATargetNotAReachableOne(unittest.TestCase):
                 self.assertGreater(result.searched_turns, 0)
 
     def test_a_precondition_refusal_claims_nothing_at_all(self):
-        result = solve(_state(hp=50), HUNT, _config())
+        result = solve(_state(status=Status.BURN), HUNT, _config())
         self.assertFalse(result.proven)
         self.assertEqual(result.capture_windows, 0)
         self.assertFalse(result.stopped_at_struggle)

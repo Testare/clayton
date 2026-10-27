@@ -241,7 +241,7 @@ class Session:
 
     # -- phases ---------------------------------------------------------
 
-    def enter_pinning(self) -> None:
+    def enter_pinning(self, declared_hp: int | None = 1) -> None:
         """Move to Phase 1.5. Player-declared, never inferred from a hit count.
 
         A fixed False Swipe count is unreliable anyway: the target's own Attack drop lands on us
@@ -256,34 +256,51 @@ class Session:
         Not doing this had the tool arguing with the player and then refusing to work: the page
         asked "are you sure?", the player said yes, and the solver turned round and reported that
         its preconditions did not hold -- about the very number that had just been declared.
+
+        **`declared_hp` is 1 by default, and `None` means "trust the simulation".** The default is
+        what every caller has always meant and keeps the chip-to-1 flow byte-for-byte unchanged.
+        `None` is for the hunt that deliberately solves at a higher HP -- now that `solver.solve`
+        searches at any HP, a full-HP Dusk Ball run exists, and forcing 1 on it would be the worst
+        of both: the solver would price every throw against a `b` the battle does not have and
+        plan a capture that cannot land. So the declaration had to stop being unconditional the
+        moment the precondition stopped being universal.
         """
         if self.phase is not Phase.SETUP:
             raise ValueError(f"already past setup ({self.phase.label})")
-        self.declare_target_at_one_hp()
+        if declared_hp is not None:
+            self.declare_target_hp(declared_hp)
         self.phase = Phase.PINNING
 
-    def declare_target_at_one_hp(self) -> None:
-        """Take the player's word for it across every surviving candidate.
+    def declare_target_hp(self, hp: int = 1) -> None:
+        """Take the player's word for the target's HP across every surviving candidate.
 
         Separate from `enter_pinning` because the forced Phase 2 transition needs it too: that
         path exists precisely for when the model disagrees with the game, so it has to adopt the
         declaration rather than merely skip the complaint about it.
+
+        The argument for believing the player over the model is unchanged and is in
+        `enter_pinning`: an unmodelled damage modifier leaves the simulation above the real figure,
+        and the HP bar is an observation while ours is an output.
         """
-        self.states = {seed: self._declared_at_one_hp(state)
+        self.states = {seed: self._declared_at_hp(state, hp)
                        for seed, state in self.states.items()}
 
+    def declare_target_at_one_hp(self) -> None:
+        """`declare_target_hp(1)`, kept because it is what most callers mean and it says so."""
+        self.declare_target_hp(1)
+
     @staticmethod
-    def _declared_at_one_hp(state: BattleState) -> BattleState:
-        """`state` with the target's HP set to the declared 1.
+    def _declared_at_hp(state: BattleState, hp: int = 1) -> BattleState:
+        """`state` with the target's HP set to the declared figure.
 
         Only the HP. The status is still read off the simulation, because unlike HP it is not
         something the player is asked to declare here -- and a status they can see is reported as
         a turn, through the token stream, which is a better channel than a flag.
         """
-        if state.target.hp == 1:
+        if state.target.hp == hp:
             return state
         nxt = state.copy()
-        nxt.target = nxt.target.with_hp(1)
+        nxt.target = nxt.target.with_hp(hp)
         return nxt
 
     def solver_blockers(self, *, assume_past_setup: bool = False) -> list[str]:
@@ -295,8 +312,19 @@ class Session:
         never light up -- which is what left seed pinning a two-click process after the first
         attempt at fixing it (clayton-pv0).
 
-        **The only battle-state requirement is 1 HP.** There is no status precondition, and
-        removing it was the last step of a change that had already happened underneath:
+        **There is no battle-state requirement left at all** beyond the target being alive and not
+        on an HP clock. The 1 HP requirement went the way the status one did -- see `solver.solve`,
+        which now searches at any HP, because a target above 1 HP is not unreachable, only a
+        smaller ``b``. That matters for more than tidiness: Dialga **cannot be brought to 1 HP**
+        by a Smeargle at all, since Steel resists False Swipe and Pressure halves the PP
+        (notes/battle_compass_dialga_palkia_shaymin.md sec 4A).
+
+        **`declare_target_at_one_hp` is still here and still useful**, because chipping is still
+        worth doing: at a x1 ball it is worth about 3x (8.09% a throw against 23.42% for Dialga).
+        What changed is that it is a LEVER rather than a gate -- a player who wants their legendary
+        in a Premier Ball chips first, and one throwing a Dusk Ball at full HP need not.
+
+        The history of this gate, kept because each step had the same shape:
         `solver.reachable_statuses` includes NONE, `max_reachable_threshold` prices the largest
         ``b`` any reachable status allows, and `_dominance_key` separates states by status and
         sleep counter so the search plans through a wake-up.
@@ -309,24 +337,27 @@ class Session:
         ball and 1 HP against 21845 paralyzed. Refusing it reported "no solution" for a battle
         the player could still win.
 
-        Burn and poison are the one exception, and not as a status requirement in disguise: they
-        tick the target's HP every turn, which at 1 HP faints it before any ball can land. There
-        is no reason to ever inflict one on a Pokemon you are trying to catch -- the catch bonus
-        is exactly paralysis's, with a clock attached -- so the target's own tick is deliberately
-        unsimulated and the state is refused instead (`state.HP_TICKING_STATUSES`).
+        Burn and poison are the one exception, and not as a status requirement in disguise.
+        **Their refusal does not rest on 1 HP either**, which is worth saying now that 1 HP is no
+        longer assumed: they give exactly the x1.5 that paralysis gives and arrive attached to a
+        clock, so there is no HP at which inflicting one is the right trade -- above 1 HP the
+        clock is slower, not absent. So the target's own tick is deliberately unsimulated and the
+        state is refused instead (`state.HP_TICKING_STATUSES`).
         """
         problems: list[str] = []
         if self.phase is Phase.SETUP and not assume_past_setup:
-            problems.append("still in setup — declare the target at 1 HP to move on")
+            problems.append("still in setup — move on when you are done weakening the target")
         if self.identified is None:
             problems.append(f"the seed is not pinned yet ({len(self.states)} candidates remain)")
         for state in self.states.values():
-            if state.target.hp != 1:
-                problems.append(f"the target is at {state.target.hp} HP, not 1")
+            # No HP check. A target above 1 HP is a smaller `b`, not a dead end -- and some
+            # targets cannot reach 1 HP at all. The one HP that still blocks is zero.
+            if state.target.hp <= 0:
+                problems.append("the target has fainted — there is nothing left to catch")
             if state.target.status in HP_TICKING_STATUSES:
                 problems.append(
                     f"the target is {state.target.status.value}, which ticks its HP every turn — "
-                    f"at 1 HP that faints it before a ball can land")
+                    f"it gives the same bonus paralysis does and puts the prize on a clock")
             break
         return problems
 
