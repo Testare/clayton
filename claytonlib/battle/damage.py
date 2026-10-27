@@ -346,6 +346,24 @@ TYPE_GROUND = "Ground"
 ABILITY_SCRAPPY = "scrappy"
 
 
+#: Choice Band and Choice Specs, by the move CLASS each one boosts. A Choice Scarf is absent
+#: because it touches Speed rather than power (`readiness.speed_after_item`); all three share the
+#: move lock, which lives in `readiness.CHOICE_ITEMS` and is a different mechanism from this.
+#:
+#: Keyed on category rather than type, which is the whole difference from `TYPE_ENHANCING_ITEMS`:
+#: a Band boosts every physical move regardless of type [battle_lib.c:6776-6783].
+CHOICE_POWER_ITEMS: dict[str, int] = {
+    "choiceband": CATEGORY_PHYSICAL,
+    "choicespecs": CATEGORY_SPECIAL,
+}
+
+#: What a Choice Band or Specs adds, as the ROM's `heldItemPower` percentage: +50%, i.e. x1.5.
+#: Expressed as a percentage rather than a fraction because the ROM's expression is
+#: ``movePower * (100 + heldItemPower) / 100`` and the integer division has to happen in that
+#: shape -- `power * 3 // 2` agrees for most figures and not all.
+CHOICE_ITEM_MODIFIER_PERCENT = 50
+
+
 @dataclass(frozen=True)
 class Attacker:
     """The opponent, as the damage formula sees it."""
@@ -481,6 +499,20 @@ def effective_power(move: Move, attacker: Attacker, *, base: int | None = None) 
     ``power * (100 + mod) / 100``, both integer division. The order is not cosmetic -- for a
     Technician user holding Silk Scarf, False Swipe goes 40 -> 60 -> 72, where applying the item
     first would give 40 -> 48 -> 72 by luck here but differ elsewhere.
+
+    **A Choice Band or Choice Specs is the third step, and it is a POWER multiplier rather than a
+    stat one.** That is the part worth transcribing rather than remembering: Gen 4 implements both
+    as `HOLD_EFFECT_POWER_UP_PHYS` / `_SPEC`, and the ROM's line is
+    ``movePower = movePower * (100 + heldItemPower) / 100`` keyed on the move's **class**
+    (battle_lib.c:6776-6783) -- the same arithmetic as the type-enhancing items above and sitting
+    in the same run of `movePower` multipliers, after Technician at :6698. So it belongs here and
+    not next to the Attack stat, which is where "x1.5 Attack" would have put it.
+
+    It had been modelled for its move LOCK alone (`readiness.CHOICE_ITEMS`,
+    `state.choice_locked_slot`) while the multiplier was silently inert, so a Choice Band chipper's
+    damage was under-predicted by half again -- and under-predicting OUR damage is unsound rather
+    than cautious: the predicted target HP is wrong from the first hit and every candidate is
+    eliminated with no contradiction raised (clayton-6xi.7).
     """
     power = move.power if base is None else base
     ability = attacker.ability.strip().lower()
@@ -489,6 +521,9 @@ def effective_power(move: Move, attacker: Attacker, *, base: int | None = None) 
     boosted = TYPE_ENHANCING_ITEMS.get(item_key(attacker.held_item))
     if boosted is not None and boosted == move.type_name:
         power = power * (100 + TYPE_ITEM_MODIFIER_PERCENT) // 100
+    choice = CHOICE_POWER_ITEMS.get(item_key(attacker.held_item))
+    if choice is not None and choice == move.category:
+        power = power * (100 + CHOICE_ITEM_MODIFIER_PERCENT) // 100
     return power
 
 

@@ -119,6 +119,11 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # `act_ours` sets it on `new.target`, and the only thing it would change is whether the
     # target's own Normal/Fighting moves can touch a Ghost or a Gengar of ours.
     113: "Foresight, Odor Sleuth: the flag on US, so its Normal moves reach a Ghost of ours",
+    # Growth, and Shaymin's. Reached through `PRIMARY_SELF_RAISES`, which already had the row --
+    # this id was absent only because no configured target had the move, so it is the same
+    # one-line addition Double Team's mirror was. +1 Sp. Atk on a Lv30 Shaymin whose only attack
+    # is a 60-power Magical Leaf is close to harmless.
+    13: "Growth: Sp. Atk +1 on the target itself",
     210: "Water Sport: a per-battler volatile flag, so a second one fails",
     245: "Punishment: power computed from our positive stages (`punishment_power`)",
     # Uxie's and Azelf's. Three of the five are the first of their kind on either side, and the
@@ -233,6 +238,20 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # there at all (`targets.ENCOUNTER_ACCESS`) -- and a move sitting in a real moveset should
     # not read as a coverage gap when it is genuinely inert.
     257: "Surf: double damage vs a Dive target, which nothing here can be",
+    # Aerial Ace, and a pure asymmetry rather than a gap: effect 17 has been in
+    # `MODELLED_TARGET_EFFECTS` since Darkrai's Faint Attack, and `execute_move` handles an
+    # accuracy-0 damaging move identically whichever side uses it -- it simply spends no accuracy
+    # roll. It was refused on our half only because nobody had listed it.
+    17: "Aerial Ace and friends: accuracy 0, so it never misses and spends no accuracy roll",
+    # Earthquake, and it is here for exactly the reason 149 (Gust) and 257 (Surf) are. Effect 147
+    # is the hits-all-adjacent / double-damage-vs-Dig conditional; in a single battle there is no
+    # adjacent ally to hit, and nothing a configured encounter can do puts itself underground. So
+    # the condition never holds and the move is plain damage.
+    #
+    # Worth having now that the chipper for a Lv70 target is a real attacker rather than a
+    # Smeargle -- though note Earthquake is Ground, so a Levitate holder (Giratina Origin, both
+    # Lati twins) is immune and `deals_nothing` will say so.
+    147: "Earthquake: hits-all-adjacent, which in a single battle is plain damage",
 }
 
 
