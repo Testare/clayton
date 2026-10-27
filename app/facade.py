@@ -1079,8 +1079,20 @@ class Facade:
         """Rewind one reported turn (a misreport). A misplay is reported, not undone."""
         return self._hunt_sessions.get(session_id).undo()
 
-    def hunt_session_enter_pinning(self, session_id: str) -> dict:
-        return self._hunt_sessions.get(session_id).enter_pinning()
+    def hunt_session_enter_pinning(self, session_id: str,
+                                   declared_hp: int | None = None) -> dict:
+        """Move the run to Phase 1.5. `declared_hp` is what the PLAYER says the target is on.
+
+        **`None` means "trust the simulation", and that is now the default.** It used to force 1
+        unconditionally, which was right while Phase 2 required 1 HP and is wrong now that it does
+        not: a run deliberately solving higher up would have had every throw priced against a `b`
+        the battle does not have, and a plan built on it cannot land (clayton-6xu.3.14).
+
+        Passing 1 is still the right thing on the force path, which exists precisely for a model
+        that lags the game -- an unmodelled damage modifier leaves the simulation above 1 HP when
+        the HP bar says otherwise, and the bar is an observation while our figure is an output.
+        """
+        return self._hunt_sessions.get(session_id).enter_pinning(declared_hp=declared_hp)
 
     def hunt_session_enter_solving(self, session_id: str, force: bool = False) -> dict:
         """Start Phase 2. `force` proceeds despite the blockers the simulation reports.

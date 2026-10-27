@@ -6354,7 +6354,15 @@ function huntRunObserve(){
 // a spinner for the whole thing.
 async function huntStartSolving(force){
   if (_huntSnap && _huntSnap.phase === 1) {
-    await huntRunDo("hunt_session_enter_pinning");
+    // **`null` trusts the simulation's HP; only the FORCE path declares 1.**
+    //
+    // This used to declare 1 unconditionally, which was right while Phase 2 required 1 HP and is
+    // wrong now that it does not: pressing "Start solving" on a target the simulation has at 120
+    // would have told the solver it was on 1, pricing every throw against a `b` the battle does
+    // not have and planning a capture that cannot land. The force path still declares 1, because
+    // that is exactly what it is for -- its own confirm says "do this only if the game itself
+    // shows the target at 1 HP" (clayton-6xu.3.14).
+    await huntRunDo("hunt_session_enter_pinning", force ? 1 : null);
     if (!_huntSnap || _huntSnap.phase !== 2) return;   // a contradiction stopped us
   }
   await huntRunDo("hunt_session_enter_solving", !!force);
@@ -6864,10 +6872,26 @@ function renderHuntRun(){
   const solveReady = s.ready_to_solve;
   const phaseButtons = (s.phase === 1 || s.phase === 2)
     ? (solveReady
+        // **The HP comes from the state, not from an assumption.** It read "is at 1 HP"
+        // unconditionally, which was true while Phase 2 required it and became a plain falsehood
+        // the moment any HP was accepted -- the panel announced "Giratina is at 1 HP — ready to
+        // solve" over a Giratina on 198 (clayton-6xu.3.14).
+        //
+        // Still RECOMMENDS 1 HP when the target is above it, because it is genuinely better and
+        // not merely traditional: at a x1 ball, 1 HP is worth about 3x on every throw (8.09%
+        // against 23.42% for a catch-rate-30 target), which is the difference between a capture
+        // window every twelve stream positions and every four. So this says what the state is and
+        // what chipping would buy, and lets the player decide.
         ? `<div class="panel ok-cta"><div class="section-label">${esc(s.target.name)} is at
-             1 HP${s.target.status === "none" ? "" : ` and ${esc(s.target.status)}`} —
+             ${s.target.hp} HP${s.target.hp === 1 ? "" : ` of ${s.target.max_hp}`}${
+             s.target.status === "none" ? "" : ` and ${esc(s.target.status)}`} —
              ready to solve</div>
            <div class="hr-small muted">The seed is pinned and nothing is in the way.${
+             s.target.hp > 1
+               ? ` Chipping further still helps: every point of HP raises the catch chance, and`
+                 + ` 1 HP is worth roughly three times a full-HP throw in a plain ball. Solving`
+                 + ` from here is supported, just slower to find a window.`
+               : ""}${
              s.target.status === "none"
                ? " A status is optional; it raises the catch rate, and the solver can apply one"
                  + " itself if your moveset can."

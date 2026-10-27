@@ -1695,9 +1695,14 @@ class HuntSession:
 
     # -- phases ---------------------------------------------------------
 
-    def enter_pinning(self) -> dict:
+    def enter_pinning(self, declared_hp: int | None = 1) -> dict:
+        """`declared_hp=None` trusts the simulation; a number is the player's word for it.
+
+        The default stays 1 for the callers that mean it (the chip-to-1 flow and the force path);
+        the app passes `None` explicitly now that any HP solves. See `Session.enter_pinning`.
+        """
         self._moved()
-        self._session.enter_pinning()
+        self._session.enter_pinning(declared_hp=declared_hp)
         self.transitions.append((len(self.turns), Phase.PINNING))
         return self.snapshot()
 
