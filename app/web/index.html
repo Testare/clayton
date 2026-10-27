@@ -5829,6 +5829,15 @@ function hrTargetBlocks(){
       if (hrTargetCanMiss(info))
         opts2.push(hrChip("It failed", `hrSet('target',${base},result:''})`,
                           t.target.result === ""));
+    } else if (info.charges){
+      // A two-turn move's CHARGE turn. It fires nothing -- no crit, no damage, not even an
+      // accuracy roll -- so the only thing the player saw is the vanish, and the turn renders the
+      // bare slot. This used to fall through to the damaging branch, which offered "Hit us" and
+      // "Critical hit" as the only answers to a turn that can render neither and then asked for
+      // an HP figure that had not moved (`sim.starts_charge_turn`). The HP question goes with it:
+      // `hrNeedsHp` keys off this answer being h/!.
+      opts2.push(hrChip(`It vanished`, `hrSet('target',${base},result:''})`,
+                        t.target.result === ""));
     } else if (info.damaging){
       opts2.push(hrChip("Hit us", `hrSet('target',${base},result:'h'})`, t.target.result === "h"));
       opts2.push(hrChip("Critical hit", `hrSet('target',${base},result:'!'})`,
@@ -5849,6 +5858,14 @@ function hrTargetBlocks(){
           t.target = {slot: t.target.slot,
                       result: (info.damaging && !info.guaranteed_fail) ? "h" : ""};
         })) out.push(hrChips(`What happened to ${info.name}?`, opts2));
+    // Said out loud when the turn auto-answers, because this is the one auto-answered turn the
+    // player has a reason to doubt: they picked a damaging move and were asked nothing about it.
+    // The next turn is the one that hits, and nothing we throw can reach it in between.
+    else if (info.charges)
+      out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
+          vanished instantly — ${esc(info.name)} is a two-turn move, so it deals its damage next
+          turn and nothing can touch it until then. Nothing to report for it this turn.
+        </div></div>`);
 
     // A flinch is the exception: it is announced on the victim's turn, so a flinching move that
     // went SECOND showed the player nothing at all. Asking anyway -- which is what this did for

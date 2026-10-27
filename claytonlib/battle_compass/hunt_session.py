@@ -49,7 +49,7 @@ from claytonlib.battle_compass.sim import (
     SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
     can_flinch, can_inflict, can_miss, deals_nothing, is_semi_invulnerable,
-    pending_future_sight,
+    pending_future_sight, starts_charge_turn,
     effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
     secondary_status,
     simulate_turn,
@@ -985,11 +985,16 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "secondary_status": None, "secondary_label": None,
                         "secondary_side": None, "stat_drop": None, "self_raise": None,
                         "deals_nothing": False, "applies_foresight": False,
-                        "no_effect_hint": None,
+                        "no_effect_hint": None, "charges": False,
                         "makes_contact": False,
                         "effect_chance": 0, "priority": 0, "pp": 0,
                         "unselectable_reason": None})
             continue
+        #: Whether picking this slot now is the CHARGE turn of a two-turn move. Computed once
+        #: and read by four of the fields below, because every one of them is a question about a
+        #: particular TURN rather than about the move: Shadow Force is physical, 100-accuracy and
+        #: damaging on its second turn, and none of those is true of its first.
+        charging = starts_charge_turn(battler, slot)
         out.append({
             "slot": slot,
             "name": move.name,
@@ -1010,7 +1015,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # misses nor crits: the damage is banked and the accuracy check is deferred two turns
             # (`banked_hit`). Reporting it as damaging put "Hit us" and "Critical hit" in the
             # interview for a turn that can render neither.
-            "damaging": move.category != CATEGORY_STATUS and not banked_hit(move),
+            "damaging": (move.category != CATEGORY_STATUS and not banked_hit(move)
+                         and not charging),
             # Stage-dependent: a 100%-accuracy move becomes missable under an accuracy drop or
             # a raised evasion, so this is computed against the real defender, not assumed.
             # The HELD ITEMS go in too, not just the stage: a Brightpowder on the defender makes
@@ -1018,13 +1024,14 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # would refuse to let the player report a miss that really happened.
             "can_miss": can_miss(move, accuracy_net_stage(battler, defender)
                                  if defender is not None else 0,
-                                 attacker=battler, defender=defender),
+                                 attacker=battler, defender=defender,
+                                 charge_turn=charging),
             # The stage's CONSEQUENCE, not the stage. "Sacred Fire 31" is what a player wants off
             # six Flashes; "accuracy_stage -6" makes them do the arithmetic. 0 means the move
             # bypasses the check entirely (Mean Look, Light Screen), which is not the same as 0%.
             "effective_accuracy": _effective_accuracy(
                 move, accuracy_net_stage(battler, defender) if defender is not None else 0,
-                attacker=battler, defender=defender),
+                attacker=battler, defender=defender, charge_turn=charging),
             "guaranteed_fail": defender is not None and will_fail(move, defender),
             # A secondary effect is observable ("Smeargle's Attack fell!") and renders its own
             # `~` token, so the interview has to ask about it or such a turn is unreportable.
@@ -1061,6 +1068,11 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # `applies_status`, and live on the same turn for the same reason: a Taunt we land
             # resolves before the target's half of the turn.
             "applies_taunt": move.effect == EFFECT_TAUNT,
+            # Whether this turn is a two-turn move's charge turn, so the page can say what the
+            # player just watched ("it vanished") instead of leaving a turn with nothing asked
+            # about it looking like a question that failed to render. The three flags above
+            # already carry the CONSEQUENCES; this one carries the reason.
+            "charges": charging,
             # Contact, which decides whether a Static holder's ability could have fired. The
             # page needs it because Static's paralysis is announced by no move at all, so the
             # interview has to ask for it or the roll goes unreported (clayton-957.10.13).

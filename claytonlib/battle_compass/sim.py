@@ -546,7 +546,8 @@ def accuracy_net_stage(attacker: "Battler", defender: "Battler") -> int:
 
 
 def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
-                        defender=None, deferred_check: bool = False) -> int:
+                        defender=None, deferred_check: bool = False,
+                        charge_turn: bool = False) -> int:
     """Accuracy after the combined accuracy/evasion stage.
 
     0 means the move bypasses the check entirely. `net_stage` is the attacker's accuracy stage
@@ -567,6 +568,12 @@ def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
     """
     if move.accuracy == 0:
         return 0
+    if charge_turn:
+        # "Charge-up moves don't consider accuracy on their first turn" --
+        # `CheckMoveHitAccuracy` returns 0 before its roll [battle_controller_player.c:2905-2907].
+        # The same shape as the Future Sight line below: a real accuracy on the move, bypassed on
+        # this particular turn, so the caller has to say which turn it is asking about.
+        return 0
     if move.effect == EFFECT_FUTURE_SIGHT and not deferred_check:
         # The accuracy check does not happen on the turn this move is USED: the effect script
         # sets `SYSCTL_NONSTANDARD_ACC_CHECK` and `CheckMoveHitAccuracy` returns 0
@@ -582,7 +589,8 @@ def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
         attacker_item=getattr(attacker, "held_item", "") or "")
 
 
-def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None) -> bool:
+def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None,
+             charge_turn: bool = False) -> bool:
     """Whether an accuracy roll can actually fail.
 
     Accuracy 0 bypasses the check, and accuracy 100 at a neutral or positive stage passes it
@@ -599,8 +607,15 @@ def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None) ->
     the question this function is actually asked: it is asked about the turn a move is USED, and
     a Future Sight cannot miss on that turn. Its check is deferred to the end of the turn it
     lands, where the verdict gets a token of its own (`tokens.FUTURE_SIGHT`).
+
+    `charge_turn` is the same shape of answer for the other move whose accuracy belongs to a
+    different turn from the one it was picked on: a Shadow Force on its charge turn cannot miss,
+    because the check is skipped entirely and spends no roll (`starts_charge_turn`). Unlike
+    Future Sight's, this one cannot be read off the move -- the same move DOES roll accuracy on
+    its second turn -- so the caller has to say which turn it means.
     """
-    return 0 < _effective_accuracy(move, net_stage, attacker=attacker, defender=defender) < 100
+    return 0 < _effective_accuracy(move, net_stage, attacker=attacker, defender=defender,
+                                   charge_turn=charge_turn) < 100
 
 
 def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None) -> bool:
@@ -1616,6 +1631,30 @@ def is_semi_invulnerable(battler: Battler) -> bool:
     return move is not None and move.effect in SEMI_INVULNERABLE_EFFECTS
 
 
+def starts_charge_turn(battler: Battler, slot: int) -> bool:
+    """Whether picking `slot` right now is the CHARGE turn of a two-turn move.
+
+    The other half of `is_semi_invulnerable`: that one asks whether a battler is already away,
+    this one whether it is about to go. Same condition as `execute_move`'s own first branch
+    (``move.effect in SEMI_INVULNERABLE_EFFECTS and attacker.charging_slot != slot``), named once
+    so the simulator and the interview cannot disagree about which turn it is.
+
+    **Why the interview needs it.** A charge turn fires nothing: `execute_move` returns before
+    CalcCrit, CalcDamage and the accuracy check, so it renders the bare slot token, spends no
+    rolls and moves no HP. But Shadow Force is a PHYSICAL move by category, so everything that
+    asked "is this damaging" answered yes on both of its turns -- and the interview offered "Hit
+    us" and "Critical hit" as the only answers to a turn that can render neither, then asked for
+    an HP figure that had not changed. `tokens.turn_requires_hp` and the simulator were both
+    already right; only the questions were wrong.
+
+    Reads the MOVE's effect rather than a list of names, so Fly, Dig and Dive are covered the day
+    a target has one -- see `SEMI_INVULNERABLE_EFFECTS`.
+    """
+    move = battler.move(slot)
+    return (move is not None and move.effect in SEMI_INVULNERABLE_EFFECTS
+            and battler.charging_slot != slot)
+
+
 def nightmare_tick(battler: Battler) -> int:
     """Nightmare's end-of-turn damage: a quarter of max HP, or 0 if it does not apply.
 
@@ -1992,7 +2031,27 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # Neither a hit nor a miss: the token is the bare slot, as every other blocked move's is.
         return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False,
                                 ends_charge=attacker.charging_slot == slot)
-    parts.append(tok.CRIT if critical else tok.HIT)
+    # **A type immunity renders no hit marker**, and the ROM says so in its own vocabulary:
+    # `MOVE_STATUS_INEFFECTIVE` is a member of `MOVE_STATUS_DID_NOT_HIT`
+    # (include/constants/battle/moves.h:80-82), sitting in the same group as `MOVE_STATUS_MISSED`
+    # and `MOVE_STATUS_SEMI_INVULNERABLE`. The player sees "It doesn't affect Smeargle!" and no
+    # hit, no crit and no HP change -- so the bare slot, exactly as a soundproofed move above.
+    #
+    # Live against Giratina and the reason this was found: Ominous Wind and Shadow Force are both
+    # Ghost and the planned lead is a Normal-typed Smeargle, so half of Giratina's turns land
+    # here. With the marker on, `tokens.turn_requires_hp` demanded an HP token for a turn whose HP
+    # had not moved, while `simulate_turn` emits one only on a CHANGE -- so the prediction was
+    # `E4h` against a report of `E4hHP154` and every candidate was eliminated, the true seed
+    # included.
+    #
+    # Deliberately NOT an early return, unlike soundproof's: that would change what the turn
+    # spends. The secondary proc roll below is still spent and still applied, which is the one
+    # part of this the ROM reading disputes -- `BtlCmd_CheckMoveHit` jumps past the side-effect
+    # subscript on `DID_NOT_HIT` (battle_script.c:6128), implying both the roll and the effect are
+    # skipped. That is an advance-count claim with no capture behind it, so it is left alone and
+    # owed one (clayton-957.26.6). This change is tokens only.
+    if not deals_nothing(move, defender, attacker):
+        parts.append(tok.CRIT if critical else tok.HIT)
 
     starts_uproar = 0
     if move.effect == EFFECT_UPROAR and not attacker.uproar_turns:

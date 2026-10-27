@@ -23,11 +23,15 @@ invulnerability check, so Shadow Force costs us two turns of moves and nothing o
 """
 import unittest
 from dataclasses import replace
+from pathlib import Path
 
 from claytonlib.battle.stats import abilities, derive_species_stats, species
+from claytonlib.battle_compass import tokens as tok
+from claytonlib.battle_compass.hunt_session import move_info
 from claytonlib.battle_compass.sim import (
     EFFECT_SHADOW_FORCE, MODELLED_TARGET_EFFECTS, SEMI_INVULNERABLE_EFFECTS, HuntConfig,
     execute_move, is_semi_invulnerable, opening_rng, select_target_move, simulate_turn,
+    starts_charge_turn,
 )
 from claytonlib.battle_compass.state import Action, BattleState, Battler, Status
 from claytonlib.battle_compass.targets import (
@@ -345,6 +349,180 @@ class TestItRunsEndToEnd(unittest.TestCase):
                             break
                 for slot in ("E1", "E2", "E3", "E4"):
                     self.assertTrue(any(p.startswith(slot) for p in seen), f"{key}: {slot}")
+
+class TestTheInterviewQuestionsOnTheChargeTurn(unittest.TestCase):
+    """What the PLAYER is asked, which is a different thing from what the simulator does.
+
+    The simulator and the token grammar were both already right about the charge turn: it renders
+    the bare slot (`execute_move` returns before CalcCrit, CalcDamage and the accuracy check) and
+    `tokens.turn_requires_hp` therefore asks for no HP. But Shadow Force is **physical and
+    100-accuracy by category**, and `move_info` read those off the move rather than off the turn
+    -- so the interview offered "Hit us" and "Critical hit" as the only answers to a turn that can
+    render neither, and then asked for an HP figure that had not moved.
+    """
+
+    def _info(self, target, move_name="Shadow Force"):
+        rows = {row["name"]: row for row in move_info(target, _ours())}
+        return rows[move_name]
+
+    def test_the_predicate_tells_the_two_turns_apart(self):
+        self.assertTrue(starts_charge_turn(_giratina(), FORCE))
+        self.assertFalse(starts_charge_turn(_giratina(charging_slot=FORCE), FORCE))
+
+    def test_an_ordinary_move_never_charges(self):
+        """Read off the move's EFFECT, so a charge lock on something else is not a charge turn --
+        the same distinction `is_semi_invulnerable` makes."""
+        for slot in (0, 1, 2):
+            with self.subTest(slot=slot):
+                self.assertFalse(starts_charge_turn(_giratina(), slot))
+
+    def test_an_empty_slot_does_not_charge(self):
+        self.assertFalse(starts_charge_turn(_ours(), 3))
+
+    def test_the_charge_turn_is_not_offered_as_damaging(self):
+        """The bug as reported: the first turn asked whether it hit."""
+        self.assertFalse(self._info(_giratina())["damaging"])
+
+    def test_the_fire_turn_IS_damaging(self):
+        """The other half, and the reason this could not be fixed on the move alone: the same
+        move really does hit on its second turn."""
+        self.assertTrue(self._info(_giratina(charging_slot=FORCE))["damaging"])
+
+    def test_the_charge_turn_cannot_miss_and_has_no_accuracy(self):
+        """"Charge-up moves don't consider accuracy on their first turn" -- the accuracy check
+        returns before its roll, so 0 means "bypassed" rather than "0%"."""
+        info = self._info(_giratina())
+        self.assertFalse(info["can_miss"])
+        self.assertEqual(info["effective_accuracy"], 0)
+
+    def test_the_fire_turn_has_its_real_accuracy_back(self):
+        self.assertEqual(self._info(_giratina(charging_slot=FORCE))["effective_accuracy"], 100)
+
+    def test_the_charge_turn_is_flagged_so_the_page_can_say_why(self):
+        """The three flags above carry the consequences; this one carries the reason, so a turn
+        with nothing asked about it does not read as a question that failed to render."""
+        self.assertTrue(self._info(_giratina())["charges"])
+        self.assertFalse(self._info(_giratina(charging_slot=FORCE))["charges"])
+
+    def test_a_charge_turn_cannot_miss_even_with_our_evasion_raised(self):
+        """The case that makes `can_miss` state-dependent rather than a property of the move: a
+        Double Team of ours makes a 100-accuracy move missable, and must still not make a charge
+        turn missable."""
+        rows = {row["name"]: row
+                for row in move_info(_giratina(), _ours(evasion_stage=3))}
+        self.assertFalse(rows["Shadow Force"]["can_miss"])
+        # ...while the move that really can miss this turn still says so.
+        self.assertTrue(rows["Dragon Claw"]["can_miss"])
+
+    def test_nothing_else_in_the_moveset_is_affected(self):
+        for name in ("Ominous Wind", "Ancient Power", "Dragon Claw"):
+            with self.subTest(name):
+                info = self._info(_giratina(), name)
+                self.assertFalse(info["charges"])
+                self.assertTrue(info["damaging"])
+
+    def test_the_charge_turn_needs_no_hp_and_validates(self):
+        """The end of the chain the bug ran down: `hrNeedsHp` keys off the hit answer, so a charge
+        turn that is not damaging asks for no HP -- and the turn the simulator predicts is one the
+        grammar accepts."""
+        config = _config()
+        state = BattleState(ours=_ours(), target=_forced(),
+                            rng=opening_rng(0x0C0E02CA, config))
+        turn = simulate_turn(state, Action.MOVE_2, config).log[-1]
+        self.assertIn("E4", turn)
+        self.assertNotIn("h", turn)
+        self.assertFalse(tok.turn_requires_hp(turn))
+        self.assertEqual(tok.validate_turn(list(turn)), [])
+
+    def test_the_page_asks_the_charge_turn_question_differently(self):
+        html = (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
+        self.assertIn("} else if (info.charges){", html)
+        self.assertIn("It vanished", html)
+        self.assertIn("vanished instantly", html)
+
+
+class TestATypeImmuneHitRendersNoMarker(unittest.TestCase):
+    """Found by fixing the charge turn, and the same family of bug: a move that connects and does
+    nothing was reporting a hit.
+
+    The ROM groups a type immunity with a miss. `MOVE_STATUS_INEFFECTIVE` is a member of
+    `MOVE_STATUS_DID_NOT_HIT` (include/constants/battle/moves.h:80-82), next to
+    `MOVE_STATUS_MISSED` and `MOVE_STATUS_SEMI_INVULNERABLE` -- the player sees "It doesn't affect
+    Smeargle!" and no hit, no crit and no HP change.
+
+    **Why it was a run-ending bug rather than a cosmetic one.** `simulate_turn` emits an HP token
+    only on a CHANGE, while `tokens.turn_requires_hp` demands one for any ``E`` token carrying a
+    hit marker. So against the planned Normal-typed lead the prediction was ``E4h`` and the
+    interview built ``E4hHP154``, which matches no candidate at all -- the true seed eliminated
+    with no contradiction raised. Live on half of Giratina's turns, since Ominous Wind and Shadow
+    Force are both Ghost.
+
+    What this does NOT change is what the turn SPENDS: see clayton-957.26.6, which owns the
+    question of whether an ineffective hit's secondary proc roll happens at all.
+    """
+
+    def test_a_ghost_move_against_a_normal_type_renders_the_bare_slot(self):
+        _, wind = execute_move(0x1234_5678, resolve_move("Ominous Wind"), _giratina(), _ours(),
+                               actor="E", slot=0)
+        self.assertEqual(wind.damage, 0)
+        self.assertNotIn("h", wind.tokens)
+        self.assertNotIn("!", wind.tokens)
+
+    def test_the_fire_turn_against_a_normal_type_renders_it_too(self):
+        """Shadow Force's second turn is an ordinary damaging move, and ordinary includes this."""
+        _, fired = execute_move(0x1234_5678, resolve_move("Shadow Force"),
+                                _giratina(charging_slot=FORCE), _ours(), actor="E", slot=FORCE)
+        self.assertEqual(fired.damage, 0)
+        self.assertNotIn("h", fired.tokens)
+
+    def test_a_defender_it_CAN_touch_still_gets_its_marker(self):
+        """Magneton is Electric/Steel, and Steel merely resists Ghost. So this is a real hit and
+        has to keep reading as one -- the suppression is about zero, not about "not very"."""
+        _, fired = execute_move(0x1234_5678, resolve_move("Shadow Force"),
+                                _giratina(charging_slot=FORCE), _hittable(),
+                                actor="E", slot=FORCE)
+        self.assertGreater(fired.damage, 0)
+        self.assertTrue("h" in fired.tokens or "!" in fired.tokens)
+
+    def test_it_spends_exactly_the_same_rolls_either_way(self):
+        """**Tokens only.** The marker is suppressed and nothing about the stream moves, which is
+        what keeps this clear of the advance-count question in clayton-957.26.6."""
+        move = resolve_move("Shadow Force")
+        immune_rng, immune = execute_move(0x1234_5678, move, _giratina(charging_slot=FORCE),
+                                          _ours(), actor="E", slot=FORCE)
+        hit_rng, landed = execute_move(0x1234_5678, move, _giratina(charging_slot=FORCE),
+                                       _hittable(), actor="E", slot=FORCE)
+        self.assertEqual(immune.rolls, landed.rolls)
+        self.assertEqual(immune_rng, hit_rng)
+
+    def test_our_own_false_swipe_is_subject_to_the_same_rule(self):
+        """It reads the pairing rather than the side, so a Normal move of OURS against a Ghost
+        renders the bare slot as well -- and gets its marker back once a Foresight lands."""
+        false_swipe = resolve_move("False Swipe")
+        _, blocked = execute_move(0x0C0E_02CA, false_swipe, _ours(), _giratina(),
+                                  actor="M", slot=0)
+        _, connected = execute_move(0x0C0E_02CA, false_swipe, _ours(),
+                                    _giratina(identified=True), actor="M", slot=0)
+        self.assertNotIn("h", blocked.tokens)
+        self.assertIn("h", connected.tokens)
+
+    def test_a_whole_immune_turn_validates_and_needs_no_hp(self):
+        """The regression, stated as the contradiction it caused: what the simulator predicts and
+        what the grammar requires now agree."""
+        config = _config()
+        state = BattleState(ours=_ours(), target=_forced(charging_slot=FORCE),
+                            rng=opening_rng(0x0C0E02CA, config))
+        turn = simulate_turn(state, Action.MOVE_1, config).log[-1]
+        self.assertFalse(tok.turn_requires_hp(turn))
+        self.assertEqual(tok.validate_turn(list(turn)), [])
+
+    def test_levitate_is_covered_by_the_same_rule(self):
+        """An Earthquake at Giratina Origin is zero for an ABILITY rather than for the chart, and
+        the player sees the same "doesn't affect" message -- so the same bare slot."""
+        _, outcome = execute_move(0x1234_5678, resolve_move("Earthquake"),
+                                  _hittable(), _giratina(), actor="M", slot=0)
+        self.assertEqual(outcome.damage, 0)
+        self.assertNotIn("h", outcome.tokens)
 
 
 if __name__ == "__main__":
