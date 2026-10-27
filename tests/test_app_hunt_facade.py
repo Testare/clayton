@@ -187,6 +187,45 @@ class TestHuntReadiness(HuntFacadeCase):
         self.assertLessEqual(alphabet["reachability_percent"], 99)
         self.assertIn("Thunder Wave", " ".join(alphabet["costs_by_action"]))
 
+    def test_a_ghost_target_is_reported_as_unchippable_before_the_run(self):
+        """The whole point of the chip check, through the facade rather than through
+        `chip_warnings` -- because what it is really testing is the WIRING: the probe's types, the
+        party's abilities and the readiness key all have to line up, and a test on the function
+        alone passes with any of them missing (the same argument as the ABILITY test below).
+
+        Giratina is Ghost/Dragon and the fixture Smeargle's only attack is a Normal False Swipe,
+        so nothing in this party can take it to 1 HP (clayton-957.26.4).
+        """
+        hunt = self._hunt(
+            target={"species": "giratina-origin", "level": 47, "nature": "Timid",
+                    "ivs": dict(PERFECT_IVS)},
+            party=[{"pokemon_id": self.ids["Smeargle"]}])
+        chip = self.api.hunt_readiness(hunt["id"])["chip"]
+        self.assertEqual(len(chip), 1, chip)
+        self.assertIn("False Swipe", chip[0])
+        self.assertIn("Foresight or Odor Sleuth", chip[0])
+
+    def test_the_suicune_fixture_has_nothing_to_say_about_chipping(self):
+        """A warning has to earn its line: the default target blocks nothing, so the section must
+        not appear at all."""
+        self.assertEqual(self.api.hunt_readiness(self._hunt()["id"])["chip"], [])
+
+    def test_a_scrappy_holder_in_the_party_silences_it(self):
+        """Reads the party's ABILITIES, which is the half a test on `chip_warnings` cannot reach:
+        the facade has to collect them off the profile entries and hand them over, and without
+        that a Scrappy Kangaskhan is warned about when it is the answer.
+        """
+        kangaskhan = self.api.add_party_pokemon(self.profile["id"], {
+            "name": "Kangaskhan", "species": "kangaskhan", "level": 50, "ability": "Scrappy",
+            "moveset": ["False Swipe"], "max_pp": {"1": 40},
+            "stats": {"hp": 190, "atk": 125, "def": 100,
+                      "spa": 60, "spd": 80, "spe": 110}})["pokemon_id"]
+        hunt = self._hunt(
+            target={"species": "giratina-origin", "level": 47, "nature": "Timid",
+                    "ivs": dict(PERFECT_IVS)},
+            party=[{"pokemon_id": kangaskhan}])
+        self.assertEqual(self.api.hunt_readiness(hunt["id"])["chip"], [])
+
     def test_the_party_battlers_carry_their_ABILITY(self):
         """A regression test for a one-field omission with a wide blast radius.
 

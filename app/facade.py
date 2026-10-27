@@ -622,24 +622,37 @@ class Facade:
 
     @staticmethod
     def _target_ability_probe(hunt, profile):
-        """A `Battler` carrying the target's name and ability, or None if it has no row yet.
+        """A `Battler` carrying the target's name, ability and TYPES, or None if it has no row yet.
 
         Deliberately minimal. Everything that asks "what would this target's ability do to our
-        move" reads those two fields and nothing else, and building the real Battler needs a
-        level, a nature and a full IV spread -- none of which a half-configured hunt has. So the
-        advice is available from the moment a species is typed.
+        move" reads those fields and nothing else, and building the real Battler needs a level, a
+        nature and a full IV spread -- none of which a half-configured hunt has. So the advice is
+        available from the moment a species is typed.
+
+        **The types used to be hardcoded to Normal.** That is harmless today -- the one caller
+        (`sim.unsupported_our_moves` -> `unselectable_reason`) reads the ability alone, for Flash
+        Fire -- so this is a correction rather than a bug fix, and it is worth making anyway: a
+        probe that ASSERTS a typing it does not have is a trap for the next question asked of it,
+        and "is this move type-immune" is now a question the codebase asks elsewhere
+        (`sim.deals_nothing`). The real types are one lookup away, off the same `stats_key` row
+        the stats come from, so a forme-split target answers for the forme it is met as.
+
+        Note that `chip_warnings` does NOT read them from here -- it resolves the species itself,
+        because it needs the Pokedex name for its messages too.
         """
         from claytonlib.battle_compass.state import Battler
-        from claytonlib.battle_compass.targets import target_ability
+        from claytonlib.battle_compass.targets import target_ability, target_types
 
         species_name = (hunt.target.species or "").strip()
         if not species_name:
             return None
+        game = profile.game if profile else ""
         try:
-            ability = target_ability(species_name, profile.game if profile else "")
+            ability = target_ability(species_name, game)
+            types = target_types(species_name, game)
         except KeyError:
             return None
-        return Battler(name=species_name, level=1, types=("Normal",), stats={"hp": 1},
+        return Battler(name=species_name, level=1, types=types, stats={"hp": 1},
                        ability=ability)
 
     @staticmethod
@@ -1248,7 +1261,7 @@ class Facade:
         )
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
-        from claytonlib.battle_compass.targets import access_warnings
+        from claytonlib.battle_compass.targets import access_warnings, chip_warnings
         from claytonlib.moves import resolve_move
 
         h = self._load_hunt(hunt_id)
@@ -1264,6 +1277,13 @@ class Facade:
             # whether it can beat it and was not being asked at all. Lugia is behind Surf and
             # Whirlpool, and the party you arrive with is the party you fight with.
             "access": [],
+            # ...and whether it can DAMAGE the encounter, which is the other half of that
+            # question. Phase 1 needs the target on 1 HP and False Swipe is the only move that
+            # can safely get it there -- but False Swipe is Normal, so against Giratina it does
+            # nothing at all until a Foresight or Odor Sleuth lands. That is a one-slot decision
+            # made before the run, and it was only discoverable after hitting the seed
+            # (clayton-957.26.4).
+            "chip": [],
             # Held items the simulator cannot model, plus the ones left blank. A misconfigured
             # item SHOULD desync the run -- what was missing is being told before the encounter
             # instead of as a turn-2 contradiction blaming the window (clayton-957.10.15).
@@ -1296,6 +1316,10 @@ class Facade:
         move_names: dict[str, list[str]] = {}
         held_items: dict[str, str] = {}
         party_species: dict[str, str] = {}
+        #: Abilities, read for Scrappy alone by `chip_warnings` -- the attacker-side route to
+        #: removing a Ghost immunity. Without it a Scrappy Kangaskhan gets warned about when it
+        #: is the answer rather than the problem.
+        our_abilities: dict[str, str] = {}
         our_speeds: dict[str, int] = {}
         #: Speed-check label -> the Pokemon's own name, for joining the two dicts above.
         speed_labels: dict[str, str] = {}
@@ -1315,6 +1339,7 @@ class Facade:
             # Species as well as moves, so the field-move warning can name who COULD carry a
             # missing HM -- and say plainly when nobody can, which is the Lugia party's answer.
             party_species[pokemon.name] = pokemon.species or ""
+            our_abilities[pokemon.name] = pokemon.ability or ""
             for name, why in unsupported_our_moves(pokemon.moveset, target_probe):
                 result["move_coverage"].append(
                     {"pokemon": pokemon.name, "move": name, "reason": why})
@@ -1335,6 +1360,11 @@ class Facade:
         # Asked of the target regardless of whether a party is configured yet: "you will need
         # Surf and Whirlpool" is most useful BEFORE the party is picked, not after.
         result["access"] = access_warnings(h.target.species, move_names, party_species)
+        # Asked only once a party exists, unlike `access`: "nothing can damage it" is not a
+        # statement worth making about an empty party list, where it is trivially true and tells
+        # the player only that they have not finished configuring yet.
+        result["chip"] = chip_warnings(h.target.species, movesets, our_abilities,
+                                       profile.game if profile else "")
         result["held_items"] = unmodelled_held_items(held_items)
 
         if movesets or our_speeds:

@@ -370,6 +370,113 @@ def access_warnings(species: str, movesets: dict[str, list[str]],
     return out
 
 
+def chip_warnings(species: str, movesets: "dict[str, list]",
+                  our_abilities: "dict[str, str] | None" = None,
+                  game: str = "") -> list[str]:
+    """Warnings about being able to DAMAGE `species`, given ``{pokemon name: Moves}``.
+
+    The sibling of `access_warnings`, and the same shape for the same reason: both answer a
+    question about the party that is only worth answering *before* the encounter. That one asks
+    whether the party can reach the fight; this one asks whether it can win the half of it that
+    comes before a ball.
+
+    **Why it exists.** Phase 1 needs the target on 1 HP and False Swipe is the only move that can
+    safely put it there (effect 101's floor). False Swipe is Normal, so against a Ghost target it
+    does *nothing* — and the player found that out after hitting the seed, in an interview that
+    showed a hit marker and an unmoved HP bar. The immunity is removable (a Foresight, an Odor
+    Sleuth, or a Scrappy attacker), which is exactly why the warning is worth giving: it names a
+    fix that costs one party slot, decided before the run rather than during it.
+
+    **Advisory, never blocking**, like every other warning in this module. Two reasons, and the
+    second is the one that matters: the hunt's party list is not necessarily the game party, and a
+    player may knowingly intend to chip with something this cannot price (a fixed-damage move, a
+    Pokemon the hunt does not list). A tool that refused to start on this would be wrong more
+    often than right.
+
+    `our_abilities` (``{pokemon name: ability}``) is optional and is read for Scrappy alone — the
+    attacker-side route to the same removal (`battle.damage.ignores_ghost_immunity`). Without it a
+    Scrappy Kangaskhan would be warned about when it is in fact the answer.
+
+    Unknown target, or no row for it -> no warnings, as `access_warnings` has it.
+    """
+    from claytonlib.battle.damage import is_type_immune
+    from claytonlib.battle_compass.sim import EFFECT_FORESIGHT, FALSE_SWIPE_EFFECT
+    from claytonlib.moves import CATEGORY_STATUS
+    from claytonlib.species_names import display_species_name
+
+    try:
+        _, row = resolve(species, game)
+        types = target_types(species, game)
+        ability = target_ability(species, game)
+    except (KeyError, ValueError):
+        # KeyError is the documented "no row for it". ValueError is the narrower case of a
+        # profile holding a game string this build does not know -- `resolve` raises it while
+        # BUILDING its own KeyError message, through `game_name`. Either way the honest answer is
+        # no advice: a misconfigured game must not take the whole readiness panel down with it.
+        return []
+
+    abilities = our_abilities or {}
+    #: The Pokedex name, taken off the row rather than off the encounter key -- which for a
+    #: forme-split target is the difference between "Giratina" and "Giratina-Origin" in the middle
+    #: of a sentence. The forme is not worth naming here anyway: both share a typing, and this
+    #: warning is about typing.
+    named = display_species_name(row.species) or row.species
+
+    def blocked(move, holder: str, *, identified: bool) -> bool:
+        return is_type_immune(move, types, defender_ability=ability, identified=identified,
+                              attacker_ability=abilities.get(holder, ""))
+
+    #: Who could lift a Ghost immunity, as ``(holder, move name)``. A list because naming the
+    #: holder is what makes the advice actionable -- "use Odor Sleuth" is a move, "use Odor Sleuth
+    #: (Smeargle)" is a turn.
+    identifiers = [(holder, move.name)
+                   for holder, moves in movesets.items() for move in moves
+                   if move is not None and move.effect == EFFECT_FORESIGHT]
+    fix = (f"use {identifiers[0][1]} ({identifiers[0][0]}) first"
+           if identifiers else
+           "add Foresight or Odor Sleuth to the party, or bring a Scrappy attacker")
+
+    out: list[str] = []
+    for holder, moves in movesets.items():
+        attacks = [m for m in moves if m is not None and m.category != CATEGORY_STATUS]
+        swipes = [m for m in attacks if m.effect == FALSE_SWIPE_EFFECT]
+
+        # The specific case first, because it is the one with a one-turn fix and the one the whole
+        # chip phase rests on.
+        for move in swipes:
+            if not blocked(move, holder, identified=False):
+                continue
+            if blocked(move, holder, identified=True):
+                # Not the Ghost immunity, so no Foresight would help. Unreachable with a
+                # Normal-typed False Swipe -- Normal is zeroed by nothing but Ghost -- and said
+                # plainly anyway rather than assumed, since the test is free and a Sketched
+                # effect-101 move of another type would land here.
+                out.append(
+                    f"{holder}'s {move.name} cannot touch {named} at all — its typing blocks it "
+                    f"and identifying it would not change that.")
+            else:
+                out.append(
+                    f"{holder}'s {move.name} does nothing to {named} until it is identified "
+                    f"({'/'.join(types)} blocks Normal and Fighting) — {fix}.")
+
+        # ...then the general one, for a Pokemon whose whole attacking half is blocked. Skipped
+        # where a False Swipe above has already spoken for it, so one problem is not reported
+        # twice. A Pokemon with no attacks at all is not reported either: a dedicated paralyzer or
+        # a Flash mule is a legitimate party member, not a coverage gap.
+        if swipes or not attacks:
+            continue
+        if any(not blocked(move, holder, identified=False) for move in attacks):
+            continue
+        if any(not blocked(move, holder, identified=True) for move in attacks):
+            out.append(
+                f"Nothing {holder} carries can damage {named} until it is identified — {fix}.")
+        else:
+            out.append(f"Nothing {holder} carries can damage {named}: every attack it has is "
+                       f"blocked by {named}'s typing"
+                       + (f" or {ability}." if ability else "."))
+    return out
+
+
 def _room_note(configured: int) -> str:
     """Whether a carrier needs to displace anybody, given how many are CONFIGURED.
 
@@ -576,6 +683,19 @@ def target_ability(name: str, game: str = "") -> str:
         return row.ability
     from claytonlib.battle.stats import abilities
     return (abilities(row.species) or ("",))[0]
+
+
+def target_types(name: str, game: str = "") -> tuple[str, ...]:
+    """This encounter's types, from the same row its stats come from.
+
+    The sibling of `target_ability`, and keyed the same way -- through `stats_key`, so a
+    forme-split target answers for the forme it is actually met as. That matters here for the
+    same reason it matters for stats: Giratina Origin and Altered happen to share a typing, but
+    nothing about the lookup should depend on that holding.
+    """
+    from claytonlib.battle.stats import species as species_row
+
+    return tuple(species_row(stats_key(name, game))["types"])
 
 
 def stats_key(name: str, game: str = "") -> str:

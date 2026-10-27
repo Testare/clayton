@@ -7109,8 +7109,9 @@ function renderHuntConfigure(){
 function huntReadinessPanel(r){
   const access = r.access || [], coverage = r.move_coverage || [];
   const items = r.held_items || [], survive = r.survivability || [];
+  const chip = r.chip || [];
   if(!r.alphabet && !r.speed && !access.length && !coverage.length
-     && !items.length && !survive.length) return "";
+     && !items.length && !survive.length && !chip.length) return "";
   const a = r.alphabet;
   let alphabet = "";
   if(a){
@@ -7147,6 +7148,16 @@ function huntReadinessPanel(r){
     ? `<div class="field"><label>Getting there</label>
         ${access.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}</div>`
     : "";
+  // Whether anything can DAMAGE it, which is the other half of "getting there" and sits directly
+  // under it for that reason. The case this exists for: False Swipe is Normal and Giratina is
+  // Ghost, so the only move that can safely bring a target to 1 HP does nothing at all -- and
+  // the fix is a party slot, decided here rather than discovered after hitting the seed.
+  const chipping = chip.length
+    ? `<div class="field"><label>Chipping it down</label>
+        ${chip.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}
+        <div class="hr-small muted">Phase 1 needs the target on 1 HP, and False Swipe is the only
+          move that can get it there without the risk of a knockout.</div></div>`
+    : "";
   // Computed by `hunt_readiness` since it was written and never shown until now, which made the
   // whole check dead data -- an unmodelled move of ours is simulated as if it worked, so being
   // told about it is the entire point.
@@ -7172,7 +7183,7 @@ function huntReadinessPanel(r){
     ? `<div class="field"><label>Survivability</label>
         ${survive.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}</div>`
     : "";
-  return `<div class="panel" style="margin-top:12px">${reach}${heldItems}${alphabet}${speed}${cover}${survivability}</div>`;
+  return `<div class="panel" style="margin-top:12px">${reach}${chipping}${heldItems}${alphabet}${speed}${cover}${survivability}</div>`;
 }
 
 // The set of initial times a key seed can be loaded at is fixed and small, so the other tools
