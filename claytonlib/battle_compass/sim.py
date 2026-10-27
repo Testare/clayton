@@ -3261,7 +3261,22 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             victim_selected_a_move=target_slot is not None,
             victim_moves_second=ours_first,
             secondary_landed=secondary_landed))
-        return outcome.successful
+        # **`or ends_charge`: a charge that COMPLETES runs its cleanup whether or not the hit
+        # connected, and that cleanup is the two-advance block.** `effect_script_0272.s` reaches
+        # `_055` -- `FLAG_OFF ... MOVE_EFFECT_SEMI_INVULNERABLE` then
+        # `BATTLE_SUBSCRIPT_CHARGE_MOVE_CLEANUP` -- by falling through the fire branch, so it runs
+        # before any hit verdict is applied.
+        #
+        # Measured as the difference between two switch turns that are otherwise identical:
+        # `giratina2.jsonl` turn 6 is an ineffective Ominous Wind and spends 4 trailing advances,
+        # while `giratina3.jsonl` turn 6 is an ineffective Shadow Force FIRE turn and spends 6.
+        # Same immunity, same switch, one of them mid-charge (clayton-6xu.3.14).
+        #
+        # So the return value answers "does this half of the turn owe its post-move block", and it
+        # now has three sources: an ordinary successful move, a completing charge, and a prevented
+        # turn that BREAKS one (`broken_charge`). All three run a subscript; an ineffective
+        # ordinary move runs none, which is why it alone forfeits the block.
+        return outcome.successful or outcome.ends_charge
 
     def act_target() -> bool:
         nonlocal rng
@@ -3437,7 +3452,22 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             victim_selected_a_move=action.move_slot is not None,
             victim_moves_second=not ours_first,
             secondary_landed=secondary_landed))
-        return outcome.successful
+        # **`or ends_charge`: a charge that COMPLETES runs its cleanup whether or not the hit
+        # connected, and that cleanup is the two-advance block.** `effect_script_0272.s` reaches
+        # `_055` -- `FLAG_OFF ... MOVE_EFFECT_SEMI_INVULNERABLE` then
+        # `BATTLE_SUBSCRIPT_CHARGE_MOVE_CLEANUP` -- by falling through the fire branch, so it runs
+        # before any hit verdict is applied.
+        #
+        # Measured as the difference between two switch turns that are otherwise identical:
+        # `giratina2.jsonl` turn 6 is an ineffective Ominous Wind and spends 4 trailing advances,
+        # while `giratina3.jsonl` turn 6 is an ineffective Shadow Force FIRE turn and spends 6.
+        # Same immunity, same switch, one of them mid-charge (clayton-6xu.3.14).
+        #
+        # So the return value answers "does this half of the turn owe its post-move block", and it
+        # now has three sources: an ordinary successful move, a completing charge, and a prevented
+        # turn that BREAKS one (`broken_charge`). All three run a subscript; an ineffective
+        # ordinary move runs none, which is why it alone forfeits the block.
+        return outcome.successful or outcome.ends_charge
 
     def battle_halted() -> bool:
         """Whether the battle itself has stopped, as opposed to our Pokemon going down.

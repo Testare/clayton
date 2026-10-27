@@ -416,8 +416,8 @@ TARGET_OVERRIDE = {
     #: Refuse to write unless the battler really is this species, so a mistimed breakpoint
     #: cannot silently rewrite our own Pokemon. None disables the guard.
     "species": 487,
-    "nature": "Naive",        # +Sp. Atk, -Atk
-    "ivs": {"hp": 0, "atk": 27, "def": 25, "spa": 2, "spd": 1, "spe": 13},
+    "nature": "Modest",        # +Sp. Atk, -Atk
+    "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 31, "spd": 31, "spe": 31},
     #: Wild Pokemon have none; here for completeness.
     "evs": 0,
     #: Levels the preview prints. The battler's real level always comes from the snapshot.
