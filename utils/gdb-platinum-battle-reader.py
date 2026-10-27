@@ -415,13 +415,13 @@ TARGET_OVERRIDE = {
     "battler": 1,
     #: Refuse to write unless the battler really is this species, so a mistimed breakpoint
     #: cannot silently rewrite our own Pokemon. None disables the guard.
-    "species": 485,            # SPECIES_HEATRAN
-    "nature": "Modest",        # +Sp. Atk, -Atk
-    "ivs": {"hp": 31, "atk": 31, "def": 31, "spa": 31, "spd": 31, "spe": 31},
+    "species": 487,
+    "nature": "Bold",        # +Sp. Atk, -Atk
+    "ivs": {"hp": 13, "atk": 18, "def": 31, "spa": 27, "spd": 4, "spe": 2},
     #: Wild Pokemon have none; here for completeness.
     "evs": 0,
     #: Levels the preview prints. The battler's real level always comes from the snapshot.
-    "preview_levels": (50,),
+    "preview_levels": (47,),
 }
 
 # Nature by index, in the ROM's order (include/constants/pokemon.h: NATURE_HARDY 0 .. QUIRKY 24)

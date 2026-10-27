@@ -1703,9 +1703,20 @@ def broken_charge(battler: Battler) -> Battler:
     rest would be modelling a difference nothing has shown. The rule is simply "the move did not
     go off, so the charge is lost", which is also what it looks like from the player's side.
 
-    Clearing `charging_slot` is the whole of it: `is_semi_invulnerable`, `usable_slots`'s lock and
-    `select_target_move`'s skipped roll all read that one field, so the vanish, the move lock and
-    the selection roll come back together.
+    Clearing `charging_slot` is the whole of the STATE change: `is_semi_invulnerable`,
+    `usable_slots`'s lock and `select_target_move`'s skipped roll all read that one field, so the
+    vanish, the move lock and the selection roll come back together.
+
+    **It is not the whole of the COST, though — the break spends two advances**
+    [verified: data/battle_logs/giratina.jsonl]. The log's turns 2 and 5 are a controlled pair:
+    both end "The wild GIRATINA is paralyzed! It can't move!" with no move rolls at all, and turn
+    2 -- the one where the paralysis broke a charge -- spends **14** advances against turn 5's
+    **15 with a selection roll**, i.e. 6 trailing advances against 4. The two extra sit in the
+    target's post-move slot, which is where the charge cleanup subscript would run. So a prevented
+    turn that breaks a charge owes `POST_SUCCESSFUL_MOVE_ADVANCES`, and `act_target` says so by
+    returning True from that prevention -- see the comment there, because "successful" is the
+    wrong word for it and the return value's real meaning is "this half of the turn owes its post-
+    move advances".
     """
     if battler.charging_slot is None:
         return battler
@@ -3245,14 +3256,22 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if not awake:
             # A charge dies with the turn it needed -- see `broken_charge`. Sleep is the one
             # the ROM itself attests (battle_lib.c:2239-2242).
+            #
+            # **Returning True when it broke one, and that is not a claim the move succeeded.**
+            # This return value gates `POST_SUCCESSFUL_MOVE_ADVANCES` and nothing else, so what
+            # it really asks is "does this half of the turn owe its two post-move advances". A
+            # charge break does, measured: data/battle_logs/giratina.jsonl turn 2 spends two more
+            # than turn 5, which is the same prevention without a charge to break.
+            broke = new.target.charging_slot is not None
             new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "slp"))
-            return False
+            return broke
         if flinched["E"]:
             move_failed["E"] = True
+            broke = new.target.charging_slot is not None
             new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "fln"))
-            return False
+            return broke
         move = new.target.move(target_slot)
         if move is None:
             return False
@@ -3263,19 +3282,22 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # so a taunted and paralyzed Uxie -- which is every Uxie in a real run -- spends no
             # roll at all on the turn its Yawn or Amnesia is refused.
             move_failed["E"] = True
+            broke = new.target.charging_slot is not None
             new.target = broken_charge(new.target)
             parts.append(tok.taunted_token("E", target_slot))
-            return False
+            return broke
         if new.target.status is Status.PARALYSIS:
             rng, roll = advance(rng)
             new.rng_offset += 1
             if roll % 4 == 0:
                 move_failed["E"] = True
-                # The case Testare saw on hardware: a full paralysis on the fire turn loses
-                # the Shadow Force and brings Giratina back.
+                # The case Testare saw on hardware, and the one the log measures: a full
+                # paralysis on the fire turn loses the Shadow Force, brings Giratina back, and
+                # costs two advances for the cleanup.
+                broke = new.target.charging_slot is not None
                 new.target = broken_charge(new.target)
                 parts.append(tok.prevented_token("E", "par"))
-                return False
+                return broke
         was_charging = new.target.charging_slot == target_slot
         # An Uproar continuation turn is the same case as a charge turn and for the same reason:
         # `Battler_CanPickCommand` is FALSE, so `ppDecremented` is set TRUE at command selection
