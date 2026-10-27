@@ -93,6 +93,16 @@ class TestTheGhostCase(unittest.TestCase):
         self.assertNotIn("Scrappy", warning)
 
     def test_the_fix_may_be_carried_by_somebody_else(self):
+        """**The Foresight does not have to be on the False Swipe user** [verified in game, by
+        Testare]. The flag is a volatile on the TARGET, so one Pokemon can identify it and another
+        can come in and chip -- which is why the suggestion names any carrier in the party rather
+        than only the one holding the False Swipe.
+
+        Cited as verified rather than derived because the opposite is the natural assumption,
+        acting on it costs a party slot, and it was briefly believed to work the other way round
+        (clayton-957.26.5). The simulator side of the same fact is pinned in
+        `test_battle_compass_foresight`.
+        """
         party = {"Smeargle": _moves("False Swipe", "Flash"),
                  "Stantler": _moves("Odor Sleuth", "Take Down")}
         warning = next(w for w in chip_warnings(GHOST, party) if "False Swipe" in w)

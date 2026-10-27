@@ -234,6 +234,13 @@ class Battler:
     #: clears it only when the Pokemon leaves the field, and a wild target never does. So one
     #: Foresight lasts the battle -- and a second one still succeeds, which is why effect 113 is
     #: deliberately absent from `sim.will_fail`.
+    #:
+    #: **It survives the APPLIER switching out, which is the half worth stating** [verified in
+    #: game, by Testare -- Foresight with one Pokemon, switch, False Swipe with another, damage
+    #: dealt]. The flag belongs to the target, so whoever put it there is irrelevant from then on;
+    #: the Foresight does not have to be on the False Swipe user. `sim.sent_out` clears it only
+    #: from the Pokemon being sent out, which is the opposite direction and reachable only for a
+    #: Foresight aimed at US (clayton-957.26.5).
     identified: bool = False
 
     def __post_init__(self):

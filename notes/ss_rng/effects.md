@@ -869,6 +869,8 @@ Sets `VOLATILE_CONDITION_FORESIGHT` **on the move's DEFENDER**, not on its user 
 
 It lasts until the flagged Pokemon leaves the field, which for a wild target means the rest of the battle. **Using it again does not fail** — the subscript tests nothing before setting the bit — so its turn cost is the same every time, unlike Mean Look's.
 
+**It also survives the APPLIER leaving** [verified in game: Foresight with one Pokemon, switch, False Swipe with another, damage dealt]. The flag belongs to the target, so the Foresight does not have to be on the same Pokemon that does the chipping. The two departure paths agree: `BattleSystem_UpdateAfterSwitch` and `BattleSystem_CleanupFaintedMon` (battle_lib.c:2040, 2155) clear, from *other* battlers, only Mean Look, Lock On, Attract and Bind — the four that record a source in `MoveEffectsData` (`meanLookTarget`, `lockOnTarget`, `bindTarget`; include/battle/battle_mon.h:23-26). Foresight stores no source, so the game has nothing to match on and could not clear it this way.
+
 What the flag does, in two separate places:
 
 * `BattleSystem_ApplyTypeChart` (battle_lib.c:2612-2621) **breaks** out of the matchup walk at the `0xFE` sentinel when the defender has this volatile, or when the ATTACKER has Scrappy. The sentinel sits at index 108 of the table in `effectiveness_chart.md` and the only entries after it are 109 `NORMAL->GHOST` and 110 `FIGHTING->GHOST`, so breaking and deleting those two rows are the same operation. Levitate is tested in the branch *before* the walk and is unaffected.

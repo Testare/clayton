@@ -350,6 +350,39 @@ class TestTheFlagLandsOnTheDefender(unittest.TestCase):
         by switching, while the target has no way out of ours."""
         self.assertFalse(sent_out(_ours(identified=True)).identified)
 
+    def test_it_survives_the_APPLIER_switching_out(self):
+        """[verified in game, by Testare.] One Pokemon identifies the target, switches out, and
+        another chips it -- **the Foresight does not have to be on the False Swipe user.**
+
+        The flag is a volatile on the target, so whoever applied it is irrelevant from then on.
+        The ROM could not do it the other way even if it wanted to: the four effects it DOES clear
+        when their applier leaves (Mean Look, Lock On, Attract, Bind) each record a source in
+        `MoveEffectsData`, and this one records none, so there is nothing to match on
+        (battle_lib.c:2040 and 2155; include/battle/battle_mon.h:23-26).
+
+        A regression test rather than a derivation, because this was briefly believed to work the
+        other way round and "fixing" it would make the simulator predict 0 damage on a turn the
+        game deals real damage -- which eliminates the true seed rather than under-promising
+        (clayton-957.26.5).
+        """
+        config = _config()
+        stantler = replace(_ours(name="Stantler", moves=("Odor Sleuth", "Take Down"),
+                                 pp=(40, 20)), party_slot=1)
+        smeargle = replace(_ours(), party_slot=2)
+        state = BattleState(ours=stantler, target=_giratina(), bench=(smeargle,),
+                            rng=opening_rng(0x0C0E02CA, config))
+
+        state = simulate_turn(state, Action.MOVE_1, config)          # Stantler: Odor Sleuth
+        self.assertTrue(state.target.identified)
+
+        state = simulate_turn(state, Action.SWITCH, config, bench_slot=0)
+        self.assertEqual(state.ours.name, "Smeargle")
+        self.assertTrue(state.target.identified, "the switch must not shed the target's flag")
+
+        before = state.target.hp
+        state = simulate_turn(state, Action.MOVE_1, config)           # Smeargle: False Swipe
+        self.assertLess(state.target.hp, before)
+
 
 class TestTheEvasionHalf(unittest.TestCase):
     """``if (MON_IS_IDENTIFIED(defender) && evaStages < 0) evaStages = 0``, and `evaStages` is held

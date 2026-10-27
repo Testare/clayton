@@ -397,6 +397,22 @@ def chip_warnings(species: str, movesets: "dict[str, list]",
     attacker-side route to the same removal (`battle.damage.ignores_ghost_immunity`). Without it a
     Scrappy Kangaskhan would be warned about when it is in fact the answer.
 
+    **The Foresight does NOT have to be on the False Swipe user.** [verified in game, by Testare]
+    The identified status is a volatile on the TARGET, not on whoever applied it
+    (`subscript_foresight.s` sets it on ``BTLSCR_DEFENDER``), so one Pokemon can Odor Sleuth and
+    another can come in and chip — and a wild target never leaves the field, so it is bought once
+    and lasts the battle.
+
+    This is called out because the opposite is the natural assumption, and acting on it costs a
+    party slot: it is what makes "``use Odor Sleuth (Stantler) first``" a legitimate suggestion
+    even when Stantler is not the chipper, so this function names ANY carrier in the party rather
+    than only the one holding the False Swipe. It was briefly believed to work the other way and
+    an in-game test settled it — Foresight with one Pokemon, switch, False Swipe with another,
+    damage dealt. The two departure paths in the ROM agree: `BattleSystem_UpdateAfterSwitch` and
+    `BattleSystem_CleanupFaintedMon` (battle_lib.c:2040, 2155) clear, from *other* battlers, only
+    Mean Look, Lock On, Attract and Bind — the four that record a source — and the volatile
+    stores none, so there is nothing for the game to match on (clayton-957.26.5).
+
     Unknown target, or no row for it -> no warnings, as `access_warnings` has it.
     """
     from claytonlib.battle.damage import is_type_immune
