@@ -44,10 +44,12 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
-    ABILITY_BAD_DREAMS, EFFECT_NIGHTMARE, EFFECT_TAUNT, FLINCH_EFFECTS, HuntConfig,
+    ABILITY_BAD_DREAMS, EFFECT_FORESIGHT, EFFECT_NIGHTMARE, EFFECT_TAUNT, FLINCH_EFFECTS,
+    HuntConfig,
     SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
-    can_flinch, can_inflict, can_miss, is_semi_invulnerable, pending_future_sight,
+    can_flinch, can_inflict, can_miss, deals_nothing, is_semi_invulnerable,
+    pending_future_sight,
     effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
     secondary_status,
     simulate_turn,
@@ -546,6 +548,21 @@ BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: Battler-level flags that belong in the banner -- the mirror of `FIELD_FLAGS`, which holds the
+#: state-level ones, and of `BATTLER_CONDITIONS`, which holds the battler-level *counters*.
+#:
+#: ``(side, attribute, label)``. One entry, and it earns the table: **Identified** is what makes a
+#: Ghost target catchable, and it is invisible otherwise. The game announces it once ("Smeargle
+#: identified Giratina!") and then never mentions it again, while every False Swipe afterwards
+#: depends on it -- so a player who misses the message, or comes back to a run an hour later, has
+#: no way to tell whether the chip phase will work. Both sides are listed because `act_target`
+#: can set it on us, even though no configured encounter has the move.
+BATTLER_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("target", "identified", "Identified"),
+    ("ours", "identified", "Identified"),
+)
+
+
 def field_conditions(state) -> list[dict]:
     """What is currently up, newest-relevant first: ``{name, turns, whose}``.
 
@@ -570,6 +587,9 @@ def field_conditions(state) -> list[dict]:
     for attr, label, whose in FIELD_FLAGS:
         if getattr(state, attr, False):
             out.append({"name": label, "turns": None, "whose": whose})
+    for side, attr, label in BATTLER_FLAGS:
+        if getattr(getattr(state, side, None), attr, False):
+            out.append({"name": label, "turns": None, "whose": side})
     return out
 
 
@@ -893,6 +913,42 @@ def _burn_tick_of(battler: Battler) -> int:
     return burn_tick(battler) if battler.status is Status.BURN else 0
 
 
+def _no_effect_hint(move, battler: Battler, defender: Battler | None) -> str | None:
+    """Why this move does nothing to `defender`, and what would change it — or None if it does.
+
+    The page cannot work this out for itself, which is why it is computed here. "Deals nothing"
+    has three causes that look identical from the outside and call for completely different
+    decisions: a plain bad matchup (bring something else), Levitate (nothing in a party fixes it),
+    and the Ghost immunity to Normal and Fighting (**one turn fixes it, permanently**). Naming the
+    wrong one is worse than saying nothing, because the third is the whole of why Giratina is
+    catchable.
+
+    The three are told apart by asking the simulator rather than by reasoning about types: if the
+    same move against the same defender *identified* still deals nothing, no Foresight was ever
+    going to help. That stays correct for a target whose typing nobody has thought about yet.
+
+    Named for a move in `battler`'s own set when there is one with PP left, because "use Odor
+    Sleuth" is actionable where "use a Foresight-type move" is a puzzle.
+    """
+    if defender is None or not deals_nothing(move, defender, battler):
+        return None
+    named = defender.name or "the target"
+    if deals_nothing(move, replace(defender, identified=True), battler):
+        # Levitate, or an ordinary immunity. Nothing to offer, so nothing is offered -- and the
+        # ability is named when it is the cause, since that is not readable off the type chart.
+        why = (f"{defender.ability} blocks it" if defender.ability and move.type_name == "Ground"
+               else "its typing blocks it outright")
+        return f"{move.name} does nothing to {named}: {why}."
+    fix = next((candidate for slot in range(len(battler.moves))
+                if (candidate := battler.move(slot)) is not None
+                and candidate.effect == EFFECT_FORESIGHT and battler.pp_left(slot) > 0), None)
+    tail = (f"{fix.name} removes it for the rest of the battle."
+            if fix is not None else
+            "A Foresight or Odor Sleuth removes it for the rest of the battle.")
+    return (f"{move.name} does nothing while {named} is unidentified: Ghost is immune to Normal "
+            f"and Fighting. {tail}")
+
+
 def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
     """Per slot: what the UI must know to ask the right questions about this move.
 
@@ -928,6 +984,8 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
                         "secondary_side": None, "stat_drop": None, "self_raise": None,
+                        "deals_nothing": False, "applies_foresight": False,
+                        "no_effect_hint": None,
                         "makes_contact": False,
                         "effect_chance": 0, "priority": 0, "pp": 0,
                         "unselectable_reason": None})
@@ -1013,6 +1071,21 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # snapshot's `can_miss` is read off the turn's OPENING state (clayton-957.10.8).
             "stat_drop": _stat_drops_info(move),
             "self_raise": _self_raises_info(move),
+            # Whether the type chart (or Levitate) zeroes this move outright. Distinct from all
+            # three flags above it: the move is selectable, it is modellable, and it does not
+            # FAIL -- it connects, spends every roll and renders its hit marker, and only the HP
+            # stays put. Against a Ghost target half of a chipper's moveset reads like a bug
+            # without it, and it is also how the page can say what a Foresight would buy.
+            "deals_nothing": (defender is not None
+                              and deals_nothing(move, defender, battler)),
+            # ...and WHY, in words, with the fix named when there is one. The bool is for logic
+            # and this is for the player; see `_no_effect_hint` for why the page cannot derive it.
+            "no_effect_hint": _no_effect_hint(move, battler, defender),
+            # ...and whether THIS move is the one that lands the Foresight. The mirror of
+            # `applies_taunt`, and live on the same turn for the same reason: a Foresight of ours
+            # resolves before the target's half of the turn, so the immunity is gone by the time
+            # anything else is asked about that turn.
+            "applies_foresight": move.effect == EFFECT_FORESIGHT,
             #: Priority decides turn order before Speed does, so the page needs it to know
             #: which side's tokens come first.
             "priority": move.priority,

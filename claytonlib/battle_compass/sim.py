@@ -29,7 +29,8 @@ from claytonlib.battle.catch import (
 )
 from claytonlib.battle.damage import (
     WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_items, apply_accuracy_stage,
-    apply_stage, damage, item_key, unsupported_attacker_reason, unsupported_reason,
+    apply_stage, damage, is_type_immune, item_key, unsupported_attacker_reason,
+    unsupported_reason,
 )
 from claytonlib.battle.readiness import (
     LEFTOVERS, PARALYSIS_SPEED_DIVISOR, speed_after_item,
@@ -112,6 +113,12 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     136: "Rain Dance: field condition, and the weather term in `battle.damage`",
     140: "Ancient Power: raises every one of the target's stats, Speed included",
     193: "Refresh: fails against an unstatused user",
+    # Foresight and Odor Sleuth aimed at US. Unreachable: no configured encounter has either, and
+    # a target that did would be using its turn to make our Normal moves work. Listed because the
+    # machinery is genuinely symmetric -- `act_target` sets the flag on `new.ours` the same way
+    # `act_ours` sets it on `new.target`, and the only thing it would change is whether the
+    # target's own Normal/Fighting moves can touch a Ghost or a Gengar of ours.
+    113: "Foresight, Odor Sleuth: the flag on US, so its Normal moves reach a Ghost of ours",
     210: "Water Sport: a per-battler volatile flag, so a second one fails",
     245: "Punishment: power computed from our positive stages (`punishment_power`)",
     # Uxie's and Azelf's. Three of the five are the first of their kind on either side, and the
@@ -199,6 +206,13 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     76: "may confuse (Signal Beam) -- the proc roll only; confusion ON THE TARGET is inert here",
     101: "False Swipe: damage that cannot take the target below 1 HP",
     106: "Mean Look: traps, and a second one fails",
+    # Foresight and Odor Sleuth, and the first move of ours that changes the TYPE CHART. Listed
+    # as modelled only once both halves of the flag were read -- the Ghost immunities in
+    # `battle.damage` and the evasion term in `accuracy_net_stage`. Before that it was the exact
+    # "inert rather than refused" failure `MODELLED_OUR_EFFECTS` exists to catch: a status move
+    # with no recognised effect simulates as having worked and changed nothing, which for this
+    # one means every False Swipe afterwards still predicted zero against a Ghost.
+    113: "Foresight, Odor Sleuth: the Ghost immunities off and the target's evasion ignored",
     125: "may burn -- as effect 4",
     136: "Rain Dance: field condition and the weather term",
     # Taunt, and it is listed as modelled only because `usable_slots` narrows the selection rather
@@ -448,6 +462,10 @@ class MoveOutcome:
     #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
     #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
     blocked_by_mist: bool = False
+    #: Foresight or Odor Sleuth landed, so the move's DEFENDER is now identified. Aimed at the
+    #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
+    #: what applies it -- only it knows which side that is.
+    identifies: bool = False
     #: Haze: every stat stage on BOTH sides goes back to neutral. A flag rather than a list of
     #: fields, because the ROM's own loop is over every battler and every stage without exception.
     resets_all_stages: bool = False
@@ -509,8 +527,22 @@ def accuracy_net_stage(attacker: "Battler", defender: "Battler") -> int:
     """The single stage the accuracy check uses: the attacker's accuracy minus the defender's
     evasion, clamped to -6..+6. Combining them is what the game does, and keeping it in one
     function is what stops the simulator and the interview disagreeing about it.
+
+    **A Foresighted defender's evasion term is dropped when -- and only when -- it favours the
+    defender.** `CheckMoveHitAccuracy` holds the evasion contribution negated
+    (``evaStages = 6 - statBoosts[EVASION]``, so a raised evasion is a *negative* term) and then
+    does ``if (MON_IS_IDENTIFIED(defender) && evaStages < 0) evaStages = 0``
+    [battle_controller_player.c:2876-2890]. So a +3 evasion is ignored while a -3 from our Flashes
+    and Sweet Scents still counts -- the asymmetry is the ROM's, and reading it as "evasion is
+    neutralised" would throw away the accuracy work a run spends turns on.
+
+    The clamp is the ROM's too: it bounds ``6 + evaStages + accStages`` to 0..12, which is this
+    function's -6..+6.
     """
-    return max(-6, min(6, attacker.accuracy_stage - defender.evasion_stage))
+    evasion = defender.evasion_stage
+    if defender.identified:
+        evasion = min(0, evasion)
+    return max(-6, min(6, attacker.accuracy_stage - evasion))
 
 
 def _effective_accuracy(move: Move, net_stage: int = 0, *, attacker=None,
@@ -785,6 +817,31 @@ EFFECT_EVASION_UP = 16
 #: accuracy check at all [effect_script_0017.s], which is exactly what `execute_move` already
 #: does for an accuracy-0 damaging move -- so this id needs no code of its own, only saying so.
 EFFECT_BYPASS_ACCURACY = 17
+#: Foresight and Odor Sleuth (BATTLE_EFFECT_FORESIGHT), and the move that makes a Ghost target
+#: catchable. **Next to Double Team above because it is that move's answer**, and it is the one
+#: of ours that answers it.
+#:
+#: Both moves are effect 113 and byte-for-byte identical in the table: status, Normal, power 0,
+#: **accuracy 0**, 40 PP, no effect chance. `effect_script_0113.s` is two instructions --
+#: `MOVE_SIDE_EFFECT_ON_HIT|MOVE_SUBSCRIPT_PTR_FORESIGHT` and `SYSCTL_IGNORE_IMMUNITIES` -- and
+#: `subscript_foresight.s` is a single `UpdateMonData ... VOLATILE_CONDITION_FORESIGHT` on the
+#: DEFENDER plus a message. So:
+#:
+#: * **Zero rolls.** No accuracy roll (accuracy 0), no `Random` anywhere in either script. Not
+#:   even a duration, because there is no duration -- see `Battler.identified`. Cross-validated
+#:   against `metronome_compass.effects`, which maps 113 to `_eff_no_rolls_ok`.
+#: * **It cannot fail**, and that is a positive statement rather than an omission: the subscript
+#:   has no test before it sets the flag, so a second Foresight sets an already-set bit and still
+#:   counts as a successful move. Hence no `will_fail` entry -- which also makes it the only
+#:   repeatable zero-roll status move either side has, i.e. a filler whose turn cost is
+#:   *constant* where Mean Look's second use is two advances cheaper than its first.
+#: * **`SYSCTL_IGNORE_IMMUNITIES` is about the move itself**, not about what it grants: it is how
+#:   a Normal-type move lands on a Ghost at all. Nothing to model here, because `execute_move`
+#:   never consults the type chart on the status branch.
+#:
+#: What the flag then does is read in two other places -- `accuracy_net_stage` for the evasion
+#: half and `battle.damage.ignores_ghost_immunity` for the type half.
+EFFECT_FORESIGHT = 113
 #: Nightmare. Fails against anything not asleep and against a second application
 #: [effect_script_0107.s], then takes a quarter of max HP at the end of every sleeping turn.
 EFFECT_NIGHTMARE = 107
@@ -843,6 +900,29 @@ def absorbs(battler: "Battler", move: Move) -> bool:
     """Whether this defender's ability eats `move` whole, with a side effect we do not model."""
     eaten = ABSORBED_MOVE_TYPES.get((battler.ability or "").strip().lower())
     return eaten is not None and move.type_name == eaten and bool(move.power)
+
+
+def deals_nothing(move: Move, defender: "Battler", attacker: "Battler" = None) -> bool:
+    """Whether the type chart (or Levitate) zeroes this move against `defender`.
+
+    The `Battler`-shaped face of `battle.damage.is_type_immune`, so callers that hold Battlers --
+    the UI, mostly -- do not have to build a `Defender` to ask. It reads `defender.identified`
+    and the attacker's Scrappy through that function, so one Foresight flips every answer it
+    gives about a Normal or Fighting move.
+
+    **Not a reason to refuse the move** (`unselectable_reason`) and not a `will_fail` entry: the
+    move connects, spends every roll and renders a hit marker. It is published so the interview
+    can explain a turn where nothing happened, which against a Ghost target is half the moveset.
+
+    Deliberately NOT routed through `_defender_side`/`_attacker_side`: those build the damage
+    formula's view and need a full stat spread, and this question reads types, two abilities and
+    one volatile flag. A `Battler` assembled for a UI test with a partial `stats` dict can still
+    be asked whether its moves do anything.
+    """
+    return is_type_immune(
+        move, defender.types,
+        defender_ability=defender.ability, identified=defender.identified,
+        attacker_ability="" if attacker is None else attacker.ability)
 
 
 def soundproofed(battler: "Battler", move: Move) -> bool:
@@ -1661,11 +1741,18 @@ def _defender_side(battler: Battler) -> Defender:
     Only Levitate is read off the ability, and only as a Ground immunity. It reaches the
     calculation at all because the target's Battler carries its encounter's ability, and Giratina
     Origin's is Levitate.
+
+    `identified` goes with it, and the two are worth contrasting precisely because this one
+    function carries both: a Foresight takes the GHOST immunities off and leaves Levitate's GROUND
+    immunity standing, since the ROM tests Levitate in the branch before the table walk the
+    Foresight sentinel lives in. So a Foresighted Giratina Origin can be False Swiped and still
+    cannot be Earthquaked.
     """
     return Defender(
         defence=battler.stats["def"], special_defence=battler.stats["spd"],
         types=battler.types, defence_stage=battler.def_stage,
-        special_defence_stage=battler.spdef_stage, ability=battler.ability)
+        special_defence_stage=battler.spdef_stage, ability=battler.ability,
+        identified=battler.identified)
 
 
 def _future_sight_damage(move: Move, attacker: Battler, defender: Battler, *,
@@ -1849,6 +1936,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_nightmare=move.effect == EFFECT_NIGHTMARE,
             sets_drowsy=move.effect == EFFECT_YAWN,
             resets_all_stages=move.effect == EFFECT_HAZE,
+            # Unconditional on reaching here, which is the whole of this move's behaviour: the
+            # subscript tests nothing before setting the bit, so a Foresight against an
+            # already-identified target lands again and costs exactly what the first one did.
+            identifies=move.effect == EFFECT_FORESIGHT,
             # Double Team, Swords Dance, Nasty Plot, Amnesia. Mist does not guard against any of
             # them -- Mist blocks REDUCTIONS to its own side, and this is the user raising its own
             # stage.
@@ -2111,7 +2202,13 @@ def sent_out(battler: Battler) -> Battler:
                    # NOT reset here. That is a pre-existing gap rather than a decision, and it is
                    # left alone rather than changed in passing because the advance counts around
                    # Darkrai were all fitted with it as it is (clayton-6xu.7.2).
-                   drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0)
+                   #
+                   # `identified` is in `statusVolatile` and so belongs to the same zeroing: a
+                   # Foresight a target put on us is shaken off by switching. Reachable only in
+                   # that direction, since the target itself never switches out -- which is what
+                   # makes OUR Foresight on it last the whole battle.
+                   drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0,
+                   identified=False)
 
 
 #: Every stage field on a `Battler`: what Haze resets, and what a send-out resets. Named once so
@@ -2844,6 +2941,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # and the ROM's stat reset runs only on the Pokemon being sent out -- which is what
             # makes six Flashes worth more than any five-turn field condition.
             new.target = apply_stat_drop(new.target, outcome.stat_drop)
+        if outcome.identifies:
+            # Foresight or Odor Sleuth. **Permanent, for the same reason a stat drop on a wild
+            # target is**: the ROM clears `statusVolatile` only when the Pokemon leaves the field
+            # and a wild one never does. So this is bought once and keeps paying -- every False
+            # Swipe after it connects against a Ghost, and the target's Double Teams stop
+            # mattering.
+            new.target = replace(new.target, identified=True)
         if outcome.starts_charge is not None:
             new.ours = replace(new.ours, charging_slot=outcome.starts_charge)
         elif outcome.ends_charge:
@@ -3005,6 +3109,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # because no configured target had a status move.
             new.ours = new.ours.with_status(outcome.applied_status,
                                             sleep_turns=outcome.sleep_turns)
+        if outcome.identifies:
+            # The mirror, and unreachable: no configured target has Foresight or Odor Sleuth.
+            # Wired for the same reason Nightmare's and Taunt's mirrors are -- the two halves of a
+            # turn are meant to differ only in which side they read. Aimed at us it would be
+            # escapable, which it is not in the other direction: `sent_out` clears the flag, so
+            # switching sheds it exactly as it sheds a Yawn -- and the target, which never
+            # switches, has no such way out.
+            new.ours = replace(new.ours, identified=True)
         if outcome.sets_nightmare:
             new.ours = replace(new.ours, nightmare=True)
         if outcome.starts_uproar:

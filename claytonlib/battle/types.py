@@ -6,9 +6,18 @@ matchups are listed; anything absent is 1.0x.  ``tests/test_battle_types.py`` re
 notes file and asserts this literal still matches it.
 
 Gen 4 specifics worth noting: there is no Fairy type, and **Steel resists both Ghost and Dark**
-(that changed in Gen 6).  The two Ghost immunities sit after a FORESIGHT sentinel in the ROM
-table because Foresight removes them; Foresight is out of scope, so they are included here
-unconditionally.
+(that changed in Gen 6).
+
+The two Ghost immunities sit after a FORESIGHT sentinel in the ROM table, and that sentinel is
+load-bearing rather than decorative: `BattleSystem_ApplyTypeChart` walks the table and **breaks**
+at it when the defender is Foresighted or the attacker has Scrappy (battle_lib.c:2612-2621), so
+those two rows -- and only those two -- stop applying.  They are the last two real entries, which
+is why a break and a skip are the same thing here.  `FORESIGHT_REMOVABLE` names them, and the
+`foresight` keyword below is what turns them off; by default they apply, which is the ordinary
+case.
+
+**Levitate is NOT removable this way.** It is tested in the branch *before* the table walk, so a
+Foresighted Giratina Origin is still immune to Ground -- see `damage._levitates`.
 """
 from __future__ import annotations
 
@@ -126,20 +135,51 @@ TYPE_CHART: dict[tuple[str, str], float] = {
     ('Fighting', 'Ghost'): 0.0,
 }
 
+#: The two entries the ROM's FORESIGHT sentinel guards, and the whole of what Foresight, Odor
+#: Sleuth and Scrappy do to the chart.
+#:
+#: Kept as its own name rather than inlined into `_FORESIGHT_CHART` so that the test which
+#: re-parses notes/ss_rng/effectiveness_chart.md can assert these are exactly the rows listed
+#: *after* the sentinel -- the property that makes "break at the sentinel" and "drop these two"
+#: the same operation.
+FORESIGHT_REMOVABLE: frozenset[tuple[str, str]] = frozenset({
+    ('Normal', 'Ghost'),
+    ('Fighting', 'Ghost'),
+})
 
-def type_multiplier(attacking: str, defending: str) -> float:
-    """Multiplier for one attacking type against one defending type."""
-    return TYPE_CHART.get((attacking.capitalize(), defending.capitalize()), 1.0)
+#: `TYPE_CHART` as a Foresighted defender sees it. Derived rather than written out, so a chart
+#: edit cannot leave the two versions disagreeing about anything but those two rows.
+_FORESIGHT_CHART: dict[tuple[str, str], float] = {
+    pair: multiplier for pair, multiplier in TYPE_CHART.items()
+    if pair not in FORESIGHT_REMOVABLE
+}
 
 
-def effectiveness(attacking: str, defending: tuple[str, ...] | list[str] | str) -> float:
+def type_multiplier(attacking: str, defending: str, *, foresight: bool = False) -> float:
+    """Multiplier for one attacking type against one defending type.
+
+    `foresight` drops the two Ghost immunities, which is what a Foresight or Odor Sleuth on the
+    defender -- or a Scrappy attacker -- does. It makes **Normal and Fighting neutral** against
+    Ghost rather than super-effective: the row is deleted, not inverted, so a Foresighted
+    Gengar still resists nothing and Ghost still resists nothing of its own.
+    """
+    chart = _FORESIGHT_CHART if foresight else TYPE_CHART
+    return chart.get((attacking.capitalize(), defending.capitalize()), 1.0)
+
+
+def effectiveness(attacking: str, defending: tuple[str, ...] | list[str] | str, *,
+                  foresight: bool = False) -> float:
     """Multiplier against a defender's full (one- or two-) type combination.
 
     A dual type multiplies both matchups, so an immunity in either half zeroes the result.
+
+    `foresight` is passed through to every matchup, which is what makes Giratina catchable: it is
+    Ghost/Dragon, so a False Swipe is 0x on the Ghost half and 1x on the Dragon half, and
+    removing the Ghost row leaves the whole thing neutral.
     """
     if isinstance(defending, str):
         defending = (defending,)
     result = 1.0
     for d in defending:
-        result *= type_multiplier(attacking, d)
+        result *= type_multiplier(attacking, d, foresight=foresight)
     return result

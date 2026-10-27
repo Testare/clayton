@@ -863,9 +863,20 @@ No rolls. Sets up a single layer of spikes on the opponent's side of the field. 
 ## Effect 113
 Moves: Foresight, Odor Sleuth
 
-No rolls.
+No rolls. Accuracy is 0, so not even an accuracy roll, and neither `effect_script_0113.s` nor `subscript_foresight.s` contains a `Random`.
 
-Gives user "Foresight" status until target switches out, which allows us to ignore evasion changes and hit ghost types. Since there is no way for Magikarp to gain evasion stat changes or be ghost type, this status does not really matter, especially since using it again does not cause the move to fail, so we can basically treat this move as a "no-op."
+Sets `VOLATILE_CONDITION_FORESIGHT` **on the move's DEFENDER**, not on its user — `subscript_foresight.s` is a single `UpdateMonData OPCODE_FLAG_ON, BTLSCR_DEFENDER, BATTLEMON_VOLATILE_STATUS, VOLATILE_CONDITION_FORESIGHT`. (This entry used to say "gives user Foresight status"; that was backwards, and it matters to anything that reads the flag off the wrong side.) The effect script also sets `SYSCTL_IGNORE_IMMUNITIES`, which is how a Normal-type move lands on a Ghost in the first place.
+
+It lasts until the flagged Pokemon leaves the field, which for a wild target means the rest of the battle. **Using it again does not fail** — the subscript tests nothing before setting the bit — so its turn cost is the same every time, unlike Mean Look's.
+
+What the flag does, in two separate places:
+
+* `BattleSystem_ApplyTypeChart` (battle_lib.c:2612-2621) **breaks** out of the matchup walk at the `0xFE` sentinel when the defender has this volatile, or when the ATTACKER has Scrappy. The sentinel sits at index 108 of the table in `effectiveness_chart.md` and the only entries after it are 109 `NORMAL->GHOST` and 110 `FIGHTING->GHOST`, so breaking and deleting those two rows are the same operation. Levitate is tested in the branch *before* the walk and is unaffected.
+* `BattleControllerPlayer_CheckMoveHitAccuracy` (battle_controller_player.c:2888) does `if (MON_IS_IDENTIFIED(defender) && evaStages < 0) evaStages = 0`. `evaStages` is held negated (`6 - statBoosts[EVASION]`), so this discards evasion the defender *gained* and leaves evasion *drops* counting.
+
+For **metronome compass** this is still effectively a no-op: Magikarp cannot gain evasion and cannot be Ghost, so neither consequence can fire.
+
+For **battle compass** it is the move that makes a Ghost target catchable at all — False Swipe is Normal and Giratina is Ghost/Dragon, so the chip phase is impossible without it. Modelled there: `sim.EFFECT_FORESIGHT`, `Battler.identified`, `battle.types.FORESIGHT_REMOVABLE`.
 
 
 ## Effect 114
@@ -1574,7 +1585,12 @@ Moves: Miracle Eye
 
 * No rolls
 
-Functionally the same as Odor Sleuth (Effect 113), the only difference being it applies to dark types not ghost types. None of this matters, so this is essentially a no-op.
+Like Odor Sleuth (Effect 113) in what it is *for* — it also sets its flag on `BTLSCR_DEFENDER` and also feeds `MON_IS_IDENTIFIED`, so the evasion half is shared exactly — but it reaches the type chart by a **different mechanism**, which is worth recording because the two cannot be folded into one flag:
+
+* Foresight breaks out of the matchup walk at the sentinel, which drops the two trailing Ghost rows.
+* Miracle Eye sets `MOVE_EFFECT_MIRACLE_EYE` in `moveEffectsMask`, and `BasicTypeMulApplies` (battle_lib.c:2551-2555) then vetoes **any** immunity entry whose DEFENDING type is Dark, entry by entry. That is how Psychic reaches a Dark type; the Ghost rows are untouched.
+
+Still a no-op for metronome compass, for the same reason 113 is. Unmodelled in battle compass: no configured encounter has it and nothing a party carries needs it.
 
 ## Effect 217
 Moves: Wake Up Slap

@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from claytonlib.battle.types import effectiveness, type_multiplier
-from claytonlib.moves import CATEGORY_PHYSICAL, CATEGORY_SPECIAL, Move
+from claytonlib.moves import CATEGORY_PHYSICAL, CATEGORY_SPECIAL, CATEGORY_STATUS, Move
 
 # Gen 4 multiplies damage by one of sixteen values, 85..100 percent.
 DAMAGE_ROLLS: tuple[int, ...] = tuple(range(85, 101))
@@ -329,6 +329,22 @@ UNMODELLED_DAMAGE_ABILITIES = UNMODELLED_ATTACKER_ABILITIES | UNMODELLED_DEFENDE
 ABILITY_LEVITATE = "levitate"
 TYPE_GROUND = "Ground"
 
+#: Scrappy, and it is in neither UNMODELLED set for the same reason Levitate is in neither: it is
+#: a type rule with no second half. `BattleSystem_ApplyTypeChart` tests
+#: ``Battler_Ability(attacker) == ABILITY_SCRAPPY`` in the **same condition** as the defender's
+#: Foresight volatile (battle_lib.c:2612-2616), so the two are one mechanic reached from opposite
+#: sides, and modelling one without the other would be an asymmetry rather than a smaller scope.
+#:
+#: It mattered before anything was typed here: a Scrappy Kangaskhan is an ordinary thing to bring
+#: and False Swipe is its obvious job, so the simulator predicted 0 damage against Giratina on a
+#: turn the game dealt some -- a wrong prediction, which eliminates the true seed rather than
+#: merely under-promising.
+#:
+#: Tested with `Battler_Ability` rather than `Battler_IgnorableAbility`, so unlike Levitate it is
+#: **not** suppressed by Mold Breaker. Nothing models Mold Breaker anyway; noted because the two
+#: lines sit three apart in the ROM and differ.
+ABILITY_SCRAPPY = "scrappy"
+
 
 @dataclass(frozen=True)
 class Attacker:
@@ -357,6 +373,25 @@ class Defender:
     #: The defender's ability. Only Levitate is read, and only as a Ground immunity -- which is
     #: all Levitate is in Gen 4. Last, so every positional construction keeps working.
     ability: str = ""
+    #: Whether a Foresight or Odor Sleuth has landed on this defender -- the ROM's
+    #: `VOLATILE_CONDITION_FORESIGHT`. It removes the two Ghost immunities and nothing else
+    #: (`types.FORESIGHT_REMOVABLE`); Levitate is checked before the table walk and survives it.
+    #:
+    #: On the DEFENDER because that is where the ROM keeps it, even though the move is used by the
+    #: attacker: `battleMons[defender].statusVolatile`. The attacker-side route to the same
+    #: removal is Scrappy -- see `ignores_ghost_immunity`.
+    identified: bool = False
+
+
+def _levitate_blocks(ability: str, move: Move) -> bool:
+    """Levitate's whole rule, from an ability NAME rather than from a `Defender`.
+
+    Split out so `is_type_immune` can ask the same question without a damage-calculation object:
+    whether a move is blocked is about types and abilities, and nothing about it needs a stat
+    spread.
+    """
+    return (ability or "").strip().lower() == ABILITY_LEVITATE \
+        and move.type_name == TYPE_GROUND
 
 
 def _levitates(defender: Defender, move: Move) -> bool:
@@ -367,8 +402,57 @@ def _levitates(defender: Defender, move: Move) -> bool:
     move. Both Lati twins and Giratina Origin have it, and the Distortion World fight is the one
     where it matters -- its sibling in Turnback Cave has Pressure instead.
     """
-    return (defender.ability or "").strip().lower() == ABILITY_LEVITATE \
-        and move.type_name == TYPE_GROUND
+    return _levitate_blocks(defender.ability, move)
+
+
+def ignores_ghost_immunity(*, identified: bool = False, attacker_ability: str = "") -> bool:
+    """Whether the Normal/Fighting-vs-Ghost rows do not apply to this pairing.
+
+    Two routes to one answer, which is how the ROM has it -- both halves of a single condition at
+    battle_lib.c:2612-2616: a Foresight or Odor Sleuth landed on the DEFENDER, or the ATTACKER has
+    Scrappy.
+
+    **Takes the two facts rather than the two battlers**, which is why the keywords are named
+    after sides. The question is about one volatile flag and one ability, and demanding a
+    `Defender` and an `Attacker` for it meant a caller that only wanted to know whether a move
+    could do anything had to invent a stat spread to ask.
+    """
+    if identified:
+        return True
+    return (attacker_ability or "").strip().lower() == ABILITY_SCRAPPY
+
+
+def is_type_immune(move: Move, types: tuple[str, ...] | list[str] | str, *,
+                   defender_ability: str = "", identified: bool = False,
+                   attacker_ability: str = "") -> bool:
+    """Whether this pairing zeroes the move outright, so it deals nothing whatever it rolls.
+
+    Both routes to zero in one answer, because a caller asking "will this move do anything" does
+    not care which: the type chart (a 0.0 matchup against either of the defender's types) and
+    Levitate, which the ROM keeps inside the same function as the chart. Foresight and Scrappy are
+    folded in too, so this flips to False the moment one of them lands.
+
+    Takes the defender's TYPES and the two relevant ability/flag facts rather than a `Defender`
+    and an `Attacker`, for the reason `ignores_ghost_immunity` gives: none of this reads a stat.
+
+    **A zeroed move is not a failed move**, and the distinction is the reason this is published
+    rather than inferred from a damage figure of 0. It spends every roll, prints a hit, renders a
+    ``h``/``!`` token and counts as successful -- so the turn is identical to a connecting one
+    except that no HP moved. What the UI needs it for is saying *why* nothing happened, which is
+    otherwise indistinguishable from a bug: against Giratina half of a Smeargle's moveset reads as
+    broken until someone explains that Normal does not touch Ghost.
+
+    Status moves are never immune -- they do not reach the type chart at all -- so they answer
+    False rather than raising.
+    """
+    if move.category == CATEGORY_STATUS:
+        return False
+    if _levitate_blocks(defender_ability, move):
+        return True
+    return effectiveness(
+        move.type_name, types,
+        foresight=ignores_ghost_immunity(identified=identified,
+                                         attacker_ability=attacker_ability)) == 0.0
 
 
 def unsupported_reason(move: Move, *, power_known: bool = False) -> str | None:
@@ -541,7 +625,7 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
         # and "the step did not happen" are the same number only by luck.
         return value
     value = _apply_stab(value, move, attacker)
-    value = _apply_effectiveness(value, move, defender)
+    value = _apply_effectiveness(value, move, defender, attacker=attacker)
     return value
 
 
@@ -568,7 +652,8 @@ def _apply_stab(value: int, move: Move, attacker: Attacker) -> int:
     return value
 
 
-def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
+def _apply_effectiveness(value: int, move: Move, defender: Defender, *,
+                         attacker: Attacker | None = None) -> int:
     """Type effectiveness, applied once PER DEFENDER TYPE in tenths.
 
     The ROM does ``damage = DamageDivide(damage * typeEffectiveness, 10)`` for each of the
@@ -576,9 +661,17 @@ def _apply_effectiveness(value: int, move: Move, defender: Defender) -> int:
     `DamageDivide` truncates but never returns 0 for a nonzero input. Multiplying the two
     matchups together and dividing once is not the same thing: ``x * 5 / 10 * 5 / 10`` truncates
     twice, which is what the game does against a dual type resisting twice over.
+
+    A Foresighted defender or a Scrappy attacker drops the two Ghost immunities before the walk
+    starts (`ignores_ghost_immunity`). Nothing else about the walk changes -- in particular the
+    per-type truncation is unaffected, because a removed row contributes no multiplier at all
+    rather than a multiplier of one.
     """
+    foresight = ignores_ghost_immunity(
+        identified=defender.identified,
+        attacker_ability="" if attacker is None else attacker.ability)
     for defending in defender.types:
-        tenths = round(type_multiplier(move.type_name, defending) * 10)
+        tenths = round(type_multiplier(move.type_name, defending, foresight=foresight) * 10)
         if tenths == 0:
             return 0                     # an immunity zeroes it outright
         if value == 0:

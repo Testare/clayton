@@ -14,11 +14,12 @@ from claytonlib.battle.stats import (  # noqa: F401
     species, derive_species_stats, has_fast_ball_bonus,
 )
 from claytonlib.battle.types import (  # noqa: F401
-    TYPE_CHART, type_multiplier, effectiveness,
+    FORESIGHT_REMOVABLE, TYPE_CHART, type_multiplier, effectiveness,
 )
 from claytonlib.battle.damage import (  # noqa: F401
     DAMAGE_ROLLS, Attacker, Defender, damage, damage_range, damage_spread,
-    rolls_for_damage, stage_multiplier, unsupported_reason,
+    ignores_ghost_immunity, is_type_immune, rolls_for_damage, stage_multiplier,
+    unsupported_reason,
 )
 from claytonlib.battle.catch import (  # noqa: F401
     apricorn_catch_rate, capture_chance, capture_windows, captures, catch_value,

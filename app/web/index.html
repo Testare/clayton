@@ -5903,12 +5903,19 @@ function hrInterview(){
   // only route to the encounter -- it just must never be told to use it. See
   // `sim.unselectable_reason`, and note this is NOT the same as `guaranteed_fail`: a move that
   // fails is a fine turn to report, and a failing Sing is one of our best probes.
+  // A move the type chart zeroes stays ENABLED and gets a marker: it is a perfectly good turn to
+  // report -- it connects, spends every roll and renders its hit marker, and only the HP stays
+  // put -- so disabling it would refuse an answer the game really did produce. What it must not
+  // do is look like a working move: against a Ghost target that is half a chipper's moveset, and
+  // `no_effect_hint` carries both the reason and the fix (`hunt_session._no_effect_hint`).
   const actionChips = s.ours.move_info
     .filter(m => m.known && m.pp > 0 && s.legal_actions.includes("M" + (m.slot + 1)))
     .map(m => m.unselectable_reason
           ? hrChipOff(`${m.name}`, m.unselectable_reason)
-          : hrChip(`${m.name}`, `hrSet('action','M${m.slot + 1}')`,
-                   t.action === "M" + (m.slot + 1), `${m.pp} PP left`));
+          : hrChip(`${m.name}${m.deals_nothing ? " \u2298" : ""}`,
+                   `hrSet('action','M${m.slot + 1}')`,
+                   t.action === "M" + (m.slot + 1),
+                   m.no_effect_hint || `${m.pp} PP left`));
   actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
   // Both balls, in every phase. The capture ball never carried a risk -- a landing wins -- and
   // a standard ball's risk is DISCLOSED rather than forbidden: it is smallest early (0.35% per

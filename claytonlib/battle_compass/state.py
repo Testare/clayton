@@ -218,6 +218,23 @@ class Battler:
     #: ``Random 2, 3``, decremented by `MON_COND_CHECK_STATE_TAUNT` (state 20 of the end-of-turn
     #: condition walk, between Uproar at 14 and Yawn at 24), and it spends nothing on the way out.
     taunted_turns: int = 0
+    #: A Foresight or Odor Sleuth has landed on this battler -- the ROM's
+    #: `VOLATILE_CONDITION_FORESIGHT`, set on the move's DEFENDER by `subscript_foresight.s`.
+    #:
+    #: Two consequences, and both are read elsewhere rather than here: the two Ghost immunities
+    #: stop applying to moves aimed at it (`battle.damage.ignores_ghost_immunity`), and its
+    #: positive evasion stages stop counting (`sim.accuracy_net_stage`). Its evasion DROPS still
+    #: count -- the ROM zeroes the term only when it favours the defender
+    #: (battle_controller_player.c:2888).
+    #:
+    #: **This is what makes a Ghost target catchable at all.** False Swipe is Normal, so against
+    #: Giratina it does nothing until one of these lands; the chip phase is impossible without it.
+    #:
+    #: A flag with no counter, like `target_water_sport` and unlike every `*_turns` field: the ROM
+    #: clears it only when the Pokemon leaves the field, and a wild target never does. So one
+    #: Foresight lasts the battle -- and a second one still succeeds, which is why effect 113 is
+    #: deliberately absent from `sim.will_fail`.
+    identified: bool = False
 
     def __post_init__(self):
         if self.hp is None:
@@ -346,14 +363,14 @@ class Battler:
         if landed == 0 and (self.status is not Status.NONE or self.nightmare
                             or self.charging_slot is not None
                             or self.uproar_turns or self.drowsy_turns
-                            or self.taunted_turns):
+                            or self.taunted_turns or self.identified):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
             # drowsy from a Yawn it will never now fall asleep from.
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
-                           drowsy_turns=0, taunted_turns=0)
+                           drowsy_turns=0, taunted_turns=0, identified=False)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":

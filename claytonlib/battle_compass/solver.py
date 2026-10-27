@@ -495,7 +495,12 @@ def can_faint_target(move, ours, target, *, field=None) -> bool:
         move, attacker,
         Defender(defence=target.stats["def"], special_defence=target.stats["spd"],
                  types=target.types, defence_stage=target.def_stage,
-                 special_defence_stage=target.spdef_stage),
+                 special_defence_stage=target.spdef_stage,
+                 # A Foresight already landed makes a Normal move lethal that was harmless
+                 # before it. Without this the check answered "safe" for a False Swipe-less
+                 # Normal attacker against an identified Ghost, which is the one direction this
+                 # function must never be wrong in.
+                 identified=target.identified),
         base_power=base_power, critical=True, weather=weather_of(field))
     return high >= target.hp
 
