@@ -524,6 +524,130 @@ class TestATypeImmuneHitRendersNoMarker(unittest.TestCase):
         self.assertEqual(outcome.damage, 0)
         self.assertNotIn("h", outcome.tokens)
 
+class TestASecondaryDoesNotProcOnAnImmuneHit(unittest.TestCase):
+    """The other half of an ineffective hit, and the half that moves STATE rather than tokens.
+
+    One ROM function settles both halves, and it settles them differently --
+    `BattleSystem_TriggerSecondaryEffect` (battle_lib.c:1519). It runs from the controller loop
+    rather than from the effect script, which is why it is reached after a move that did not
+    connect, and its generic branch (battle_lib.c:1569-1586) is:
+
+    ```c
+    if (BattleSystem_RandNext(battleSys) % 100 < effectChance) {
+        SetupSideEffect(...);
+        if (curHP && !substituteWasHit
+            && (moveStatusFlags & MOVE_STATUS_NO_EFFECTS) == FALSE) { result = TRUE; }
+    }
+    ```
+
+    The `Random` sits outside every guard, so **the advance is unconditional**; `result` is what
+    runs the subscript. `MOVE_STATUS_NO_EFFECTS` contains `MOVE_STATUS_DID_NOT_HIT`, which
+    contains `MOVE_STATUS_INEFFECTIVE`. So the roll is spent and the effect is suppressed -- an
+    outcome-only correction with no advance-count change, which is why it needed no capture.
+
+    Why it matters here rather than being a curiosity: Ominous Wind raises **all five** of its own
+    user's stats, Speed among them, and the no-speed-tie guarantee that keeps ties out of the
+    search is built on Giratina being slower than us. Boosting it on a turn the game did not was
+    the expensive half of this bug.
+    """
+
+    #: An RNG state whose Ominous Wind procs its 10% against a defender it can touch, so the
+    #: immune and non-immune cases can be compared on the SAME roll rather than on two different
+    #: ones. Fed straight to `execute_move`, so this is a raw stream position.
+    PROCCING_RNG = 0x1043
+    #: The same thing one layer up: a HUNT seed, which `opening_rng` advances before the first
+    #: turn. A different number for the same reason `opening_rng` exists -- the two are not
+    #: interchangeable, and using the hunt seed as a raw state is how this test first failed.
+    PROCCING_SEED = 0x0C0E0205
+
+    def _wind_only(self):
+        """Giratina with PP in Ominous Wind alone, so the selection roll cannot pick anything
+        else."""
+        base = _giratina()
+        return replace(base, pp=(base.pp[0], 0, 0, 0))
+
+    def _bulky(self):
+        """A Magneton that survives the hit, so the turn is about the secondary rather than about
+        a faint."""
+        return replace(_hittable(),
+                       stats={"hp": 300, "atk": 65, "def": 70, "spa": 40, "spd": 77, "spe": 100})
+
+    def test_the_roll_is_still_spent(self):
+        """The half that is NOT changed, asserted as strictly as the half that is: same roll
+        count and the same RNG state afterwards, immune or not. Skipping the roll was the reading
+        that would have needed an emulator capture, and it was the wrong one.
+        """
+        wind = resolve_move("Ominous Wind")
+        immune_rng, immune = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                          _ours(), actor="E", slot=0)
+        hit_rng, landed = execute_move(self.PROCCING_RNG, wind, self._wind_only(),
+                                       self._bulky(), actor="E", slot=0)
+        self.assertEqual(immune.rolls, landed.rolls)
+        self.assertEqual(immune_rng, hit_rng)
+
+    def test_the_proc_that_would_have_landed_does_not(self):
+        """Same seed, same roll, opposite verdict -- so this is the immunity doing it and not a
+        different random number."""
+        wind = resolve_move("Ominous Wind")
+        _, immune = execute_move(self.PROCCING_RNG, wind, self._wind_only(), _ours(),
+                                 actor="E", slot=0)
+        _, landed = execute_move(self.PROCCING_RNG, wind, self._wind_only(), self._bulky(),
+                                 actor="E", slot=0)
+        self.assertTrue(landed.secondary)
+        self.assertFalse(immune.secondary)
+
+    def test_no_secondary_token_is_emitted(self):
+        """Nothing was shown, so nothing is reportable -- and a `~` the player never saw would
+        filter the candidate set on a message the game did not print."""
+        _, immune = execute_move(self.PROCCING_RNG, resolve_move("Ominous Wind"),
+                                 self._wind_only(), _ours(), actor="E", slot=0)
+        self.assertNotIn("~", immune.tokens)
+
+    def test_giratinas_speed_stage_does_not_move(self):
+        """The consequence that costs the run, through `simulate_turn` so the state change is
+        what is being checked rather than the flag."""
+        config = _config()
+        immune = simulate_turn(
+            BattleState(ours=_ours(), target=self._wind_only(),
+                        rng=opening_rng(self.PROCCING_SEED, config)), Action.MOVE_1, config)
+        self.assertEqual(immune.target.speed_stage, 0)
+
+    def test_but_it_does_move_when_the_hit_connects(self):
+        """The control, and what keeps the test above from passing for the wrong reason: the same
+        seed against a defender Ghost can touch really does boost."""
+        config = _config()
+        landed = simulate_turn(
+            BattleState(ours=self._bulky(), target=self._wind_only(),
+                        rng=opening_rng(self.PROCCING_SEED, config)), Action.MOVE_1, config)
+        self.assertEqual(landed.target.speed_stage, 1)
+        self.assertIn("~", landed.log[-1])
+
+    def test_every_stat_it_would_have_raised_stays_put(self):
+        """Ominous Wind raises five at once; Speed is merely the dangerous one."""
+        config = _config()
+        immune = simulate_turn(
+            BattleState(ours=_ours(), target=self._wind_only(),
+                        rng=opening_rng(self.PROCCING_SEED, config)), Action.MOVE_1, config)
+        for field in ("atk_stage", "def_stage", "spatk_stage", "spdef_stage", "speed_stage"):
+            with self.subTest(field):
+                self.assertEqual(getattr(immune.target, field), 0)
+
+    def test_no_configured_move_takes_the_branch_that_skips_the_gate(self):
+        """The invariant the suppression rests on. Two of the six branches in
+        `BattleSystem_TriggerSecondaryEffect` do not consult `MOVE_STATUS_NO_EFFECTS`:
+        `MOVE_SIDE_EFFECT_PROBABILISTIC`, which only effects **253 and 262** use (Flare Blitz and
+        Volt Tackle), and `MOVE_SIDE_EFFECT_CHECK_HP`, which reads no `effectChance` at all and so
+        cannot carry a chance-based secondary. Pinned over every configured target rather than
+        asserted in prose, so a target added later that brings one of them fails here instead of
+        being silently mis-simulated.
+        """
+        unguarded = {253, 262}
+        for key in supported():
+            for name in moveset(key):
+                move = resolve_move(name)
+                with self.subTest(f"{key}: {name}"):
+                    self.assertNotIn(move.effect, unguarded)
+
 
 if __name__ == "__main__":
     unittest.main()
