@@ -26,16 +26,67 @@ def _function_body(name: str) -> str:
 
     Matching against the whole 4,000-line file both risks false positives and produces
     unreadable failures, since assertIn puts the entire haystack in the message.
+
+    **Braces inside strings and comments are skipped, and that is what makes this helper honest
+    rather than merely tidier.** The page builds object literals as TEXT, so
+    ``hrSet('target',${base},result:''})`` carries a closing brace that no opening brace in the
+    source matches. A naive count reaches zero early and returns a TRUNCATED body -- and a
+    truncated body makes every ``assertNotIn`` in this file pass for the wrong reason, because the
+    string is "absent" only because the haystack stopped short of it. It had already been cutting
+    `hrTargetBlocks` off partway through its outcome chain; adding one more such chip is what
+    exposed it (clayton-6xu.3.11).
+
+    Comments matter for the same reason and bit second: prose is full of apostrophes ("doesn't",
+    "target's"), and treating one as a string delimiter swallows the rest of the function.
     """
     start = _HTML.index(f"function {name}(")
-    depth, i = 0, _HTML.index("{", start)
-    for j in range(i, len(_HTML)):
-        if _HTML[j] == "{":
-            depth += 1
-        elif _HTML[j] == "}":
-            depth -= 1
-            if depth == 0:
-                return _HTML[start:j + 1]
+    j = _HTML.index("{", start)
+    depth = 0
+    #: Nesting of string/template/hole contexts, outermost last. A quote is a plain string; a
+    #: backtick is a template whose ``${`` holes are real code again, so this has to be a stack.
+    stack: list[str] = []
+    while j < len(_HTML):
+        c = _HTML[j]
+        inside = stack[-1] if stack else None
+        if inside in ("'", '"', "`"):
+            if c == "\\":
+                j += 2
+                continue
+            if c == inside:
+                stack.pop()
+            elif inside == "`" and c == "$" and _HTML[j + 1:j + 2] == "{":
+                stack.append("{")
+                j += 2
+                continue
+            j += 1
+            continue
+        # Code (or a template hole, which is code). Comments first: their contents are prose.
+        if _HTML.startswith("//", j):
+            j = _HTML.find("\n", j)
+            if j < 0:
+                break
+            continue
+        if _HTML.startswith("/*", j):
+            closed = _HTML.find("*/", j + 2)
+            if closed < 0:
+                break
+            j = closed + 2
+            continue
+        if c in ("'", '"', "`"):
+            stack.append(c)
+        elif c == "{":
+            if inside == "{":
+                stack.append("{")
+            else:
+                depth += 1
+        elif c == "}":
+            if inside == "{":
+                stack.pop()
+            else:
+                depth -= 1
+                if depth == 0:
+                    return _HTML[start:j + 1]
+        j += 1
     raise AssertionError(f"unbalanced body for {name}")
 # api("method_name", ...) — the only way the UI calls Python.
 _API_CALLS = re.compile(r'\bapi\(\s*"([A-Za-z_][A-Za-z0-9_]*)"')

@@ -5069,7 +5069,7 @@ function hrWeActFirst(){
   if (!t.action || !t.action.startsWith("M")) return true;
   const ours = hrOurMoveInfo();
   const theirSlot = t.target && !t.target.prevented ? t.target.slot : null;
-  const theirs = theirSlot === null ? null : s.target.move_info[theirSlot];
+  const theirs = theirSlot === null ? null : hrTargetMoveRows()[theirSlot];
   const ourP = ours ? ours.priority : 0;
   const theirP = theirs ? theirs.priority : 0;
   if (ourP !== theirP) return ourP > theirP;
@@ -5083,11 +5083,46 @@ function hrOurMoveInfo(){
 }
 
 // The move the target used this turn, or null if it was prevented / not answered yet.
+// The target's move rows for whoever its attack will actually LAND on.
+//
+// **On a switch turn that is the INCOMING Pokemon**, because a switch resolves before any move.
+// The snapshot's top-level `target.move_info` is computed against whoever was out when the turn
+// OPENED, which on a switch turn is the one leaving -- so reading it asked about the wrong
+// Pokemon. The case that found it: Giratina used Ominous Wind on the turn a Smeargle came in, and
+// Ghost does nothing to a Normal type, but the outgoing Magneton is Electric/Steel and merely
+// RESISTS it -- so the interview asked whether it hit and for how much damage (clayton-6xu.3.11).
+//
+// `bench[].incoming_move_info` is the same rows recomputed against that bench member, which moves
+// every defender-dependent field together: the immunity, `can_miss`, and `effective_accuracy` all
+// read the defender.
+// Whoever the target's attack lands on this turn, by name: the INCOMING Pokemon on a switch
+// turn, since a switch resolves first. Used only for wording, but the wording is the whole point
+// of the message -- naming the one that left would be worse than saying nothing.
+function hrSwitchTargetName(){
+  const s = _huntSnap, t = _hrTurn;
+  const slot = t.ours && t.ours.bench;
+  if (t.action === "S" && slot !== undefined && slot !== null){
+    const incoming = (s.bench || []).find(b => b.slot === slot);
+    if (incoming) return incoming.name;
+  }
+  return s.ours.name;
+}
+
+function hrTargetMoveRows(){
+  const s = _huntSnap, t = _hrTurn;
+  const slot = t.ours && t.ours.bench;
+  if (t.action === "S" && slot !== undefined && slot !== null){
+    const incoming = (s.bench || []).find(b => b.slot === slot);
+    if (incoming && incoming.incoming_move_info) return incoming.incoming_move_info;
+  }
+  return s.target.move_info;
+}
+
 function hrTargetMoveInfo(){
   const t = _hrTurn;
   if (!t.target || t.target.prevented) return null;
   if (t.target.slot === null || t.target.slot === undefined) return null;
-  return _huntSnap.target.move_info[t.target.slot] || null;
+  return hrTargetMoveRows()[t.target.slot] || null;
 }
 
 function hrLanded(answer){ return !!answer && (answer.result === "h" || answer.result === "!"); }
@@ -5487,7 +5522,7 @@ function hrTurnComplete(){
   if (!caught){
     if (!t.target) return false;
     if (!t.target.prevented){
-      const info = s.target.move_info[t.target.slot];
+      const info = hrTargetMoveRows()[t.target.slot];
       if (info.has_secondary && !info.flinch_secondary && hrLanded(t.target)
           && t.target.secondary === undefined) return false;
       // Static's question is the one the player is most likely to be looking at, so the turn
@@ -5783,7 +5818,7 @@ function hrTargetBlocks(){
   // picked either, and offering one invites a report no candidate can render -- which eliminates
   // every seed rather than contradicting one. The flag is `usable_slots` on the Python side, so
   // this list and the simulator's selection roll cannot disagree about the modulus.
-  const opts = s.target.move_info.filter(m => m.known && m.selectable).map(m =>
+  const opts = hrTargetMoveRows().filter(m => m.known && m.selectable).map(m =>
     hrChip(m.name,
            // A slot our Taunt refuses carries its own outcome, so picking the move answers the
            // next question too -- and the chip says so, because "Yawn (blocked by the taunt)"
@@ -5821,7 +5856,7 @@ function hrTargetBlocks(){
   if (!t.target) return {blocks: out, done: false};
 
   if (!t.target.prevented){
-    const info = s.target.move_info[t.target.slot];
+    const info = hrTargetMoveRows()[t.target.slot];
     const base = `{slot:${t.target.slot}`;
     // Settled, not asked. The refusal has no roll behind it, so there is exactly one thing that
     // can have happened -- and the game named the move, which is why this turn keeps its slot
@@ -5848,6 +5883,20 @@ function hrTargetBlocks(){
       if (hrTargetCanMiss(info))
         opts2.push(hrChip("It failed", `hrSet('target',${base},result:''})`,
                           t.target.result === ""));
+    } else if (info.deals_nothing){
+      // **The type chart zeroes it, so there is no hit to report.** The move connects, spends
+      // every roll and renders the bare slot -- "It doesn't affect Smeargle!" -- and
+      // `tokens.turn_requires_hp` therefore asks for no HP either.
+      //
+      // This branch did not exist: `deals_nothing` was published for OUR move chips and never
+      // consulted here, so an immune incoming move offered "Hit us" and "Critical hit" as the
+      // only answers to a turn that can render neither, then asked for an HP figure that had not
+      // moved. Half of Giratina's moveset is Ghost and the chipper is a Normal-typed Smeargle,
+      // so this is most of its turns (clayton-6xu.3.11).
+      opts2.push(hrChip(`It had no effect`, `hrSet('target',${base},result:''})`,
+                        t.target.result === "",
+                        `${esc(s.target.name)}'s ${esc(info.name)} cannot touch `
+                        + `${esc(hrSwitchTargetName())} at all.`));
     } else if (info.charges){
       // A two-turn move's CHARGE turn. It fires nothing -- no crit, no damage, not even an
       // accuracy roll -- so the only thing the player saw is the vanish, and the turn renders the
@@ -5875,7 +5924,8 @@ function hrTargetBlocks(){
     // read the same way the options above do -- otherwise a blanked Uproar auto-answered "h".
     if (!hrAutoAnswer(opts2, () => {
           t.target = {slot: t.target.slot,
-                      result: (info.damaging && !info.guaranteed_fail) ? "h" : ""};
+                      result: (info.damaging && !info.guaranteed_fail
+                               && !info.deals_nothing) ? "h" : ""};
         })) out.push(hrChips(`What happened to ${info.name}?`, opts2));
     // Said out loud when the turn auto-answers, because this is the one auto-answered turn the
     // player has a reason to doubt: they picked a damaging move and were asked nothing about it.

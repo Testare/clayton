@@ -2130,7 +2130,24 @@ class HuntSession:
                        # could fire. Without this the question was silently skipped on exactly
                        # the turn the plan brings Ampharos in on.
                        "ability": b.ability,
-                       "moves": list(b.moves)}
+                       "moves": list(b.moves),
+                       # **The target's moves as they would land on THIS Pokemon**, for the same
+                       # reason `burn_tick` and `ability` above are per-bench-member: a switch
+                       # resolves before any move, so the newcomer is who the target's attack
+                       # hits. The top-level `target.move_info` is computed against whoever was
+                       # out when the turn OPENED, which on a switch turn is the Pokemon leaving.
+                       #
+                       # The case that found it: Giratina used Ominous Wind on the turn a
+                       # Smeargle came in. Ghost does nothing to a Normal type, so the turn
+                       # renders a bare `E1` with no HP -- but the outgoing Magneton is
+                       # Electric/Steel, which merely RESISTS it, so the interview asked whether
+                       # it hit and for how much (clayton-6xu.3.11).
+                       #
+                       # Every field that depends on the defender moves with it, not just the
+                       # immunity: `can_miss` and `effective_accuracy` read the defender's evasion
+                       # and its held item, and `deals_nothing` reads its types and ability. So
+                       # the whole row is recomputed rather than one flag being patched.
+                       "incoming_move_info": move_info(state.target, b)}
                       for i, b in enumerate(state.bench)],
             "ours_party_slot": state.ours.party_slot or 1,
             # Whether "fainted before moving" is a reportable outcome at all.

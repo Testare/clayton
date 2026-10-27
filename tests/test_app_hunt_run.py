@@ -819,7 +819,14 @@ class TestGuaranteedFailureIsNotAsked(unittest.TestCase):
         self.assertGreaterEqual(self.html.count("if (info.guaranteed_fail){"), 2)
         self.assertNotIn("} else if (info.guaranteed_fail){", self.html)
         # And the auto-answer has to read the same way, or a blanked Uproar auto-answers "h".
-        self.assertIn("(info.damaging && !info.guaranteed_fail)", self.html)
+        #
+        # Asserted as its TERMS rather than as one literal string. The expression has since gained
+        # a third exclusion (`deals_nothing` -- a type-immune incoming move renders the bare slot
+        # for the same reason a blanked Uproar does) and wrapped across two lines, which a literal
+        # match cannot survive. Each term is what matters; their exact spacing is not.
+        for term in ("info.damaging", "!info.guaranteed_fail", "!info.deals_nothing"):
+            with self.subTest(term):
+                self.assertIn(term, self.html)
         self.assertIn('hrChip("It failed"', self.html)
 
     def test_it_is_checked_on_both_sides(self):
