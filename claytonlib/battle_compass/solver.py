@@ -39,7 +39,8 @@ from claytonlib.battle import turn as turn_costs
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass.sim import (
-    HuntConfig, advance, pending_future_sight, simulate_turn, unselectable_reason,
+    HuntConfig, advance, is_semi_invulnerable, pending_future_sight, simulate_turn,
+    unselectable_reason,
 )
 from claytonlib.battle_compass.state import (
     HP_TICKING_STATUSES, Action, BattleState, Status,
@@ -553,9 +554,29 @@ def _legal_actions(state: BattleState, config: SolverConfig,
     dist = lambda price: distance_of(price, base=config.base_distance,
                                      divisor=config.cost_divisor)
 
-    # If a capture is available this turn it is the only thing worth doing.
-    if simulate_turn(state, Action.CAPTURE_BALL, hunt).captured:
-        return [(Action.CAPTURE_BALL, dist(0), None)]
+    # **No ball at all while the target is away mid-charge** [verified in game by Testare].
+    #
+    # And the refusal is not a failed throw -- **the game does not let you throw one**. The ball
+    # is never selected, never consumed, and no turn happens. So this is a gate on the ACTION
+    # existing rather than a cost to price: there is nothing to measure, because there is nothing
+    # to measure.
+    #
+    # It reverses what this project believed. `test_battle_compass_giratina` asserted the opposite
+    # outright -- "the catch path has no invulnerability check at all, so Shadow Force costs us
+    # two turns of MOVES and nothing of the capture" -- reasoning from the absence of a check in
+    # the decompiled catch path. The absence is real and the conclusion was not: nothing in the
+    # catch path refuses the throw because the throw never gets that far.
+    #
+    # The symptom: the solver handed the player a Luxury Ball throw at a vanished Giratina as the
+    # final step of a plan (clayton-6xu.3.13).
+    #
+    # Shadow Force therefore costs us the capture as well as the turn, which is a real strategic
+    # change rather than a tidy-up: a vanished turn is one the window search has to step PAST,
+    # because no throw can land on it.
+    if not is_semi_invulnerable(state.target):
+        # If a capture is available this turn it is the only thing worth doing.
+        if simulate_turn(state, Action.CAPTURE_BALL, hunt).captured:
+            return [(Action.CAPTURE_BALL, dist(0), None)]
 
     item = choose_item(state, config)
     if item is not None:
@@ -618,7 +639,8 @@ def _legal_actions(state: BattleState, config: SolverConfig,
         if undoes_our_own_work(move, state) is not None:
             continue
         out.append((getattr(Action, f"MOVE_{slot + 1}"), dist(0), None))
-    if config.allow_standard_balls:
+    # The standard ball is gated on the same thing, and for the same reason: it is a thrown ball.
+    if config.allow_standard_balls and not is_semi_invulnerable(state.target):
         out.append((Action.STANDARD_BALL, dist(BALL_PRICE), None))
     return out
 

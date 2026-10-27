@@ -324,18 +324,66 @@ class TestATurnPair(unittest.TestCase):
         self.assertFalse(outcome.successful)
         self.assertIn("-", outcome.tokens)
 
-    def test_a_ball_still_works_while_it_is_away(self):
-        """The fact that matters most. The catch path has no invulnerability check at all, so
-        Shadow Force costs us two turns of MOVES and nothing of the capture."""
+    def test_a_ball_cannot_be_thrown_while_it_is_away(self):
+        """**Reversed, and it was the claim this file called "the fact that matters most".**
+
+        It read: "The catch path has no invulnerability check at all, so Shadow Force costs us two
+        turns of MOVES and nothing of the capture." The absence of a check is real; the conclusion
+        was not. Nothing in the catch path refuses the throw because **the throw never gets that
+        far -- you cannot select the ball at all** [verified in game by Testare]. It is not dodged
+        and not consumed, and no turn happens.
+
+        Testare hit it in a real run, with the solver recommending a Luxury Ball at a vanished
+        Giratina as the final step of a plan (clayton-6xu.3.13).
+
+        So the simulator RAISES rather than returning an outcome: there is no turn to render and
+        no cost to price, and the one answer this branch must never give is a capture. What keeps
+        it reachable only by bypass is `solver._legal_actions` and `hunt_session.legal_actions`,
+        both tested below.
+        """
         config = _config()
         state = BattleState(ours=_ours(),
                             target=_forced(charging_slot=FORCE, hp=1, status=Status.SLEEP,
                                            sleep_turns=4),
                             rng=opening_rng(0x0C0E02CA, config))
+        with self.assertRaises(NotImplementedError) as caught:
+            simulate_turn(state, Action.CAPTURE_BALL, config)
+        self.assertIn("cannot be thrown", str(caught.exception))
+
+    def test_a_ball_works_normally_once_it_is_back(self):
+        """The control: the refusal is about the vanish and nothing else, so an identical state
+        without the charge lock throws a ball as it always did."""
+        config = _config()
+        state = BattleState(ours=_ours(),
+                            target=_forced(hp=1, status=Status.SLEEP, sleep_turns=4),
+                            rng=opening_rng(0x0C0E02CA, config))
         after = simulate_turn(state, Action.CAPTURE_BALL, config)
         self.assertEqual(after.balls_thrown, 1)
         self.assertTrue(any(part.startswith("C") or part.startswith("P")
                             for part in after.log[-1]), after.log[-1])
+
+    def test_neither_the_solver_nor_the_interview_offers_one(self):
+        """The two gates that keep the raise above unreachable. Shadow Force now costs us the
+        capture as well as the turn, which is a real strategic change: a vanished turn is a turn
+        the ball cannot be thrown on, so the window search must step past it."""
+        from claytonlib.battle_compass.solver import SolverConfig, _legal_actions
+
+        config = _config()
+        away = _forced(charging_slot=FORCE, hp=1, status=Status.SLEEP, sleep_turns=4)
+        state = BattleState(ours=_ours(), target=away,
+                            rng=opening_rng(0x0C0E02CA, config), phase=2)
+        offered = [a for a, _d, _i in _legal_actions(
+            state, SolverConfig(allow_standard_balls=True), config)]
+        self.assertNotIn(Action.CAPTURE_BALL, offered)
+        self.assertNotIn(Action.STANDARD_BALL, offered)
+        # ...and the same state with the lock off offers them again, so the gate is about the
+        # vanish and not about something else in this fixture.
+        back = BattleState(ours=_ours(),
+                           target=_forced(hp=1, status=Status.SLEEP, sleep_turns=4),
+                           rng=opening_rng(0x0C0E02CA, config), phase=2)
+        again = [a for a, _d, _i in _legal_actions(
+            back, SolverConfig(allow_standard_balls=True), config)]
+        self.assertIn(Action.STANDARD_BALL, again)
 
     def test_fainting_clears_the_lock(self):
         """`statusVolatile` goes when a Pokemon leaves the field, and the charge lock with it."""

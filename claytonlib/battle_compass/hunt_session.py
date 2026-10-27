@@ -1395,9 +1395,16 @@ class HuntSession:
         Move slots are filtered to those with PP left in *every* surviving candidate, since PP is
         not a thing candidates can disagree about.
 
-        Both balls are legal in every phase -- see `Phase`. A standard ball's danger is reported
+        Both balls are legal in every PHASE -- see `Phase`. A standard ball's danger is reported
         by `standard_ball_risk` rather than removed from the list, because the risk is small,
         quantified, and the player's to weigh; and the capture ball never carried one.
+
+        **Neither is legal while the target is away mid-charge**, and that is a stronger
+        restriction than a phase: you cannot throw the ball AT ALL [verified in game by Testare].
+        It is not a throw that fails -- the ball is never selected and no turn happens -- so this
+        is not a risk to disclose but an action that does not exist, and offering it invites a
+        report no candidate can render. This project believed the opposite until it was tried
+        (clayton-6xu.3.13).
 
         ``REVIVE`` appears only while somebody is actually down to revive, and ``FAINTED`` only
         while the target could move before us -- otherwise we always got our move off, so being
@@ -1415,7 +1422,8 @@ class HuntSession:
             actions.append(Action.ITEM)
         if statused:
             actions.append(Action.ITEM_CURE)
-        actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
+        if not is_semi_invulnerable(state.target):
+            actions.extend([Action.CAPTURE_BALL, Action.STANDARD_BALL])
         if self.phase is Phase.SETUP and state.healthy_bench:
             actions.append(Action.SWITCH)
         if any(b.fainted for b in state.bench):

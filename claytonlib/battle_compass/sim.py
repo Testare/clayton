@@ -2981,6 +2981,26 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # `new.turn` is still the count of COMPLETED turns here -- it is incremented at the
             # end of the turn -- which is exactly the ROM's `totalTurns`, so a Quick Ball's
             # "first turn" and a Timer Ball's climb line up without an adjustment.
+            if is_semi_invulnerable(new.target):
+                # **You cannot throw a ball at a target that is away** [verified in game by
+                # Testare]. Not a throw that fails or is dodged -- the ball cannot be selected,
+                # so it is never consumed and the turn never happens.
+                #
+                # Which is why this RAISES rather than returning some cheaper outcome: there is no
+                # turn here to render and no cost to price. A `MoveOutcome` of any shape would be
+                # describing a turn the game refuses to let the player take, and the one thing
+                # this branch must never do is predict a capture -- that is the single wrong
+                # answer that loses a run.
+                #
+                # Kept unreachable by the two gates that decide what may be chosen:
+                # `solver._legal_actions` will not plan a ball at a vanished target and
+                # `hunt_session.legal_actions` will not offer one. Arriving here means one of them
+                # was bypassed (clayton-6xu.3.13).
+                raise NotImplementedError(
+                    "a ball cannot be thrown at a semi-invulnerable target -- the game does not "
+                    "offer the action at all, so there is no turn to simulate; both "
+                    "`solver._legal_actions` and `hunt_session.legal_actions` exclude it, so "
+                    "reaching here means one of those was bypassed")
             effect = config.ball_effect_at(new.turn)
             multiplier = (effect.multiplier
                           if action is Action.CAPTURE_BALL else BALL_POKE)

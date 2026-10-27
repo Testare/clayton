@@ -351,6 +351,54 @@ class TestAPreventedTurnBreaksTheCharge(unittest.TestCase):
         self.assertIsNone(after.target.charging_slot)
 
 
+class TestNoBallWhileItIsAway(unittest.TestCase):
+    """**You cannot throw a ball at a vanished target at all** [verified in game by Testare].
+
+    Not dodged, not consumed -- the action is simply unavailable, so no turn happens. This file's
+    sibling asserted the opposite as "the fact that matters most", reasoning from the absence of an
+    invulnerability check in the decompiled catch path. Nothing refuses the throw there because the
+    throw never gets that far.
+
+    The symptom was the solver recommending a Luxury Ball at a vanished Giratina as a plan's final
+    step. So the consequence is strategic as well as mechanical: Shadow Force costs us the capture
+    opportunity as well as the turn, and the window search has to step PAST a vanished turn
+    (clayton-6xu.3.13).
+    """
+
+    def _session(self, **target_kwargs):
+        import datetime as dt
+
+        from claytonlib.battle_compass.candidates import Candidate, CandidateWindow
+        from claytonlib.battle_compass.hunt_session import HuntSession
+
+        window = CandidateWindow(
+            key_seed=0x1234, initial_time=dt.datetime(2026, 1, 1, 12, 0, 0), vector_ms=5000.0,
+            frame_centre=1000, second_centre=30, frame_window=0, second_window=0,
+            candidates=(Candidate(seed=0x0C0E02CA, frame=1000, second=30),))
+        return HuntSession(window, _ours(200), _forced(**target_kwargs), _config())
+
+    def test_the_interview_does_not_offer_either_ball(self):
+        actions = self._session(charging_slot=FORCE).legal_actions()
+        self.assertNotIn(Action.CAPTURE_BALL, actions)
+        self.assertNotIn(Action.STANDARD_BALL, actions)
+
+    def test_it_offers_them_again_once_it_is_back(self):
+        """The control. Balls are legal in every PHASE -- it is the vanish that removes them, and
+        only for as long as it lasts."""
+        actions = self._session().legal_actions()
+        self.assertIn(Action.CAPTURE_BALL, actions)
+        self.assertIn(Action.STANDARD_BALL, actions)
+
+    def test_the_simulator_refuses_rather_than_predicting_a_capture(self):
+        """Raising is the point: there is no turn to render and no cost to price, and a predicted
+        capture that cannot happen is the single answer that loses a run."""
+        config = _config()
+        state = BattleState(ours=_ours(200), target=_forced(charging_slot=FORCE, hp=1),
+                            rng=opening_rng(0x0C0E02CA, config))
+        with self.assertRaises(NotImplementedError):
+            simulate_turn(state, Action.CAPTURE_BALL, config)
+
+
 class TestTheTag(unittest.TestCase):
     """Bug 3."""
 
