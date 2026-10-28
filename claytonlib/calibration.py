@@ -122,6 +122,31 @@ class CalibrationModel:
     safari_offset_per_advance: float | None = None
     safari_offset_per_advance_n: int = 0        # runs carrying an advance count
     safari_offset_per_advance_ci: tuple = ()    # (lo, hi) bootstrap 95% CI on the slope
+    # BATTLE-path offset (frames): the Battle Compass encounter -- an A-press on a static
+    # legendary -- lands this far off the metronome fit's intercept, fit the same way
+    # `safari_offset` is and applied only when a caller asks for that path
+    # (`with_battle_offset()`).  Reported by Testare as "about -5 seconds" and measured at -423
+    # frames over 17 saved runs (notes/battle_offset.md).
+    #
+    # **It is statistically the SAME number as `safari_offset` (-435, n=8), which refines the
+    # hypothesis rather than confirming it.**  The proposed cause was Sweet Scent's menu-close
+    # and field-move animations, which would make the safari path land LATER than the battle one;
+    # instead the two agree to within 12 frames against a standard error of 122.  What they share
+    # is not being the METRONOME encounter, so the ~430 frames look like something the base fit's
+    # intercept carries for Blackthorn alone rather than something Sweet Scent adds.  Kept as its
+    # own field anyway: two paths agreeing is a measurement, and collapsing them into one
+    # constant would hide the next path that disagrees.
+    battle_offset: float | None = None
+    battle_offset_n: int = 0           # battle runs behind the offset
+    battle_offset_std: float = 0.0     # spread of the per-run residuals (frames)
+    # The battle path's own RTC-second offset, REPLACING `rtc_offset_seconds` rather than adding
+    # to it: the two describe the same quantity on different paths.  Measured at ~0.25 s against
+    # the metronome fit's 5.25, from 17 runs whose second residual was negative EVERY TIME
+    # (median -5).  That axis is far cleaner than the frame axis -- it is quantised to whole
+    # seconds and carries no landing jitter -- which is why it is fit separately rather than
+    # derived from `battle_offset` at 59.8261 Hz.  None = not fit, which leaves the metronome
+    # figure in place.
+    battle_rtc_offset_seconds: float | None = None
     # Safari-path landing jitter (frames per sqrt(ms)), fit from the spread of the safari runs
     # themselves rather than inherited from the metronome fit.  The safari load path is a
     # different (longer) path than the metronome one, so its spread need not match; without
@@ -180,6 +205,39 @@ class CalibrationModel:
         if self.safari_offset_per_advance:
             shift += self.safari_offset_per_advance * advances
         return shift
+
+    def with_battle_offset(self) -> "CalibrationModel":
+        """A copy describing the BATTLE path: the frame intercept shifted and the RTC second swapped.
+
+        The sibling of `with_safari_offset`, and the same mechanism for the same reason -- the
+        shift is baked into the mean so the existing scorers and `battle_compass.candidates` score
+        this path just by being handed the model, with no per-call flag threaded through them.
+
+        Two differences from the safari version, both because the data is different:
+
+        * There is no per-advance term.  `fd` against `M` over these runs has r = -0.03, so the
+          residual is an intercept and not a slope; and an advance count is not what a Hunt varies
+          anyway.
+        * It also replaces `rtc_offset_seconds`, which the safari path never needed to.  The
+          second axis is the cleaner of the two here (every one of 17 runs negative, median -5 s)
+          and it is a different question from the frame counter, which lags real time across loads.
+
+        `self` when neither field is fit, so a model that predates this behaves exactly as it did.
+        """
+        if self.battle_offset is None and self.battle_rtc_offset_seconds is None:
+            return self
+        out = replace(self)
+        if self.battle_offset:
+            if self.kind == "quad" and self.coeffs:
+                out.coeffs = (self.coeffs[0] + self.battle_offset,) + tuple(self.coeffs[1:])
+            else:
+                out.alpha = self.alpha + self.battle_offset
+        if self.battle_rtc_offset_seconds is not None:
+            out.rtc_offset_seconds = self.battle_rtc_offset_seconds
+        # Cleared so the returned model cannot shift twice if it is handed back through here.
+        out.battle_offset = None
+        out.battle_rtc_offset_seconds = None
+        return out
 
     def with_safari_offset(self, advances: int = 0) -> "CalibrationModel":
         """A copy with the safari load path folded into the mean, or self if nothing applies.

@@ -32,7 +32,13 @@ def _ready_hunt(**overrides):
     hunt.update({
         "target": TARGET, "party": [{"pokemon_id": lead, "held_item": "Silk Scarf"}],
         "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
-        "initial_time": "2026-01-01T12:00:00", "vector_ms": 5000,
+        # A REALISTIC countdown, and it has to be: a five-second vector used to work here only
+        # because the uncorrected intercept happened to land just above the key seed's own delay.
+        # With the battle-path offset applied (-423 frames), a five-second gap between loading the
+        # save and the encounter predicts a battle seed BEFORE the seed it came from, which the
+        # candidate grid correctly refuses -- `CandidateWindow.why_empty` says so in those words.
+        # Nobody runs a five-second vector; three minutes is the low end of a real one.
+        "initial_time": "2026-01-01T12:00:00", "vector_ms": 180000,
         "seconds_window": 0, "delay_window": 10,
     })
     hunt.update(overrides)
@@ -253,7 +259,7 @@ class TestThePageOpensOnConfigurationAlone(unittest.TestCase):
 
     def test_the_targeting_can_be_corrected_from_the_page(self):
         facade, hunt_id = _ready_hunt(vector_ms=1000)
-        started = facade.hunt_session_start(hunt_id, {"vector_ms": 5000})
+        started = facade.hunt_session_start(hunt_id, {"vector_ms": 180000})
         self.assertTrue(started["session_id"])
         self.assertGreater(started["snapshot"]["survivors"], 0)
 

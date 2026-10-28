@@ -1016,8 +1016,19 @@ class Facade:
 
         models = self._resolve_calibration_models(hunt.profile_id)
         model = models.get("linear") or next(iter(models.values()), None)
-        if model is None or not hunt.is_roamer:
-            return model, None, None
+        if model is None:
+            return None, None, None
+        if not hunt.is_roamer:
+            # **The BATTLE path, not the metronome fit it was built from.** A Hunt's encounter
+            # lands ~423 frames and ~5 RTC seconds earlier than the base intercept predicts --
+            # measured over 17 saved runs, every one of them negative on the second axis
+            # (notes/battle_offset.md) -- and `with_battle_offset` is the same mechanism
+            # `with_safari_offset` uses for the same reason: the shift goes into the mean so
+            # `candidates.generate` needs no flag of its own. A model with neither field fit
+            # returns itself, so an unfitted profile behaves exactly as it did.
+            return model.with_battle_offset(), None, None
+        # A roamer is measured rather than commanded, so NEITHER intercept applies -- the battle
+        # offset describes a timed A-press and a stopwatch reading already contains everything.
         vector = StopwatchVector.from_calibration(model)
         if elapsed_ms is None:
             return vector, None, None

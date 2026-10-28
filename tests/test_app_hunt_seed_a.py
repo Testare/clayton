@@ -48,7 +48,9 @@ def _ready_hunt():
         "target": CONFIGURED,
         "party": [{"pokemon_id": lead, "held_item": "Silk Scarf"}],
         "capture_ball": "Fast Ball", "key_seed": 0x2D005C61,
-        "initial_time": "2026-01-01T12:00:00", "vector_ms": 5000,
+        # Three minutes, not five seconds -- see `test_app_hunt_run._ready_hunt` for why the
+        # old value stopped working once the battle-path offset was applied.
+        "initial_time": "2026-01-01T12:00:00", "vector_ms": 180000,
         "seconds_window": 0, "delay_window": 10,
     })
     facade.save_hunt(hunt)
@@ -522,7 +524,7 @@ class TestSavingAHuntRun(unittest.TestCase):
         self.assertEqual(record["turns"], 1)
         self.assertEqual(record["hunt_id"], self.hunt_id)
         self.assertEqual(record["hunt_name"], "Suicune")
-        self.assertEqual(record["vector_ms"], 5000)
+        self.assertEqual(record["vector_ms"], 180000)
 
     def test_saving_stores_a_battle_kind_run(self):
         run = self.facade.save_hunt_run(self.sid, {"tag": "BC1"})

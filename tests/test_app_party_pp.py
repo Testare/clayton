@@ -109,7 +109,10 @@ class TestTheKeyThePageWritesIsTheKeyTheSimulatorReads(unittest.TestCase):
                        "ivs": {k: 31 for k in ("hp", "atk", "def", "spa", "spd", "spe")}},
             "party": [{"pokemon_id": lead}], "capture_ball": "Fast Ball",
             "key_seed": 0x2D005C61, "initial_time": "2026-01-01T12:00:00",
-            "vector_ms": 5000, "seconds_window": 0, "delay_window": 10})
+            # Three minutes, for the reason `test_app_hunt_run._ready_hunt` documents: a
+            # five-second vector predicts a battle seed before the seed it came from once the
+            # battle-path offset is applied.
+            "vector_ms": 180000, "seconds_window": 0, "delay_window": 10})
         facade.save_hunt(hunt)
         return facade.hunt_session_start(hunt["id"])["snapshot"]["ours"]["pp"]
 

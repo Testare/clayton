@@ -1588,6 +1588,72 @@ def _bootstrap_slope_ci(xs, ys, resamples=_BOOTSTRAP_RESAMPLES):
     return (lo, hi)
 
 
+def fit_battle_offset(runs):
+    """Fit the BATTLE path's two offsets from saved Hunt run records.
+
+    `runs` is an iterable of run dicts as ``app.store`` saves them -- the ones with
+    ``kind == "battle"`` -- and the two numbers come straight out of what each run already
+    recorded, which is why this needs no re-simulation and no emulator:
+
+    * ``b_seed.frame_delta`` is **already the residual**. It is the identified battle seed's frame
+      minus the window's centre, and the centre was `model.frame(M, base_low16)` -- so it is
+      (actual - predicted) in frames, per run, with no arithmetic of ours in between.
+    * ``b_seed.second_delta`` is the same on the RTC-second axis, against
+      ``round(M/1000 + rtc_offset_seconds)``.
+
+    Medians, like `fit_safari_offset`, so one mis-identified run cannot drag either figure. Runs
+    flagged ``excluded`` are skipped; so is anything without a ``b_seed``, which is a run that
+    ended before the seed was pinned and therefore has no residual to offer.
+
+    Returns ``{"offset", "rtc_offset_seconds", "n", "std", "second_median", "seconds_all_negative",
+    "slope_per_second", "slope_r", "residuals"}`` or None when no run is usable. The two slope
+    figures are reported rather than fitted on purpose: if the residual scaled with M it would be
+    a SLOPE error and an intercept shift would be the wrong repair, so the caller should see that
+    it does not (r = -0.03 over the first 17 runs) rather than take it on trust.
+
+    **`rtc_offset_seconds` is returned as an absolute figure, not a delta**, because
+    `CalibrationModel.battle_rtc_offset_seconds` replaces the metronome one rather than adding to
+    it: it needs the model's own value to add the median to, which is why that is an argument of
+    the model rather than of this function.
+    """
+    import statistics
+
+    usable = []
+    for run in runs:
+        if run.get("kind") != "battle" or run.get("excluded"):
+            continue
+        b = run.get("b_seed") or {}
+        if b.get("frame_delta") is None or b.get("second_delta") is None:
+            continue
+        if not run.get("vector_ms"):
+            continue
+        usable.append((float(run["vector_ms"]), float(b["frame_delta"]),
+                       float(b["second_delta"]), run.get("id", "")))
+    if not usable:
+        return None
+    frames = [f for _, f, _, _ in usable]
+    seconds = [s for _, _, s, _ in usable]
+    ms = [m for m, _, _, _ in usable]
+    slope = r = 0.0
+    if len(usable) > 2 and len(set(ms)) > 1:
+        mbar, fbar = statistics.mean(ms), statistics.mean(frames)
+        sxx = sum((m - mbar) ** 2 for m in ms)
+        syy = sum((f - fbar) ** 2 for f in frames)
+        sxy = sum((m - mbar) * (f - fbar) for m, f in zip(ms, frames))
+        slope = (sxy / sxx) * 1000.0 if sxx else 0.0      # frames per second of M
+        r = sxy / math.sqrt(sxx * syy) if sxx and syy else 0.0
+    return {
+        "offset": statistics.median(frames),
+        "second_median": statistics.median(seconds),
+        "seconds_all_negative": all(s < 0 for s in seconds),
+        "n": len(usable),
+        "std": statistics.pstdev(frames) if len(frames) > 1 else 0.0,
+        "slope_per_second": slope,
+        "slope_r": r,
+        "residuals": {rid: f for _, f, _, rid in usable if rid},
+    }
+
+
 def fit_safari_offset(model, runs_path=SAFARI_RUNS_PATH, fresh_only=True, runs=None,
                       per_advance=False, jitter=False):
     """Fit the safari load-path offset Δα for `model`, holding its slope/shape fixed.
