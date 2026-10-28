@@ -111,10 +111,36 @@ class TestTheKindIsDerived(RoamerHuntCase):
 
 class TestItAsksForAStopwatchNotACountdown(RoamerHuntCase):
 
-    def test_a_roamer_needs_a_stopwatch_reading(self):
+    def test_a_missing_reading_is_not_a_CONFIGURATION_error(self):
+        """The deadlock this fixes: the reading is MEASURED during the run -- watch started on the
+        load press, stopped when the battle opens -- so it cannot exist until Battle Compass is
+        open. Demanding it in `hard_errors` disabled the button that opens the only page that can
+        ask for it, so no roamer hunt could ever be run."""
         hunt = self._hunt(stopwatch_ms=None)
         errors = self.api.hunt_readiness(hunt["id"])["hard_errors"]
-        self.assertTrue([e for e in errors if "stopwatch reading" in e], errors)
+        self.assertEqual(errors, [])
+
+    def test_and_the_run_page_opens_without_one(self):
+        setup = self.api.hunt_run_setup(self._hunt(stopwatch_ms=None)["id"])
+        self.assertEqual(setup["hard_errors"], [])
+        self.assertTrue(setup["skips_seed_a"])
+        self.assertIsNone(setup["targeting"]["stopwatch_ms"])
+
+    def test_a_reading_given_on_the_run_page_starts_the_run(self):
+        """The other half of the same deadlock: `hunt_session_start` checks `hard_errors` BEFORE
+        applying the page's params, so a reading typed on the page was refused for being absent
+        from the hunt it was about to be written to."""
+        hunt_id = self._hunt(stopwatch_ms=None, seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(
+            hunt_id, {"stopwatch_ms": STOPWATCH_MS, "seconds_window": 1, "delay_window": 4})
+        self.assertIsNotNone(started["session_id"], started.get("problem"))
+        self.assertEqual(self.api.get_hunt(hunt_id)["stopwatch_ms"], STOPWATCH_MS)
+
+    def test_a_static_hunt_still_needs_its_vector_at_configuration_time(self):
+        """The asymmetry is the point: a countdown is COMMANDED, so it is known before the run."""
+        hunt = self._hunt(species="uxie", level=50, vector_ms=None)
+        self.assertTrue([e for e in self.api.hunt_readiness(hunt["id"])["hard_errors"]
+                         if "Vector ms" in e])
 
     def test_and_does_not_need_a_vector_ms(self):
         hunt = self._hunt(vector_ms=None)
@@ -168,6 +194,14 @@ class TestTheWindowIsCentredOnTheReading(RoamerHuntCase):
         probe = self.api.hunt_candidates(self._hunt(stopwatch_ms=None)["id"])
         self.assertFalse(probe["ok"])
         self.assertIn("stopwatch reading", probe["problem"])
+
+    def test_and_as_incomplete_rather_than_as_an_empty_window(self):
+        """Nothing was centred, so "no candidates in that window" would send the player off
+        widening a window that was never searched."""
+        hunt_id = self._hunt(stopwatch_ms=None)["id"]
+        self.assertTrue(self.api.hunt_candidates(hunt_id)["incomplete"])
+        filled = self.api.hunt_candidates(hunt_id, {"stopwatch_ms": STOPWATCH_MS})
+        self.assertFalse(filled.get("incomplete"))
 
     def test_the_page_may_override_the_reading(self):
         hunt_id = self._hunt()["id"]
@@ -500,7 +534,15 @@ class TestTheRoamerRunPage(unittest.TestCase):
     def test_start_is_not_gated_on_a_seed_a_that_cannot_exist(self):
         body = self._body("huntReadyToStart")
         self.assertIn("huntIsRoamer()", body)
-        self.assertIn("return true", body)
+        self.assertNotIn("_hsa?.seedA", body.split("huntIsRoamer()")[0])
+
+    def test_but_it_is_gated_on_the_stopwatch_reading_the_page_itself_takes(self):
+        """The one thing a roamer run still needs, and the field is right there -- so the button
+        says so rather than starting and coming back with an empty window."""
+        self.assertIn("huntStopwatchEntered()", self._body("huntReadyToStart"))
+        self.assertIn("stopwatch reading", self._body("huntStartBlockedReason"))
+        # ...and it re-enables as the reading is typed, not only on the next whole-page render.
+        self.assertIn("huntRenderStartButton()", self._body("renderHuntSetup"))
 
     def test_and_the_blocked_reason_does_not_ask_for_one_either(self):
         self.assertIn("huntIsRoamer()", self._body("huntStartBlockedReason"))
@@ -554,6 +596,59 @@ class TestTheRoamerRunPage(unittest.TestCase):
         self.assertIn("renderHuntSeedA()", body)
         self.assertIn("renderHuntFrameGuide()", body)
         self.assertIn("Vector ms", body)
+
+    def test_the_configure_page_asks_the_stored_kind_too(self):
+        """Never the species, on either page: the facade derives the kind from the encounter row
+        and both pages read `encounter_kind`."""
+        self.assertIn('function huntCfgIsRoamer(){ return (_hunt && _hunt.encounter_kind) === "roamer"; }',
+                      self._html())
+
+    def test_configuration_takes_the_opening_hp_and_status(self):
+        """What the feedback asked for: a roamer's HP and status are plan, not live state, so they
+        belong with the rest of the target's configuration."""
+        body = self._body("huntOpeningPanelHtml")
+        self.assertIn("hc-opening-hp", body)
+        self.assertIn("hc-opening-status", body)
+        self.assertIn("huntSetField('opening_hp'", body)
+        self.assertIn("huntSetField('opening_status'", body)
+
+    def test_and_not_on_a_static_hunt_which_cannot_arrive_chipped(self):
+        self.assertIn("if(!huntCfgIsRoamer()) return \"\";",
+                      self._body("huntOpeningPanelHtml"))
+
+    def test_configuration_offers_only_none_and_paralysis_for_now(self):
+        """Sleep is left out on purpose: the counter was rolled in a prep encounter nobody could
+        observe, so declaring it would be declaring a guess the simulation reads from turn 1."""
+        html = self._html()
+        self.assertIn('const HUNT_OPENING_STATUSES = [["", "no status"], ["par", "paralyzed"]];',
+                      html)
+        self.assertNotIn("slp", self._body("huntOpeningStatusOptions"))
+
+    def test_but_a_status_already_stored_is_kept_rather_than_rewritten(self):
+        """The run page still offers the full set, and a value the player chose there must not be
+        silently changed by opening the configure screen."""
+        body = self._body("huntOpeningStatusOptions")
+        self.assertIn("known.includes", body)
+        self.assertIn("HUNT_STATUS_LABELS", body)
+
+    def test_configuration_hides_the_two_fields_a_roamer_has_no_use_for(self):
+        """No frame to route to, so no advances; and the window is centred on a measured reading
+        rather than a commanded countdown, which is taken on the run page."""
+        body = self._body("renderHuntConfigure")
+        self.assertIn("const roamer = huntCfgIsRoamer();", body)
+        self.assertIn('${roamer ? "" : `<div class="field"><label>Advances</label>', body)
+        self.assertIn('${roamer ? "" : `<div class="field"><label>Vector ms</label>', body)
+        # And the frame-route anchor with them: it exists only to count advances towards a frame
+        # a roamer run never routes to.
+        self.assertIn("""${roamer ? "" : `<div class="field">${helpLabel('Starting advance frame'""",
+                      body)
+        self.assertIn("stopwatch reading is asked for in Battle", body)
+
+    def test_and_still_shows_them_on_a_static_hunt(self):
+        """The gate is a conditional, not a deletion -- a static hunt's two fields are untouched."""
+        body = self._body("renderHuntConfigure")
+        self.assertIn("hc-advances", body)
+        self.assertIn("hcVectorMs", body)
 
     def test_the_trap_warnings_are_actually_shown(self):
         """`hunt_readiness` computing a field nothing renders is dead data -- the mistake the

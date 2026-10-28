@@ -892,9 +892,16 @@ class Hunt:
         if self.is_roamer:
             # A roamer has no commanded countdown to report, so Vector ms is not merely absent
             # here -- it is the wrong question. What it has is a stopwatch reading.
-            if self.stopwatch_ms is None:
-                errors.append("needs a stopwatch reading (load press to encounter, in ms)")
-            elif self.stopwatch_ms <= 0:
+            #
+            # **And a missing reading is NOT a configuration error.** The reading is MEASURED
+            # while the run happens -- you start the watch on the load press and stop it when the
+            # battle opens -- so it cannot exist until Battle Compass is already open. Demanding
+            # it here disabled the button that opens the only page that can ask for it, which
+            # made every roamer hunt unreachable. `hunt_candidates` is what refuses a window with
+            # no centre, in the same words, at the moment the centre is actually needed. A reading
+            # that IS present is still sanity-checked, since zero is a typo rather than a
+            # measurement.
+            if self.stopwatch_ms is not None and self.stopwatch_ms <= 0:
                 errors.append("the stopwatch reading must be greater than zero")
             errors.extend(self._opening_errors())
         elif self.vector_ms is None:

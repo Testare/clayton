@@ -1070,7 +1070,11 @@ class Facade:
                                             ("initial time", initial_time),
                                             (label, vector_ms)) if value in (None, "")]
         if missing:
-            return {"ok": False, "candidates": 0,
+            # Flagged as INCOMPLETE rather than empty: nothing was centred, so "no candidates in
+            # that window" would send the page's reader off widening a window that was never
+            # searched. The roamer case is the one that matters -- the stopwatch reading is
+            # measured during the run, so an absent one is the normal state of a first attempt.
+            return {"ok": False, "candidates": 0, "incomplete": True,
                     "problem": f"Seed targeting is incomplete: no {', no '.join(missing)}."}
 
         model, suggested_frames, suggested_seconds = self._centring_model(
