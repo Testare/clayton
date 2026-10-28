@@ -104,7 +104,30 @@ class TestTheSuggestedWindows(unittest.TestCase):
             self.assertGreaterEqual(StopwatchVector().suggest_second_window(ms), 1, ms)
 
     def test_the_frame_window_never_falls_below_a_static_hunts_own_default(self):
-        self.assertEqual(StopwatchVector().suggest_frame_window(0), 60)
+        """With the lag measured there is nothing left but the spread, and 60 is the floor."""
+        self.assertEqual(StopwatchVector(seed_lag_seconds=4.8).suggest_frame_window(0), 60)
+
+    def test_an_unmeasured_lag_dominates_the_whole_spread_budget(self):
+        """~600 frames of allowance against ~75 of spread -- which is why measuring it pays."""
+        unmeasured = StopwatchVector(load_sigma_frames=73.3)
+        measured = StopwatchVector(load_sigma_frames=73.3, seed_lag_seconds=4.8)
+        self.assertGreater(unmeasured.suggest_frame_window(120_000),
+                           3 * measured.suggest_frame_window(120_000))
+        self.assertEqual(unmeasured.lag_allowance_frames(), 599)
+        self.assertEqual(measured.lag_allowance_frames(), 0)
+
+    def test_the_second_window_carries_the_same_allowance(self):
+        self.assertGreaterEqual(StopwatchVector().suggest_second_window(120_000), 10)
+        self.assertEqual(
+            StopwatchVector(seed_lag_seconds=4.8).suggest_second_window(120_000), 1)
+
+    def test_an_unmeasured_window_is_the_size_hunts_are_really_run_at(self):
+        """Testare reports static hunts working at +-2000 frames and +-7 seconds, so ~800 x ~11
+        is in the right neighbourhood rather than alarming -- and it is the price of not having
+        measured the lag, not a property of roamers."""
+        sw = StopwatchVector(load_sigma_frames=73.3)
+        self.assertLess(sw.suggest_frame_window(120_000), 2_000)
+        self.assertLess(sw.suggest_second_window(120_000), 15)
 
     def test_the_frame_window_grows_with_the_hunt(self):
         sw = StopwatchVector(load_sigma_frames=8.0)

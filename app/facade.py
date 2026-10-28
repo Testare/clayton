@@ -627,6 +627,25 @@ class Facade:
         return ours, target, bench
 
     @staticmethod
+    def _target_derived_speed(hunt) -> int | None:
+        """The target's Speed from its configured spread, or None if it cannot be derived yet.
+
+        None rather than zero or a guess: the trap check needs to tell "this party cannot hold
+        it" from "we cannot tell yet", and a roamer hunt sits in the second state far more often
+        than a static one -- its spread was rolled when the roam began and no seed names it
+        (notes/roamers.md sec 7).
+        """
+        from claytonlib.battle.stats import derive_species_stats
+
+        if hunt.target.spread_errors():
+            return None
+        try:
+            return int(derive_species_stats(hunt.target.species, hunt.target.level,
+                                            hunt.target.nature, ivs=dict(hunt.target.ivs))["spe"])
+        except (KeyError, ValueError):
+            return None
+
+    @staticmethod
     def _target_speed_stages(target) -> tuple[int, ...]:
         """Speed stages this target can reach, for the speed-tie checks.
 
@@ -1257,15 +1276,19 @@ class Facade:
                 f"(frame {session.window.frame_window}->{frames}, "
                 f"second {session.window.second_window}->{seconds})")
 
-        models = self._resolve_calibration_models(h.profile_id)
-        model = models.get("linear") or next(iter(models.values()), None)
+        # Through `_centring_model` like the other two sites: widening must not RE-CENTRE. A
+        # roamer window centred on the calibration model instead of the stopwatch would move by
+        # the whole difference between the two, so a widen could lose the true seed it was
+        # widened to catch -- a silent failure, since a wider window that misses looks exactly
+        # like a window that was never wide enough.
+        model, _, _ = self._centring_model(h)
         if model is None:
             raise ValueError("no calibration model available for this profile")
 
         window = generate(
             model, key_seed=int(h.key_seed),
             initial_time=dt.datetime.fromisoformat(h.initial_time),
-            vector_ms=float(h.vector_ms),
+            vector_ms=float(h.centring_ms),
             frame_window=frames, second_window=seconds)
 
         snapshot = session.rebase(window)
@@ -1367,7 +1390,9 @@ class Facade:
         )
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
-        from claytonlib.battle_compass.targets import access_warnings, chip_warnings
+        from claytonlib.battle_compass.targets import (
+            TrapCandidate, access_warnings, chip_warnings, trap_warnings,
+        )
         from claytonlib.moves import resolve_move
 
         h = self._load_hunt(hunt_id)
@@ -1390,6 +1415,11 @@ class Facade:
             # made before the run, and it was only discoverable after hitting the seed
             # (clayton-957.26.4).
             "chip": [],
+            # And whether it can HOLD it, which only a roamer asks: the trap is released when our
+            # side leaves the field, so every member that could end up active needs Shadow Tag,
+            # Arena Trap against a grounded target, or a trapping move plus the Speed to land it
+            # first (notes/roamers.md sec 2). Empty for a static encounter, which cannot leave.
+            "trap": [],
             # Held items the simulator cannot model, plus the ones left blank. A misconfigured
             # item SHOULD desync the run -- what was missing is being told before the encounter
             # instead of as a turn-2 contradiction blaming the window (clayton-957.10.15).
@@ -1429,6 +1459,11 @@ class Facade:
         our_speeds: dict[str, int] = {}
         #: Speed-check label -> the Pokemon's own name, for joining the two dicts above.
         speed_labels: dict[str, str] = {}
+        #: The party in SEND-OUT ORDER for the trap check, which is the one check here that cares
+        #: which member is the lead -- its failure ends the run on turn 1 where a bench member's
+        #: only matters after a faint. The other collections above are dicts keyed by name
+        #: precisely because order is irrelevant to them.
+        trap_party: list[TrapCandidate] = []
         for slot in h.party:
             pokemon = profile.get_party_pokemon(slot.pokemon_id)
             if pokemon is None:
@@ -1446,6 +1481,17 @@ class Facade:
             # missing HM -- and say plainly when nobody can, which is the Lugia party's answer.
             party_species[pokemon.name] = pokemon.species or ""
             our_abilities[pokemon.name] = pokemon.ability or ""
+            trap_party.append(TrapCandidate(
+                name=pokemon.name, ability=pokemon.ability or "",
+                moves=tuple(move_names[pokemon.name]),
+                # Item-adjusted, like `our_speeds` -- a Choice Scarf is exactly what turns a
+                # Mean Look user that cannot trap into one that can, so reading the bare stat
+                # would reject the party for a problem the player had already solved. Zero when
+                # the Speed is not configured, which `trap_checks` reports as unknown rather
+                # than as a failure.
+                speed=(speed_after_item(pokemon.speed, slot.held_item)
+                       if pokemon.speed is not None else 0),
+                held_item=slot.held_item))
             for name, why in unsupported_our_moves(pokemon.moveset, target_probe):
                 result["move_coverage"].append(
                     {"pokemon": pokemon.name, "move": name, "reason": why})
@@ -1471,6 +1517,15 @@ class Facade:
         # the player only that they have not finished configuring yet.
         result["chip"] = chip_warnings(h.target.species, movesets, our_abilities,
                                        profile.game if profile else "")
+        # Asked once a party exists, like `chip`. The target's Speed comes from the derived
+        # spread when there is one and is None otherwise -- a roamer's spread is not lookupable
+        # from the key seed, so "we cannot tell yet" is a normal state here rather than a
+        # misconfiguration, and `trap_checks` says which of the two it is.
+        if trap_party:
+            result["trap"] = trap_warnings(
+                h.target.species, trap_party,
+                target_speed=self._target_derived_speed(h),
+                game=profile.game if profile else "")
         result["held_items"] = unmodelled_held_items(held_items)
 
         if movesets or our_speeds:

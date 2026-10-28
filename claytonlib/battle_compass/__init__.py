@@ -69,7 +69,8 @@ from claytonlib.battle_compass.items import (  # noqa: F401
     ITEMS, Item, heal_amount, smallest_heal_covering,
 )
 from claytonlib.battle_compass.targets import (  # noqa: F401
-    ENCOUNTERS, Encounter, encounter_level, is_roamer, moveset, resolve, supported,
+    ENCOUNTERS, Encounter, TrapCandidate, TrapCheck, encounter_level, is_grounded, is_roamer,
+    moveset, resolve, supported, trap_checks, trap_warnings,
 )
 from claytonlib.battle_compass.hunt_session import (  # noqa: F401
     HuntSession, TurnLog, worst_incoming_hit,

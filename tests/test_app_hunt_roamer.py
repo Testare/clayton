@@ -227,3 +227,134 @@ class TestTheSessionSimulatesARoamer(RoamerHuntCase):
         started = self.api.hunt_session_start(hunt_id)
         session = self.api._hunt_sessions.get(started["session_id"])
         self.assertFalse(session.config.target_is_roamer)
+
+
+class TestWideningDoesNotRecentre(RoamerHuntCase):
+    """A widen that moved the centre could lose the very seed it was widened to catch."""
+
+    def test_a_widened_roamer_window_keeps_the_stopwatch_centre(self):
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        before = self.api._hunt_sessions.get(started["session_id"]).window.frame_centre
+        self.api.hunt_session_widen(started["session_id"], frame_window=40, second_window=2)
+        after = self.api._hunt_sessions.get(started["session_id"]).window.frame_centre
+        self.assertEqual(before, after)
+
+    def test_and_the_window_really_did_widen(self):
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        snapshot = self.api.hunt_session_widen(started["session_id"], frame_window=40,
+                                               second_window=2)
+        self.assertEqual(snapshot["widened"]["frame_window"], 40)
+        self.assertGreater(snapshot["widened"]["candidates"], 0)
+
+
+class TestTheTrapValidation(RoamerHuntCase):
+    """Every member that could end up active has to be able to hold the roamer."""
+
+    WOBBUFFET = dict(
+        name="Wobbuffet", species="wobbuffet", level=25, ability="Shadow Tag",
+        stats={"hp": 130, "atk": 21, "def": 34, "spa": 21, "spd": 34, "spe": 21},
+        moveset=["Safeguard"], max_pp={"1": 25},
+    )
+    #: Speed 72, so a Choice Scarf takes it to 108 -- past Cresselia's 105, where the bare stat
+    #: is well short of it.
+    SLOWBRO = dict(
+        name="Slowbro", species="slowbro", level=50, ability="Own Tempo",
+        stats={"hp": 180, "atk": 100, "def": 130, "spa": 120, "spd": 110, "spe": 72},
+        moveset=["Mean Look", "Surf"], max_pp={"1": 5, "2": 15},
+    )
+    #: Speed 70, whose scarfed 105 TIES Cresselia's 105 -- the one case that is worse than being
+    #: slower, because the ROM breaks a tie with a roll.
+    SLOWKING = dict(
+        name="Slowking", species="slowking", level=50, ability="Own Tempo",
+        stats={"hp": 180, "atk": 100, "def": 110, "spa": 120, "spd": 130, "spe": 70},
+        moveset=["Mean Look", "Surf"], max_pp={"1": 5, "2": 15},
+    )
+    MAGNETON = dict(
+        name="Magneton", species="magneton", level=50, ability="Sturdy",
+        stats={"hp": 120, "atk": 60, "def": 95, "spa": 120, "spd": 70, "spe": 70},
+        moveset=["Thunder Wave", "Flash"], max_pp={"1": 20, "2": 20},
+    )
+    DUGTRIO = dict(
+        name="Dugtrio", species="dugtrio", level=50, ability="Arena Trap",
+        stats={"hp": 110, "atk": 120, "def": 70, "spa": 60, "spd": 80, "spe": 160},
+        moveset=["Dig"], max_pp={"1": 10},
+    )
+
+    def _with_bench(self, *members, **fields):
+        party = self._party()
+        for member in members:
+            party.append({"pokemon_id": self.api.add_party_pokemon(
+                self.profile, member)["pokemon_id"]})
+        return self._hunt(party=party, **fields)
+
+    def _trap(self, hunt):
+        return self.api.hunt_readiness(hunt["id"])["trap"]
+
+    def test_a_lone_fast_mean_look_user_passes_with_a_note_about_why(self):
+        warnings = self._trap(self._hunt())
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("outspeeds", warnings[0])
+
+    def test_a_bench_member_that_cannot_trap_is_called_out(self):
+        warnings = self._trap(self._with_bench(self.MAGNETON))
+        self.assertTrue([w for w in warnings if "Magneton" in w and "cannot trap" in w], warnings)
+        self.assertTrue([w for w in warnings if "if Smeargle faints" in w], warnings)
+
+    def test_shadow_tag_on_the_bench_passes(self):
+        warnings = self._trap(self._with_bench(self.WOBBUFFET))
+        self.assertEqual([w for w in warnings if "Wobbuffet" in w], [])
+
+    def test_arena_trap_does_not_reach_a_levitating_roamer(self):
+        warnings = self._trap(self._with_bench(self.DUGTRIO))
+        self.assertTrue([w for w in warnings if "Dugtrio" in w and "not grounded" in w], warnings)
+
+    def test_a_slow_mean_look_user_is_told_a_choice_scarf_would_fix_it(self):
+        warnings = self._trap(self._with_bench(self.SLOWBRO))
+        self.assertTrue([w for w in warnings if "Slowbro" in w and "Choice Scarf" in w], warnings)
+
+    def test_and_the_scarf_actually_fixes_it(self):
+        """Not advice for its own sake: the item is per hunt, so readiness can see it applied."""
+        party = self._party()
+        party.append({"pokemon_id": self.api.add_party_pokemon(
+            self.profile, self.SLOWBRO)["pokemon_id"], "held_item": "Choice Scarf"})
+        warnings = self._trap(self._hunt(party=party))
+        self.assertEqual([w for w in warnings if "Slowbro" in w], [], warnings)
+
+    def test_a_party_that_can_all_trap_is_warned_off_switching(self):
+        warnings = self._trap(self._with_bench(self.WOBBUFFET))
+        self.assertTrue([w for w in warnings if "Do not switch" in w], warnings)
+
+    def test_a_static_hunt_is_not_asked_any_of_this(self):
+        hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS)
+        self.assertEqual(self._trap(hunt), [])
+
+    def test_a_speed_tie_is_called_out_as_worse_than_being_slower(self):
+        """A scarf that lands exactly on the target's Speed is not a fix (ss_rng/speed.md)."""
+        party = self._party()
+        party.append({"pokemon_id": self.api.add_party_pokemon(
+            self.profile, self.SLOWKING)["pokemon_id"], "held_item": "Choice Scarf"})
+        warnings = self._trap(self._hunt(party=party))
+        tie = [w for w in warnings if "Slowking" in w]
+        self.assertTrue(tie, warnings)
+        self.assertIn("coin flip", tie[0])
+        self.assertIn("ties", tie[0])
+
+    def test_a_scarf_already_held_is_not_suggested_again(self):
+        """The first version of this message advised the item the player was already holding."""
+        party = self._party()
+        party.append({"pokemon_id": self.api.add_party_pokemon(
+            self.profile, self.MAGNETON)["pokemon_id"], "held_item": "Choice Scarf"})
+        hunt = self._hunt(party=party)
+        # Magneton cannot trap at all, so the scarf is irrelevant -- but the Slowking case above
+        # is the one that regressed, and this pins the other half: nothing suggests a second one.
+        self.assertEqual([w for w in self._trap(hunt) if "a Choice Scarf would" in w], [])
+
+    def test_an_unknown_target_spread_says_so_instead_of_failing_the_party(self):
+        hunt = self._hunt()
+        hunt["target"] = {**hunt["target"], "nature": "", "ivs": {}}
+        saved = self.api.save_hunt(hunt)
+        warnings = self._trap(saved)
+        self.assertTrue([w for w in warnings if "not known yet" in w], warnings)
+        self.assertEqual([w for w in warnings if "run is over" in w], [])

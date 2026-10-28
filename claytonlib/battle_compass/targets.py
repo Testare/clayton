@@ -769,6 +769,260 @@ def stats_key(name: str, game: str = "") -> str:
     return row.forme or row.species
 
 
+#: Effect 106 -- Mean Look, Block and Spider Web. The **pure** traps: no damage, no duration, and
+#: the only ones `FleeCommand` honours that we can apply on purpose. Keyed by effect rather than by
+#: name so all three count, and so a fourth would count for free.
+PURE_TRAP_EFFECT = 106
+
+#: Effect 42 (Bind, Wrap, Fire Spin, Clamp, Sand Tomb, Magma Storm) and 261 (Whirlpool) -- the
+#: partial traps. They set the same ``VOLATILE_CONDITION_BIND`` the roamer AI and `FleeCommand`
+#: both accept, so they really do hold it... and they are useless to us twice over: the residual
+#: is 1/16 per turn, which kills the 1 HP target the whole run exists to catch, and neither effect
+#: is in `sim.MODELLED_OUR_EFFECTS`, so a party carrying one is refused before it gets this far.
+#: Named so the warning can say that instead of staying silent about a move that looks like the
+#: answer.
+PARTIAL_TRAP_EFFECTS = frozenset({42, 261})
+
+#: What a Choice Scarf multiplies Speed by, as the ROM's integer pair (`* 15 / 10`). Here rather
+#: than imported from `battle.readiness` because this module only ever asks the hypothetical --
+#: "would a scarf make this one fast enough" -- and never applies one.
+SCARF_NUMERATOR, SCARF_DENOMINATOR = 15, 10
+
+
+@dataclass(frozen=True)
+class TrapCandidate:
+    """One party member, as the trap check needs to see it."""
+    name: str
+    ability: str = ""
+    #: Move names, as `resolve_move` spells them.
+    moves: tuple[str, ...] = ()
+    #: Effective Speed INCLUDING whatever it is holding -- the caller has already applied
+    #: `readiness.speed_after_item`, because that is what it does for the speed checks anyway.
+    speed: int = 0
+    held_item: str = ""
+
+
+@dataclass(frozen=True)
+class TrapCheck:
+    """Whether this member could hold a roamer, and if not, what is missing."""
+    name: str
+    traps: bool
+    #: What would do it -- an ability name or a move name. Empty when nothing would.
+    how: str = ""
+    #: What is wrong, in a sentence. Empty when nothing is.
+    problem: str = ""
+    #: True when a Choice Scarf is the whole difference. Separated from `problem` because it is
+    #: the one failure with a one-item fix, and the fix has no downside here: a scarfed trapper
+    #: locks into its trapping move, and locking into Mean Look costs nothing once the trap is up
+    #: -- balls, revives and items are bag actions, so the run continues normally.
+    scarf_would_fix: bool = False
+    #: True when the verdict could not be reached rather than coming back negative -- a Speed
+    #: that is not configured on either side. Distinguished because the two call for opposite
+    #: messages: a negative verdict says to change the party, and this says to finish entering it.
+    unknown: bool = False
+
+
+def is_grounded(name: str, game: str = "") -> bool:
+    """Whether this encounter is on the ground, which is Arena Trap's whole condition.
+
+    Levitate or a Flying type lifts it. Gravity, an Iron Ball and Ingrain would put it back down
+    and are deliberately absent: none is reachable here, since nothing in `MODELLED_OUR_EFFECTS`
+    sets Gravity and a wild target holds no item.
+    """
+    from claytonlib.battle.damage import ABILITY_LEVITATE
+
+    if target_ability(name, game).strip().lower() == ABILITY_LEVITATE:
+        return False
+    return "flying" not in {t.strip().lower() for t in target_types(name, game)}
+
+
+def _already_scarfed(member: "TrapCandidate") -> bool:
+    """Whether this member's Speed already has a Choice Scarf in it.
+
+    Checked because `TrapCandidate.speed` is item-adjusted: suggesting a scarf to somebody
+    already holding one produced "105 does not outspeed 105 - a Choice Scarf would (157)", which
+    is advice to do the thing they had done and a number no Pokemon in the battle would have.
+    """
+    from claytonlib.battle.damage import item_key
+    from claytonlib.battle.readiness import CHOICE_SPEED_ITEMS
+
+    return item_key(member.held_item or "") in CHOICE_SPEED_ITEMS
+
+
+def trap_checks(species: str, party: "list[TrapCandidate] | tuple[TrapCandidate, ...]", *,
+                target_speed: int | None, game: str = "") -> list[TrapCheck]:
+    """Which party members could hold a roamer in the battle, one row each.
+
+    **Every member is checked, not just the lead**, because any of them can end up active: the
+    trap is released when our side leaves the field, so the Pokemon that replaces a fainted
+    trapper has to be able to re-establish it (notes/roamers.md sec 2.4). The rule is the same for
+    both -- a replacement is on the field before the next action selection, so an ability traps
+    from that selection just as a lead's does.
+
+    The three ways, in the order `RoamingPokemon_Main` tests them:
+
+    * **Shadow Tag** -- always, and from the first selection. No Speed requirement at all.
+    * **Arena Trap** -- the same, but only if the target `is_grounded`. Cresselia has Levitate, so
+      on that target it does nothing.
+    * **A pure trapping move** -- Mean Look, Block or Spider Web, and it must **outspeed the
+      target**: the roamer has already chosen Escape by then, and the move only refuses it by
+      landing first (sec 2.3). A Choice Scarf counts, and `scarf_would_fix` says when it is the
+      whole difference.
+
+    What this does NOT check is our own voluntary switching, which no party composition can fix:
+    a Shadow Tag Pokemon switched IN behind an already-chosen escape does not stop it, so on a
+    roamer hunt a mid-battle switch is a lost run whoever is on the bench. That belongs in the run
+    page's advice, not in a readiness row.
+
+    Returns ``[]`` for a target that is not a roamer: a static encounter cannot leave, so a party
+    that cannot trap is a perfectly good party.
+    """
+    from claytonlib.battle_compass.sim import ARENA_TRAP, SHADOW_TAG
+    from claytonlib.moves import resolve_move
+    from claytonlib.species_names import display_species_name
+
+    try:
+        if not is_roamer(species, game):
+            return []
+        grounded = is_grounded(species, game)
+        display = display_species_name(resolve(species, game)[1].species)
+    except (KeyError, ValueError):
+        return []
+
+    def effects(member: TrapCandidate) -> dict[int, str]:
+        found: dict[int, str] = {}
+        for name in member.moves:
+            if not name:
+                continue
+            try:
+                move = resolve_move(name)
+            except (KeyError, ValueError):
+                continue
+            found.setdefault(move.effect, name)
+        return found
+
+    checks: list[TrapCheck] = []
+    for member in party:
+        ability = (member.ability or "").strip().lower()
+        known = effects(member)
+        if ability == SHADOW_TAG:
+            checks.append(TrapCheck(member.name, True, how="Shadow Tag"))
+            continue
+        if ability == ARENA_TRAP:
+            if grounded:
+                checks.append(TrapCheck(member.name, True, how="Arena Trap"))
+            else:
+                checks.append(TrapCheck(
+                    member.name, False, problem=(
+                        f"Arena Trap does not reach {display}, which is not grounded — it is "
+                        f"skipped before the Arena Trap check, so the roamer flees anyway")))
+            continue
+        trap_move = known.get(PURE_TRAP_EFFECT)
+        if trap_move:
+            if not target_speed or not member.speed:
+                # A verdict needs both Speeds, and the one that is usually missing is the
+                # target's: a roamer's spread cannot be looked up from the key seed, so a hunt
+                # can be fully configured in every other respect and still not know it
+                # (notes/roamers.md sec 7).
+                missing = ("the target's Speed is not known yet" if not target_speed
+                           else f"{member.name}'s Speed is not configured")
+                checks.append(TrapCheck(
+                    member.name, False, how=trap_move, unknown=True,
+                    problem=(f"{trap_move} would hold it, but only by outspeeding, and "
+                             f"{missing}")))
+            elif member.speed > target_speed:
+                checks.append(TrapCheck(member.name, True, how=trap_move))
+            elif member.speed == target_speed:
+                # A TIE, which is worse than being slower rather than marginally better: the ROM
+                # breaks it with a roll (notes/ss_rng/speed.md), so the trap lands half the time
+                # AND the turn costs an advance the simulation does not predict. Either side of
+                # the tie is fine and the tie itself is not.
+                checks.append(TrapCheck(
+                    member.name, False, how=trap_move,
+                    problem=(
+                        f"{trap_move} ties {display}'s Speed at {target_speed}, and the game "
+                        f"breaks a tie with a roll — so the trap is a coin flip and the turn "
+                        f"spends an advance the simulation does not predict")))
+            elif _already_scarfed(member):
+                checks.append(TrapCheck(
+                    member.name, False, how=trap_move,
+                    problem=(
+                        f"{trap_move} needs to land before the escape, and {member.speed} does "
+                        f"not outspeed {display}'s {target_speed} even with the "
+                        f"{member.held_item}")))
+            elif member.speed * SCARF_NUMERATOR // SCARF_DENOMINATOR > target_speed:
+                scarfed = member.speed * SCARF_NUMERATOR // SCARF_DENOMINATOR
+                checks.append(TrapCheck(
+                    member.name, False, how=trap_move, scarf_would_fix=True,
+                    problem=(
+                        f"{trap_move} needs to land before the escape, and {member.speed} does "
+                        f"not outspeed {display}'s {target_speed} — a Choice Scarf would "
+                        f"({scarfed})")))
+            else:
+                checks.append(TrapCheck(
+                    member.name, False, how=trap_move,
+                    problem=(
+                        f"{trap_move} needs to land before the escape, and {member.speed} does "
+                        f"not outspeed {display}'s {target_speed} — not even with a Choice "
+                        f"Scarf")))
+            continue
+        partial = next((known[e] for e in sorted(known) if e in PARTIAL_TRAP_EFFECTS), None)
+        if partial:
+            checks.append(TrapCheck(
+                member.name, False, problem=(
+                    f"{partial} does trap, but its residual takes 1/16 of the target's HP every "
+                    f"turn and the run needs it alive on 1 — it cannot be the trap")))
+            continue
+        checks.append(TrapCheck(
+            member.name, False, problem=(
+                "cannot trap: no Shadow Tag, no Arena Trap and no Mean Look, Block or "
+                "Spider Web")))
+    return checks
+
+
+def trap_warnings(species: str, party: "list[TrapCandidate] | tuple[TrapCandidate, ...]", *,
+                  target_speed: int | None, game: str = "") -> list[str]:
+    """`trap_checks` as sentences, worst first, for a readiness panel.
+
+    Advisory in shape and fatal in fact, which is the one place this differs from
+    `access_warnings`: a lead that cannot trap does not make the simulation wrong, it makes the
+    run end on turn 1. So the lead's row comes first and says so, and the bench's rows explain
+    what a faint would cost rather than reading as nitpicking.
+    """
+    checks = trap_checks(species, party, target_speed=target_speed, game=game)
+    if not checks:
+        return []
+    out: list[str] = []
+    lead, bench = checks[0], checks[1:]
+    if lead.unknown:
+        out.append(f"{lead.name} leads and {lead.problem} — so whether this party can hold the "
+                   f"roamer at all is still unknown.")
+    elif not lead.traps:
+        out.append(f"{lead.name} leads and {lead.problem}. The roamer flees on turn 1 and the "
+                   f"run is over before it starts.")
+    if lead.traps and lead.how not in ("Shadow Tag", "Arena Trap"):
+        out.append(f"{lead.name} holds it with {lead.how}, which only works because it outspeeds "
+                   f"— the roamer chooses Escape on turn 1 either way and {lead.how} refuses it "
+                   f"by landing first.")
+    for check in bench:
+        if check.unknown:
+            out.append(f"{check.name}: {check.problem}.")
+        elif not check.traps:
+            out.append(f"{check.name} {check.problem} — so if {lead.name} faints, the roamer "
+                       f"leaves.")
+    if any(c.unknown for c in checks):
+        return out
+    if any(c.traps for c in checks) and not all(c.traps for c in checks):
+        out.append("A roamer hunt wants EVERY member able to trap, not just the lead: the trap is "
+                   "released when our side leaves the field, so a faint hands the roamer a free "
+                   "turn to escape on.")
+    if all(c.traps for c in checks) and len(checks) > 1:
+        out.append("Do not switch voluntarily: a Shadow Tag Pokemon switched in behind an "
+                   "already-chosen escape does not stop it, so only a faint's replacement gets a "
+                   "second chance at the trap.")
+    return out
+
+
 def is_roamer(name: str, game: str = "") -> bool:
     """Whether this encounter is a roamer, which changes the simulation rather than its difficulty.
 

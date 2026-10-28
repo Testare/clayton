@@ -67,6 +67,18 @@ DEFAULT_REACTION_STD_MS = 300.0
 #: and a long hunt is exactly when it is unverifiable.
 DEFAULT_DRIFT_FRACTION = 0.001
 
+#: How long a save load could plausibly take, in seconds, used as a window allowance for as long
+#: as `StopwatchVector.seed_lag_seconds` is unmeasured.
+#:
+#: It is an allowance and not a correction, because the sign is known but the size is not: the
+#: centre sits LATE by however long the load takes, so the window has to reach that far below it.
+#: Ten seconds is generous for a DS save load and the cost of being generous is compute, while the
+#: cost of being tight is a window that cannot contain the true seed however long the run goes.
+#:
+#: **It disappears the moment the lag is measured**, which is the point: one wide-window run pins
+#: `seed_lag_seconds` (see `implied_seed_lag`) and every later hunt gets a window a tenth the size.
+UNMEASURED_LAG_SECONDS = 10.0
+
 
 @dataclass(frozen=True)
 class StopwatchVector:
@@ -176,6 +188,18 @@ class StopwatchVector:
         drift = (ms / 1000.0) * self.drift_fraction
         return math.hypot(reaction, drift)
 
+    def lag_allowance_frames(self) -> int:
+        """Window allowance in frames for an unmeasured load lag, or 0 once it is measured.
+
+        `k_sigma` cannot cover this and it would be wrong to pretend otherwise: an unmeasured
+        `seed_lag_seconds` is a BIAS of up to `UNMEASURED_LAG_SECONDS`, not a spread, so widening
+        by a multiple of sigma does not reach it. It is added to the window rather than to the
+        sigma for the same reason.
+        """
+        if self.seed_lag_seconds:
+            return 0
+        return int(math.ceil(self.frames_in(1000.0 * UNMEASURED_LAG_SECONDS)))
+
     def suggest_frame_window(self, ms: float, *, k_sigma: float = 3.0,
                              minimum: int = 60) -> int:
         """Half-width in frames to pass as ``frame_window``.
@@ -184,10 +208,17 @@ class StopwatchVector:
         failure modes (see `DEFAULT_REACTION_STD_MS`) is why the default is not 2. `minimum`
         floors it at a static hunt's own default, so a short stopwatch reading never produces a
         window narrower than the one a *timed* encounter gets.
+
+        Plus `lag_allowance_frames`, which usually dominates: ~600 frames while the load lag is
+        unmeasured, against ~60-130 for the whole spread budget. That is deliberately generous and
+        in line with what Battle Compass is actually run at -- Testare reports static hunts
+        working well at +-2000 frames and +-7 seconds, so a roamer's first window being an order
+        of magnitude wider than a static hunt's default is normal rather than alarming.
         """
         if ms < 0:
             raise ValueError(f"elapsed time cannot be negative: {ms}")
-        return max(minimum, int(math.ceil(k_sigma * self.frame_sigma(ms))))
+        spread = int(math.ceil(k_sigma * self.frame_sigma(ms)))
+        return max(minimum, spread + self.lag_allowance_frames())
 
     def suggest_second_window(self, ms: float, *, k_sigma: float = 3.0,
                               minimum: int = 1) -> int:
@@ -202,7 +233,9 @@ class StopwatchVector:
         """
         if ms < 0:
             raise ValueError(f"elapsed time cannot be negative: {ms}")
-        return max(minimum, int(math.ceil(k_sigma * self.second_sigma(ms))))
+        spread = int(math.ceil(k_sigma * self.second_sigma(ms)))
+        allowance = 0 if self.seed_lag_seconds else int(math.ceil(UNMEASURED_LAG_SECONDS))
+        return max(minimum, spread + allowance)
 
     def estimated_candidates(self, ms: float, *, k_sigma: float = 3.0) -> int:
         """How many candidates the suggested windows come to, before generating them.

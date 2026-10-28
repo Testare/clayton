@@ -439,7 +439,50 @@ two methods `candidates` calls and deliberately nothing else.
 `Facade._sync_encounter_kind` (derived on every write, never configured) and
 `Facade._centring_model` (the one place that decides which object centres the window).
 
-### 10.1 Three things the design above got wrong or left out
+### 10.1 The party rule: every member, not just the lead
+
+`targets.trap_checks` / `trap_warnings`, surfaced as `hunt_readiness`'s `trap` key. The rule is
+one sentence — **every party member must be able to hold the roamer** — and it is every member
+rather than only the lead because the trap is released when our side leaves the field (sec 2.4),
+so whoever replaces a fainted trapper has to re-establish it. A replacement is on the field before
+the next action selection, so the rule is identical for a lead and a bench member.
+
+The three ways, in the order `RoamingPokemon_Main` tests them:
+
+| | Speed requirement | note |
+| --- | --- | --- |
+| Shadow Tag | none | works from the first selection |
+| Arena Trap | none | **only against a grounded target** — `is_grounded`, so never Cresselia |
+| Mean Look / Block / Spider Web (effect 106) | must **outspeed** | the roamer has already chosen Escape; the move refuses it by landing first |
+
+Three details the implementation had to get right, two of which the first version did not:
+
+* **A Choice Scarf counts, and holding one is not a problem.** It takes a 70-Speed Mean Look user
+  past Cresselia's 105, and locking into Mean Look costs nothing once the trap is up: balls,
+  revives and items are bag actions. `scarf_would_fix` says when the item is the whole difference.
+  The check reads the item-adjusted Speed, so a scarf already equipped is *already counted* — and
+  it must not then be suggested again, which the first version did ("105 does not outspeed 105 — a
+  Choice Scarf would (157)", advising the item they were holding and naming a Speed nothing in the
+  battle had).
+* **A Speed TIE is worse than being slower, not marginally better.** The ROM breaks it with a roll
+  (`notes/ss_rng/speed.md`), so the trap becomes a coin flip *and* the turn spends an advance the
+  simulation does not predict. A scarf that lands exactly on the target's Speed is not a fix, and
+  the check says so in its own branch.
+* **An unknown target Speed is reported as unknown, not as a failure.** A roamer's spread cannot
+  be looked up from the key seed (sec 7), so a hunt can be fully configured in every other respect
+  and still not know it. `TrapCheck.unknown` keeps "finish entering it" apart from "change the
+  party".
+
+The partial-trapping family (effect 42 — Bind, Wrap, Fire Spin, Clamp, Sand Tomb, Magma Storm —
+and 261, Whirlpool) really does set the volatile both the AI and `FleeCommand` accept, and is
+refused with a reason rather than ignored: its residual takes 1/16 per turn and the run needs the
+target alive on 1. Neither effect is in `MODELLED_OUR_EFFECTS` either.
+
+What no party composition can fix, and so is advice rather than a check: **do not switch
+voluntarily.** A Shadow Tag Pokémon switched in behind an already-chosen escape does not stop it
+(sec 2.2), so only a faint's replacement gets a second chance at the trap.
+
+### 10.2 Three things the design above got wrong or left out
 
 **The stopwatch has a load-lag term, and it is a bias.** Section 6 said "the player starts a
 stopwatch at the load press" and then centred on the reading — but the seed is generated part way
@@ -450,6 +493,15 @@ defaulted to zero and **explicitly not** inferred from `CalibrationModel.alpha` 
 on the deployed fit, which is the right size and the wrong quantity: that intercept was fitted for a
 countdown that *ends* at the encounter press). `implied_seed_lag` reads it off a finished run, so
 one deliberately-wide first hunt pins it to within a frame. `clayton-957.35.23`.
+
+Which also corrects section 6's window arithmetic, in the direction of the windows Battle Compass
+is actually run at. An unmeasured lag is a **bias of up to ten seconds**, and no multiple of sigma
+reaches a bias — so `suggest_frame_window` adds `lag_allowance_frames` (~600) on top of the 3σ
+spread until the lag is known, and the second window gains the same ten. That makes a first roamer
+window ~830 frames × ~11 s ≈ 38,000 candidates, against the ±2000 frames and ±7 seconds Testare
+reports static hunts working well at — so it is in the normal range rather than the alarming one.
+Once the lag is measured the allowance disappears and the same hunt asks for ~230 × 1 ≈ 1,400,
+which is the concrete payoff for doing the one wide run.
 
 **Nothing released the target's trap when our side left the field** — a real bug, not a missing
 feature, and it predates roamers. `BattleSystem_UpdateAfterSwitch` and

@@ -377,3 +377,91 @@ class TestTheSessionReportsIt(unittest.TestCase):
         session.observe(Action.MOVE_1, ["M1", tok.escape_failed_token()])
         self.assertEqual(session.outcome(), "")
         self.assertFalse(session.snapshot()["target_fled"])
+
+
+class TestTheTrapChecksThemselves(unittest.TestCase):
+    """`targets.trap_checks` in isolation: the rules, not their wording."""
+
+    @staticmethod
+    def _c(**kwargs):
+        from claytonlib.battle_compass.targets import TrapCandidate
+        return TrapCandidate(**kwargs)
+
+    def _check(self, member, *, target_speed=105, species="cresselia"):
+        from claytonlib.battle_compass.targets import trap_checks
+        return trap_checks(species, [member], target_speed=target_speed,
+                           game="platinum")[0]
+
+    def test_shadow_tag_needs_no_speed_at_all(self):
+        check = self._check(self._c(name="Wob", ability="Shadow Tag", speed=1))
+        self.assertTrue(check.traps)
+        self.assertEqual(check.how, "Shadow Tag")
+
+    def test_arena_trap_is_refused_against_a_levitating_target(self):
+        check = self._check(self._c(name="Dug", ability="Arena Trap", speed=160))
+        self.assertFalse(check.traps)
+        self.assertIn("not grounded", check.problem)
+
+    def test_all_three_pure_trapping_moves_count(self):
+        for move in ("Mean Look", "Block", "Spider Web"):
+            check = self._check(self._c(name="X", moves=(move,), speed=200))
+            self.assertTrue(check.traps, move)
+            self.assertEqual(check.how, move)
+
+    def test_a_partial_trap_is_refused_because_it_kills_the_target(self):
+        check = self._check(self._c(name="Y", moves=("Whirlpool", "Surf"), speed=200))
+        self.assertFalse(check.traps)
+        self.assertIn("1/16", check.problem)
+
+    def test_a_trapping_move_must_outspeed(self):
+        self.assertTrue(self._check(self._c(name="A", moves=("Mean Look",), speed=106)).traps)
+        self.assertFalse(self._check(self._c(name="B", moves=("Mean Look",), speed=104)).traps)
+
+    def test_a_tie_is_not_a_pass(self):
+        check = self._check(self._c(name="C", moves=("Mean Look",), speed=105))
+        self.assertFalse(check.traps)
+        self.assertFalse(check.scarf_would_fix)
+        self.assertIn("ties", check.problem)
+
+    def test_a_scarf_is_offered_only_when_it_would_actually_do_it(self):
+        close = self._check(self._c(name="D", moves=("Mean Look",), speed=72))
+        self.assertTrue(close.scarf_would_fix)
+        hopeless = self._check(self._c(name="E", moves=("Mean Look",), speed=20))
+        self.assertFalse(hopeless.scarf_would_fix)
+        self.assertIn("not even", hopeless.problem)
+
+    def test_a_scarf_already_held_is_not_offered_again(self):
+        check = self._check(self._c(name="F", moves=("Mean Look",), speed=90,
+                                    held_item="Choice Scarf"))
+        self.assertFalse(check.scarf_would_fix)
+        self.assertIn("Choice Scarf", check.problem)
+
+    def test_an_unknown_target_speed_is_unknown_and_not_a_failure(self):
+        check = self._check(self._c(name="G", moves=("Mean Look",), speed=177),
+                            target_speed=None)
+        self.assertTrue(check.unknown)
+        self.assertFalse(check.traps)
+
+    def test_an_ability_verdict_needs_no_speeds_at_all(self):
+        check = self._check(self._c(name="Wob", ability="Shadow Tag"), target_speed=None)
+        self.assertTrue(check.traps)
+        self.assertFalse(check.unknown)
+
+    def test_arena_trap_reaches_a_grounded_roamer(self):
+        """The order in the ROM script is what this is really testing: Levitate skips only the
+        Arena Trap check, so a roamer without it is caught by one."""
+        from claytonlib.battle_compass.targets import trap_checks
+
+        check = trap_checks("cresselia", [self._c(name="Dug", ability="Arena Trap", speed=160)],
+                            target_speed=105, game="platinum")[0]
+        self.assertFalse(check.traps)
+        # Same party, a grounded target: Raikou roams in HGSS and has Pressure, but it has no row
+        # here yet -- so this half is asserted through `is_grounded` directly.
+        from claytonlib.battle_compass.targets import is_grounded
+        self.assertFalse(is_grounded("cresselia", "platinum"))
+        self.assertTrue(is_grounded("suicune", "heartgold"))
+
+    def test_a_static_target_asks_nothing(self):
+        from claytonlib.battle_compass.targets import trap_checks
+        self.assertEqual(trap_checks("suicune", [self._c(name="Z")], target_speed=50,
+                                     game="heartgold"), [])
