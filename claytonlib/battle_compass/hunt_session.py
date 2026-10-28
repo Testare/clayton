@@ -856,6 +856,34 @@ def prevention_options(actor: Battler, other: Battler, *, actor_moves_first: boo
     return options
 
 
+def flee_options(state, config) -> list[dict]:
+    """The two roamer outcomes, when this turn could have produced one.
+
+    Offered the same way `prevention_options` offers a paralysis: **only when the state allows
+    it**. A roamer that was trapped at ACTION SELECTION never chose to escape, so offering "it
+    fled" there invites a report no candidate can predict -- which looks exactly like a wrong
+    model constant rather than like a mis-click.
+
+    Both are offered together whenever it was untrapped, because the player can tell them apart
+    off the screen ("The wild X fled!" against "The wild X can't escape!") and the simulator
+    decides which one each candidate predicted. They are prevention-shaped -- no move happened --
+    so they ride in the same list and the page's ``"E" + code`` assembly renders them without
+    knowing they exist.
+
+    Returns ``[]`` for a static target, which cannot leave at all.
+    """
+    from claytonlib.battle_compass.sim import roamer_trapped_at_selection
+
+    if not getattr(config, "target_is_roamer", False):
+        return []
+    if roamer_trapped_at_selection(state):
+        return []
+    return [
+        {"code": tok.ESCAPED, "label": "fled — the run is over"},
+        {"code": tok.ESCAPE_FAILED, "label": "tried to flee and couldn't"},
+    ]
+
+
 def resolution_options(actor: Battler) -> list[dict]:
     """Status changes that let the move through and so must be reported explicitly.
 
@@ -2050,8 +2078,9 @@ class HuntSession:
             "prevention": {
                 "ours": prevention_options(state.ours, state.target,
                                            actor_moves_first=we_first),
-                "target": prevention_options(state.target, state.ours,
-                                             actor_moves_first=not we_first),
+                "target": (prevention_options(state.target, state.ours,
+                                              actor_moves_first=not we_first)
+                           + flee_options(state, self.config)),
             },
             "resolution": {
                 "ours": resolution_options(state.ours),

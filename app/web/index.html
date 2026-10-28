@@ -5604,8 +5604,16 @@ function hrTokens(){
       targetParts.push("E" + (t.target.slot + 1) + (t.target.result || "")
                            + hrSecondaryMark("target") + hrStaticMark("target"));
   }
-  const ordered = hrWeActFirst() ? ourParts.concat(targetParts)
+  // **A roamer that got away before we acted takes our half of the turn with it.** The game
+  // never ran our action -- no PP, no ball, no token -- so reporting one would describe a turn
+  // no candidate simulated. `sim.simulate_turn` stops at `battle_halted()` for exactly this.
+  const fled = t.target?.prevented === "esc";
+  const ordered = fled && !hrWeActFirst() ? targetParts
+                : hrWeActFirst() ? ourParts.concat(targetParts)
                                  : targetParts.concat(ourParts);
+  // Terminal, like a capture: nothing follows it, so neither the Future Sight line nor an HP
+  // report nor a faint may be appended.
+  if (fled) return ordered.join("");
   // After both halves and before the HP: it resolves in the end-of-turn block, which is where
   // `sim.simulate_turn` appends it too.
   if (hrFutureSightDue() && t.future_sight) ordered.push("F" + t.future_sight);

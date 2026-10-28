@@ -532,3 +532,60 @@ class TestTheRoamerRunPage(unittest.TestCase):
         self.assertIn("const chip = r.chip || [], trap = r.trap || [];", html)
         self.assertIn("Holding it still", html)
         self.assertIn("${trapping}", html)
+
+
+class TestReportingAFlee(RoamerHuntCase):
+    """A first roamer run is quite likely to end in one, so it has to be reportable."""
+
+    def _session(self, **fields):
+        hunt_id = self._hunt(seconds_window=1, delay_window=4, **fields)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        return started["session_id"], self.api._hunt_sessions.get(started["session_id"])
+
+    def test_the_interview_offers_both_outcomes_while_it_is_untrapped(self):
+        _, session = self._session()
+        codes = [o["code"] for o in session.snapshot()["prevention"]["target"]]
+        self.assertIn("esc", codes)
+        self.assertIn("trp", codes)
+
+    def test_and_offers_neither_once_it_is_trapped(self):
+        """Offering "it fled" to a trapped roamer invites a report no candidate can predict."""
+        from claytonlib.battle_compass import tokens as tok
+        from claytonlib.battle_compass.state import Action
+
+        session_id, session = self._session()
+        self.api.hunt_session_observe(session_id, Action.MOVE_1.value,
+                                      ["M1", tok.escape_failed_token()])
+        codes = [o["code"] for o in session.snapshot()["prevention"]["target"]]
+        self.assertNotIn("esc", codes)
+        self.assertNotIn("trp", codes)
+
+    def test_a_static_hunt_is_never_offered_them(self):
+        hunt_id = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS,
+                             seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        codes = [o["code"] for o in session.snapshot()["prevention"]["target"]]
+        self.assertEqual([c for c in codes if c in ("esc", "trp")], [])
+
+    def test_reporting_it_ends_the_run(self):
+        from claytonlib.battle_compass import tokens as tok
+        from claytonlib.battle_compass.state import Action
+
+        # A lead that cannot outspeed it, so every candidate predicts the flee.
+        slow = dict(self.SMEARGLE, name="Slowgle",
+                    stats={**self.SMEARGLE["stats"], "spe": 40})
+        party = [{"pokemon_id": self.api.add_party_pokemon(self.profile, slow)["pokemon_id"]}]
+        hunt_id = self._hunt(party=party, seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        snap = self.api.hunt_session_observe(started["session_id"], Action.MOVE_1.value,
+                                             [tok.escaped_token()])
+        self.assertTrue(snap["target_fled"])
+        self.assertTrue(snap["over"])
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.assertEqual(session.outcome(), "fled")
+
+    def test_the_page_drops_our_half_of_a_turn_we_never_got_to_act_in(self):
+        html = TestTheRoamerRunPage._html()
+        self.assertIn('const fled = t.target?.prevented === "esc";', html)
+        self.assertIn("if (fled) return ordered.join", html)

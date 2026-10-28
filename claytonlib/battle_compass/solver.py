@@ -874,6 +874,14 @@ def solve(state: BattleState, hunt: HuntConfig,
             nxt = simulate_turn(current, action, hunt, item_code=item)
             if nxt.captured_in_wrong_ball:
                 continue          # never a path; the run would be lost
+            # **A roamer that gets away is the same kind of dead end as a standard-ball capture**:
+            # the run is over and lost, so a path through it is not a path. Reachable here for one
+            # reason only -- a SWITCH releases the trap (notes/roamers.md sec 2.4), so the search
+            # would otherwise happily plan one, lose the trap, and present a plan whose second
+            # turn is "the roamer leaves". Pruned rather than merely costed, for the same reason
+            # the wrong ball is: no distance makes it acceptable.
+            if nxt.target_fled:
+                continue
             # Sustainability is a hard constraint, not a warning (sec 6.2). Keyed on the faint
             # COUNT rather than on `ours.fainted`: a faint now switches the replacement in before
             # the turn returns, so the Pokemon on the field is healthy again and the old check

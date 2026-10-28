@@ -465,3 +465,39 @@ class TestTheTrapChecksThemselves(unittest.TestCase):
         from claytonlib.battle_compass.targets import trap_checks
         self.assertEqual(trap_checks("suicune", [self._c(name="Z")], target_speed=50,
                                      game="heartgold"), [])
+
+
+class TestTheSolverWillNotLoseTheRun(unittest.TestCase):
+    """A path that lets the roamer go is not a path, however cheap it looks."""
+
+    @staticmethod
+    def _state(**kwargs):
+        from claytonlib.battle_compass.sim import opening_rng
+
+        ours = _trapper(hp=400, pp=(5, 40, 15, 40))
+        target = _cresselia(hp=1, status=Status.SLEEP, sleep_turns=5)
+        return BattleState(ours=ours, target=target, rng=opening_rng(SEED, _config()),
+                           phase=2, target_trapped=True, **kwargs)
+
+    def test_a_switch_that_releases_the_trap_is_never_planned(self):
+        """The only way a flee is reachable mid-solve, and the search would otherwise take it:
+        a switch is the cheapest action there is (no rolls at all)."""
+        from claytonlib.battle_compass.solver import SolverConfig, solve
+
+        bench = (_wobbuffet(hp=130),)
+        state = self._state(bench=bench)
+        result = solve(state, _config(capture_ball="Timer Ball"),
+                       SolverConfig(max_turns=6))
+        steps = getattr(result, "steps", ())
+        self.assertNotIn(Action.SWITCH, [s.action for s in steps])
+
+    def test_the_prune_is_on_the_outcome_rather_than_on_the_action(self):
+        """A switch is fine when something else holds it -- which is why this prunes `target_fled`
+        and not `Action.SWITCH`: a Shadow Tag bench member keeps the trap through one."""
+        from claytonlib.battle_compass.sim import simulate_turn
+
+        state = self._state(bench=(_wobbuffet(hp=130),))
+        after = simulate_turn(state, Action.SWITCH, _config(), bench_slot=0)
+        self.assertFalse(after.target_trapped)
+        self.assertFalse(after.target_fled)          # Shadow Tag is out now
+        self.assertTrue(roamer_trapped_at_selection(after))
