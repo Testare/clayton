@@ -4229,6 +4229,15 @@ async function huntRunStart(_owner, id){
     };
     // A Platinum run is on its starting frame the moment it loads; there is no frame to find.
     if (huntIsPlatinum()) _hsa.pinnedFrame = _huntSetup.start_frame ?? 0;
+    // A ROAMER has no Seed A step at all -- nothing about the target is generated at the
+    // encounter, so there is no seed worth identifying and no frame to route to. The whole
+    // left-hand half of this page is skipped and `_hsa` is pre-satisfied so that nothing
+    // downstream waits on a step that will never happen (notes/roamers.md sec 1).
+    if (huntIsRoamer()){
+      _hsa.pinnedFrame = 0;
+      _hsa.seedA = null;
+      _hsa.spreadConfirmed = true;
+    }
     renderHuntSetup();
     huntSeedAFocus();
   } catch (e) { toast(String(e.message || e)); }
@@ -4753,8 +4762,15 @@ function renderHuntSpread(){
 // Whether the run may begin: Seed A pinned, and -- when it is not the key seed -- a spread the
 // facade has accepted. Gating the BUTTON rather than the panel, so the player can still look at
 // the candidate window while the spread is outstanding.
+// Whether this hunt is against a roamer, which the FACADE decides from the encounter row -- the
+// page never looks at the species. It changes two things here and nothing else: there is no Seed
+// A step, and the vector is a measured stopwatch reading rather than a commanded countdown.
+function huntIsRoamer(){ return !!_huntSetup?.skips_seed_a; }
+
 function huntReadyToStart(){
   if (_huntSetup?.hard_errors?.length) return false;
+  // A roamer needs no Seed A, so requiring one would lock the Start button forever.
+  if (huntIsRoamer()) return true;
   if (!_hsa?.seedA) return false;
   return huntSeedAIsKeySeed() || _hsa.spreadConfirmed;
 }
@@ -4766,6 +4782,7 @@ function huntRenderStartButton(){
 }
 function huntStartBlockedReason(){
   if (_huntSetup?.hard_errors?.length) return "This hunt is not configured yet.";
+  if (huntIsRoamer()) return "";
   if (!_hsa?.seedA) return "Identify Seed A first.";
   if (!_hsa.spreadConfirmed)
     return `Seed A is not the key seed — enter this ${hsaTarget()}'s nature and IVs.`;
@@ -4784,13 +4801,27 @@ function huntVectorHint(ms){
 function huntVectorPreview(v){ $("hrVectorPreview").innerHTML = huntVectorHint(v); }
 
 function huntTargetingFromForm(){
-  return {
+  const out = {
     key_seed: huntKeySeedText(),
     initial_time: $("hrInitialTime").value.trim(),
-    vector_ms: $("hrVectorMs").value.trim(),
     delay_window: $("hrDelayWindow").value.trim(),
     seconds_window: $("hrSecondsWindow").value.trim(),
   };
+  // The field is named for what it MEASURES, and the two are not interchangeable: a static
+  // hunt's Vector ms is a commanded countdown the calibration model was fitted on, and a
+  // roamer's is a stopwatch reading. Sending one as the other would be a silent error of
+  // hundreds of frames, which is why the facade reads whichever matches the encounter kind and
+  // never whichever happens to be filled in.
+  const vector = $("hrVectorMs").value.trim();
+  if (huntIsRoamer()){
+    out.stopwatch_ms = vector;
+    out.opening_hp = $("hrOpeningHp") ? $("hrOpeningHp").value.trim() : "";
+    out.opening_status = $("hrOpeningStatus") ? $("hrOpeningStatus").value : "";
+    out.opening_sleep_turns = $("hrOpeningSleep") ? $("hrOpeningSleep").value.trim() : "";
+  } else {
+    out.vector_ms = vector;
+  }
+  return out;
 }
 
 async function huntFindCandidates(){
@@ -4826,9 +4857,16 @@ function huntCaptureTargeting(){
   t.key_seed = huntKeySeedText();
   t.initial_time = $("hrInitialTime").value.trim();
   if ($("hrVectorMs")){
-    t.vector_ms = $("hrVectorMs").value.trim() === "" ? null : Number($("hrVectorMs").value);
+    const v = $("hrVectorMs").value.trim() === "" ? null : Number($("hrVectorMs").value);
+    if (huntIsRoamer()) t.stopwatch_ms = v; else t.vector_ms = v;
     t.delay_window = $("hrDelayWindow").value.trim();
     t.seconds_window = $("hrSecondsWindow").value.trim();
+  }
+  if (huntIsRoamer() && $("hrOpeningHp")){
+    const o = _huntSetup.opening || (_huntSetup.opening = {});
+    o.hp = $("hrOpeningHp").value.trim() === "" ? null : Number($("hrOpeningHp").value);
+    o.status = $("hrOpeningStatus").value;
+    o.sleep_turns = Number($("hrOpeningSleep").value || 0);
   }
 }
 
@@ -4859,7 +4897,17 @@ function renderHuntSetup(){
         <tr><th>seed</th><th>frame</th><th>second</th></tr>
         ${w.preview.map(c => `<tr><td>${hrCopyableCell(c.seed, "this candidate seed")}</td>
           <td>${c.frame}</td><td>${c.second}</td></tr>`).join("")}</table></div>
-      ${w.second_window > 0 ? `<div class="hr-small muted">A second window above 0 multiplies
+      ${(w.suggested_frame_window != null
+          && (w.frame_window < w.suggested_frame_window
+              || w.second_window < w.suggested_second_window))
+        ? `<div class="hr-small warn">The stopwatch's own spread asks for
+            <b>±${w.suggested_frame_window} delays × ±${w.suggested_second_window} s</b>, which is
+            wider than this. Most of that is the load itself: the stopwatch starts at the press and
+            the seed is made part way through the loading screens, which puts the centre late by
+            however long that takes. <button class="btn small" type="button"
+              onclick="huntUseSuggestedWindow()">Use it</button></div>`
+        : ""}
+      ${w.second_window > 0 && w.suggested_frame_window == null ? `<div class="hr-small muted">A second window above 0 multiplies
         the set with candidates that take ~19 turns to separate — the move choice and the crit
         and damage rolls are identical between seconds, so only accuracy and proc rolls tell
         them apart. Use 0 unless the clock second itself is in doubt.</div>` : ""}</div>`;
@@ -4873,8 +4921,10 @@ function renderHuntSetup(){
   // in, and the same shape as the Metronome and Safari compasses. Key seed and initial time sit
   // in a shared header above all three because Seed A is searched around them; vector ms and
   // the window sizes belong to Seed B alone.
-  const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();
-  const seedBLocked = blocked || !_hsa?.seedA;
+  const roamer = huntIsRoamer();
+  const needSpread = !roamer && !!_hsa?.seedA && !huntSeedAIsKeySeed();
+  // A roamer's Seed B step waits on the hunt being configured and on nothing else.
+  const seedBLocked = blocked || (!roamer && !_hsa?.seedA);
   // The spread panel waits on the FRAME, not just on Seed A: for a static encounter the frame
   // is what decides which Suicune the A-press generates, so until it is pinned there is nothing
   // to look up. Seed B is deliberately not gated on it -- a player who already knows they are
@@ -4906,21 +4956,31 @@ function renderHuntSetup(){
     </form>
 
     <div class="nr-stack">
+      ${roamer ? renderHuntRoamerNote() : `
       <div class="panel ${blocked ? "locked" : ""}" id="hsa-seeda">${renderHuntSeedA()}</div>
-      <div class="panel ${_hsa?.seedA ? "" : "locked"}" id="hsa-frame">${renderHuntFrameGuide()}</div>
+      <div class="panel ${_hsa?.seedA ? "" : "locked"}" id="hsa-frame">${renderHuntFrameGuide()}</div>`}
       ${needSpread ? `<div class="panel ${spreadLocked ? "locked" : ""}" id="hsa-spread">
         ${renderHuntSpread()}</div>` : ""}
       <div class="panel ${seedBLocked ? "locked" : ""}" id="hsa-seedb">
         <h3>Seed B — the battle seed</h3>
-        <div class="hr-small muted" style="margin-bottom:10px">These centre the candidate window.
-          Nothing has to be right first time — search, look at what comes back, adjust. Vector ms
-          is the gap between Seed A and Seed B, in milliseconds.</div>
+        <div class="hr-small muted" style="margin-bottom:10px">${roamer
+          ? `These centre the candidate window. The <b>stopwatch</b> is how long ran between
+             loading the save and the encounter firing — start it on the load press, stop it when
+             the battle starts. Nothing has to be right first time: search, look at what comes
+             back, widen.`
+          : `These centre the candidate window.
+             Nothing has to be right first time — search, look at what comes back, adjust. Vector
+             ms is the gap between Seed A and Seed B, in milliseconds.`}</div>
+        ${roamer ? renderHuntOpening() : ""}
         <div class="rel-row">
-          <div class="field"><label>Vector ms</label>
-            <input id="hrVectorMs" type="number" min="0" value="${t.vector_ms ?? ""}"
-              placeholder="300000" oninput="huntVectorPreview(this.value)">
+          <div class="field"><label>${roamer ? "Stopwatch ms" : "Vector ms"}</label>
+            <input id="hrVectorMs" type="number" min="0"
+              value="${(roamer ? t.stopwatch_ms : t.vector_ms) ?? ""}"
+              placeholder="${roamer ? "120000" : "300000"}"
+              oninput="huntVectorPreview(this.value)">
             <div id="hrVectorPreview" class="hint"
-              style="font-family:ui-monospace,monospace">${huntVectorHint(t.vector_ms)}</div></div>
+              style="font-family:ui-monospace,monospace">${huntVectorHint(
+                (roamer ? t.stopwatch_ms : t.vector_ms))}</div></div>
           <div class="field"><label>Delay ±</label>
             <input id="hrDelayWindow" value="${t.delay_window ?? 60}"></div>
           <div class="field"><label>Seconds ±</label>
@@ -4934,6 +4994,67 @@ function renderHuntSetup(){
       </div>
     </div>`);
   huntValidateStartRel();
+}
+
+// --- the roamer's two differences, drawn ----------------------------------
+//
+// A roamer run has no Seed A step and no frame route, and saying WHY is worth a panel: the
+// absence looks like a missing feature otherwise, and a player who went looking for the Elm
+// calls or the chatot flips would be hunting for something that cannot exist here.
+function renderHuntRoamerNote(){
+  return `<div class="panel" id="hsa-roamer">
+    <h3>No Seed A step — this is a roamer</h3>
+    <div class="hr-small muted">Nothing about a roamer is generated when the encounter fires: its
+      species, level, IVs, nature, HP and status are all read straight out of your save, where
+      they were fixed when the roam started. So there is no initial seed worth identifying and no
+      advance frame to route to — only the battle seed, below.</div>
+    <div class="hr-small muted" style="margin-top:8px"><b>The key seed and initial time above are
+      still needed.</b> They are the anchor the stopwatch measures from: the key seed says which
+      delay the save loaded on, and the stopwatch says how many delays have passed since.</div>
+    <div class="hr-small muted" style="margin-top:8px"><b>It leaves on turn 1 unless something
+      holds it.</b> Shadow Tag or Arena Trap on whoever is out, or a Mean Look that outspeeds it —
+      and the trap is released if that Pokemon switches out or faints. Configure checks your party
+      for this.</div>
+  </div>`;
+}
+
+// What the target walks in with. A roamer carries its damage and its status between encounters,
+// so the usual plan chips it to 1 HP and sleeps it in a throwaway encounter and then hunts the
+// seed with that already done -- and the simulation has to be told, because turn 1's prediction
+// depends on it.
+function renderHuntOpening(){
+  const o = _huntSetup.opening || {};
+  const status = o.status || "";
+  const asleep = status === "slp";
+  return `<div class="rel-row" style="margin-bottom:10px">
+    <div class="field"><label>Its HP now</label>
+      <input id="hrOpeningHp" type="number" min="1" value="${o.hp ?? ""}" placeholder="full">
+      <div class="hint">blank = full health</div></div>
+    <div class="field"><label>Its status now</label>
+      <select id="hrOpeningStatus" onchange="renderHuntSetup()">
+        ${[["", "none"], ["slp", "asleep"], ["par", "paralyzed"], ["psn", "poisoned"],
+           ["brn", "burned"], ["frz", "frozen"]]
+          .map(([v, label]) => `<option value="${v}"${v === status ? " selected" : ""}
+            >${label}</option>`).join("")}
+      </select></div>
+    <div class="field"><label>Sleep turns left</label>
+      <input id="hrOpeningSleep" type="number" min="0" max="5" value="${o.sleep_turns || ""}"
+        placeholder="unknown" ${asleep ? "" : "disabled"}>
+      <div class="hint">${asleep
+        ? "blank = unknown, which is assumed to be the maximum of 5"
+        : "only for sleep"}</div></div>
+  </div>`;
+}
+
+// Adopt the window the stopwatch's own spread asks for. A button rather than a default, because
+// it is ten times a static hunt's and a player who has measured their load lag should keep the
+// tighter one they have earned.
+function huntUseSuggestedWindow(){
+  const w = _huntWindow;
+  if (!w || w.suggested_frame_window == null) return;
+  if ($("hrDelayWindow")) $("hrDelayWindow").value = w.suggested_frame_window;
+  if ($("hrSecondsWindow")) $("hrSecondsWindow").value = w.suggested_second_window;
+  huntFindCandidates();
 }
 
 function huntPickInitialTime(t){
@@ -7219,7 +7340,7 @@ function renderHuntConfigure(){
 function huntReadinessPanel(r){
   const access = r.access || [], coverage = r.move_coverage || [];
   const items = r.held_items || [], survive = r.survivability || [];
-  const chip = r.chip || [];
+  const chip = r.chip || [], trap = r.trap || [];
   if(!r.alphabet && !r.speed && !access.length && !coverage.length
      && !items.length && !survive.length && !chip.length) return "";
   const a = r.alphabet;
@@ -7268,6 +7389,18 @@ function huntReadinessPanel(r){
         <div class="hr-small muted">Phase 1 needs the target on 1 HP, and False Swipe is the only
           move that can get it there without the risk of a knockout.</div></div>`
     : "";
+  // Whether anything can HOLD it, which only a roamer asks -- and the only readiness field here
+  // whose failure is fatal rather than expensive: a lead that cannot trap loses the run on turn
+  // 1 before a single roll of the battle is worth reading. Directly under chipping because the
+  // two are the same kind of question (can this party do the job at all) and because on a roamer
+  // the trap comes first in time.
+  const trapping = trap.length
+    ? `<div class="field"><label>Holding it still</label>
+        ${trap.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}
+        <div class="hr-small muted">A roamer flees on turn 1 unless something holds it, and the
+          trap is released when whoever holds it leaves the field — so a faint or a switch hands
+          it a free turn to escape on.</div></div>`
+    : "";
   // Computed by `hunt_readiness` since it was written and never shown until now, which made the
   // whole check dead data -- an unmodelled move of ours is simulated as if it worked, so being
   // told about it is the entire point.
@@ -7293,7 +7426,7 @@ function huntReadinessPanel(r){
     ? `<div class="field"><label>Survivability</label>
         ${survive.map(w => `<div class="notice warn">${esc(w)}</div>`).join("")}</div>`
     : "";
-  return `<div class="panel" style="margin-top:12px">${reach}${chipping}${heldItems}${alphabet}${speed}${cover}${survivability}</div>`;
+  return `<div class="panel" style="margin-top:12px">${reach}${chipping}${trapping}${heldItems}${alphabet}${speed}${cover}${survivability}</div>`;
 }
 
 // The set of initial times a key seed can be loaded at is fixed and small, so the other tools

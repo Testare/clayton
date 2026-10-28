@@ -198,9 +198,11 @@ class TestThePanelRendersIt(unittest.TestCase):
         from pathlib import Path
 
         html = (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
-        self.assertIn("const chip = r.chip || [];", html)
+        self.assertIn("const chip = r.chip || [], trap = r.trap || [];", html)
         self.assertIn("Chipping it down", html)
-        self.assertIn("${reach}${chipping}", html)
+        # The trap panel moved in directly underneath -- same kind of question, and on a roamer
+        # the trap comes first in time (notes/roamers.md sec 10.1).
+        self.assertIn("${reach}${chipping}${trapping}", html)
 
 
 class TestEveryConfiguredTarget(unittest.TestCase):

@@ -482,7 +482,32 @@ What no party composition can fix, and so is advice rather than a check: **do no
 voluntarily.** A Shadow Tag Pokémon switched in behind an already-chosen escape does not stop it
 (sec 2.2), so only a faint's replacement gets a second chance at the trap.
 
-### 10.2 Three things the design above got wrong or left out
+### 10.2 Mesprit, and what three recordings settled
+
+`mesprit`, `mesprit1` and `mesprit2` in `data/battle_logs/` are forced-seed captures of the
+roaming Mesprit, 21 turns in all, and **every roll count, HP figure and rendered token in them is
+reproduced** by `tests/test_battle_compass_ground_truth_mesprit.py`. What that pinned:
+
+* **The AI cost, exactly.** 80 rolls at the four-damage-roll site over 20 turns — four every turn
+  without exception, fleeing and asleep included — and 14 at the tie-break, so 14 chose a move and
+  6 chose Escape. Section 2.5's table is measured now, not derived.
+* **The wild selection call site never fires**, which is a cleaner confirmation of the trainer-AI
+  branch than any count: not the same path at a different price, a different path.
+* **`BATTLE_START_ADVANCES` is 6 for a roamer route encounter** — four in
+  `BattleContext_InitCounters` plus two at the send-out, the same as every Platinum static and the
+  same as HGSS's Bell Tower. No roamer variant needed (`clayton-957.35.2`).
+* **Mesprit has a row after all.** `notes/platinum.md` section 15 said it "has no row and cannot
+  have one", which was true of a table that could only describe static encounters. Its Lv50 set is
+  Swift / Lucky Chant / Future Sight / Charm — and the log reports exactly those four move ids,
+  which is the first empirical confirmation of the last-four-learnable-in-learn-order rule for a
+  roamer rather than for a battle script.
+
+Two effects came with it. **Lucky Chant (240)** suppresses crits against the target for five turns
+and **the crit roll is still spent**: `BattleSystem_CalcCriticalMulti` puts `BattleSystem_RandNext`
+first in its `&&` chain and tests the flag after it, so C's short-circuit never reaches the roll.
+**Charm (58)** takes two stages off our Attack, which slows the chip phase rather than failing it.
+
+### 10.3 Three things the design above got wrong or left out
 
 **The stopwatch has a load-lag term, and it is a bias.** Section 6 said "the player starts a
 stopwatch at the load press" and then centred on the reading — but the seed is generated part way
@@ -502,6 +527,14 @@ window ~830 frames × ~11 s ≈ 38,000 candidates, against the ±2000 frames and
 reports static hunts working well at — so it is in the normal range rather than the alarming one.
 Once the lag is measured the allowance disappears and the same hunt asks for ~230 × 1 ≈ 1,400,
 which is the concrete payoff for doing the one wide run.
+
+**Our own Safeguard blocked our own Spore**, and that bug predates roamers entirely.
+`safeguard_turns` was a single counter documented as the target's — "nothing in any party can set
+one" — which stopped being true the moment a Wobbuffet with Safeguard became the standard roamer
+trapper. `mesprit2` T8 is the turn that caught it: the game slept the target and the simulator
+refused to. Our side has its own counter now, and `will_fail` takes the acting side. The roll count
+on that turn happened to agree anyway, so only the two turns *after* it diverged — which is why a
+recording was the only thing that could have found it.
 
 **Nothing released the target's trap when our side left the field** — a real bug, not a missing
 feature, and it predates roamers. `BattleSystem_UpdateAfterSwitch` and

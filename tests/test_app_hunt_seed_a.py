@@ -15,6 +15,11 @@ from app.store import FileStore
 
 INDEX = pathlib.Path(__file__).resolve().parent.parent / "app" / "web" / "index.html"
 
+
+def _seed_b_lock_line(html: str) -> str:
+    """The one line that decides whether the Seed B panel is locked."""
+    return next(line for line in html.splitlines() if "const seedBLocked" in line)
+
 LEAD = {
     "name": "Smeargle", "species": "smeargle", "level": 58, "ability": "Technician",
     "stats": {"hp": 153, "atk": 65, "def": 66, "spa": 45, "spd": 79, "spe": 160},
@@ -243,12 +248,16 @@ class TestThePageIsWiredUp(unittest.TestCase):
             self.assertIn(fragment, self.html, fragment)
 
     def test_the_spread_panel_is_only_rendered_on_a_key_seed_miss(self):
-        self.assertIn("const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();", self.html)
+        self.assertIn("const needSpread = !roamer && !!_hsa?.seedA && !huntSeedAIsKeySeed();",
+                      self.html)
         self.assertIn('${needSpread ? `<div class="panel ${spreadLocked ? "locked" : ""}" '
                       'id="hsa-spread">', self.html)
 
     def test_seed_b_is_locked_until_seed_a_is_identified(self):
-        self.assertIn("const seedBLocked = blocked || !_hsa?.seedA;", self.html)
+        """...unless there is no Seed A to identify. A roamer has none -- nothing about it is
+        generated at the encounter -- so gating on one would lock the page forever
+        (notes/roamers.md sec 1)."""
+        self.assertIn("const seedBLocked = blocked || (!roamer && !_hsa?.seedA);", self.html)
 
     def test_starting_is_gated_on_the_spread_when_it_is_needed(self):
         self.assertIn("return huntSeedAIsKeySeed() || _hsa.spreadConfirmed;", self.html)
@@ -374,8 +383,9 @@ class TestTheAdvanceFrameStep(unittest.TestCase):
 
     def test_seed_b_is_deliberately_not_gated_on_the_frame(self):
         """A player who already knows they are on the right frame should not have to re-derive
-        it to get on with the battle."""
-        self.assertIn("const seedBLocked = blocked || !_hsa?.seedA;", self.html)
+        it to get on with the battle. The frame is absent from the condition either way."""
+        self.assertIn("const seedBLocked = blocked || (!roamer && !_hsa?.seedA);", self.html)
+        self.assertNotIn("pinnedFrame", _seed_b_lock_line(self.html))
 
     def test_changing_seed_a_discards_the_pinned_frame(self):
         """A frame is an offset into one seed's Elm stream; carried onto another seed it is a
@@ -484,7 +494,8 @@ class TestKeySeedHitVersusFrameToAimFor(unittest.TestCase):
     def test_the_spread_is_still_skipped_on_a_key_seed_hit(self):
         """It keys off the SEED, not off whether a frame was configured -- the configured spread
         is the key seed's either way."""
-        self.assertIn("const needSpread = !!_hsa?.seedA && !huntSeedAIsKeySeed();", self.html)
+        self.assertIn("const needSpread = !roamer && !!_hsa?.seedA && !huntSeedAIsKeySeed();",
+                      self.html)
 
     def test_a_failed_plan_is_not_a_dead_end(self):
         """The in-flight state is also where a thrown plan lands, and a toast has faded by the

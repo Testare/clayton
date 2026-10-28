@@ -437,3 +437,98 @@ class TestTheOpeningState(RoamerHuntCase):
         session = self.api._hunt_sessions.get(started["session_id"])
         self.assertEqual(session.target.hp, 1)
         self.assertIs(session.target.status, Status.SLEEP)
+
+
+class TestTheRoamerRunPage(unittest.TestCase):
+    """Static checks on app/web/index.html: the run page has to skip a step that cannot happen.
+
+    The sharp one is `huntReadyToStart`. It required an identified Seed A, and a roamer never has
+    one -- so without the roamer branch the Start button is disabled forever and the feature is
+    unreachable however correct the library underneath it is.
+    """
+
+    @staticmethod
+    def _html():
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
+
+    @staticmethod
+    def _body(name):
+        # Same path dance as tests/test_battle_compass_switch_immunity.py: the discovery runner
+        # imports these as `tests.*`, so a sibling is not importable by bare name without it.
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+        return _function_body(name)
+
+    def test_the_page_asks_the_facade_which_kind_it_is(self):
+        """`skips_seed_a`, not the species: the encounter row decides and the page obeys."""
+        self.assertIn("function huntIsRoamer(){ return !!_huntSetup?.skips_seed_a; }",
+                      self._html())
+
+    def test_start_is_not_gated_on_a_seed_a_that_cannot_exist(self):
+        body = self._body("huntReadyToStart")
+        self.assertIn("huntIsRoamer()", body)
+        self.assertIn("return true", body)
+
+    def test_and_the_blocked_reason_does_not_ask_for_one_either(self):
+        self.assertIn("huntIsRoamer()", self._body("huntStartBlockedReason"))
+
+    def test_the_form_sends_a_stopwatch_for_a_roamer_and_a_vector_otherwise(self):
+        body = self._body("huntTargetingFromForm")
+        self.assertIn("out.stopwatch_ms = vector", body)
+        self.assertIn("out.vector_ms = vector", body)
+        self.assertIn("huntIsRoamer()", body)
+
+    def test_the_opening_state_is_sent_with_it(self):
+        body = self._body("huntTargetingFromForm")
+        for field in ("opening_hp", "opening_status", "opening_sleep_turns"):
+            self.assertIn(field, body)
+
+    def test_the_page_explains_the_missing_step_rather_than_just_omitting_it(self):
+        body = self._body("renderHuntRoamerNote")
+        self.assertIn("No Seed A step", body)
+        # The three things a player would otherwise go looking for.
+        self.assertIn("read straight out of your save", body)
+        self.assertIn("key seed and initial time above are", body)
+        self.assertIn("leaves on turn 1", body)
+
+    def test_the_opening_panel_offers_the_statuses_the_model_accepts(self):
+        from claytonlib.battle_compass.state import Status
+
+        body = self._body("renderHuntOpening")
+        for status in Status:
+            if status is Status.NONE:
+                continue
+            self.assertIn(f'"{status.value}"', body)
+
+    def test_the_sleep_counter_is_only_enabled_for_sleep(self):
+        body = self._body("renderHuntOpening")
+        self.assertIn('asleep = status === "slp"', body)
+        self.assertIn("assumed to be the maximum", body)
+
+    def test_the_suggested_window_is_offered_rather_than_imposed(self):
+        self.assertIn("function huntUseSuggestedWindow", self._html())
+        body = self._body("renderHuntSetup")
+        self.assertIn("suggested_frame_window", body)
+        self.assertIn("huntUseSuggestedWindow()", body)
+
+    def test_the_seed_b_panel_is_not_locked_behind_seed_a_for_a_roamer(self):
+        body = self._body("renderHuntSetup")
+        self.assertIn("(!roamer && !_hsa?.seedA)", body)
+
+    def test_the_static_run_is_untouched(self):
+        """Every roamer branch is additive: the static path still asks for Seed A and a Vector."""
+        body = self._body("renderHuntSetup")
+        self.assertIn("renderHuntSeedA()", body)
+        self.assertIn("renderHuntFrameGuide()", body)
+        self.assertIn("Vector ms", body)
+
+    def test_the_trap_warnings_are_actually_shown(self):
+        """`hunt_readiness` computing a field nothing renders is dead data -- the mistake the
+        move-coverage and survivability fields were both fixed for."""
+        html = self._html()
+        self.assertIn("const chip = r.chip || [], trap = r.trap || [];", html)
+        self.assertIn("Holding it still", html)
+        self.assertIn("${trapping}", html)

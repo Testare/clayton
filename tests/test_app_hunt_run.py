@@ -380,7 +380,11 @@ class TestVectorMsPresentation(unittest.TestCase):
         self.html = INDEX.read_text()
 
     def test_both_vector_fields_suggest_a_realistic_value(self):
-        self.assertEqual(self.html.count('placeholder="300000"'), 4)
+        """Three literals plus the run page's, which became conditional when the roamer's
+        stopwatch moved in beside it: a measured two minutes of walking is the realistic
+        suggestion there, where a commanded countdown's is five (notes/roamers.md sec 6)."""
+        self.assertEqual(self.html.count('placeholder="300000"'), 3)
+        self.assertIn('placeholder="${roamer ? "120000" : "300000"}"', self.html)
 
     def test_the_last_three_digits_are_shaded_like_the_other_pages(self):
         self.assertTrue("fmtVectorMs(h.vector_ms)" in self.html)
