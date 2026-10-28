@@ -1018,6 +1018,47 @@ def trap_checks(species: str, party: "list[TrapCandidate] | tuple[TrapCandidate,
     return checks
 
 
+def repel_warnings(species: str, lead_level: int | None, game: str = "") -> list[str]:
+    """Whether the LEAD's level lets the Repel trick find this roamer at all.
+
+    `RepelPreventsEncounter` is ``repelActive && firstBattlerLevel > wildLevel``
+    (pokeplatinum src/overlay006/wild_encounters.c:1397-1400) read off the first *live* party
+    member (`:264`) -- which is also the Pokemon that gets sent out, so the trapper and the Repel
+    gate are the same Pokemon and cannot be tuned separately.
+
+    A strict inequality, so **equal levels are fine**: a Lv50 lead against a Lv50 Cresselia passes.
+    One level over and the roamer is suppressed -- and on the walking path that is worse than a
+    normal encounter, because the suppressed check returns FALSE outright and the encounter is
+    simply lost rather than falling through to a wild Pokemon [verified].
+
+    The other half of the trick -- the lead being ABOVE every wild level on the route -- is
+    deliberately not checked: it needs Platinum's route encounter tables, which this project does
+    not carry (`safari_zones.json` is the HGSS Safari's). Warning about the half that is knowable
+    beats warning about neither, and the message says which half it checked.
+
+    Advisory, not blocking: a player may be finding the roamer some other way (walking without a
+    Repel, or on a Seed A they are steering), and refusing the hunt for it would be wrong more
+    often than right.
+    """
+    try:
+        if not is_roamer(species, game):
+            return []
+        level = encounter_level(species, game)
+    except (KeyError, ValueError):
+        return []
+    if lead_level is None or lead_level <= level:
+        return []
+    from claytonlib.species_names import display_species_name
+
+    named = display_species_name(resolve(species, game)[1].species)
+    return [
+        f"The Repel trick needs your lead at level {level} or below — {named} is level {level}, "
+        f"and a lead above it suppresses the encounter entirely rather than giving you a wild "
+        f"Pokemon instead. Your lead is level {lead_level}. (It still has to be ABOVE the route's "
+        f"wild levels, which this cannot check.)"
+    ]
+
+
 def trap_warnings(species: str, party: "list[TrapCandidate] | tuple[TrapCandidate, ...]", *,
                   target_speed: int | None, game: str = "") -> list[str]:
     """`trap_checks` as sentences, worst first, for a readiness panel.

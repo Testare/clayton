@@ -293,8 +293,11 @@ class TestTheTrapValidation(RoamerHuntCase):
         return self.api.hunt_readiness(hunt["id"])["trap"]
 
     def test_a_lone_fast_mean_look_user_passes_with_a_note_about_why(self):
-        warnings = self._trap(self._hunt())
-        self.assertEqual(len(warnings), 1)
+        """One trap line, and it is the "how" rather than a problem. (The Repel ceiling adds its
+        own line for this Lv64 lead -- see TestTheRepelCeiling -- which is why this counts the
+        trap lines rather than the field.)"""
+        warnings = [w for w in self._trap(self._hunt()) if "Repel" not in w]
+        self.assertEqual(len(warnings), 1, warnings)
         self.assertIn("outspeeds", warnings[0])
 
     def test_a_bench_member_that_cannot_trap_is_called_out(self):
@@ -589,3 +592,31 @@ class TestReportingAFlee(RoamerHuntCase):
         html = TestTheRoamerRunPage._html()
         self.assertIn('const fled = t.target?.prevented === "esc";', html)
         self.assertIn("if (fled) return ordered.join", html)
+
+
+class TestTheRepelCeiling(RoamerHuntCase):
+    """The lead is both the trapper and what Repel reads, so the two cannot be tuned apart."""
+
+    def test_a_lead_above_the_roamers_level_is_warned_about(self):
+        """The fixture's Smeargle is Lv64 against Cresselia's 50, which suppresses it."""
+        warnings = self.api.hunt_readiness(self._hunt()["id"])["trap"]
+        repel = [w for w in warnings if "Repel trick" in w]
+        self.assertTrue(repel, warnings)
+        self.assertIn("level 50 or below", repel[0])
+        self.assertIn("level 64", repel[0])
+
+    def test_an_equal_level_is_fine_because_the_rom_test_is_strict(self):
+        lead = dict(self.SMEARGLE, name="Smeargle50", level=50)
+        party = [{"pokemon_id": self.api.add_party_pokemon(self.profile, lead)["pokemon_id"]}]
+        warnings = self.api.hunt_readiness(self._hunt(party=party)["id"])["trap"]
+        self.assertEqual([w for w in warnings if "Repel trick" in w], [])
+
+    def test_it_says_which_half_it_could_not_check(self):
+        """The route's own wild levels need Platinum encounter tables this project lacks."""
+        warnings = self.api.hunt_readiness(self._hunt()["id"])["trap"]
+        self.assertTrue([w for w in warnings if "cannot check" in w], warnings)
+
+    def test_a_static_hunt_is_not_warned(self):
+        hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS)
+        warnings = self.api.hunt_readiness(hunt["id"])["trap"]
+        self.assertEqual([w for w in warnings if "Repel" in w], [])

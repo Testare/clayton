@@ -1440,7 +1440,7 @@ class Facade:
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
         from claytonlib.battle_compass.targets import (
-            TrapCandidate, access_warnings, chip_warnings, trap_warnings,
+            TrapCandidate, access_warnings, chip_warnings, repel_warnings, trap_warnings,
         )
         from claytonlib.moves import resolve_move
 
@@ -1575,6 +1575,13 @@ class Facade:
                 h.target.species, trap_party,
                 target_speed=self._target_derived_speed(h),
                 game=profile.game if profile else "")
+            # The Repel ceiling, which is the same Pokemon's problem: the lead is both the trapper
+            # and what `RepelPreventsEncounter` reads. Appended to the same field rather than
+            # given one of its own, because the player's answer to either is "change the lead".
+            lead = profile.get_party_pokemon(h.party[0].pokemon_id) if h.party else None
+            result["trap"] += repel_warnings(
+                h.target.species, getattr(lead, "level", None),
+                profile.game if profile else "")
         result["held_items"] = unmodelled_held_items(held_items)
 
         if movesets or our_speeds:
