@@ -106,6 +106,8 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # 1/16, which is the "inert rather than refused" failure this table exists to prevent.
     43: "high crit ratio: one crit stage up, so `% 8` rather than `% 16`",
     46: "Mist: field condition, and it blocks our stat drops",
+    58: "Charm: drops our Attack two stages, which is the chip phase slowing down",
+    240: "Lucky Chant: no crits against the target for five turns, and the roll is still spent",
     68: "lowers our Attack, which raises how many False Swipes the target needs",
     71: "lowers our Sp. Atk, which lowers the special damage WE deal",
     72: "lowers our Sp. Def, which raises every later special hit we take",
@@ -456,6 +458,9 @@ class MoveOutcome:
     #: Field conditions this move set. Applied by `simulate_turn`, which owns the state.
     sets_rain: bool = False
     sets_mist: bool = False
+    #: Lucky Chant went up on the user's side. Only the TARGET can set one -- `MODELLED_OUR_EFFECTS`
+    #: has no row for effect 240 -- so the state field it feeds is the target's.
+    sets_lucky_chant: bool = False
     traps: bool = False
     sets_water_sport: bool = False
     sets_safeguard: bool = False
@@ -646,7 +651,8 @@ def can_miss(move: Move, net_stage: int = 0, *, attacker=None, defender=None,
                                    charge_turn=charge_turn) < 100
 
 
-def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None) -> bool:
+def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" = None,
+              actor_side: str = "ours") -> bool:
     """Whether this move is certain to do nothing, from state alone.
 
     Eight families now, all costing the turn its two post-successful-move advances when they fire
@@ -686,6 +692,12 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     defender-facing families -- `hunt_session.move_info`, which asks "can this move of OURS do
     nothing to the target" -- need not pretend to know who is acting.
 
+    `actor_side` is which side is USING the move, and it exists for the two Safeguard families
+    alone -- Safeguard is the only condition here that both sides can raise, and both of its
+    questions are about a side rather than about a Pokemon: a status move is refused by the
+    DEFENDER's Safeguard, and a second Safeguard by the USER's own. It defaults to ``"ours"``
+    because that is what every caller that omits it means.
+
     None of these renders as a miss: the simulator emits the bare slot token.
     """
     status = status_applied_by(move)
@@ -695,8 +707,14 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     # than a nuisance: sec 2.2's precondition is a target held still, so a Safeguard up before we
     # land Thunder Wave or Spore has to be waited out. It does NOT block a ball -- a ball is not
     # a move -- which is what keeps the target catchable through it.
-    if status is not None and field is not None and getattr(field, "safeguard_turns", 0) > 0:
-        return True
+    # The DEFENDER's side, which is what this always meant and what it only accidentally said:
+    # a status move we aim at the target is blocked by the TARGET's Safeguard, and one the target
+    # aims at us by OURS.
+    if status is not None and field is not None:
+        attr = "our_safeguard_turns" if actor_side == "ours" else "safeguard_turns"
+        defender_attr = "safeguard_turns" if attr == "our_safeguard_turns" else "our_safeguard_turns"
+        if getattr(field, defender_attr, 0) > 0:
+            return True
     if soundproofed(defender, move):
         # Blocked outright, and it lands on the same "no more work" flag as the other
         # defender-side refusals -- so it costs what those cost. Heatran's Metal Sound against a
@@ -786,7 +804,18 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         return True
     if move.effect == EFFECT_WATER_SPORT and field.target_water_sport:
         return True
-    if move.effect == EFFECT_SAFEGUARD and getattr(field, "safeguard_turns", 0) > 0:
+    # A second Safeguard fails -- but only against the USER's OWN side's, which is the whole
+    # reason `actor_side` exists. Read off the target's, our own Safeguard made our own second one
+    # fail and (worse, line 703 above) made our own sleep moves fail too.
+    if move.effect == EFFECT_SAFEGUARD:
+        attr = "our_safeguard_turns" if actor_side == "ours" else "safeguard_turns"
+        if getattr(field, attr, 0) > 0:
+            return True
+    # A second Lucky Chant fails outright rather than refreshing the counter -- effect_script_0240
+    # tests the flag first and sets `MOVE_STATUS_FAILED` on the `_009` branch. Same shape as Mist
+    # above, and the same cost: a failed move spends no post-successful-move advances.
+    if (move.effect == EFFECT_LUCKY_CHANT
+            and getattr(field, "target_lucky_chant_turns", 0) > 0):
         return True
     # A screen re-used while it is already up fails (the fail branch at
     # src/battle/battle_command.c:2577), which costs the turn its two post-successful-move
@@ -805,6 +834,16 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
 #: re-used Rain Dance while it was already raining, the game spent 17 advances, and this spent 19.
 EFFECT_RAIN_DANCE = 136
 EFFECT_MIST = 46
+#: Lucky Chant, Mesprit's. A SIDE condition on the user's side that suppresses critical hits
+#: against it for five turns -- and the one thing about it that matters to a seed is that the crit
+#: roll is **still spent**: `BattleSystem_CalcCriticalMulti` puts `BattleSystem_RandNext` as the
+#: FIRST term of its `&&` chain and tests the Lucky Chant flag afterwards (battle_lib.c:7134-7139),
+#: so C's short-circuit never reaches the roll. Only the verdict changes.
+#:
+#: The side read is the DEFENDER's (`BtlCmd_CalcCrit` passes
+#: `BATTLECTX_SIDE_CONDITIONS_MASK, battleCtx->defender`, battle_script.c:2158-2163), which is why
+#: a Lucky Chant the target sets protects the target.
+EFFECT_LUCKY_CHANT = 240
 EFFECT_MEAN_LOOK = 106
 EFFECT_LOWER_EVASION = 24
 #: Aurora Beam's Attack, Mist Ball's Sp. Atk and Luster Purge's Sp. Def all live in
@@ -859,6 +898,11 @@ EFFECT_ALL_STATS_UP = 140
 #: Safeguard: protects its own side from new non-volatile statuses for five turns.
 EFFECT_SAFEGUARD = 124
 SAFEGUARD_TURNS = 5
+#: Five, and the counter is the three bits 12-14 of the side-condition mask: the start subscript
+#: sets `0x5000`, i.e. 5 in that field (subscript_lucky_chant_start.s), and the end-of-turn walk
+#: subtracts one `SIDE_CONDITION_LUCKY_CHANT_SHIFT` per turn including the turn it was used
+#: [verified: data/battle_logs/mesprit2.jsonl, used on turn 6 and "wore off" at the end of 10].
+LUCKY_CHANT_TURNS = 5
 #: Heal Block (BATTLE_EFFECT_HEAL_BLOCK). Dialga's and Palkia's, aimed at us. 100 accuracy, so an
 #: accuracy roll; five turns; and a second one against an already-blocked victim FAILS, which is
 #: the half that costs advances rather than HP. See `Battler.heal_block_turns` for the list of
@@ -1985,7 +2029,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # script banks the damage with one roll and switches the accuracy check off before
         # `TRY_MOVE` ever runs. So the turn renders as the bare slot token, exactly as a
         # successful status move does.
-        if will_fail(move, defender, field, actor=attacker):
+        if will_fail(move, defender, field, actor=attacker,
+                     actor_side="ours" if actor == "M" else "target"):
             # One already in the air, so `TryFutureSight` jumps straight to "But it failed!"
             # without reaching `CalcMoveDamage` -- no damage roll. **But an accuracy roll IS
             # spent**, and it took ground truth to see why. `effect_script_0148.s` is:
@@ -2049,7 +2094,8 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # Every failure below spends the accuracy roll and then stops, so it costs the turn its
         # two post-successful-move advances. Getting this wrong is what desynchronised the
         # simulator from data/battle_logs/test1.jsonl at turn 3.
-        if will_fail(move, defender, field, actor=attacker):
+        if will_fail(move, defender, field, actor=attacker,
+                     actor_side="ours" if actor == "M" else "target"):
             return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=False)
         status = status_applied_by(move)
         sleep_turns = 0
@@ -2082,6 +2128,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             stat_drop=None if blocked else drop,
             sets_rain=move.effect == EFFECT_RAIN_DANCE,
             sets_mist=move.effect == EFFECT_MIST,
+            sets_lucky_chant=move.effect == EFFECT_LUCKY_CHANT,
             traps=move.effect == EFFECT_MEAN_LOOK,
             sets_water_sport=move.effect == EFFECT_WATER_SPORT,
             sets_safeguard=move.effect == EFFECT_SAFEGUARD,
@@ -2111,6 +2158,16 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     # modifier off slot 0 unconditionally made Aeroblast crit half as often as the game does --
     # wrong token and wrong damage on the same turn (clayton-957.2).
     critical = crit_roll % CRIT_MODIFIERS[crit_stage_of(move, attacker)] == 0
+    if critical and actor == "M" and getattr(field, "target_lucky_chant_turns", 0) > 0:
+        # **The roll was already spent**, which is the only thing about Lucky Chant a seed can
+        # see: the ROM's `&&` chain rolls first and tests the flag second, so suppressing the
+        # verdict here -- after `advance` -- is the faithful order (see `EFFECT_LUCKY_CHANT`).
+        # Skipping the roll instead would desynchronise every turn after the chant went up.
+        #
+        # Only `actor == "M"`: the side consulted is the DEFENDER's, and nothing in any party can
+        # set a Lucky Chant (`MODELLED_OUR_EFFECTS` has no 240), so the target attacking us is
+        # never shielded by one.
+        critical = False
     hit = True
     if move.accuracy > 0:
         rng, hit_roll = advance(rng)
@@ -3107,18 +3164,31 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     # reads as "no priority bracket of its own".
     ours_first = action.is_bag_action or _we_move_first(new, action, target_slot)
 
-    def apply_field(outcome) -> None:
-        """Field conditions the move just set. Applied here because the state lives here."""
+    def apply_field(outcome, side: str = "target") -> None:
+        """Field conditions the move just set. Applied here because the state lives here.
+
+        `side` is who USED the move, and only Safeguard needs it: every other condition here is
+        one-sided by construction. Rain is the field's; Mist, the trap and Water Sport can only
+        come from the target (no party moveset carries them); Reflect and Light Screen can only
+        come from us (no configured target's does). Safeguard is the one both sides can raise --
+        Ho-Oh has it and so does Wobbuffet -- and reading it as the target's either way is what
+        made our own Safeguard block our own Spore.
+        """
         if outcome.sets_rain:
             new.rain_turns = RAIN_TURNS
         if outcome.sets_mist:
             new.mist_turns = MIST_TURNS
+        if outcome.sets_lucky_chant:
+            new.target_lucky_chant_turns = LUCKY_CHANT_TURNS
         if outcome.traps:
             new.target_trapped = True
         if outcome.sets_water_sport:
             new.target_water_sport = True
         if outcome.sets_safeguard:
-            new.safeguard_turns = SAFEGUARD_TURNS
+            if side == "ours":
+                new.our_safeguard_turns = SAFEGUARD_TURNS
+            else:
+                new.safeguard_turns = SAFEGUARD_TURNS
         # Screens are OUR side's, so a `sets_*` can only come from `act_ours`. The duration is
         # carried on the outcome rather than read here, because it depends on the setter's held
         # item (Light Clay) and the setter is whoever used the move.
@@ -3332,7 +3402,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # it alongside the move actually going off.
         if new.ours.holds_choice_item and new.ours.choice_locked_slot is None:
             new.ours = replace(new.ours, choice_locked_slot=slot)
-        apply_field(outcome)
+        apply_field(outcome, "ours")
         if outcome.damage:
             new.target = new.target.with_hp(new.target.hp - outcome.damage)
         if outcome.applied_status is not None:
@@ -3552,7 +3622,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target = replace(new.target, charging_slot=outcome.starts_charge)
         elif outcome.ends_charge:
             new.target = replace(new.target, charging_slot=None)
-        apply_field(outcome)
+        apply_field(outcome, "target")
         if outcome.damage:
             new.ours = new.ours.with_hp(new.ours.hp - outcome.damage)
         if outcome.secondary and (drop := SECONDARY_STAT_DROPS.get(move.effect)):
@@ -3631,7 +3701,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # once Ampharos is burned, every later proc is invisible. No Safeguard check on this
             # side -- Safeguard is the TARGET's side condition (nothing in any party can set one),
             # so a status aimed at us is never blocked by it.
-            secondary_landed = not new.ours.fainted and new.ours.status is Status.NONE
+            # **Our own Safeguard is checked here now.** The comment this replaces said there
+            # was nothing to check -- "Safeguard is the TARGET's side condition (nothing in any
+            # party can set one)" -- which stopped being true the moment a Wobbuffet with
+            # Safeguard became the standard roamer trapper.
+            secondary_landed = (new.our_safeguard_turns <= 0
+                                and not new.ours.fainted
+                                and new.ours.status is Status.NONE)
             if secondary_landed:
                 new.ours = new.ours.with_status(sec)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
@@ -3792,7 +3868,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     if not battle_halted():
         new.rain_turns = max(0, new.rain_turns - 1)
         new.mist_turns = max(0, new.mist_turns - 1)
+        new.target_lucky_chant_turns = max(0, new.target_lucky_chant_turns - 1)
         new.safeguard_turns = max(0, new.safeguard_turns - 1)
+        new.our_safeguard_turns = max(0, new.our_safeguard_turns - 1)
         # Heal Block, on whichever side carries it. `MON_COND_CHECK_STATE_HEAL_BLOCK` decrements
         # it in the same end-of-turn walk (battle_controller_player.c:1660-1661) and spends
         # nothing on the way out, exactly as Safeguard and Taunt do. Inside the `battle_halted`

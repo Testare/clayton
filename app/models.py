@@ -811,6 +811,28 @@ class Hunt:
     #: and no frame to route to, the vector is a measured stopwatch reading rather than a
     #: commanded countdown, and the target's spread cannot come from the key seed.
     encounter_kind: str = ENCOUNTER_STATIC
+    #: The HP the target will be at when the battle OPENS, for a roamer -- or None for "full".
+    #:
+    #: A roamer brings its damage with it: `RoamerAfterBattle_UpdateRoamers` writes HP and status
+    #: back to the save after any battle that is neither a win-with-KO nor a capture, and
+    #: `AddRoamerToEnemyParty` reads them out again next encounter (notes/roamers.md sec 3). So the
+    #: usual plan is to chip it to 1 and sleep it in a throwaway encounter and then hunt the seed
+    #: with the chip phase already done -- which the simulation has to be told, because every
+    #: prediction from turn 1 depends on it.
+    #:
+    #: Meaningless for a static encounter, which is always generated at full HP, and refused there
+    #: rather than ignored.
+    opening_hp: int | None = None
+    #: The status the target will be in when the battle opens: "" for none, else a
+    #: `battle_compass.state.Status` value ("sleep", "paralysis", ...).
+    opening_status: str = ""
+    #: Remaining sleep turns, when the opening status is sleep. **Uncertain by nature**: the
+    #: duration was rolled in the prep encounter and the counter did not tick while the roamer was
+    #: out of battle, so the player did not see it and cannot know it (clayton-957.35.21). Stored
+    #: so a player who has deduced it can say so; left at 0 it means "we do not know", which the
+    #: facade turns into the ROM's own maximum rather than into zero -- a zero counter would wake
+    #: it on its very first turn, which is the one value we can be sure is wrong.
+    opening_sleep_turns: int = 0
     #: Stopwatch reading in ms, load press to encounter, for a roamer hunt. Kept SEPARATE from
     #: `vector_ms` on purpose: the two are different quantities measured different ways, and a
     #: single field would let a static hunt's calibrated countdown be read as a stopwatch
@@ -853,6 +875,7 @@ class Hunt:
                 errors.append("needs a stopwatch reading (load press to encounter, in ms)")
             elif self.stopwatch_ms <= 0:
                 errors.append("the stopwatch reading must be greater than zero")
+            errors.extend(self._opening_errors())
         elif self.vector_ms is None:
             errors.append("needs a Vector ms")
         if profile is not None:
@@ -862,6 +885,25 @@ class Hunt:
                     errors.append(f"party pokemon #{slot.pokemon_id} is no longer on the profile")
                 else:
                     errors.extend(f"{pokemon.name}: {e}" for e in pokemon.hard_errors())
+        return errors
+
+    def _opening_errors(self) -> list[str]:
+        """Whether the declared opening state is one the game could actually produce.
+
+        Hard rather than advisory, and for the reason `HuntTarget._encounter_errors` gives: the
+        simulation consumes these numbers from turn 1, so a wrong one is not a vague run but a
+        confidently wrong one. A declared 0 HP is the sharp case -- a fainted roamer is a roamer
+        whose slot the save already zeroed, so there is nothing to hunt.
+        """
+        from claytonlib.battle_compass.state import Status
+
+        errors: list[str] = []
+        if self.opening_hp is not None and self.opening_hp < 1:
+            errors.append("the target's opening HP must be at least 1 (a roamer that reached 0 "
+                          "is gone from the save)")
+        known = {s.value for s in Status}
+        if self.opening_status and self.opening_status not in known:
+            errors.append(f"opening status must be one of {', '.join(sorted(known))}")
         return errors
 
     def _ball_errors(self, profile: "Profile") -> list[str]:
@@ -904,6 +946,9 @@ class Hunt:
             "start_frame": self.start_frame,
             "encounter_kind": self.encounter_kind,
             "stopwatch_ms": self.stopwatch_ms,
+            "opening_hp": self.opening_hp,
+            "opening_status": self.opening_status,
+            "opening_sleep_turns": self.opening_sleep_turns,
             "completed": self.completed,
         }
 
@@ -934,6 +979,9 @@ class Hunt:
             encounter_kind=(d.get("encounter_kind") if d.get("encounter_kind") in ENCOUNTER_KINDS
                             else ENCOUNTER_STATIC),
             stopwatch_ms=d.get("stopwatch_ms"),
+            opening_hp=d.get("opening_hp"),
+            opening_status=d.get("opening_status", "") or "",
+            opening_sleep_turns=int(d.get("opening_sleep_turns") or 0),
             completed=bool(d.get("completed", False)),
         )
 

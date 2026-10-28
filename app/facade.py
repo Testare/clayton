@@ -624,7 +624,37 @@ class Facade:
             # read from HuntConfig -- and would have gone on being invisible right up to a forme
             # whose ability differs from its species' (clayton-957.35.4).
             ability=target_ability(hunt.target.species, profile.game))
+        target = self._apply_opening_state(hunt, target)
         return ours, target, bench
+
+    @staticmethod
+    def _apply_opening_state(hunt, target):
+        """The HP and status a ROAMER walks in with, off the hunt's configuration.
+
+        A static encounter is generated when the battle starts, so it always opens at full HP and
+        unstatused and this is a no-op for it. A roamer's HP and status come out of the save
+        (notes/roamers.md sec 3), which is the feature's single biggest advantage -- the chip phase
+        can be done in throwaway encounters and the seed-hunting one can open at 1 HP asleep -- and
+        the simulation has to be told, because every prediction from turn 1 reads them.
+
+        **An unknown sleep counter becomes the ROM's maximum, not zero.** The duration was rolled
+        in a prep encounter the player could not observe (clayton-957.35.21), and of the two
+        guesses available, zero is the one we can be certain is wrong: it wakes the target on its
+        very first turn. The maximum is at least reachable, and a run whose target wakes earlier
+        than predicted diverges loudly on the turn it happens rather than quietly from turn 1.
+        """
+        from claytonlib.battle_compass.sim import SLEEP_DURATION_MIN, SLEEP_DURATION_SPAN
+        from claytonlib.battle_compass.state import Status
+
+        if not hunt.is_roamer:
+            return target
+        if hunt.opening_hp is not None:
+            target = target.with_hp(min(hunt.opening_hp, target.max_hp))
+        if hunt.opening_status:
+            status = Status(hunt.opening_status)
+            turns = hunt.opening_sleep_turns or (SLEEP_DURATION_MIN + SLEEP_DURATION_SPAN - 1)
+            target = target.with_status(status, sleep_turns=turns)
+        return target
 
     @staticmethod
     def _target_derived_speed(hunt) -> int | None:
@@ -792,6 +822,15 @@ class Facade:
             # stopwatch reading where a static run asks for a Vector ms.
             "encounter_kind": h.encounter_kind,
             "skips_seed_a": h.is_roamer,
+            # What the target walks in with, for a roamer: the prep encounter's chip and status
+            # come out of the save, so the page shows them and the run is simulated from them
+            # (notes/roamers.md sec 3). All three are None/""/0 on a static hunt, which is the
+            # honest answer there -- a static target is generated when the battle starts.
+            "opening": {
+                "hp": h.opening_hp,
+                "status": h.opening_status,
+                "sleep_turns": h.opening_sleep_turns,
+            },
             "capture_ball": h.capture_ball,
             "calibration_model": self.calibration_model_summary(h.profile_id),
             # The advance frame the hunt is planned to encounter on. Only meaningful when the
@@ -1129,6 +1168,16 @@ class Facade:
             hunt.vector_ms = int(params["vector_ms"])
         if params.get("stopwatch_ms") not in (None, ""):
             hunt.stopwatch_ms = int(params["stopwatch_ms"])
+        # The opening state is per ATTEMPT in practice -- the roamer's HP and status are whatever
+        # the last encounter left in the save -- so the run page can set it alongside the vector
+        # rather than making the player edit the hunt between attempts.
+        if "opening_hp" in params:
+            raw = params["opening_hp"]
+            hunt.opening_hp = int(raw) if str(raw).strip() not in ("", "None") else None
+        if "opening_status" in params:
+            hunt.opening_status = (params["opening_status"] or "").strip()
+        if params.get("opening_sleep_turns") not in (None, ""):
+            hunt.opening_sleep_turns = int(params["opening_sleep_turns"])
         if params.get("delay_window") not in (None, ""):
             hunt.delay_window = int(params["delay_window"])
         if params.get("seconds_window") not in (None, ""):

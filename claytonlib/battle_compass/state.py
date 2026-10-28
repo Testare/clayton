@@ -483,12 +483,24 @@ class BattleState:
     #: (notes/battle_compass_next_targets.md): paralyze before it goes up, or wait out the five
     #: turns. A counter rather than a bool because it expires, unlike Water Sport.
     safeguard_turns: int = 0
+    #: Safeguard on OUR side, which the first version of this state did not have at all -- the
+    #: comment above said the target's was "the only side that raises one", and that was true only
+    #: while no party member knew the move. **Wobbuffet does**, and Wobbuffet is the canonical
+    #: roamer trapper, so the omission turned our own Safeguard into a block on our own Spore
+    #: [caught by data/battle_logs/mesprit2.jsonl turn 8, where the game slept the target and the
+    #: simulator refused to].
+    our_safeguard_turns: int = 0
     #: Water Sport, set by the TARGET. A per-battler volatile flag in the ROM rather than a turn
     #: counter, so once up it stays up for the rest of a wild battle -- the user never switches
     #: out. A bool, not a counter, for that reason. Our own side using Water Sport is unmodelled
     #: and no configured moveset contains it; it is tracked at all because a SECOND Water Sport
     #: fails, and a failing move costs the turn two fewer advances.
     target_water_sport: bool = False
+    #: Lucky Chant on the TARGET's side -- Mesprit's, and the only side that can raise one, since
+    #: no party moveset carries effect 240. While it is up our critical hits are suppressed, and
+    #: the crit ROLL is still spent (`sim.EFFECT_LUCKY_CHANT`), so this changes verdicts and never
+    #: roll counts. A counter because it expires, like Mist and Safeguard.
+    target_lucky_chant_turns: int = 0
     #: Reflect and Light Screen on OUR side, which is the only side that can raise them: no
     #: configured target moveset contains either move. Counters because they expire, and because
     #: a Light Clay makes the figure 8 rather than 5 (`battle.damage.screen_turns`).
@@ -584,7 +596,9 @@ class BattleState:
             target_trapped=self.target_trapped,
             mist_turns=self.mist_turns, rain_turns=self.rain_turns,
             safeguard_turns=self.safeguard_turns,
+            our_safeguard_turns=self.our_safeguard_turns,
             target_water_sport=self.target_water_sport,
+            target_lucky_chant_turns=self.target_lucky_chant_turns,
             reflect_turns=self.reflect_turns, light_screen_turns=self.light_screen_turns,
             future_sight_turns=self.future_sight_turns,
             future_sight_damage=self.future_sight_damage,

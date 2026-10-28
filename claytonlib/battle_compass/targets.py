@@ -304,6 +304,44 @@ ENCOUNTERS: dict[str, Encounter] = {
     "cresselia": Encounter(
         "cresselia", 50, ("Mist", "Aurora Beam", "Future Sight", "Slash"),
         games=("platinum",), roamer=True, where="roaming Sinnoh"),
+    # Platinum's roaming **Mesprit**, and the one target on this table whose row is confirmed by a
+    # recording rather than only by a learnset: data/battle_logs/mesprit.jsonl reports
+    # ``moves: [129, 381, 248, 204]`` for it, which is Swift / Lucky Chant / Future Sight / Charm
+    # in that order -- an exact match for "the last four learnable at 50, in learn order", and the
+    # first empirical confirmation of that rule for a ROAMER rather than a legendary-battle script.
+    #
+    # `ActivateRoamingPokemon ROAMING_SLOT_MESPRIT` is in scripts_verity_cavern.s; the level comes
+    # from the slot (`case ROAMING_SLOT_MESPRIT: species = SPECIES_MESPRIT; level = 50`,
+    # src/roaming_pokemon.c:254-257), which is why there is no `WildBattle` line to cite.
+    #
+    # **notes/platinum.md section 15 said Mesprit "has no row and cannot have one"**, and that was
+    # true of a table that could only describe static encounters: Platinum makes it a roamer, so it
+    # is never met through a legendary-battle script. With `roamer` on `Encounter` it can, and the
+    # lake trio is complete.
+    #
+    # 80/105/105/105/105/80, pure Psychic, Levitate, catch rate 3 and genderless -- so the ball
+    # maths is Cresselia's (Fast x1 off base Speed 80, Love x1 with no gender) and the Timer Ball
+    # is again the answer.
+    #
+    # Last four learnable at 50, in learn order, from res/pokemon/mesprit/data.json (1 Rest,
+    # 1 Confusion, 6 Imprison, 16 Protect, 21 Swift, 31 Lucky Chant, 36 Future Sight, 46 Charm,
+    # 51 Extrasensory):
+    #
+    #   Swift(17), Lucky Chant(240), Future Sight(148), Charm(58)
+    #
+    # The level window is kind at both edges again, and this time the lower one is the one that
+    # matters most: **Rest(1) is pushed out from below**, and a Rest would heal off every False
+    # Swipe and make the chip phase unwinnable. **Extrasensory(51) is pushed out from above** by a
+    # single level, which is the hardest-hitting move in the list.
+    #
+    # Two effects were new for this row and both were measured off the same recordings:
+    # Lucky Chant (240, no crits against it for five turns, and the crit roll is STILL SPENT) and
+    # Charm (58, two stages off our Attack, which is the chip phase slowing rather than failing).
+    # Charm's accuracy 100 also makes it the only move here that can miss, which is worth having:
+    # Swift is accuracy 0 and Lucky Chant has no roll of its own.
+    "mesprit": Encounter(
+        "mesprit", 50, ("Swift", "Lucky Chant", "Future Sight", "Charm"),
+        games=("platinum",), roamer=True, where="roaming Sinnoh"),
 }
 
 #: The other side of each version-split encounter, for the cross-check's error message. Not in

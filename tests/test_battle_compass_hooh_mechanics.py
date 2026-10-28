@@ -174,7 +174,15 @@ class TestSafeguard(unittest.TestCase):
         # included.
         self.assertEqual(nxt.safeguard_turns, SAFEGUARD_TURNS - 1)
         self.assertGreater(nxt.safeguard_turns, 0)
-        self.assertTrue(will_fail(resolve_move("Safeguard"), nxt.ours, nxt))
+        # `actor_side="target"`, because it is HO-OH's second Safeguard that fails. This used to
+        # pass without it, back when the simulator kept one Safeguard counter for both sides --
+        # so the same call also claimed OUR Safeguard would fail, which is why Wobbuffet's
+        # blocked our own Spore (data/battle_logs/mesprit2.jsonl turn 8).
+        self.assertTrue(will_fail(resolve_move("Safeguard"), nxt.ours, nxt,
+                                  actor_side="target"))
+        # ...and ours would not: our side has no Safeguard up at all.
+        self.assertFalse(will_fail(resolve_move("Safeguard"), nxt.target, nxt,
+                                   actor_side="ours"))
 
     def test_it_expires(self):
         state = BattleState(ours=_ours(), target=_hooh(moves=("Safeguard",)),

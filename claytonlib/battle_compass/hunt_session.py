@@ -511,7 +511,16 @@ FIELD_CONDITIONS: tuple[tuple[str, str, str], ...] = (
     ("future_sight_turns", "Future Sight", "target"),
     ("rain_turns", "Rain", "field"),
     ("safeguard_turns", "Safeguard", "target"),
+    # Ours, which a Wobbuffet trapper raises on the roamer plan. A separate row rather than one
+    # ambiguous "Safeguard": the two block opposite things -- the target's refuses OUR sleep move,
+    # and ours refuses a status the TARGET would inflict -- so a banner that could not say whose
+    # it was would be worse than no banner.
+    ("our_safeguard_turns", "Safeguard", "ours"),
     ("mist_turns", "Mist", "target"),
+    # Mesprit's. Worth a row for the same reason Mist has one: it silently changes what a damaging
+    # move of ours can do -- no crits while it is up -- and the turn that set it rendered as a bare
+    # `E2` with nothing to show the player why their False Swipes stopped critting.
+    ("target_lucky_chant_turns", "Lucky Chant", "target"),
     ("reflect_turns", "Reflect", "ours"),
     ("light_screen_turns", "Light Screen", "ours"),
 )

@@ -109,12 +109,20 @@ class TestTheRows(unittest.TestCase):
                 self.assertNotIn(name, supported("heartgold"))
                 self.assertNotIn(name, supported("soulsilver"))
 
-    def test_mesprit_is_not_a_target_because_platinum_roams_it(self):
-        """No `StartLegendaryBattle` anywhere for it -- it is met through `field_roamer`, which
-        Battle Compass's static-encounter model does not cover."""
-        self.assertNotIn("mesprit", supported("platinum"))
-        with self.assertRaises(KeyError):
-            moveset("mesprit")
+    def test_mesprit_is_a_target_after_all_now_that_roamers_are_modelled(self):
+        """This used to assert the opposite, and the assertion was right at the time.
+
+        There is no `StartLegendaryBattle` anywhere for Mesprit -- it is met through
+        `field_roamer` -- so a table that could only describe STATIC encounters could not hold
+        it, and this file (and notes/platinum.md sec 15) said so. `Encounter.roamer` is what
+        changed, and with it the lake trio is complete. See
+        tests/test_battle_compass_ground_truth_mesprit.py, which replays three real recordings of
+        the row.
+        """
+        self.assertIn("mesprit", supported("platinum"))
+        self.assertEqual(moveset("mesprit", "platinum"),
+                         ("Swift", "Lucky Chant", "Future Sight", "Charm"))
+        self.assertEqual(encounter_level("mesprit", "platinum"), 50)
 
     def test_both_abilities_are_levitate(self):
         for name in ("uxie", "azelf"):

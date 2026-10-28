@@ -358,3 +358,82 @@ class TestTheTrapValidation(RoamerHuntCase):
         warnings = self._trap(saved)
         self.assertTrue([w for w in warnings if "not known yet" in w], warnings)
         self.assertEqual([w for w in warnings if "run is over" in w], [])
+
+
+class TestTheOpeningState(RoamerHuntCase):
+    """A roamer brings its damage and its status with it, out of the save."""
+
+    def _target_of(self, hunt):
+        profile = self.api._load_profile(self.profile)
+        h = self.api._load_hunt(hunt["id"])
+        return self.api._hunt_battlers(h, profile)[1]
+
+    def test_a_roamer_opens_at_the_declared_hp(self):
+        target = self._target_of(self._hunt(opening_hp=1))
+        self.assertEqual(target.hp, 1)
+        self.assertGreater(target.max_hp, 1)
+
+    def test_and_at_full_hp_when_nothing_is_declared(self):
+        target = self._target_of(self._hunt())
+        self.assertEqual(target.hp, target.max_hp)
+
+    def test_a_declared_status_is_applied(self):
+        from claytonlib.battle_compass.state import Status
+
+        target = self._target_of(self._hunt(opening_hp=1, opening_status="slp"))
+        self.assertIs(target.status, Status.SLEEP)
+
+    def test_an_unknown_sleep_counter_becomes_the_maximum_not_zero(self):
+        """Zero is the one value certain to be wrong: it wakes the target on its first turn."""
+        from claytonlib.battle_compass.sim import SLEEP_DURATION_MIN, SLEEP_DURATION_SPAN
+
+        target = self._target_of(self._hunt(opening_hp=1, opening_status="slp"))
+        self.assertEqual(target.sleep_turns, SLEEP_DURATION_MIN + SLEEP_DURATION_SPAN - 1)
+
+    def test_a_known_sleep_counter_is_used_as_given(self):
+        target = self._target_of(
+            self._hunt(opening_hp=1, opening_status="slp", opening_sleep_turns=2))
+        self.assertEqual(target.sleep_turns, 2)
+
+    def test_hp_is_clamped_to_the_targets_maximum(self):
+        target = self._target_of(self._hunt(opening_hp=9999))
+        self.assertEqual(target.hp, target.max_hp)
+
+    def test_zero_hp_is_refused_because_such_a_roamer_is_gone_from_the_save(self):
+        errors = self.api.hunt_readiness(self._hunt(opening_hp=0)["id"])["hard_errors"]
+        self.assertTrue([e for e in errors if "opening HP must be at least 1" in e], errors)
+
+    def test_a_nonsense_status_is_refused(self):
+        errors = self.api.hunt_readiness(
+            self._hunt(opening_status="asleep-ish")["id"])["hard_errors"]
+        self.assertTrue([e for e in errors if "opening status must be one of" in e], errors)
+
+    def test_a_static_hunt_ignores_it_entirely(self):
+        """A static target is generated when the battle starts, so it cannot arrive chipped."""
+        hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS,
+                          opening_hp=1, opening_status="slp")
+        target = self._target_of(hunt)
+        self.assertEqual(target.hp, target.max_hp)
+        self.assertEqual(target.sleep_turns, 0)
+
+    def test_the_run_page_is_told_what_the_target_walks_in_with(self):
+        setup = self.api.hunt_run_setup(
+            self._hunt(opening_hp=1, opening_status="slp")["id"])
+        self.assertEqual(setup["opening"], {"hp": 1, "status": "slp", "sleep_turns": 0})
+
+    def test_the_page_may_set_it_per_attempt(self):
+        hunt_id = self._hunt()["id"]
+        self.api.hunt_session_start(hunt_id, {"opening_hp": 1, "opening_status": "slp",
+                                              "seconds_window": 1, "delay_window": 4})
+        self.assertEqual(self.api.get_hunt(hunt_id)["opening_hp"], 1)
+        self.assertEqual(self.api.get_hunt(hunt_id)["opening_status"], "slp")
+
+    def test_a_session_really_starts_from_it(self):
+        from claytonlib.battle_compass.state import Status
+
+        hunt_id = self._hunt(opening_hp=1, opening_status="slp", seconds_window=1,
+                             delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.assertEqual(session.target.hp, 1)
+        self.assertIs(session.target.status, Status.SLEEP)
