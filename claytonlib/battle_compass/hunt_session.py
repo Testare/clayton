@@ -1832,6 +1832,13 @@ class HuntSession:
             return "caught"
         if all(st.captured_in_wrong_ball for st in states):
             return "wrong_ball"
+        # A ROAMER got away, which is a lost run and not a lost turn: the battle is over and the
+        # roamer has been relocated, so the next attempt starts by finding it again
+        # (notes/roamers.md sec 3). `all`, like every other ending here -- a candidate set that
+        # disagrees about whether it fled has not finished, and disagreement is possible: the
+        # escape is speed-ordered, so two candidates can differ on whether our trap landed first.
+        if all(st.target_fled for st in states):
+            return "fled"
         # The WIPE, not a faint: a faint with a replacement left is a turn, not an ending.
         if all(st.party_wiped for st in states):
             return "wiped"
@@ -1996,6 +2003,8 @@ class HuntSession:
             # through it -- which is the whole point of the distinction.
             "we_fainted": all(st.party_wiped for st in states),
             "party_wiped": all(st.party_wiped for st in states),
+            # The roamer's version of a wipe: terminal, and only ever true with a roamer target.
+            "target_fled": all(st.target_fled for st in states),
             # ...and this one says somebody went down *this* turn, replacement or not, so the
             # page can say so without claiming the run is over.
             "active_fainted": all(st.ours.fainted for st in states),

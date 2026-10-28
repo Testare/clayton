@@ -531,6 +531,12 @@ class BattleState:
     captured: bool = False
     #: Set when a standard ball captures: the run is lost, not won (sec 2.3).
     captured_in_wrong_ball: bool = False
+    #: Set when a ROAMER got away. Terminal and unrecoverable: the battle ends, and the roamer is
+    #: moved to another route by `MoveRoamersOffMap`, so the next attempt starts by hunting for it
+    #: again (notes/roamers.md sec 3). A lost run like `party_wiped`, not a lost turn.
+    #:
+    #: Only reachable with `sim.HuntConfig.target_is_roamer`; a static target has no way to set it.
+    target_fled: bool = False
     log: list = field(default_factory=list)
 
     @property
@@ -569,7 +575,7 @@ class BattleState:
         even returns.
         """
         return (self.captured or self.captured_in_wrong_ball
-                or self.target.fainted or self.party_wiped)
+                or self.target.fainted or self.party_wiped or self.target_fled)
 
     def copy(self) -> "BattleState":
         return BattleState(
@@ -586,4 +592,5 @@ class BattleState:
             faints=self.faints,
             rng_offset=self.rng_offset, balls_thrown=self.balls_thrown,
             captured=self.captured, captured_in_wrong_ball=self.captured_in_wrong_ball,
+            target_fled=self.target_fled,
             log=list(self.log))

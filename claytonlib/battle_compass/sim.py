@@ -20,6 +20,7 @@ roll before the move it prevents.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from claytonlib.battle import turn as turn_costs
 from claytonlib.battle.balls import BallEffect, ThrowContext, ball_effect, is_turn_dependent
@@ -2509,6 +2510,150 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     return rng, usable[roll % len(usable)]
 
 
+#: Rolls the roamer AI spends before it has decided anything: ``TrainerAI_Init`` fills
+#: ``moveDamageRolls[i] = 100 - (BattleSystem_RandNext % 16)`` over ``LEARNED_MOVES_MAX``, outside
+#: every branch (pokeplatinum src/battle/trainer_ai/trainer_ai.c:234-241).
+#:
+#: **Four, unconditionally, and they are spent before the decision is visible** -- which is what
+#: makes the roll COUNT the observation: a fifth roll (the ``% numMaxScoreMoves`` tie-break) means
+#: the roamer chose a move, and its absence means it chose Escape.
+#:
+#: [verified: data/battle_logs/mesprit.jsonl, mesprit1.jsonl, mesprit2.jsonl -- 20 turns, 14 with
+#: the tie-break and 6 without, matching the trap state at selection every time. The grouping in
+#: those logs is 4x ``ov10_0221FC78`` then 1x ``ov10_0221FE10``; the symbol names are
+#: nearest-symbol and unreliable, the grouping is not.]
+ROAMER_AI_ADVANCES = 4
+
+#: Abilities on OUR active Pokemon that stop a roamer deciding to flee, in the order
+#: ``RoamingPokemon_Main`` tests them (src/battle/trainer_ai/script.s:8073-8089). Order matters
+#: because the roamer's own Levitate sits BETWEEN them: Shadow Tag is checked first and Levitate
+#: skips only the Arena Trap test, so Levitate beats Arena Trap and loses to Shadow Tag. That is
+#: not a detail for Cresselia, it is the whole reason a Shadow Tag lead works on it at all.
+SHADOW_TAG = "shadow tag"
+ARENA_TRAP = "arena trap"
+LEVITATE = "levitate"
+
+
+def traps_by_ability(ours: Battler, target: Battler) -> bool:
+    """Whether OUR active Pokemon's ability stops the roamer choosing Escape.
+
+    The ROM reads the TRUE ability here -- ``AICmd_LoadAbility`` -> ``Battler_Ability``
+    (trainer_ai.c:2654-2662), not the AI's recorded knowledge of it -- so a Shadow Tag lead traps
+    from turn 1 without having revealed anything [verified].
+
+    **Only consulted at action selection.** `escape_blocked_at_execution` is the other half, and
+    the difference between the two is the single most expensive fact in a roamer hunt: see there.
+    """
+    ability = (ours.ability or "").strip().lower()
+    if ability == SHADOW_TAG:
+        return True
+    if (target.ability or "").strip().lower() == LEVITATE:
+        return False
+    return ability == ARENA_TRAP
+
+
+def roamer_trapped_at_selection(state: BattleState) -> bool:
+    """Whether the roamer will pick a move rather than Escape, this turn.
+
+    The four things that stop it, as one question: a Mean Look or Bind volatile on the roamer
+    (`state.target_trapped`), or our active Pokemon's Shadow Tag or Arena Trap
+    (`traps_by_ability`).
+    """
+    return state.target_trapped or traps_by_ability(state.ours, state.target)
+
+
+def escape_blocked_at_execution(state: BattleState) -> bool:
+    """Whether an escape the roamer ALREADY CHOSE fails when it comes to resolve.
+
+    `BattleControllerPlayer_FleeCommand` (src/battle/battle_controller_player.c:1989-2001) loads
+    ``subscript_enemy_escape_failed`` for ``VOLATILE_CONDITION_BIND | VOLATILE_CONDITION_MEAN_LOOK``
+    and **looks at no abilities at all** [verified]. So this is deliberately *not*
+    `roamer_trapped_at_selection`, and the gap between them is measurable in both directions:
+
+    * **A Mean Look landing this turn rescues the run.** The roamer had already chosen Escape; we
+      move first, the volatile goes up, and the escape fails -- its turn spent on nothing
+      [verified 3x: mesprit.jsonl T3, mesprit2.jsonl T2 and T7].
+    * **A Shadow Tag Pokemon switching IN does not.** The switch resolves before moves, so Shadow
+      Tag is on the field when this check runs -- and the roamer leaves anyway, because this check
+      does not look at abilities [verified: mesprit1.jsonl T2]. Shadow Tag is a LEAD-only trap.
+
+    Modelling both with one predicate would be wrong whichever one was chosen: as the selection
+    test it would make a switched-in Wobbuffet save a run the game loses, and as the execution
+    test it would throw away the reactive Mean Look that is the only way to save one.
+    """
+    return state.target_trapped
+
+
+class RoamerChoice(NamedTuple):
+    """What a roamer decided, and what deciding it cost.
+
+    `rolls` is returned rather than inferred from whether the stream moved, which is how
+    `select_target_move`'s single roll is accounted for: a roamer spends four rolls even on the
+    turn it decides to flee, so "did the rng change" cannot distinguish 4 from 5 and
+    `BattleState.rng_offset` would drift by one per fleeing turn. The offset IS the stream
+    position for `solver._state_key`, so that drift is not cosmetic.
+    """
+    rng: int
+    #: The move slot it will use, or None -- which means Escape when `fled`, and the unmodelled
+    #: Struggle case otherwise, exactly as `select_target_move` means it.
+    slot: int | None
+    #: True when it chose Escape. Whether it actually gets away is a separate question, answered
+    #: at execution by `escape_blocked_at_execution`.
+    fled: bool
+    rolls: int
+
+
+def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerChoice:
+    """A roamer's action for the turn: the trainer-AI path, not the wild ``% usable`` pick.
+
+    `BATTLE_TYPE_ROAMER` routes command selection to `TrainerAI_Main`
+    (src/battle/battle_display.c:3587-3590), where an ordinary wild Pokemon takes the
+    ``validMoves[RandNext % validMovesCount]`` branch instead. So the cost is
+    `ROAMER_AI_ADVANCES` and then, only if it is picking a move, one tie-break roll:
+
+    =====================  =====  =========================================
+    trap state             rolls  the choice
+    =====================  =====  =========================================
+    trapped                **5**  ``% len(usable_slots())``, the 5th roll
+    not trapped            **4**  Escape; the tie-break is never reached
+    mid-charge / Uproar    **0**  relocked, and never asked for a command
+    =====================  =====  =========================================
+
+    **The tie list is `usable_slots()`, unchanged.** All four scores start at 100
+    (``AI_INIT_SCORE_ALL_MOVES``) and the roaming script lowers none of them, so the max-score tie
+    is every slot `BattleSystem_CheckInvalidMoves(..., CHECK_INVALID_ALL)` did not zero -- which is
+    the list `Battler.usable_slots` already builds, for that exact reason and with that exact
+    citation. A roamer is therefore not a new move-choice distribution, only a later roll.
+
+    **Zero on a relocked turn**, for the same reason the wild path spends nothing there:
+    ``Battler_CanPickCommand`` is FALSE mid-charge and mid-Uproar (battle_lib.c:6224-6236), so
+    `Task_TrainerShowMoveSelectMenu` is never reached and `TrainerAI_Init`'s four rolls are never
+    spent. Unreachable for Cresselia, which has neither kind of move, and modelled anyway because
+    the next roamer need not be so kind.
+
+    Struggle stays outside the model, as it is for a wild target: the ROM would tie all four
+    zero-scored slots and roll, we return None and roll nothing. A 1 HP roamer dies to Struggle
+    recoil, so a run that reaches it is lost either way -- see `solver.struggle_deadline`.
+    """
+    if target.charging_slot is not None:
+        return RoamerChoice(rng, target.charging_slot, False, 0)
+    if target.uproar_turns and target.uproar_slot is not None:
+        return RoamerChoice(rng, target.uproar_slot, False, 0)
+    rolls = ROAMER_AI_ADVANCES
+    for _ in range(ROAMER_AI_ADVANCES):
+        rng = advance_rng(rng)
+    if not trapped:
+        # The escape branch returns before the tie-break (`AI_STATUS_FLAG_ESCAPE` short-circuits
+        # `TrainerAI_MainSingles`, trainer_ai.c:311-339), which is why a fleeing turn is 4 and not
+        # 5 -- and why the count is readable as the decision.
+        return RoamerChoice(rng, None, True, rolls)
+    usable = target.usable_slots()
+    if not usable:
+        return RoamerChoice(rng, None, False, rolls)
+    rng, roll = advance(rng)
+    return RoamerChoice(rng, usable[roll % len(usable)], False, rolls + 1)
+
+
 def throw_ball(rng: int, target: Battler, *, catch_rate: int, ball_multiplier: int,
                status_bonus: int) -> tuple[int, int, bool]:
     """Resolve a throw, returning (rng, shakes, captured).
@@ -2590,6 +2735,16 @@ class HuntConfig:
     #: venue-specific: the four animation rolls are the Bell Tower's, and a different encounter
     #: would spend a different number. See :data:`BATTLE_START_ADVANCES`.
     battle_start_advances: int = BATTLE_START_ADVANCES
+    #: The target is a ROAMER, so it takes the trainer-AI selection path and can leave
+    #: (`select_roamer_action`, `targets.is_roamer`). Three things change and all three are
+    #: stream-visible: the selection cost (5 rolls trapped, 4 fleeing, against a wild's 1), the
+    #: existence of an outcome that is neither a move nor a prevention, and the turn ending early
+    #: when it gets away.
+    #:
+    #: A FIELD on the config rather than a lookup through `targets`, for the same reason
+    #: `target_has_pressure` is: `sim` is handed everything it needs and never resolves an
+    #: encounter itself, so a fixture can simulate a roamer that no table knows about.
+    target_is_roamer: bool = False
 
     def ball_effect_at(self, turn: int = 0) -> BallEffect:
         """What the capture ball is worth on `turn` (0 == the first turn, as the ROM counts).
@@ -2918,10 +3073,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     #
     # An LCRNG step can never be a no-op here -- a fixed point needs state * (A - 1) == -C mod
     # 2**32, and A - 1 is even while C is odd -- so an unchanged `rng` means exactly "no roll".
-    rng_before = rng
-    rng, target_slot = select_target_move(rng, new.target)
-    if rng != rng_before:
-        new.rng_offset += 1
+    #
+    # A ROAMER takes the trainer-AI path instead, which is four rolls plus a tie-break, and can
+    # decide to leave rather than to move -- see `select_roamer_action`. It returns its own roll
+    # count because "did the stream move" cannot tell 4 from 5, and a fleeing turn would otherwise
+    # drift the offset by one.
+    if config.target_is_roamer:
+        choice = select_roamer_action(rng, new.target,
+                                      trapped=roamer_trapped_at_selection(new))
+        rng, target_slot = choice.rng, choice.slot
+        roamer_chose_escape = choice.fled
+        new.rng_offset += choice.rolls
+    else:
+        rng_before = rng
+        rng, target_slot = select_target_move(rng, new.target)
+        roamer_chose_escape = False
+        if rng != rng_before:
+            new.rng_offset += 1
 
     for _ in range(turn_costs.BEFORE_TURN_ADVANCES):
         rng = advance_rng(rng)
@@ -2930,6 +3098,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     # Bag actions resolve before any move, so we always act first when using one. Otherwise
     # priority brackets first, then effective Speed -- paralysis quarters the target's, which is
     # what removes speed ties from the search entirely (sec 4.2).
+    #
+    # **A roamer's escape is ordered like a move**, not hoisted the way our own Run is: it sets
+    # `PICK_COMMAND` and leaves `SELECTED_COMMAND` as `PLAYER_INPUT_FIGHT`, and
+    # `BattleControllerPlayer_CalcTurnOrder` hoists a run only for the player's own slots
+    # (battle_controller_player.c:772-776, :707-790) [verified]. So `_we_move_first` decides it,
+    # with the escape treated as priority 0 -- `target_slot` is None, which is what that function
+    # reads as "no priority bracket of its own".
     ours_first = action.is_bag_action or _we_move_first(new, action, target_slot)
 
     def apply_field(outcome) -> None:
@@ -3038,6 +3213,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 + (replace(new.ours, choice_locked_slot=None),))
             incoming = sent_out(incoming)
             new.ours = incoming
+            # Our departure takes the target's trap with it -- see `_release_trap`. Before
+            # Intimidate and before anything else this turn, because the roamer's escape (already
+            # chosen, and resolving after this switch) tests the volatile and nothing else.
+            _release_trap(new)
             # Intimidate fires on the way in, before any move of this turn resolves, and costs no
             # advances. Re-fires on every entry, so a shuttle can stack it (see
             # `_apply_intimidate`).
@@ -3280,6 +3459,25 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
 
     def act_target() -> bool:
         nonlocal rng
+        if roamer_chose_escape:
+            # **Before sleep, before a flinch, before anything.** An escape is an ACTION, not a
+            # move, so none of the move-prevention checks below apply to it -- measured on a
+            # roamer that fled while "fast asleep" (data/battle_logs/mesprit2.jsonl T11). A model
+            # that let sleep hold a roamer would promise a run the game loses.
+            if escape_blocked_at_execution(new):
+                parts.append(tok.escape_failed_token())
+                # False, so no `POST_SUCCESSFUL_MOVE_ADVANCES`: a refused escape spends nothing
+                # of its own. Measured -- mesprit.jsonl T3's tail is our own move's two, the two
+                # between-turn advances and then the full four end-of-turn, with nothing for the
+                # roamer's half [verified].
+                return False
+            new.target_fled = True
+            parts.append(tok.escaped_token())
+            # The battle stops here: `battle_halted` reads `target_fled`, so no between-turn
+            # advances, no end-of-turn block, and -- when the roamer outsped us -- no action of
+            # ours at all. The tail is unobservable in any case, because there is no next turn to
+            # predict: the roamer is gone and `MoveRoamersOffMap` has moved it off the route.
+            return False
         if target_slot is None:
             return False
         # Symmetric with our side, and reachable: nothing in a party can start an Uproar
@@ -3476,7 +3674,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         does not end it, and the replacement comes in once the turn finishes. A capture (either
         ball) or the target fainting really does stop everything there.
         """
-        return new.captured or new.captured_in_wrong_ball or new.target.fainted
+        return (new.captured or new.captured_in_wrong_ball or new.target.fainted
+                or new.target_fled)
 
     first, second = (act_ours, act_target) if ours_first else (act_target, act_ours)
     if first():
@@ -3637,6 +3836,27 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     return new
 
 
+def _release_trap(state: BattleState) -> None:
+    """Our side has left the field, so the target's trap volatile goes with it.
+
+    `BattleSystem_UpdateAfterSwitch` and `BattleSystem_CleanupFaintedMon` (battle_lib.c:2040,
+    2155) clear Mean Look, Lock On, Attract and Bind from *other* battlers when a battler departs
+    -- unconditionally, because the volatile records no source for the game to match on. The same
+    pair of functions `targets.foresight_warnings` already cites, and the reason a Foresight set by
+    one Pokemon survives for another.
+
+    **Harmless for a static target and run-ending for a roamer**, which is why it went unmodelled
+    until now: against a Suicune the trap only decides whether a second Mean Look fails, while a
+    roamer's next action after this is Escape. Measured in data/battle_logs/mesprit.jsonl (T6
+    switch, T7 fled) and mesprit2.jsonl (T3 switch, and the Shadow Tag lead behind it is the only
+    reason T4 was not a flee).
+
+    Deliberately NOT a clear of the ability trap: there is nothing to clear, since
+    `traps_by_ability` reads whoever is active at the time.
+    """
+    state.target_trapped = False
+
+
 def _send_out(state: BattleState, replacement: int | None) -> str:
     """Replace our fainted Pokemon, returning the ``X`` token for it. Costs no advances.
 
@@ -3663,6 +3883,10 @@ def _send_out(state: BattleState, replacement: int | None) -> str:
         tuple(b for i, b in enumerate(state.bench) if i != index)
         + (replace(state.ours, choice_locked_slot=None),))
     state.ours = incoming
+    # A faint is a departure too (`BattleSystem_CleanupFaintedMon`), so the trap is released here
+    # as well -- which is what makes a roamer hunt's faint run-ending rather than turn-costing:
+    # the replacement gets one speed-gated chance to re-trap [measured: mesprit2.jsonl T6-T7].
+    _release_trap(state)
     # A replacement Intimidates exactly as a voluntary switch-in does -- this is a send-out, and
     # `intimidateFlag` is cleared per send-out. Free of advances, so it cannot disturb the
     # end-of-turn counts this runs inside.

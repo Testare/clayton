@@ -31,6 +31,13 @@ import uuid
 from dataclasses import asdict, dataclass, field
 
 from claytonlib.battle.balls import TERRAIN_OTHER, TERRAINS as TERRANS_OK
+
+#: What kind of encounter a Hunt is against. A static encounter is timed and its target is
+#: generated when the battle starts; a roamer is found by walking and everything about it was
+#: decided when the roam began (notes/roamers.md).
+ENCOUNTER_STATIC = "static"
+ENCOUNTER_ROAMER = "roamer"
+ENCOUNTER_KINDS = (ENCOUNTER_STATIC, ENCOUNTER_ROAMER)
 from claytonlib.games import canonical_game_key, game_name, tool_refusal
 from claytonlib.metronome_abilities import ability_info, unsupported_abilities
 
@@ -795,7 +802,31 @@ class Hunt:
     # note the published guides are 1-based where this project is 0-based
     # (claytonlib.platinum_advance.PLATINUM_START_FRAME).
     start_frame: int = 0
+    #: Whether the target is a ROAMER, which changes how the seed is acquired rather than how
+    #: hard the battle is (notes/roamers.md sec 8). Not configured by the player: it is read off
+    #: the encounter row, because a player cannot make Cresselia static. Stored so a saved hunt
+    #: and its run records agree about which kind of run they describe even if the table changes.
+    #:
+    #: What it switches, all of it in the facade and the run page: there is no Seed A to identify
+    #: and no frame to route to, the vector is a measured stopwatch reading rather than a
+    #: commanded countdown, and the target's spread cannot come from the key seed.
+    encounter_kind: str = ENCOUNTER_STATIC
+    #: Stopwatch reading in ms, load press to encounter, for a roamer hunt. Kept SEPARATE from
+    #: `vector_ms` on purpose: the two are different quantities measured different ways, and a
+    #: single field would let a static hunt's calibrated countdown be read as a stopwatch
+    #: reading or the reverse -- a silent, confident error of hundreds of frames. The facade
+    #: chooses which one to centre on from `encounter_kind` and never from which is populated.
+    stopwatch_ms: int | None = None
     completed: bool = False
+
+    @property
+    def is_roamer(self) -> bool:
+        return self.encounter_kind == ENCOUNTER_ROAMER
+
+    @property
+    def centring_ms(self) -> "int | float | None":
+        """The number this hunt's candidate window is centred on, whichever kind it is."""
+        return self.stopwatch_ms if self.is_roamer else self.vector_ms
 
     def hard_errors(self, profile: "Profile | None" = None) -> list[str]:
         """Reasons Battle Compass cannot start from this hunt."""
@@ -813,7 +844,16 @@ class Hunt:
             errors.append("needs a key seed")
         if not self.initial_time:
             errors.append("needs an initial time")
-        if self.vector_ms is None:
+        if self.encounter_kind not in ENCOUNTER_KINDS:
+            errors.append(f"encounter kind must be one of {', '.join(ENCOUNTER_KINDS)}")
+        if self.is_roamer:
+            # A roamer has no commanded countdown to report, so Vector ms is not merely absent
+            # here -- it is the wrong question. What it has is a stopwatch reading.
+            if self.stopwatch_ms is None:
+                errors.append("needs a stopwatch reading (load press to encounter, in ms)")
+            elif self.stopwatch_ms <= 0:
+                errors.append("the stopwatch reading must be greater than zero")
+        elif self.vector_ms is None:
             errors.append("needs a Vector ms")
         if profile is not None:
             for slot in self.party:
@@ -862,6 +902,8 @@ class Hunt:
             "terrain": self.terrain,
             "target_registered": self.target_registered,
             "start_frame": self.start_frame,
+            "encounter_kind": self.encounter_kind,
+            "stopwatch_ms": self.stopwatch_ms,
             "completed": self.completed,
         }
 
@@ -887,6 +929,11 @@ class Hunt:
             terrain=d.get("terrain") or TERRAIN_OTHER,
             target_registered=bool(d.get("target_registered", False)),
             start_frame=int(d.get("start_frame") or 0),
+            # Every hunt written before roamers existed is a static one, which is also what an
+            # unrecognised value degrades to -- a hunt is not worth refusing to load over.
+            encounter_kind=(d.get("encounter_kind") if d.get("encounter_kind") in ENCOUNTER_KINDS
+                            else ENCOUNTER_STATIC),
+            stopwatch_ms=d.get("stopwatch_ms"),
             completed=bool(d.get("completed", False)),
         )
 

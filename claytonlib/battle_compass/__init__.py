@@ -55,7 +55,9 @@ from claytonlib.battle_compass.state import (  # noqa: F401
     Action, Battler, BattleState, Status,
 )
 from claytonlib.battle_compass.sim import (  # noqa: F401
-    HuntConfig, execute_move, move_roll_cost, select_target_move, throw_ball,
+    HuntConfig, RoamerChoice, escape_blocked_at_execution, execute_move, move_roll_cost,
+    roamer_trapped_at_selection, select_roamer_action, select_target_move, throw_ball,
+    traps_by_ability,
 )
 from claytonlib.battle_compass.candidates import (  # noqa: F401
     Candidate, CandidateWindow,
@@ -67,7 +69,7 @@ from claytonlib.battle_compass.items import (  # noqa: F401
     ITEMS, Item, heal_amount, smallest_heal_covering,
 )
 from claytonlib.battle_compass.targets import (  # noqa: F401
-    ENCOUNTERS, Encounter, encounter_level, moveset, resolve, supported,
+    ENCOUNTERS, Encounter, encounter_level, is_roamer, moveset, resolve, supported,
 )
 from claytonlib.battle_compass.hunt_session import (  # noqa: F401
     HuntSession, TurnLog, worst_incoming_hit,

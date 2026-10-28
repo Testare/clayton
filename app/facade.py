@@ -15,8 +15,8 @@ from app import calibration as calibration_lib
 from app import chart as chart_lib
 from app import metronome
 from app.models import (
-    CalibrationModelDoc, Chart, Expedition, Hunt, MetronomeUser, PartyPokemon,
-    Profile, Run, Seed, Target, _default_preferences,
+    ENCOUNTER_ROAMER, ENCOUNTER_STATIC, CalibrationModelDoc, Chart, Expedition, Hunt,
+    MetronomeUser, PartyPokemon, Profile, Run, Seed, Target, _default_preferences,
 )
 from app.store import FileStore, Store
 from claytonlib.battle.catch import shake_messages
@@ -490,6 +490,29 @@ class Facade:
                     f"A hunt named \"{doc['name']}\"{where} already exists. "
                     "Hunt names have to be unique across every profile — pick another.")
 
+    @staticmethod
+    def _sync_encounter_kind(hunt, profile) -> None:
+        """Set `hunt.encounter_kind` from the encounter row, every time the hunt is written.
+
+        DERIVED and not configured: a player cannot make Cresselia static or Suicune roam, so
+        offering the choice would only let them get it wrong. It is still stored rather than looked
+        up on read, so a saved hunt and the run records under it keep agreeing about which kind of
+        run they describe.
+
+        An unknown species leaves the kind alone instead of defaulting it: a half-configured hunt
+        on its way to a species is not a static hunt, it is a hunt with no target yet, and
+        stamping one in would have to be undone by the next save.
+        """
+        from claytonlib.battle_compass.targets import is_roamer
+
+        if not hunt.target.species:
+            return
+        try:
+            roamer = is_roamer(hunt.target.species, profile.game if profile else "")
+        except (KeyError, ValueError):
+            return
+        hunt.encounter_kind = ENCOUNTER_ROAMER if roamer else ENCOUNTER_STATIC
+
     def create_hunt(self, fields: dict) -> dict:
         name = (fields.get("name") or "").strip()
         if not name:
@@ -505,6 +528,7 @@ class Facade:
             raise ValueError(refusal)
         self._assert_hunt_name_free(name)
         h = Hunt.from_dict({**fields, "name": name})
+        self._sync_encounter_kind(h, profile)
         self._store.write(_HUNTS, h.id, h.to_dict())
         return h.to_dict()
 
@@ -513,8 +537,11 @@ class Facade:
         if not hunt.get("id"):
             raise ValueError("save_hunt needs a hunt id (use create_hunt for new)")
         h = Hunt.from_dict(hunt)
-        self._load_profile(h.profile_id)
+        profile = self._load_profile(h.profile_id)
         self._assert_hunt_name_free(h.name.strip(), except_id=h.id)
+        # Re-derived on every save, so changing the target species changes the kind with it --
+        # which is what keeps the two from ever disagreeing after an edit.
+        self._sync_encounter_kind(h, profile)
         self._store.write(_HUNTS, h.id, h.to_dict())
         return h.to_dict()
 
@@ -735,9 +762,17 @@ class Facade:
                 "key_seed": None if h.key_seed is None else f"{h.key_seed:#010x}",
                 "initial_time": h.initial_time,
                 "vector_ms": h.vector_ms,
+                "stopwatch_ms": h.stopwatch_ms,
                 "delay_window": h.delay_window,
                 "seconds_window": h.seconds_window,
             },
+            # Which kind of run this is, so the page can draw the right one rather than
+            # branching on the species. A roamer run SKIPS the Seed A step entirely -- there is
+            # nothing to identify and no frame to route to, because the target's spread, HP and
+            # status all come out of the save (notes/roamers.md sec 1) -- and asks for a
+            # stopwatch reading where a static run asks for a Vector ms.
+            "encounter_kind": h.encounter_kind,
+            "skips_seed_a": h.is_roamer,
             "capture_ball": h.capture_ball,
             "calibration_model": self.calibration_model_summary(h.profile_id),
             # The advance frame the hunt is planned to encounter on. Only meaningful when the
@@ -859,6 +894,35 @@ class Facade:
         return {"ok": True, "problem": None, "natures": list(nature_names()),
                 "nature": spread["nature"], "ivs": spread["ivs"], "stats": stats}
 
+    def _centring_model(self, hunt, *, elapsed_ms: float | None = None):
+        """What centres this hunt's candidate window, and the sizes it suggests.
+
+        Returns ``(model, suggested_frame_window, suggested_second_window)``, where the two
+        suggestions are None for a static hunt -- its windows are the player's own settings, and
+        a calibrated countdown has no business proposing them.
+
+        **A roamer gets a `StopwatchVector`, never the calibration model.** The model maps a
+        COMMANDED countdown through a fitted load path whose intercept belongs to that workflow;
+        a roamer encounter is observed, so the reading is a measurement and pushing it through
+        that intercept would add a constant to a number that already contains everything
+        (notes/roamers.md sec 6). The two objects share exactly the two methods
+        `candidates.generate` calls, which is why nothing downstream branches.
+
+        Returns ``(None, ...)`` when the profile has no calibration model at all, which both
+        callers already report -- a roamer still needs one, for the load press's landing spread.
+        """
+        from claytonlib.stopwatch import StopwatchVector
+
+        models = self._resolve_calibration_models(hunt.profile_id)
+        model = models.get("linear") or next(iter(models.values()), None)
+        if model is None or not hunt.is_roamer:
+            return model, None, None
+        vector = StopwatchVector.from_calibration(model)
+        if elapsed_ms is None:
+            return vector, None, None
+        return (vector, vector.suggest_frame_window(elapsed_ms),
+                vector.suggest_second_window(elapsed_ms))
+
     def hunt_candidates(self, hunt_id: str, params: dict | None = None) -> dict:
         """Build the candidate window, without starting a run.
 
@@ -880,24 +944,36 @@ class Facade:
             key_seed = int(key_seed, 0) if key_seed.strip() else None
         initial_time = (params["initial_time"] if "initial_time" in params
                         else h.initial_time) or ""
-        vector_ms = params["vector_ms"] if "vector_ms" in params else h.vector_ms
+        # A roamer is centred on a STOPWATCH READING and a static hunt on a commanded Vector ms.
+        # Read from the field that matches the kind, never from whichever happens to be filled
+        # in: the two are different measurements, and confusing them is a silent error of
+        # hundreds of frames rather than a visible one.
+        vector_key = "stopwatch_ms" if h.is_roamer else "vector_ms"
+        vector_ms = params[vector_key] if vector_key in params else h.centring_ms
         if isinstance(vector_ms, str):
             vector_ms = float(vector_ms) if vector_ms.strip() else None
-        frame_window = int(params.get("delay_window") or h.delay_window or 0)
-        second_window = int(params.get("seconds_window") or h.seconds_window or 0)
+        label = "stopwatch reading" if h.is_roamer else "vector ms"
 
         missing = [name for name, value in (("key seed", key_seed),
                                             ("initial time", initial_time),
-                                            ("vector ms", vector_ms)) if value in (None, "")]
+                                            (label, vector_ms)) if value in (None, "")]
         if missing:
             return {"ok": False, "candidates": 0,
                     "problem": f"Seed targeting is incomplete: no {', no '.join(missing)}."}
 
-        models = self._resolve_calibration_models(h.profile_id)
-        model = models.get("linear") or next(iter(models.values()), None)
+        model, suggested_frames, suggested_seconds = self._centring_model(
+            h, elapsed_ms=float(vector_ms))
         if model is None:
             return {"ok": False, "candidates": 0,
                     "problem": "This profile has no calibration model."}
+
+        # The suggestions are the DEFAULT for a roamer, not an override: a player who has set a
+        # window keeps it. A static hunt has no suggestions at all, so this reduces to the
+        # stored settings exactly as before.
+        frame_window = int(params.get("delay_window")
+                           or h.delay_window or suggested_frames or 0)
+        second_window = int(params.get("seconds_window")
+                            or h.seconds_window or suggested_seconds or 0)
 
         window = generate(
             model, key_seed=int(key_seed),
@@ -914,6 +990,13 @@ class Facade:
             "skipped_below_base_delay": window.skipped_below_base_delay,
             "frame_window": window.frame_window,
             "second_window": window.second_window,
+            "encounter_kind": h.encounter_kind,
+            # What the stopwatch's own spread would have asked for, so the page can offer it
+            # rather than leaving the player to guess at a window ten times a static hunt's.
+            # None on a static hunt, where the windows are the player's settings and nothing
+            # else.
+            "suggested_frame_window": suggested_frames,
+            "suggested_second_window": suggested_seconds,
             "preview": [{"seed": f"{c.seed:#010x}", "frame": c.frame, "second": c.second}
                         for c in window.candidates[:12]],
         }
@@ -956,13 +1039,18 @@ class Facade:
         # problem rather than surfacing later as a battle that does not match.
         spread = self._target_spread_from_params(params)
         ours, target, bench = self._hunt_battlers(h, profile, spread)
-        models = self._resolve_calibration_models(h.profile_id)
-        model = models.get("linear") or next(iter(models.values()), None)
+        # Rebuilt rather than taken from `probe`, which returns counts and not the window itself
+        # -- and through the same `_centring_model` it used, so the session can never run against
+        # a window centred differently from the one the page just priced.
+        centring_ms = float(h.centring_ms)
+        model, suggested_frames, suggested_seconds = self._centring_model(
+            h, elapsed_ms=centring_ms)
         window = generate(
             model, key_seed=int(h.key_seed),
             initial_time=dt.datetime.fromisoformat(h.initial_time),
-            vector_ms=float(h.vector_ms),
-            frame_window=h.delay_window, second_window=h.seconds_window)
+            vector_ms=centring_ms,
+            frame_window=h.delay_window or suggested_frames or 0,
+            second_window=h.seconds_window or suggested_seconds or 0)
 
         # The forme's row where the encounter names one: the catch rate agrees between Giratina's
         # two formes but the types and the base Speed a conditional ball reads do not have to.
@@ -989,7 +1077,11 @@ class Facade:
             target_has_pressure=ability == "pressure",
             # Darkrai's, and the reason a hunt against it is a clock rather than a budget: an
             # eighth of our max HP every turn we spend asleep, on top of Nightmare's quarter.
-            target_has_bad_dreams=ability == ABILITY_BAD_DREAMS)
+            target_has_bad_dreams=ability == ABILITY_BAD_DREAMS,
+            # The trainer-AI selection path and the flee. Off the stored kind rather than asking
+            # `targets.is_roamer` again here, so one run and the hunt it came from can never
+            # disagree -- `_sync_encounter_kind` is the single place that decides it.
+            target_is_roamer=h.is_roamer)
         # The spread the stats were DERIVED from, for the popup that lets the player check them
         # against the summary screen -- a run override if there was one, else the hunt's own
         # (clayton-1jd).
@@ -1016,6 +1108,8 @@ class Facade:
             hunt.initial_time = params["initial_time"]
         if params.get("vector_ms") not in (None, ""):
             hunt.vector_ms = int(params["vector_ms"])
+        if params.get("stopwatch_ms") not in (None, ""):
+            hunt.stopwatch_ms = int(params["stopwatch_ms"])
         if params.get("delay_window") not in (None, ""):
             hunt.delay_window = int(params["delay_window"])
         if params.get("seconds_window") not in (None, ""):

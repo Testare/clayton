@@ -89,6 +89,31 @@ TAUNTED = "tnt"
 #: (notes/seed_separation.md).
 FUTURE_SIGHT = "F"
 
+#: A ROAMER got away: ``Eesc``. **Terminal, like ``C`` and ``XX``** -- the battle ends, and the
+#: roamer is relocated by `MoveRoamersOffMap`, so there is no next turn to report and no state to
+#: carry (notes/roamers.md sec 3).
+#:
+#: It replaces the slot rather than following one, because no move happened: the escape IS the
+#: roamer's action for the turn (`AI_ENEMY_ESCAPE` short-circuits the move pick entirely). Kept out
+#: of `PREVENTION_DETAIL` for the same reason ``tnt`` is kept out of it -- that set is about a
+#: status stopping a move, and these two are about an action that was never a move. It would also
+#: admit the nonsensical ``Mesc``: our side cannot be a roamer.
+ESCAPED = "esc"
+
+#: A roamer tried to escape and could not: ``Etrp`` -- "The wild MESPRIT can't escape!".
+#:
+#: NOT terminal, and that is the whole point of having a token for it: the run continues and the
+#: roamer has spent its turn on nothing. Reachable on exactly one kind of turn -- the one a Mean
+#: Look (or a Bind) LANDS on, with the trapper moving first, so the roamer had already chosen
+#: Escape before the volatile existed [verified 3x: data/battle_logs/mesprit.jsonl T3,
+#: mesprit2.jsonl T2 and T7].
+#:
+#: Worth reporting rather than rendering an empty turn, for the reason every prevention token is
+#: worth reporting: the four AI rolls were still spent, so a candidate that thought the roamer
+#: moved is a candidate whose stream is four or five rolls out, and the player saw a message that
+#: says which happened.
+ESCAPE_FAILED = "trp"
+
 #: Uppercase action prefixes, longest-match, so LONGER ONES MUST COME FIRST. Prefix-free apart
 #: from that: "H" alone is deliberately not one, which is what lets "HP" be two characters, and
 #: "XX" has to be tried before "X" or a wipe would tokenise as two separate faints.
@@ -169,6 +194,16 @@ def resolved_token(actor: str, status: str, slot: int) -> str:
     if not 0 <= slot <= 3:
         raise ValueError(f"move slot out of range: {slot}")
     return f"{actor}{status}{slot + 1}"
+
+
+def escaped_token() -> str:
+    """``Eesc`` — the roamer got away. Terminal."""
+    return f"E{ESCAPED}"
+
+
+def escape_failed_token() -> str:
+    """``Etrp`` — the roamer chose Escape and the trap it was already in refused it."""
+    return f"E{ESCAPE_FAILED}"
 
 
 def ball_token(shakes: int, captured: bool = False, *, capture_ball: bool = False) -> str:
@@ -393,6 +428,14 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
         if token[0] in ("E", "M"):
             seen_move = True
             detail = token[1:]
+            if detail in (ESCAPED, ESCAPE_FAILED):
+                # Roamer-only, and E-only: our side cannot flee (a player's Run is not modelled
+                # as an action at all, because a run that works ends the hunt and one that fails
+                # is not a turn anybody would report).
+                if token[0] != "E":
+                    problems.append(f"{token!r}: only the target can flee; {detail!r} is a "
+                                    f"roamer outcome")
+                continue
             for marker in STATUS_MARKERS:
                 if not detail.startswith(marker):
                     continue
@@ -443,8 +486,8 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
     # `turn_requires_hp` on the causes that are not modelled yet.
     if any(t.startswith("X") for t in tokens) and any(t.startswith("HP") for t in tokens):
         problems.append("we fainted, so the HP token is redundant and must be left out")
-    terminal = [t for t in tokens if t in ("C", "Pc", WIPED)]
-    if terminal and tokens[-1] not in ("C", "Pc", WIPED):
+    terminal = [t for t in tokens if t in ("C", "Pc", WIPED, escaped_token())]
+    if terminal and tokens[-1] not in ("C", "Pc", WIPED, escaped_token()):
         problems.append(f"{terminal[0]!r} is terminal; nothing may follow it")
     return problems
 
@@ -476,8 +519,20 @@ def _move_name(names: tuple[str, ...] | list[str], slot: int) -> str:
     return f"move {slot + 1}"
 
 
+#: The roamer outcomes in words. Separate from `_PREVENTION_PROSE` because these are not status
+#: markers: no status is involved and no move was ever selected.
+_ROAMER_PROSE = {
+    ESCAPED: "fled, and the run is over",
+    ESCAPE_FAILED: "tried to flee and couldn't",
+}
+
+
 def _explain_actor(detail: str, actor: str, names, *, defender: str) -> str:
     """One M/E token's detail, as a sentence fragment about `actor`."""
+    if detail in _ROAMER_PROSE:
+        # First, because the fall-through for a non-numeric detail is "acted" -- which is exactly
+        # backwards for the one case where nothing was acted on.
+        return f"{actor} {_ROAMER_PROSE[detail]}"
     for marker in STATUS_MARKERS:
         if not detail.startswith(marker):
             continue

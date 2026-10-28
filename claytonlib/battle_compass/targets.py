@@ -60,6 +60,13 @@ class Encounter:
     forme: str = ""
     #: Where the encounter is, for a message that can say which one it means.
     where: str = ""
+    #: True for a ROAMER, which is a different kind of encounter rather than a harder one: it is
+    #: driven by the trainer AI (5 selection rolls where a wild spends 1), it flees unless trapped
+    #: at action-selection time, and its HP, status and spread come out of the save rather than
+    #: being generated when the battle starts (notes/roamers.md sec 2). Every one of those
+    #: changes the simulation, so the flag belongs on the encounter and not on the Hunt -- a
+    #: player cannot configure Cresselia into being static.
+    roamer: bool = False
 
 
 #: encounter key -> `Encounter`. For a single-venue target the key IS the species slug, so
@@ -260,6 +267,43 @@ ENCOUNTERS: dict[str, Encounter] = {
         "giratina", 47, ("Ominous Wind", "Ancient Power", "Dragon Claw", "Shadow Force"),
         games=("platinum",), ability="Pressure", forme="giratina-altered",
         where="Turnback Cave"),
+    # Platinum's roaming Cresselia -- the FIRST ROAMER, and the gentlest target on this table
+    # (notes/roamers.md sec 5). `ActivateRoamingPokemon ROAMING_SLOT_CRESSELIA`
+    # (res/field/scripts/scripts_fullmoon_island_forest.s:28) starts the roam, and
+    # `case ROAMING_SLOT_CRESSELIA: species = SPECIES_CRESSELIA; level = 50`
+    # (src/roaming_pokemon.c:259-261) is where the level comes from -- so the level is a property
+    # of the SLOT rather than of a battle script, which is why there is no `WildBattle` line to
+    # cite for it.
+    #
+    # `where` is deliberately vague because a roamer has no venue: it is wherever the thing
+    # currently is, which is what makes the encounter unroutable in the first place.
+    #
+    # Last four learnable at 50, in learn order, from res/pokemon/cresselia/data.json's
+    # `learnset.by_level` (1 Confusion, 1 Double Team, 11 Safeguard, 20 Mist, 29 Aurora Beam,
+    # 38 Future Sight, 47 Slash, 57 Moonlight):
+    #
+    #   Mist(46), Aurora Beam(68), Future Sight(148), Slash(43)
+    #
+    # **All four effects were already modelled** -- 46 and 68 are Suicune's, 148 is Uxie's and
+    # Azelf's, 43 is Lugia's Aeroblast -- so this row needed no new target effects, which is most
+    # of why it is the first roamer rather than Raikou (clayton-957.35.6 lists what those need).
+    #
+    # The level window is kind in both directions, and both edges matter:
+    #
+    # * **Safeguard(11) is pushed out from below**, so sleep lands. A target that could raise one
+    #   would block the prep encounter's whole point.
+    # * **Moonlight(57) and Psychic(93) are pushed out from above.** Moonlight is the Rest of this
+    #   matchup: it would heal off every False Swipe and make the chip phase unwinnable.
+    #
+    # And there is no Roar, which is what keeps clayton-957.35.5 (Ingrain) and .7 (the
+    # replacement-selection roll) off this target's path entirely.
+    #
+    # Future Sight's accuracy 90 is worth noting as an asset rather than a hazard: it is a real
+    # sub-100 verdict, which is what separates RTC-second siblings (notes/seed_separation.md), and
+    # a roamer hunt opens with a window far wider than a static hunt's.
+    "cresselia": Encounter(
+        "cresselia", 50, ("Mist", "Aurora Beam", "Future Sight", "Slash"),
+        games=("platinum",), roamer=True, where="roaming Sinnoh"),
 }
 
 #: The other side of each version-split encounter, for the cross-check's error message. Not in
@@ -723,6 +767,17 @@ def stats_key(name: str, game: str = "") -> str:
     """
     _, row = resolve(name, game)
     return row.forme or row.species
+
+
+def is_roamer(name: str, game: str = "") -> bool:
+    """Whether this encounter is a roamer, which changes the simulation rather than its difficulty.
+
+    Read off the row for the same reason `target_ability` is: it is a property of the ENCOUNTER.
+    The same species can be both in principle -- HeartGold's Latios roams at Lv35 and is static
+    at Lv40 in the Pewter museum -- so asking the species would be wrong for exactly the case
+    this table's encounter keys exist for.
+    """
+    return resolve(name, game)[1].roamer
 
 
 def supported(game: str = "") -> tuple[str, ...]:
