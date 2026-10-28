@@ -667,7 +667,19 @@ class HuntTarget:
         Darkrai is Platinum's and Lugia's row on file is SoulSilver's. Empty means "unset", which
         filters nothing; see `targets.resolve`.
         """
-        return self.spread_errors() + self._encounter_errors(game)
+        return self.spread_errors() + self.encounter_errors(game)
+
+    @property
+    def spread_is_blank(self) -> bool:
+        """Nothing entered at all, as opposed to half-entered.
+
+        The distinction is the one `Facade._target_spread_from_params` already draws and for the
+        same reason: a nature without IVs is a half-filled form rather than a deliberate "I do
+        not know this", and treating it as the latter would mix a nature from one Pokemon with
+        assumed IVs -- stats that belong to no Pokemon at all, and no error anywhere.
+        """
+        return not self.nature and not any(
+            isinstance(self.ivs.get(k), int) for k in STAT_KEYS)
 
     def spread_errors(self) -> list[str]:
         """Only what makes the SPREAD unusable -- a missing species, level, nature or IV.
@@ -693,7 +705,7 @@ class HuntTarget:
             errors.append("target IVs out of range: " + ", ".join(out_of_range))
         return errors
 
-    def _encounter_errors(self, game: str = "") -> list[str]:
+    def encounter_errors(self, game: str = "") -> list[str]:
         """Whether this species can be simulated at all, and at the level entered.
 
         Both are hard rather than advisory, and for the same reason: `execute_move` treats an
@@ -853,7 +865,16 @@ class Hunt:
     def hard_errors(self, profile: "Profile | None" = None) -> list[str]:
         """Reasons Battle Compass cannot start from this hunt."""
         errors: list[str] = []
-        errors.extend(self.target.hard_errors(profile.game if profile is not None else ""))
+        game = profile.game if profile is not None else ""
+        # **A roamer's spread cannot be looked up, so a blank one is allowed.** It was fixed when
+        # the roam started and no seed names it (notes/roamers.md sec 7), so demanding it would
+        # refuse a run over information the player cannot obtain -- while the encounter errors,
+        # which are about whether the battle can be SIMULATED at all, still apply. A half-entered
+        # spread stays an error either way: see `HuntTarget.spread_is_blank`.
+        if self.is_roamer and self.target.spread_is_blank:
+            errors.extend(self.target.encounter_errors(game))
+        else:
+            errors.extend(self.target.hard_errors(game))
         if not self.capture_ball:
             errors.append("needs a capture ball")
         elif profile is not None:
@@ -890,7 +911,7 @@ class Hunt:
     def _opening_errors(self) -> list[str]:
         """Whether the declared opening state is one the game could actually produce.
 
-        Hard rather than advisory, and for the reason `HuntTarget._encounter_errors` gives: the
+        Hard rather than advisory, and for the reason `HuntTarget.encounter_errors` gives: the
         simulation consumes these numbers from turn 1, so a wrong one is not a vague run but a
         confidently wrong one. A declared 0 HP is the sharp case -- a fainted roamer is a roamer
         whose slot the save already zeroed, so there is nothing to hunt.

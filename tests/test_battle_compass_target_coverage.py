@@ -166,7 +166,7 @@ class TestReadinessRefusesWhatCannotBeSimulated(unittest.TestCase):
         does not withhold base stats that were perfectly good."""
         target = self._target("mewtwo", 70)
         self.assertEqual(target.spread_errors(), [])
-        self.assertTrue(target._encounter_errors())
+        self.assertTrue(target.encounter_errors())
 
     def test_an_incomplete_spread_is_still_a_spread_error(self):
         from app.models import HuntTarget

@@ -354,13 +354,40 @@ class TestTheTrapValidation(RoamerHuntCase):
         # is the one that regressed, and this pins the other half: nothing suggests a second one.
         self.assertEqual([w for w in self._trap(hunt) if "a Choice Scarf would" in w], [])
 
-    def test_an_unknown_target_spread_says_so_instead_of_failing_the_party(self):
+    def test_a_blank_spread_is_checked_against_the_fastest_it_could_be(self):
+        """A roamer's spread IS knowable -- its IVs are rolled when the roam starts, which is a
+        manipulable moment -- so a blank one is the unusual case and gets the pessimistic Speed:
+        a trapper that turns out slower loses the run, while a needless warning costs a sentence.
+        """
         hunt = self._hunt()
         hunt["target"] = {**hunt["target"], "nature": "", "ivs": {}}
         saved = self.api.save_hunt(hunt)
         warnings = self._trap(saved)
-        self.assertTrue([w for w in warnings if "not known yet" in w], warnings)
+        # Timid 31 Cresselia is 115, against the Modest 105 the entered spread gives.
+        self.assertTrue([w for w in warnings if "No spread entered" in w], warnings)
         self.assertEqual([w for w in warnings if "run is over" in w], [])
+
+    def test_and_a_blank_spread_does_not_block_the_run(self):
+        hunt = self._hunt()
+        hunt["target"] = {**hunt["target"], "nature": "", "ivs": {}}
+        saved = self.api.save_hunt(hunt)
+        errors = self.api.hunt_readiness(saved["id"])["hard_errors"]
+        self.assertEqual([e for e in errors if "IV" in e or "nature" in e], [], errors)
+
+    def test_but_a_half_entered_spread_still_is_an_error(self):
+        """A nature without IVs is a half-filled form, not a declaration of ignorance."""
+        hunt = self._hunt()
+        hunt["target"] = {**hunt["target"], "nature": "Modest", "ivs": {}}
+        saved = self.api.save_hunt(hunt)
+        errors = self.api.hunt_readiness(saved["id"])["hard_errors"]
+        self.assertTrue([e for e in errors if "IV" in e], errors)
+
+    def test_a_static_hunt_still_demands_the_spread(self):
+        hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS)
+        hunt["target"] = {**hunt["target"], "nature": "", "ivs": {}}
+        saved = self.api.save_hunt(hunt)
+        errors = self.api.hunt_readiness(saved["id"])["hard_errors"]
+        self.assertTrue([e for e in errors if "nature" in e], errors)
 
 
 class TestTheOpeningState(RoamerHuntCase):

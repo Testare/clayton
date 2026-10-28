@@ -19,6 +19,12 @@ from app.models import (
     MetronomeUser, PartyPokemon, Profile, Run, Seed, Target, _default_preferences,
 )
 from app.store import FileStore, Store
+
+#: The spread a ROAMER is simulated with when the player cannot know its real one. Neutral and
+#: maximal, which is conservative where it matters -- see `Facade._hunt_battlers`. A +Speed nature
+#: for the Speed question only (`_target_max_speed`), because that one wants the ceiling.
+ASSUMED_NATURE = "Hardy"
+FASTEST_NATURE = "Timid"
 from claytonlib.battle.catch import shake_messages
 from claytonlib.games import (
     ALL_TOOLS, GAMES, LEGACY_DEFAULT_SIGNAL, TOOL_GLASS, TOOL_HUNTS, UNSET_HINT,
@@ -571,7 +577,9 @@ class Facade:
         deliberately not written back to ``hunt.target``: that record is the plan, and
         overwriting it would lose the spread every future run is aimed at.
         """
-        from claytonlib.battle.stats import derive_species_stats, species as species_data
+        from claytonlib.battle.stats import (
+            STAT_KEYS, derive_species_stats, species as species_data,
+        )
         from claytonlib.battle_compass.state import Battler
 
         if not hunt.party:
@@ -613,6 +621,22 @@ class Facade:
         stats_row = stats_key(hunt.target.species, profile.game)
         nature = (spread or {}).get("nature") or hunt.target.nature
         ivs = (spread or {}).get("ivs") or dict(hunt.target.ivs)
+        if not nature or not all(isinstance(ivs.get(k), int) for k in STAT_KEYS):
+            # **The FALLBACK spread, and it is the unusual path.** A roamer's IVs and nature are
+            # rolled at `RoamingPokemon_ActivateSlot` from the OVERWORLD seed, which is a moment a
+            # player can manipulate like any other -- so a roamer somebody created on purpose has
+            # a spread they know exactly, and it should be entered (clayton-957.35.9). This exists
+            # for the other case: a roam that started before anyone was targeting it, where the
+            # numbers are simply gone.
+            #
+            # Neutral nature and 31 across the board, and the choice is CONSERVATIVE in every
+            # direction that matters rather than merely tidy: maximum Attack and Sp. Atk over-state
+            # the incoming damage, maximum defences over-state how many False Swipes the chip
+            # phase needs, and at 1 HP the HP IV changes the catch maths not at all
+            # (notes/roamers.md sec 5). The one direction it is NOT conservative in is Speed -- a
+            # +Speed nature is faster still -- which is why the trap check asks
+            # `_target_max_speed` instead of this.
+            nature, ivs = ASSUMED_NATURE, {k: 31 for k in STAT_KEYS}
         target = Battler(
             name=hunt.target.species.title(), level=hunt.target.level,
             types=tuple(species_data(stats_row)["types"]),
@@ -655,6 +679,25 @@ class Facade:
             turns = hunt.opening_sleep_turns or (SLEEP_DURATION_MIN + SLEEP_DURATION_SPAN - 1)
             target = target.with_status(status, sleep_turns=turns)
         return target
+
+    @staticmethod
+    def _target_max_speed(hunt) -> int | None:
+        """The fastest this target could possibly be: 31 IV and a +Speed nature.
+
+        What the trap check wants when the spread is unknown, because the two errors are not
+        symmetric. A trapper that turns out to be slower than the roamer loses the whole run on
+        turn 1; a trapper warned about a Speed the roamer did not actually have costs a sentence.
+        So an unknown spread is checked against the ceiling rather than against an average.
+        """
+        from claytonlib.battle.stats import derive_species_stats
+
+        if hunt.target.level is None:
+            return None
+        try:
+            return int(derive_species_stats(hunt.target.species, hunt.target.level,
+                                            FASTEST_NATURE, ivs=31)["spe"])
+        except (KeyError, ValueError):
+            return None
 
     @staticmethod
     def _target_derived_speed(hunt) -> int | None:
@@ -1571,10 +1614,22 @@ class Facade:
         # from the key seed, so "we cannot tell yet" is a normal state here rather than a
         # misconfiguration, and `trap_checks` says which of the two it is.
         if trap_party:
+            # The ceiling when the spread is unknown, the real figure when it is known -- see
+            # `_target_max_speed` for why the two cases want different numbers.
+            speed = (self._target_max_speed(h) if h.target.spread_is_blank
+                     else self._target_derived_speed(h))
             result["trap"] = trap_warnings(
-                h.target.species, trap_party,
-                target_speed=self._target_derived_speed(h),
+                h.target.species, trap_party, target_speed=speed,
                 game=profile.game if profile else "")
+            if h.target.spread_is_blank:
+                # Said out loud, because it is a run the player could have made stronger: a roamer
+                # created on a manipulated seed has a spread that is KNOWN, and entering it turns
+                # every damage prediction here from a bound into a figure.
+                result["trap"].append(
+                    "No spread entered, so this run assumes a neutral nature and 31 IVs — "
+                    "conservative for damage, and the Speed check above uses the fastest it "
+                    "could be. If you RNG'd this roamer, enter its real nature and IVs: they "
+                    "were rolled when the roam started, not at the encounter.")
             # The Repel ceiling, which is the same Pokemon's problem: the lead is both the trapper
             # and what `RepelPreventsEncounter` reads. Appended to the same field rather than
             # given one of its own, because the player's answer to either is "change the lead".

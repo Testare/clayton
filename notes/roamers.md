@@ -23,7 +23,8 @@ back:
   **status** and **current HP** out of the save and calls `Pokemon_InitAndCalcStats` — no RNG at
   all [verified]. The spread was fixed at `RoamingPokemon_ActivateSlot`
   (`src/roaming_pokemon.c:289`, `INIT_IVS_RANDOM`) the moment the roam started [verified]. So
-  there is nothing to steer and no reason to hit any particular Seed A.
+  there is nothing to steer **at the encounter** — and no reason to hit any particular Seed A
+  there. The spread is still steerable, one moment earlier: see section 7.
 * **The encounter cannot be routed to.** Finding the roamer means walking between maps until it
   lands on yours, and every step on an encounter tile spends overworld rolls. Advance counting is
   hopeless by construction, not merely hard.
@@ -338,11 +339,23 @@ seed unnecessary — only the DS clock's date/hour/minute at the encounter is th
 
 ---
 
-## 7. The spread, which the key seed no longer tells us
+## 7. The spread: not from the key seed, but still knowable
 
 `HuntTarget` takes nature and all six IVs by hand "from Pokefinder", and `hunt_run_setup` calls the
-hunt's spread "the one the key seed produces". **Neither is true of a roamer**: the spread was
-rolled when the roam was activated, possibly hundreds of hours of play ago.
+hunt's spread "the one the key seed produces". **The second of those is not true of a roamer**: the
+spread was rolled when the roam was *activated*, not at the encounter.
+
+**But that moment is manipulable like any other, so a roamer somebody created on purpose has a
+spread they know exactly.** `RoamingPokemon_ActivateSlot` calls `Pokemon_InitWith(...,
+INIT_IVS_RANDOM, ...)` off the overworld LCRNG at the instant the script runs
+(`src/roaming_pokemon.c:289`) — so a player who targets the seed they talk to Cresselia on chooses
+its IVs and nature there, and the hunt simply enters them. [Verified: Testare manipulated them
+ahead of time, which is what this section originally got wrong.] `clayton-957.35.9` is the bead for
+that moment; its old reading — "there is nothing to steer" — is exactly backwards, because the
+thing to steer is the activation rather than the encounter.
+
+So an *entered* spread is the normal path and an exact one. The fallback below is for the other
+case: a roam that started before anyone was targeting it, where the numbers are simply gone.
 
 What the sim actually needs it for, in descending order of harm:
 
@@ -354,10 +367,24 @@ What the sim actually needs it for, in descending order of harm:
    whatever the number is.
 4. **HP** — the catch maths. **Provably irrelevant at 1 HP** (section 5).
 
-So a roamer hunt should accept an **unknown spread** and say what that costs, rather than demand
-six IVs it cannot get [design]. The forced-seed recordings make the same point from the other end:
-an IV write that lands perfectly changes nothing, because the stats were already derived from the
-save before the battle existed (section 2.6). Section 5's table is why that is affordable; a Shadow Tag lead is
+So a roamer hunt **accepts a blank spread and says what that costs**, rather than refusing a run
+over numbers that may genuinely be gone — while a *half*-entered spread stays an error, because a
+nature without IVs is an unfinished form rather than a declaration of ignorance. The fallback is a
+neutral nature and 31 across the board, which is conservative in every direction that matters:
+maximum Attack and Sp. Atk over-state the incoming damage, maximum defences over-state the chip
+phase, and at 1 HP the HP IV changes the catch maths not at all. The exception is **Speed**, where
+a +Speed nature is faster still — so the trap check asks for the *fastest it could be* instead,
+since a trapper that turns out slower loses the whole run while a needless warning costs a
+sentence.
+
+Readiness says so out loud when a run is on the fallback, and says why it is worth avoiding: a
+roamer you RNG'd has a spread you know, and entering it turns every damage prediction from a bound
+into a figure.
+
+The forced-seed recordings make the same point from the other end: an IV write at
+`BattleSystem_InitBattleMon` changes nothing, because the stats were already derived from the save
+before the battle existed (section 2.6). The place to write them is the save's roamer block —
+or, for a run rather than a fixture, the activation seed. Section 5's table is why that is affordable; a Shadow Tag lead is
 why the remaining risk is survivability rather than correctness.
 
 ---
