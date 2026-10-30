@@ -36,9 +36,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, damage_range,
+    WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, damage_range, item_key,
     unsupported_reason,
 )
+from claytonlib.battle.readiness import STATUS_RESTORE_ITEMS
 from claytonlib.battle_compass import tokens as tok
 from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
@@ -559,6 +560,15 @@ BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
     ("target", "heal_block_turns", "Heal Block"),
     ("ours", "drowsy_turns", "Drowsy"),
     ("target", "drowsy_turns", "Drowsy"),
+    # Confusion, Regigigas' and the only condition in this banner the player must REPORT the end
+    # of: a confused Pokemon attacks perfectly normally, so nothing about the next turn reveals
+    # that it wore off (`tokens.RESOLUTION_DETAIL`). It has no status chip either, which is the
+    # test this table has to satisfy.
+    #
+    # The number shown is turns LEFT TO ROLL plus one: the counter is decremented before the
+    # check, so a 1 here means the next turn snaps out rather than rolling.
+    ("ours", "confusion_turns", "Confused"),
+    ("target", "confusion_turns", "Confused"),
 )
 
 
@@ -1045,6 +1055,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
+                        "status_cured_by_item": False,
                         "secondary_side": None, "stat_drop": None, "self_raise": None,
                         "deals_nothing": False, "applies_foresight": False,
                         "no_effect_hint": None, "charges": False,
@@ -1108,6 +1119,24 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # Spore connects, "is asleep" is the only thing the target can have done, and it was
             # not on offer because the snapshot's options are read off the turn's OPENING state.
             "applies_status": (st.value if (st := status_applied_by(move)) else None),
+            # **Whether the status this move lands is cured the instant it lands**, because the
+            # victim holds a Lum Berry. Reported separately from `guaranteed_fail` because the
+            # two are different events that happen to settle the same question: a guaranteed
+            # failure means the move did nothing, while this means it WORKED and was undone --
+            # "Shaymin fell asleep! / Shaymin's Lum Berry woke it up!".
+            #
+            # The interview needs it because our half of the turn resolves first: a Spore that
+            # connects normally settles the target's whole turn (it cannot act), but one the berry
+            # cures leaves the target free to move -- so the "nothing to report" short-circuit
+            # would swallow a turn the player really does have to report (reported by Testare).
+            #
+            # It goes false again once the berry is spent, because `sim.cure_with_held_item`
+            # clears the item -- so the SECOND Spore settles the turn the way the first did not.
+            "status_cured_by_item": (
+                defender is not None
+                and (status_applied_by(move) is not None
+                     or secondary_status(move) is not None)
+                and item_key(defender.held_item or "") in STATUS_RESTORE_ITEMS),
             # The same thing for a status the SECONDARY inflicts, which is live mid-turn for the
             # same reason: a Discharge proc paralyzes before the target's half of the turn, so
             # "was fully paralyzed" becomes possible on a turn that opened with it unstatused.

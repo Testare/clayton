@@ -676,11 +676,13 @@ class TestOnlyPossibleOutcomesAreOffered(unittest.TestCase):
             self.assertEqual([o["code"] for o in options], [code])
 
     def test_confusion_is_offered_only_while_confused(self):
+        """`confused` is now DERIVED from `confusion_turns`, so the state is constructed with a
+        count. The property exists precisely so these two readers did not have to change."""
         self.assertEqual(
-            [o["code"] for o in prevention_options(_ours(confused=True), _target(),
+            [o["code"] for o in prevention_options(_ours(confusion_turns=3), _target(),
                                                    actor_moves_first=False)], ["cfz"])
         self.assertEqual(
-            [o["code"] for o in resolution_options(_ours(confused=True))], ["scfz"])
+            [o["code"] for o in resolution_options(_ours(confusion_turns=3))], ["scfz"])
         self.assertEqual(resolution_options(_ours()), [])
 
     def test_flinch_needs_the_other_side_to_have_a_flinching_move(self):

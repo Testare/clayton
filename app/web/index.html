@@ -5472,12 +5472,18 @@ function hrStatusWeJustApplied(){
   if (!t.ours || t.ours.prevented) return null; // we never got the move off
   if (info.applies_status){
     if (info.guaranteed_fail) return null;      // it went ahead and did nothing
+    // The victim's Lum Berry cures it the instant it lands, so the status is NOT live for the
+    // rest of the turn and the target is free to move. Different from guaranteed_fail -- the move
+    // worked and was undone -- but it settles this question the same way. Shaymin is the only
+    // target that holds one, and the first Spore is the only one it cures.
+    if (info.status_cured_by_item) return null;
     return t.ours.result === "" ? info.applies_status : null;   // "-" is a miss
   }
   // A status from a SECONDARY is the same thing one roll later: Discharge paralyzes when its 30%
   // lands, and that is live before the target's half of the turn just as Thunder Wave's is. It
   // waits on the secondary question, which the interview asks before it asks about the target.
-  if (info.secondary_status && hrLanded(t.ours) && t.ours.secondary === true)
+  if (info.secondary_status && hrLanded(t.ours) && t.ours.secondary === true
+      && !info.status_cured_by_item)
     return info.secondary_status;
   return null;
 }
@@ -5526,9 +5532,11 @@ function hrStatusTargetJustApplied(){
   if (hrWeActFirst()) return null;              // our half is already over; the status is too late
   if (info.applies_status){
     if (info.guaranteed_fail) return null;      // it went ahead and did nothing
+    if (info.status_cured_by_item) return null; // a berry of OURS cures it before our half
     return t.target.result === "" ? info.applies_status : null;   // "-" is a miss
   }
-  if (info.secondary_status && hrLanded(t.target) && t.target.secondary === true)
+  if (info.secondary_status && hrLanded(t.target) && t.target.secondary === true
+      && !info.status_cured_by_item)
     return info.secondary_status;
   return null;
 }

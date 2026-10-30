@@ -2255,3 +2255,114 @@ mechanic in the whole regi set: a counter, a per-turn `& 1` check costing one ad
 self-hit costing a second for its damage variance. `Battler.confused` already exists as a field
 documented as never set by anything — that is what it is for. Once it lands, the row
 (clayton-6xu.10.7) and the no-held-items advice both have somewhere to attach.
+
+---
+
+## 24. As built — confusion, and the regis are complete (clayton-6xu.10.4, .7, .12)
+
+All four regis are supported: Regirock, Regice and Registeel at Lv30 and **Regigigas at Lv1**,
+every move modelled, every row live.
+
+### 24.1 The token grammar was already waiting for it
+
+Confusion looked like the biggest piece in the set and turned out to be the smallest surprise,
+because `tokens.py` had already been built for it: `cfz` for a self-hit, `scfz<slot>` for
+snapping out and then moving, and `RESOLUTION_DETAIL` existing with confusion as its sole member
+and an explicit justification — *sleep and freeze need no wear-off marker because the move
+happening at all proves the status ended, while a confused Pokemon attacks perfectly normally.*
+Only the simulation was missing. The arc now renders exactly as that grammar anticipated:
+
+```
+turn 1  M1 h E3          Confuse Ray lands, 4 turns rolled
+turn 2  Mcfz E3 HP182    hurt itself, move lost
+turn 3  M1 h E3          passed the check, attacked normally
+turn 5  Mscfz1 h E3      snapped out, then used move 1
+```
+
+### 24.2 The two routes differ in what a refusal COSTS
+
+This is the part a flag-shaped model would have got wrong, and it is why Confuse Ray and Dizzy
+Punch are modelled apart rather than as one "may confuse" case.
+
+Every branch of `subscript_confuse.s` that refuses a **direct** confusion sets
+`MOVE_STATUS_NO_MORE_WORK` (``_128`` already confused, ``_141`` Own Tempo, ``_167`` Safeguard,
+all via ``_178``) — so Confuse Ray is a `will_fail` family and costs the turn what every other
+family costs. Reached **indirectly**, those same branches each test
+`SIDE_EFFECT_TYPE_INDIRECT` first and jump straight to ``_185``: the move still dealt its
+damage, and nothing extra was spent. So a refused Dizzy Punch is *cheaper*, not a failure.
+
+`confusion_lands_on` is one predicate shared by both routes, because three refusals written
+twice is three chances to drift.
+
+| | Confuse Ray (direct) | Dizzy Punch (secondary) |
+| --- | --- | --- |
+| lands | accuracy + duration = **2** | accuracy, crit, damage, proc, duration = **5** |
+| refused | `will_fail`, accuracy only | accuracy, crit, damage, proc = **4** |
+| Shield Dust | cannot refuse it | refuses it |
+
+### 24.3 Three things the ROM settled about the self-hit
+
+`CALC_SELF_HIT(MOVE_STRUGGLE, 40)` then `BattleSystem_CalcDamageVariance`, and all three of
+these are easy to assume wrongly:
+
+* **It is our Attack against our own Defence**, with our own stages on both ends — the macro
+  passes the attacker as its own defender. A +2 Attack of ours makes confusion hurt *more*.
+* **It is typeless with no STAB**, and the reason is mechanical rather than folklore:
+  `BattleSystem_ApplyTypeChart` is never called, and STAB lives *inside* that function at
+  `battle_lib.c:2593`. Pinned by asserting a Ghost lead takes the same self-hit as a Normal one.
+* **Weather never touches it.** The macro passes `sideConditions = 0` *and*
+  `fieldConditions = 0`, so neither Reflect nor rain applies — a self-hit in the rain is the same
+  number as one in the clear. Pinned by asserting the function has no field parameter at all.
+
+Burn halves it **inside** the formula (`:6977`), a different truncation point from
+`_attacker_side`'s burn halving, so it is done the ROM's way here rather than by reusing that path.
+
+And the duration is `(rand % 4) + 2` = **2 to 5**, not 2 to 4 — `BtlCmd_Random` does
+`range += 1`. Verified by sweeping seeds and asserting the observed set is exactly {2,3,4,5}.
+Decrement-before-check means a duration of N gives N−1 rolled turns.
+
+> **A flag became a counter, and the flag became derived.** `Battler.confused` was honest while
+> nothing inflicted confusion. It is now a read-only property over `confusion_turns`, so the two
+> cannot drift — and `replace(..., confused=True)` raises, which is the loud failure the rename
+> wanted. Both existing readers (the interview and the snapshot) needed no change.
+
+### 24.4 And the bug it fixed on our own side
+
+`MODELLED_OUR_EFFECTS[76]` said *"the proc roll only; confusion ON THE TARGET is inert here"*.
+That was a live desync: `subscript_confuse.s` reaches ``_076`` on the indirect route too, and
+``_076`` rolls `Random 3, 2` — so a procced Signal Beam of ours spent a duration advance the
+simulator did not, and every turn after it read the wrong rolls. A procced Signal Beam now spends
+five advances where it spent four, and four against Own Tempo, where the ROM jumps past the roll.
+
+Nothing about that bug was Regigigas-specific; it was found by reading the regi effects and fixed
+by the same machinery pointed the other way. That is now the fourth target in this file whose
+reading turned up a defect in shipped behaviour.
+
+### 24.5 Separation: Regigigas is the worst case on the table
+
+Worth stating because the natural guess is the opposite — a target that confuses you sounds like
+it offers plenty to observe. By `notes/seed_separation.md`'s rule, a check is permanently blind to
+RTC-second siblings iff its modulus divides 256:
+
+| check | modulus | separates? |
+| --- | --- | --- |
+| move selection | `% 4` | no |
+| confusion check | `& 1` | no |
+| confusion duration | `% 4` | no |
+| self-hit variance | `% 16` | no |
+| accuracy | every move is 100 or 0 | no |
+| **Dizzy Punch proc** | `% 100` | **yes** |
+
+So **nothing in Regigigas' own kit separates siblings except one roll it makes a quarter of the
+time.** Identification against it has to come from our side — a sub-100 move of ours, or an early
+standard-ball probe — which is also the reason an accuracy-raising item would make this target
+*harder* rather than easier, and the last argument for the no-held-items rule in §23.1.
+
+### 24.6 Still owed
+
+Four children remain, none blocking: **Haze against Curse stacking** (clayton-6xu.10.10, the
+first target where §17's refusal is wrong), the **Own Tempo advisory** (clayton-6xu.10.11, now
+that confusion exists to advise about), the **cave-terrain gdb question** for all four venues
+(clayton-6xu.10.9), and the **Lv1 ball-and-HP readout** (clayton-6xu.10.8). The access gating —
+the ruins needing an event Regigigas and Snowpoint needing the trio — is recorded on the epic but
+not yet expressed as `ENCOUNTER_ACCESS`; it belongs with clayton-6xu.9.12.

@@ -145,10 +145,19 @@ class Battler:
     #: ends when this reaches 1, and the Pokemon ACTS on that turn. So a rolled duration of 2
     #: costs one turn and 5 costs four. Zero whenever `status` is not SLEEP.
     sleep_turns: int = 0
-    #: Confusion is volatile, so it sits outside `status` -- it can coexist with paralysis, and
-    #: it is the one status a Pokemon can keep while still attacking (sec 13.4). Nothing in
-    #: Suicune's moveset inflicts it, so it stays False for the v1 fixture.
-    confused: bool = False
+    #: Turns of confusion left to run, counted the ROM's way: the counter is **decremented
+    #: before** the check, so a rolled duration of N gives N-1 turns that actually roll
+    #: (`sim.confusion_self_hit`). Zero means not confused.
+    #:
+    #: Volatile, so it sits outside `status` -- it coexists with paralysis, and it is the one
+    #: condition a Pokemon can keep while still attacking (sec 13.4).
+    #:
+    #: **A counter rather than the flag this used to be.** It was `confused: bool`, which was
+    #: honest while nothing inflicted it; Regigigas' Confuse Ray and Dizzy Punch are what need
+    #: the number, because the duration is rolled (`sim.CONFUSION_TURNS_*`) and the turn it wears
+    #: off spends no roll at all. `confused` survives as a read-only property so the interview
+    #: and the snapshot read unchanged.
+    confusion_turns: int = 0
     #: 1-based position in the hunt's configured party, and the number the ``S``, ``X`` and ``R``
     #: tokens name. **Stable** -- HGSS never reorders a party, so slot 1 is the first Pokemon in
     #: the hunt configuration for the whole run, whoever happens to be out and however often we
@@ -279,6 +288,17 @@ class Battler:
     def __post_init__(self):
         if self.hp is None:
             object.__setattr__(self, "hp", self.stats.get("hp", 0))
+
+    @property
+    def confused(self) -> bool:
+        """Whether a confusion counter is running.
+
+        Derived rather than stored: two fields that must agree is the drift this codebase keeps
+        finding, and `confusion_turns > 0` is the whole of it. Construct with
+        ``confusion_turns=N``; `replace(..., confused=True)` now raises, which is the loud
+        failure the rename wanted.
+        """
+        return self.confusion_turns > 0
 
     @property
     def max_hp(self) -> int:
@@ -418,7 +438,8 @@ class Battler:
                             or self.charging_slot is not None
                             or self.uproar_turns or self.drowsy_turns
                             or self.taunted_turns or self.identified
-                            or self.heal_block_turns or self.seeded):
+                            or self.heal_block_turns or self.seeded
+                            or self.confusion_turns):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
@@ -426,7 +447,7 @@ class Battler:
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
                            drowsy_turns=0, taunted_turns=0, identified=False,
-                           heal_block_turns=0, seeded=False)
+                           heal_block_turns=0, seeded=False, confusion_turns=0)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":
@@ -442,6 +463,27 @@ class Battler:
             return replace(self, status=status, sleep_turns=0)
         return replace(self, status=status,
                        sleep_turns=sleep_turns if status is Status.SLEEP else 0)
+
+    def tick_confusion(self) -> tuple["Battler", str]:
+        """Resolve a confused Battler's turn: ``(battler, "none" | "confused" | "snapped")``.
+
+        Three outcomes rather than `tick_sleep`'s two, because confusion has a wear-off event the
+        player must REPORT: a confused Pokemon can attack perfectly normally, so the move landing
+        says nothing about whether the confusion ended (`tokens.RESOLUTION_DETAIL`).
+
+        **The counter is decremented first and then tested**, which is the ROM's order
+        (battle_controller_player.c:2617-2620) and the reason a rolled duration of N gives N-1
+        turns that roll: the turn the counter reaches zero snaps out instead, and spends nothing.
+
+        ``"confused"`` means the caller still owes the ``& 1`` check -- this method spends no
+        rolls itself, exactly like `tick_sleep`.
+        """
+        if not self.confusion_turns:
+            return self, "none"
+        remaining = self.confusion_turns - 1
+        if remaining:
+            return replace(self, confusion_turns=remaining), "confused"
+        return replace(self, confusion_turns=0), "snapped"
 
     def tick_sleep(self) -> tuple["Battler", bool]:
         """Resolve a sleeping Battler's turn: ``(battler, acts)``.

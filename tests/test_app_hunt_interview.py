@@ -210,8 +210,18 @@ class TestAStatusFromASecondaryIsLiveMidTurn(unittest.TestCase):
         cls.html = INDEX.read_text()
 
     def test_the_page_reads_the_secondary_status(self):
-        self.assertIn("if (info.secondary_status && hrLanded(t.ours) && t.ours.secondary === true)",
+        """Matched without the trailing `)` because the condition now wraps: a Lum Berry on the
+        victim cures the secondary status the instant it lands, so this route has to consult
+        `status_cured_by_item` too."""
+        self.assertIn("if (info.secondary_status && hrLanded(t.ours) && t.ours.secondary === true",
                       self.html)
+
+    def test_a_cured_secondary_status_is_not_treated_as_live(self):
+        """Shaymin's Lum Berry. The status landed and was undone, so it does not settle the
+        target's half of the turn."""
+        block = self.html.split("function hrStatusWeJustApplied(){")[1].split("\n}")[0]
+        self.assertIn("!info.status_cured_by_item", block)
+        self.assertIn("if (info.status_cured_by_item) return null;", block)
 
     def test_it_waits_for_the_secondary_answer(self):
         """`secondary === true` and not merely truthy: undefined is "not asked yet", and guessing

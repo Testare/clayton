@@ -160,6 +160,12 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # Regigigas', and free in both senses: no proc roll, and nothing to take, because the plan
     # for that fight is to carry no held items at all.
     188: "Knock Off: damage, and it takes the defender's held item (Sticky Hold refuses it)",
+    # Regigigas' other two, and the only structurally new mechanic in the regi set: confusion ON
+    # US. The duration roll at application, the `& 1` check every turn it runs, and a second
+    # advance for the self-hit's damage variance. All three moduli divide 256, so none of them
+    # separates RTC-second siblings -- only Dizzy Punch's `% 100` proc does.
+    49: "Confuse Ray: the duration roll, the per-turn check, and the self-hit",
+    76: "Dizzy Punch: the 20% proc, and the confusion it lands ON US",
 }
 
 
@@ -234,7 +240,12 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     62: "lowers the target's Sp. Def by two (Fake Tears, Metal Sound)",
     65: "Reflect: halves physical damage, and a second one fails",
     67: "paralyzes (Thunder Wave)",
-    76: "may confuse (Signal Beam) -- the proc roll only; confusion ON THE TARGET is inert here",
+    # **This used to say "the proc roll only; confusion ON THE TARGET is inert here", and that
+    # was a live bug** (clayton-6xu.10.12). `subscript_confuse.s` reaches its ``_076`` label on
+    # the INDIRECT route too, and ``_076`` rolls `Random 3, 2` -- so a procced Signal Beam spent
+    # a duration advance the simulator did not, desynchronising every turn after it. Fixed by the
+    # Regigigas confusion work, which needed the same machinery pointed the other way.
+    76: "may confuse (Signal Beam): the proc roll, the duration roll, and the confusion itself",
     101: "False Swipe: damage that cannot take the target below 1 HP",
     106: "Mean Look: traps, and a second one fails",
     # Foresight and Odor Sleuth, and the first move of ours that changes the TYPE CHART. Listed
@@ -535,6 +546,12 @@ class MoveOutcome:
     #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
     #: what applies it -- only it knows which side that is.
     identifies: bool = False
+    #: Rolled confusion turns this move put on its DEFENDER, or 0. Aimed at the other side, like
+    #: `stat_drop` and `seeds`.
+    #:
+    #: A COUNT rather than a flag because the duration is rolled and the roll is an advance -- so
+    #: the cost of a confusing move is outcome-dependent, exactly as a sleeping move's is.
+    confuses: int = 0
     #: Knock Off connected, so the move's DEFENDER loses its held item. Aimed at the other side,
     #: like `stat_drop` and `seeds`.
     #:
@@ -886,6 +903,20 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     # answer rather than a curiosity: a Grass lead simply cannot be seeded.
     if move.effect == EFFECT_LEECH_SEED and (defender.seeded or "Grass" in defender.types):
         return True
+    # **Confuse Ray against a victim that cannot take it** -- already confused, holding Own
+    # Tempo, or behind a Safeguard. All three set `MOVE_STATUS_NO_MORE_WORK` on the DIRECT route
+    # (`subscript_confuse.s` ``_128``/``_141``/``_167``, all via ``_178``), so all three cost the
+    # turn what every other family here costs.
+    #
+    # Only the direct route. Reached as a secondary, the same three branches jump to ``_185`` and
+    # end -- the move still dealt its damage -- which is why Dizzy Punch asks
+    # `confusion_lands_on` in `execute_move` instead of failing here.
+    #
+    # Shield Dust is deliberately absent: it guards the INDIRECT route only, so it can never
+    # refuse a Confuse Ray.
+    if move.effect == EFFECT_CONFUSE_RAY and not confusion_lands_on(
+            defender, field, actor="M" if actor_side == "ours" else "E", indirect=False):
+        return True
     if field is None:
         return False
     if move.effect == EFFECT_RAIN_DANCE and field.rain_turns > 0:
@@ -1017,6 +1048,46 @@ EFFECT_KNOCK_OFF = 188
 #: Read with `Battler_IgnorableAbility`, so Mold Breaker would suppress it; nothing models Mold
 #: Breaker and no configured party has it.
 ABILITY_STICKY_HOLD = "sticky hold"
+
+#: Confusion's rolled duration: ``Random 3, 2`` in `subscript_confuse.s` ``_076``, and
+#: `BtlCmd_Random` does ``range += 1`` (battle_script.c:3200-3210) -- so it is
+#: ``(rand % 4) + 2``, i.e. **2 to 5**, not 2 to 4. One advance, spent when confusion lands.
+#:
+#: The counter is decremented BEFORE the check, so a duration of N gives N-1 turns that actually
+#: roll: the turn it reaches zero snaps out and spends nothing.
+CONFUSION_TURNS_MIN = 2
+CONFUSION_TURNS_SPAN = 4
+#: The per-turn check: ``BattleSystem_RandNext(battleSys) & 1``
+#: (battle_controller_player.c:2621). ODD lets the move through, EVEN is the self-hit.
+#:
+#: **Modulus 2, which divides 256** -- so by notes/seed_separation.md's rule this check is
+#: permanently BLIND to RTC-second siblings, as are the duration roll (``% 4``) and the self-hit's
+#: damage variance (``% 16``). Nothing in Regigigas' confusion kit separates siblings; only Dizzy
+#: Punch's ``% 100`` proc does.
+CONFUSION_CHECK_MODULUS = 2
+#: Confusion's self-hit: ``CALC_SELF_HIT(MOVE_STRUGGLE, 40)`` then
+#: `BattleSystem_CalcDamageVariance` (battle_controller_player.c:2632-2634). Struggle is PHYSICAL,
+#: and the macro passes the attacker as its own defender.
+CONFUSION_SELF_HIT_POWER = 40
+#: Own Tempo, which refuses confusion on BOTH of `subscript_confuse`'s paths -- `CheckAbility` for
+#: the held-item route and `CheckIgnorableAbility` for the move route. The party answer to
+#: Regigigas, and strictly better than a Lum Berry: permanent and not consumed.
+ABILITY_OWN_TEMPO = "own tempo"
+#: Shield Dust, which blocks a confusion arriving as an INDIRECT secondary (Dizzy Punch) and
+#: **not** a DIRECT one (Confuse Ray) -- `subscript_confuse.s` tests it only on the branch
+#: reached when `SIDE_EFFECT_TYPE_INDIRECT` is set.
+ABILITY_SHIELD_DUST = "shield dust"
+#: Confuse Ray, Regigigas' slot 3. Accuracy 100 and a DIRECT side effect, so it spends an
+#: accuracy roll and no proc roll, then the duration roll -- two advances when it lands.
+EFFECT_CONFUSE_RAY = 49
+#: Dizzy Punch, Regigigas' slot 1. 20% confusion as an INDIRECT secondary, so one `% 100` proc
+#: roll and then the duration roll only if it procs.
+#:
+#: **The two routes differ in what a refusal costs**, which is why they are modelled apart: every
+#: branch of `subscript_confuse.s` that refuses a DIRECT confusion sets `MOVE_STATUS_NO_MORE_WORK`
+#: (a `will_fail` family), while the same branches reached INDIRECTLY jump straight to ``_185``
+#: and end -- the move still dealt its damage and nothing extra was spent.
+EFFECT_DIZZY_PUNCH = 76
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -1526,6 +1597,10 @@ _INERT_ABILITIES = frozenset({
     "insomnia", "vital spirit", "limber", "water veil", "immunity", "magma armor",
     "inner focus", "shield dust", "clear body", "white smoke", "hyper cutter", "soundproof",
     "super luck", "sniper", "scrappy",
+    # Regigigas', and inert in the sense this set means: Slow Start halves its OWN Attack and
+    # Speed and does nothing whatsoever to anybody who touches it. Fully modelled elsewhere
+    # (`slow_started`), which is the opposite of the "unknown, so assume capable" default.
+    "slow start",
     # Shaymin's, and a textbook case of this set's purpose: Natural Cure heals its holder's
     # status when it switches OUT, which a wild target never does -- so it is doubly inert here.
     # Without this row Shaymin answered "yes, it can paralyze us" on the strength of an ability
@@ -2197,7 +2272,7 @@ def cure_with_held_item(battler: Battler) -> Battler:
     if item_key(battler.held_item) not in STATUS_RESTORE_ITEMS:
         return battler
     cured = battler.with_status(Status.NONE)
-    return replace(cured, confused=False, nightmare=False, held_item="")
+    return replace(cured, confusion_turns=0, nightmare=False, held_item="")
 
 
 def leech_seed_tick(battler: Battler) -> int:
@@ -2387,7 +2462,7 @@ def _future_sight_damage(move: Move, attacker: Battler, defender: Battler, *,
 
 def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                  actor: str, slot: int, net_stage: int | None = None,
-                 field=None) -> tuple[int, MoveOutcome]:
+                 field=None, resolved: str = "") -> tuple[int, MoveOutcome]:
     """Execute one move against the RNG, returning (new rng, outcome).
 
     Named ``execute_move`` rather than ``resolve_move`` so it cannot be confused with — or
@@ -2399,7 +2474,17 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     used = 0
     if net_stage is None:
         net_stage = accuracy_net_stage(attacker, defender)
-    slot_token = tok.our_move_token(slot) if actor == "M" else tok.target_move_token(slot)
+    # `resolved` carries a status that WORE OFF on the way in, which the grammar folds into the
+    # move's own token rather than emitting separately: `Mscfz2` is "snapped out of confusion,
+    # then used move 2" (`tokens.resolved_token`). The slot is part of the token because the move
+    # did happen, so the usual hit/crit/miss detail follows it as it would after a plain `M2`.
+    #
+    # Confusion is the only member, and it earns the mechanism: sleep and freeze need no wear-off
+    # marker because the move happening at all proves the status ended, while a confused Pokemon
+    # attacks perfectly normally.
+    slot_token = (tok.resolved_token(actor, resolved, slot) if resolved
+                  else tok.our_move_token(slot) if actor == "M"
+                  else tok.target_move_token(slot))
     parts: list[str] = [slot_token]
 
     if move.effect in SEMI_INVULNERABLE_EFFECTS and attacker.charging_slot != slot:
@@ -2503,6 +2588,16 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             rng, duration_roll = advance(rng)
             used += 1
             sleep_turns = SLEEP_DURATION_MIN + duration_roll % SLEEP_DURATION_SPAN
+        confuse_turns = 0
+        if move.effect == EFFECT_CONFUSE_RAY:
+            # The duration roll, and it lands here for the same reason sleep's does: the status
+            # is going on, and `subscript_confuse.s` ``_076`` rolls `Random 3, 2` as it sets the
+            # volatile. Every case that would have refused it is a `will_fail` family above, so
+            # reaching here means the confusion really lands.
+            rng, duration_roll = advance(rng)
+            used += 1
+            confuse_turns = (CONFUSION_TURNS_MIN
+                             + duration_roll % CONFUSION_TURNS_SPAN)
         taunt_turns = 0
         if move.effect == EFFECT_TAUNT:
             # The same shape as sleep's: a hidden duration, rolled only once every earlier check
@@ -2560,6 +2655,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             self_stat_raise=PRIMARY_SELF_RAISES.get(move.effect),
             # Curse. Signed, and never blocked -- see `self_stat_change`.
             self_stat_change=PRIMARY_SELF_CHANGES.get(move.effect),
+            confuses=confuse_turns,
             drop_blocked_by=blocked)
 
     # Damaging.
@@ -2717,6 +2813,20 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         if secondary:
             parts.append(tok.SECONDARY)
 
+    # A secondary confusion's duration roll -- Dizzy Punch's. After the proc roll because the
+    # ROM rolls it inside the subscript the proc selects, and BEFORE the contact ability for the
+    # same reason the secondary itself is.
+    #
+    # **Only when the status actually goes on.** Reached indirectly, every refusal in
+    # `subscript_confuse.s` jumps to ``_185`` without rolling, so an Own Tempo or already-confused
+    # victim costs nothing here -- unlike the direct route, where the same cases are `will_fail`.
+    confuse_turns = 0
+    if (secondary and not ineffective and move.effect == EFFECT_DIZZY_PUNCH
+            and confusion_lands_on(defender, field, actor=actor, indirect=True)):
+        rng, duration_roll = advance(rng)
+        used += 1
+        confuse_turns = CONFUSION_TURNS_MIN + duration_roll % CONFUSION_TURNS_SPAN
+
     # The defender's contact abilities. Static is the only one any configured party has, and it is
     # Ampharos's sole ability, so it cannot be opted out of.
     #
@@ -2764,6 +2874,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                             damage=dealt, secondary=secondary,
                             self_stat_change=self_change,
                             knocks_off_item=knocks_off,
+                            confuses=confuse_turns,
                             attacker_status=attacker_status,
                             starts_uproar=starts_uproar,
                             # The charged move has fired, so the lock and the vanish come off
@@ -3300,6 +3411,85 @@ def opening_rng(seed: int, config: HuntConfig) -> int:
     for _ in range(config.battle_start_advances):
         rng = advance_rng(rng)
     return rng
+
+
+def confusion_blocked_by(victim: Battler, *, indirect: bool) -> str | None:
+    """What refuses a confusion aimed at `victim`, or None. Reads `subscript_confuse.s` in order.
+
+    `indirect` is whether it arrives as a secondary (Dizzy Punch) rather than as the move's whole
+    point (Confuse Ray) -- the ROM branches on `SIDE_EFFECT_TYPE_INDIRECT` and only that branch
+    consults Shield Dust, so the two routes really do differ in what stops them.
+
+    Own Tempo is checked on BOTH routes (`CheckAbility` on one, `CheckIgnorableAbility` on the
+    other) and is the party answer here: permanent, not consumed, and strictly better than a Lum
+    Berry, which would cure one confusion and then be gone.
+
+    Safeguard is read from the victim's own side. Already-confused is NOT here, because it is a
+    `will_fail` family -- the ROM's ``_128`` branch is a refusal of the MOVE rather than of the
+    status, and it is reported differently.
+    """
+    ability = (victim.ability or "").strip().lower()
+    if ability == ABILITY_OWN_TEMPO:
+        return "Own Tempo"
+    if indirect and ability == ABILITY_SHIELD_DUST:
+        return "Shield Dust"
+    return None
+
+
+def confusion_lands_on(victim: Battler, field=None, *, actor: str,
+                       indirect: bool) -> bool:
+    """Whether a confusion aimed at `victim` actually goes on -- the three refusals in one place.
+
+    Already confused (`subscript_confuse.s` ``_128``), an ability that refuses it (``_141`` /
+    ``_101``), or the victim's own Safeguard (``_167``). One predicate because the DIRECT route
+    asks the same three questions through `will_fail` and the INDIRECT route asks them here, and
+    three refusals written twice is three chances to drift.
+
+    `actor` is who is ATTACKING, so the Safeguard read is the defender's side: `safeguard_turns`
+    is the target's and `our_safeguard_turns` is ours (the convention `will_fail` already uses).
+    """
+    if victim.confused:
+        return False
+    if confusion_blocked_by(victim, indirect=indirect) is not None:
+        return False
+    attr = "our_safeguard_turns" if actor == "E" else "safeguard_turns"
+    return getattr(field, attr, 0) <= 0
+
+
+def confusion_self_hit(battler: Battler, *, damage_roll: int) -> int:
+    """The damage a confused `battler` does to itself, in the ROM's arithmetic order.
+
+    ``CALC_SELF_HIT(MOVE_STRUGGLE, 40)`` then `BattleSystem_CalcDamageVariance`
+    (battle_controller_player.c:2632-2634). Three things about that macro decide the formula, and
+    all three are easy to get wrong:
+
+    * **It passes the attacker as its own defender**, so this is our Attack against our own
+      Defence, with our OWN stages on both ends. A +2 Attack of ours makes confusion hurt more.
+    * **It passes `sideConditions = 0` and `fieldConditions = 0`**, so neither Reflect nor weather
+      touches it -- a confusion self-hit in the rain is the same number as one in the clear.
+    * **`BattleSystem_ApplyTypeChart` is never called**, so there is no STAB and no type chart.
+      STAB lives at battle_lib.c:2593, inside that function. Confusion damage is typeless, which
+      is the classic Gen 4 behaviour and here it is the *reason* rather than the folklore.
+
+    The arithmetic is `BattleSystem_CalcMoveDamage`'s physical branch (battle_lib.c:6947-6980),
+    which truncates at every step, then ``+ 2``, then the variance ``* (100 - rand % 16) / 100``
+    with a floor of 1.
+
+    Burn halves it, and **inside** the formula rather than on the Attack stat -- the ROM divides
+    the damage at :6977, after the stage and divisor steps. That is a different truncation point
+    from `_attacker_side`'s burn halving, so it is done here the ROM's way rather than by reusing
+    that path.
+    """
+    attack = apply_stage(battler.stats["atk"], battler.atk_stage)
+    defence = apply_stage(battler.stats["def"], battler.def_stage)
+    damage = attack * CONFUSION_SELF_HIT_POWER
+    damage *= battler.level * 2 // 5 + 2
+    damage //= max(1, defence)
+    damage //= 50
+    if battler.status is Status.BURN:
+        damage //= BURN_ATTACK_DIVISOR
+    damage += 2
+    return max(1, damage * (100 - damage_roll % 16) // 100)
 
 
 def slow_started(battler: Battler, turn: int | None) -> bool:
@@ -3847,6 +4037,25 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             move_failed["M"] = True
             parts.append(tok.taunted_token("M", slot))
             return False
+        # Confusion, state 10 of the before-move walk -- after Heal Block and **before**
+        # paralysis (battle_controller_player.c:2378-2392). Order matters for the usual reason:
+        # the self-hit returns `CHECK_STATUS_DISRUPT_MOVE`, which stops the walk, so a confused
+        # AND paralyzed actor that hurts itself never spends the paralysis roll.
+        new.ours, confusion = new.ours.tick_confusion()
+        if confusion == "confused":
+            # The `& 1` check. One advance, and BLIND to RTC-second siblings -- modulus 2
+            # divides 256 (`CONFUSION_CHECK_MODULUS`).
+            rng, roll = advance(rng)
+            new.rng_offset += 1
+            if roll % CONFUSION_CHECK_MODULUS == 0:
+                # Hurt itself: a SECOND advance for the damage variance, and the move is lost.
+                rng, variance = advance(rng)
+                new.rng_offset += 1
+                new.ours = new.ours.with_hp(
+                    new.ours.hp - confusion_self_hit(new.ours, damage_roll=variance))
+                move_failed["M"] = True
+                parts.append(tok.prevented_token("M", "cfz"))
+                return False
         if new.ours.status is Status.PARALYSIS:
             # R7 residual: a paralysis check costs one roll, as metronome_compass models it.
             rng, roll = advance(rng)
@@ -3856,7 +4065,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 parts.append(tok.prevented_token("M", "par"))
                 return False
         rng, outcome = execute_move(
-            rng, move, new.ours, new.target, actor="M", slot=slot, field=new)
+            rng, move, new.ours, new.target, actor="M", slot=slot, field=new,
+            resolved="scfz" if confusion == "snapped" else "")
         new.rng_offset += outcome.rolls
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
         # A Choice item locks its holder into the first move it uses, and stays locked until the
@@ -3894,6 +4104,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # poor idea if it were not: the only target that holds anything is Shaymin, whose
             # Lum Berry we WANT it to spend on a status rather than have knocked away for free.
             new.target = replace(new.target, held_item="")
+        if outcome.confuses:
+            # Our Signal Beam's 20%, which is the ONE reachable confusion of ours -- effect 76 is
+            # in `MODELLED_OUR_EFFECTS`. The duration roll it spends was previously thrown away
+            # (clayton-6xu.10.12), which is the bug this machinery fixes in passing.
+            new.target = replace(new.target, confusion_turns=outcome.confuses)
         if outcome.seeds:
             # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 84, so a Leech Seed of
             # ours is refused at the point of use. Wired for the same reason Nightmare's mirror
@@ -4081,6 +4296,25 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target = broken_charge(new.target)
             parts.append(tok.taunted_token("E", target_slot))
             return broke
+        # Confusion, state 10 of the before-move walk -- after Heal Block and **before**
+        # paralysis (battle_controller_player.c:2378-2392). Order matters for the usual reason:
+        # the self-hit returns `CHECK_STATUS_DISRUPT_MOVE`, which stops the walk, so a confused
+        # AND paralyzed actor that hurts itself never spends the paralysis roll.
+        new.target, confusion = new.target.tick_confusion()
+        if confusion == "confused":
+            # The `& 1` check. One advance, and BLIND to RTC-second siblings -- modulus 2
+            # divides 256 (`CONFUSION_CHECK_MODULUS`).
+            rng, roll = advance(rng)
+            new.rng_offset += 1
+            if roll % CONFUSION_CHECK_MODULUS == 0:
+                # Hurt itself: a SECOND advance for the damage variance, and the move is lost.
+                rng, variance = advance(rng)
+                new.rng_offset += 1
+                new.target = new.target.with_hp(
+                    new.target.hp - confusion_self_hit(new.target, damage_roll=variance))
+                move_failed["E"] = True
+                parts.append(tok.prevented_token("E", "cfz"))
+                return False
         if new.target.status is Status.PARALYSIS:
             rng, roll = advance(rng)
             new.rng_offset += 1
@@ -4101,7 +4335,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         was_locked = was_charging or (new.target.uproar_turns > 0
                                       and new.target.uproar_slot == target_slot)
         rng, outcome = execute_move(
-            rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new)
+            rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new,
+            resolved="scfz" if confusion == "snapped" else "")
         new.rng_offset += outcome.rolls
         # **PP is spent on the charge turn only.** The ROM marks `ppDecremented` TRUE for a
         # battler that cannot pick a command [battle_controller_player.c:334-336], so the turn
@@ -4157,6 +4392,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # to plain 20 BP damage (`EFFECT_KNOCK_OFF`). Modelled so that a player who brings
             # one anyway gets a correct simulation rather than a silently wrong one.
             new.ours = replace(new.ours, held_item="")
+        if outcome.confuses:
+            # Regigigas' Confuse Ray and Dizzy Punch, and the reachable direction.
+            new.ours = replace(new.ours, confusion_turns=outcome.confuses)
         if outcome.seeds:
             # Shaymin's, and the reachable direction. The drain itself is not here -- it is an
             # end-of-turn residual, applied in the block below next to Leftovers and the burn

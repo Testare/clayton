@@ -373,7 +373,7 @@ class TestTheLumBerry(unittest.TestCase):
         """`itemUseParams` sets `healConfusion` alongside the five non-volatile statuses, which is
         why this is modelled as "cures whatever it finds". Nothing inflicts confusion yet; the
         half is here because the ROM's case is one case."""
-        confused = replace(_shaymin(), confused=True)
+        confused = replace(_shaymin(), confusion_turns=4)
         cured = cure_with_held_item(confused)
         self.assertFalse(cured.confused)
         self.assertEqual(cured.held_item, "")

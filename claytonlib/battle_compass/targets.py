@@ -287,6 +287,37 @@ ENCOUNTERS: dict[str, Encounter] = {
     "registeel": Encounter(
         "registeel", 30, ("Stomp", "Metal Claw", "Curse", "Superpower"),
         games=("platinum",), where="Iron Ruins"),
+    # Platinum's Regigigas, and the only **Lv1** encounter on this table.
+    # `StartLegendaryBattle SPECIES_REGIGIGAS, 1` (scripts_snowpoint_temple_b5f.s:51).
+    #
+    # Seven moves are learnable at 1, so three are shifted out: Fire Punch, Ice Punch and Thunder
+    # Punch go, leaving Dizzy Punch(1), Knock Off(1), Confuse Ray(1), Foresight(1) in learn
+    # order. Losing the elemental punches is pure luck in our favour -- they are its only real
+    # damage.
+    #
+    # Lv1 is what makes this target strange rather than hard:
+    #
+    # * **Max HP is exactly 13 for every IV.** (2*110 + IV) * 1 / 100 floors to 2 throughout, so
+    #   unlike every other target there is no HP-IV uncertainty at ANY HP and the catch maths is
+    #   exact rather than a range. False Swipe reaches 1 HP in one hit.
+    # * **Nest Ball is x3.9 here and x1 everywhere else on this table** -- `balls._nest` is
+    #   `max(40 - level, BALL_POKE)`. It beats the Dusk Ball's x3.5, and it is the one
+    #   target-specific ball win in the whole Platinum set.
+    # * **Slow Start halves its Attack and Speed for five turns**, which hands us the
+    #   no-speed-tie guarantee for free: at 3 effective Speed it cannot tie anything we bring, so
+    #   no paralysis is needed to buy what sec 4.2 normally pays for.
+    #
+    # `ability` is empty because Slow Start is slot 0 of the species row.
+    #
+    # **Bring no held items to this fight.** Knock Off takes them, and nothing wants one: its
+    # Attack is about 4 after Slow Start, the chip phase is one turn long, and an
+    # accuracy-raising item would weaken the only separator this target offers -- our own sub-100
+    # move, since its whole kit is accuracy 100 or 0 and its confusion, duration and
+    # damage-variance checks all have moduli that divide 256. The one candidate was a Lum Berry
+    # against Confuse Ray, and **Own Tempo dominates it**: permanent and not consumed.
+    "regigigas": Encounter(
+        "regigigas", 1, ("Dizzy Punch", "Knock Off", "Confuse Ray", "Foresight"),
+        games=("platinum",), where="Snowpoint Temple"),
     # Platinum's Flower Paradise Shaymin, and the gentlest static on this table.
     # `StartFatefulEncounter SPECIES_SHAYMIN, 30` (res/field/scripts/scripts_flower_paradise.s:46).
     #
