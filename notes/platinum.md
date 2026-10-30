@@ -2170,3 +2170,88 @@ mechanic in the whole set), and **Knock Off** (clayton-6xu.10.6, which takes our
 > touching Speed. Knock Off still matters — Leftovers stops ticking, an accuracy item stops
 > applying, a Silk Scarf's 20% comes off our chip damage — but turn order is at stake only if the
 > party chose a Speed-affecting item, which is a decision rather than a mandate.
+
+---
+
+## 23. As built — Regigigas in pieces: Slow Start and Knock Off (clayton-6xu.10.5, .6)
+
+Two of the three Regigigas blockers are down. Confusion (clayton-6xu.10.4) is the remaining one,
+and until it lands there is deliberately **no `ENCOUNTERS` row** — `unsupported_moves` would
+refuse it, which is the check doing its job.
+
+### 23.1 The design decision that shrank Knock Off: no held items
+
+**Testare's call: bring nothing to the Regigigas fight.** That converts the hardest-looking piece
+of this target into a configuration rule, and the ROM says the trade is clean —
+`BtlCmd_TryKnockOff` (`battle_script.c:6608-6634`) takes its `else` branch when the defender
+holds nothing: no message, no state change, no `Random` on any path. Combined with the `ON_HIT`
+flag (no proc roll), **Knock Off against an item-less lead is plain 20 BP damage.**
+
+Checked rather than assumed, because "we probably don't need items" is the kind of claim worth
+verifying:
+
+* **Survivability.** A Lv1 Regigigas' Attack is about 4 once Slow Start halves it, firing a 70 BP
+  Dizzy Punch and a 20 BP Knock Off. Measured here at ≤5 damage against an ordinary Lv50 lead.
+  Leftovers would be answering a threat that does not exist.
+* **Chip.** False Swipe reaches 1 HP on a 13 HP target in **one hit**, so a type-enhancing item
+  buys nothing — the chip phase is one turn long.
+* **Accuracy.** An accuracy-raising item would make our own sub-100 move *less* useful as a
+  second-sibling separator — and that move is the only separation this target offers, since
+  everything in its own kit is accuracy 100 or 0 and its confusion, duration and damage-variance
+  checks all have moduli that divide 256. So an item here is actively counterproductive.
+* The one real candidate was a **Lum Berry against Confuse Ray**, and **Own Tempo dominates it**:
+  permanent, not consumed, and it refuses both of `subscript_confuse`'s paths.
+
+The removal is modelled anyway — it is two lines, and a player who carries an item regardless
+should get a correct simulation rather than a silently wrong one. Tested that the roll count is
+**identical** with and without an item, which is the statement that matters: carrying nothing
+removes a consequence, not a cost.
+
+> **And it answered the bead's open question.** `TryKnockOff` tests **Sticky Hold** in the same
+> function that reads the item, *before* reading it. So Sticky Hold is a second way out — and a
+> worse one than carrying nothing.
+
+### 23.2 Slow Start, and a Gen-4 trap that turned out not to be one
+
+`slow start` was in `UNMODELLED_ATTACKER_ABILITIES`, so `unsupported_attacker_reason` refused
+Regigigas outright at `sim.py` and `solver.py` — which made this the **gate** on the target
+rather than a refinement.
+
+Two integer halvings on one condition, `totalTurns - slowStartTurnNumber < 5`. `slowStartTurnNumber`
+is stamped when the holder enters and a wild target is out from the start, so it is 0 for every
+reachable case and the condition reduces to `turn < 5`. `BattleState.turn` is the ROM's
+`totalTurns` — the same figure the Timer Ball already reads.
+
+**The trap that wasn't.** `battle_lib.c:6713` halves `attackStat`, and Huge Power sits three
+lines above doing `attackStat * 2` — a pairing that is a known Gen-4 quirk area, so it looked
+like Slow Start might halve Sp. Atk for a special move. It does not: `attackStat` is assigned
+from `BATTLEMON_ATTACK` at `:6635` and **`spAttackStat` is a separate `u16`** declared three
+lines earlier. Physical Attack only, exactly as documented. Moot for Regigigas — both its attacks
+are physical — and pinned with a test because the next reader will wonder the same thing.
+
+**Order: after paralysis, not before.** Quick Feet and paralysis are one if/else at `:1257-1261`
+and the Slow Start halving is the next statement at `:1263`. Each step truncates, so this is
+recorded even though `spe / 4 / 2` and `spe / 2 / 4` agree on these figures — the next ability
+added to that chain will depend on it.
+
+`turn=None` means "do not apply", a documented escape hatch for an advisory caller asking about a
+Pokemon outside any turn. Every call site inside a simulated turn passes the turn.
+
+> **What it buys us is a guarantee, not a cost.** A Lv1 Regigigas at 3 effective Speed cannot tie
+> anything we would bring, so the no-speed-tie contract (§4.2) holds for **free** here — no
+> paralysis needed to buy it — and ties stay out of the search entirely.
+
+### 23.3 Measured in passing: the max HP is pinned
+
+`(2 * 110 + IV) * 1 / 100` floors to 2 for every IV 0–31, so **Regigigas' max HP is exactly 13,
+whatever its spread**. That is stronger than `catch_value`'s usual note that a catch-rate-3
+target lands on `a = 2` at 1 HP for any max HP ≥ 2: here there is no HP-IV uncertainty at *any*
+HP, so the ball-and-HP readout (clayton-6xu.9.4) is exact for this target rather than a range.
+
+### 23.4 Still owed
+
+**Confusion aimed at us** (clayton-6xu.10.4) is the last blocker, and the only structurally new
+mechanic in the whole regi set: a counter, a per-turn `& 1` check costing one advance, and a
+self-hit costing a second for its damage variance. `Battler.confused` already exists as a field
+documented as never set by anything — that is what it is for. Once it lands, the row
+(clayton-6xu.10.7) and the no-held-items advice both have somewhere to attach.

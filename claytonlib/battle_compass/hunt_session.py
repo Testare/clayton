@@ -1487,7 +1487,8 @@ class HuntSession:
         against the moves both sides actually have rather than on Speed alone.
         """
         state = next(iter(self._session.states.values()))
-        if effective_speed(state.target) > effective_speed(state.ours):
+        if (effective_speed(state.target, state.turn)
+                > effective_speed(state.ours, state.turn)):
             return True
         theirs = [m.priority for slot in range(len(state.target.moves))
                   if (m := state.target.move(slot)) is not None]
@@ -2027,7 +2028,8 @@ class HuntSession:
         advice the player may not read.
         """
         state = next(iter(self._session.states.values()))
-        we_first = effective_speed(state.ours) > effective_speed(state.target)
+        we_first = (effective_speed(state.ours, state.turn)
+                    > effective_speed(state.target, state.turn))
         floor = self.danger_floor
         floor_weather = self.danger_floor_if_weather
         seed = self.identified
@@ -2101,7 +2103,7 @@ class HuntSession:
                      "ability": state.ours.ability,
                      "held_item": state.ours.held_item,
                      "burn_tick": _burn_tick_of(state.ours),
-                     "effective_speed": effective_speed(state.ours),
+                     "effective_speed": effective_speed(state.ours, state.turn),
                      "level": state.ours.level,
                      "types": list(state.ours.types),
                      "stats": dict(state.ours.stats),
@@ -2116,7 +2118,7 @@ class HuntSession:
                        "hp_range": self.hp_range("target"),
                        "ability": state.target.ability,
                        "held_item": state.target.held_item,
-                       "effective_speed": effective_speed(state.target),
+                       "effective_speed": effective_speed(state.target, state.turn),
                        "level": state.target.level,
                        "types": list(state.target.types),
                        # The full spread, for the popup that lets the player check it against the

@@ -300,7 +300,7 @@ _WEATHER_MODIFIERS: dict[str, dict[str, tuple[int, int]]] = {
 #: unsound, not merely imprecise.
 UNMODELLED_ATTACKER_ABILITIES = frozenset({
     "huge power", "pure power", "hustle", "guts", "blaze", "torrent", "overgrow", "swarm",
-    "sniper", "tinted lens", "rivalry", "slow start", "iron fist", "reckless", "sheer force",
+    "sniper", "tinted lens", "rivalry", "iron fist", "reckless", "sheer force",
     "adaptability", "mold breaker",
 })
 
@@ -323,6 +323,17 @@ UNMODELLED_DEFENDER_ABILITIES = frozenset({
 #: Both, for a caller that wants "any ability that touches damage".
 UNMODELLED_DAMAGE_ABILITIES = UNMODELLED_ATTACKER_ABILITIES | UNMODELLED_DEFENDER_ABILITIES
 
+#: **Slow Start left this set when Regigigas arrived**, and it is in neither UNMODELLED set now
+#: for the same reason Levitate is in neither: it is fully modelled. It halves physical Attack and
+#: Speed for five turns and does nothing else -- `battle_lib.c:6713` divides `attackStat`, which
+#: is assigned from `BATTLEMON_ATTACK` at :6635 and is a SEPARATE variable from `spAttackStat`, so
+#: special damage is untouched. The Speed half is `battle_lib.c:1263`.
+#:
+#: It is not modelled HERE, though, because the condition is a TURN COUNT
+#: (``totalTurns - slowStartTurnNumber < 5``) and this module has no notion of a turn. The
+#: halving is applied where the turn is in scope -- `battle_compass.sim._attacker_side` and
+#: `effective_speed` -- which is also where burn's identical halving already lives.
+#:
 #: Levitate is in NEITHER set, because it is fully modelled: in Gen 4 it grants immunity to
 #: Ground moves and does nothing else whatsoever. So it is a type rule, not an unknown
 #: multiplier -- see `_levitates`. Treating it as unmodelled was the bug above.

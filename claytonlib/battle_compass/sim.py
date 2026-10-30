@@ -157,6 +157,9 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     109: "Curse, non-Ghost user: -1 Speed / +1 Atk / +1 Def on itself, for zero rolls",
     182: "Superpower: damage plus a guaranteed -1 Atk / -1 Def on ITSELF, also for zero rolls",
     139: "Metal Claw: damage plus a 10% +1 Atk on itself (`SECONDARY_SELF_CHANGES`)",
+    # Regigigas', and free in both senses: no proc roll, and nothing to take, because the plan
+    # for that fight is to carry no held items at all.
+    188: "Knock Off: damage, and it takes the defender's held item (Sticky Hold refuses it)",
 }
 
 
@@ -532,6 +535,12 @@ class MoveOutcome:
     #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
     #: what applies it -- only it knows which side that is.
     identifies: bool = False
+    #: Knock Off connected, so the move's DEFENDER loses its held item. Aimed at the other side,
+    #: like `stat_drop` and `seeds`.
+    #:
+    #: False whenever the defender held nothing or has Sticky Hold -- `execute_move` resolves
+    #: both, so `simulate_turn` only has to clear the field.
+    knocks_off_item: bool = False
     #: A Leech Seed landed, so the move's DEFENDER is now seeded. Aimed at the other side, like
     #: `stat_drop` and `identifies`, so `simulate_turn` is what applies it -- only it knows which
     #: side that is.
@@ -938,6 +947,25 @@ EFFECT_LOWER_EVASION = 24
 #: Burn halves the holder's physical Attack [Gen 4]. Applied to the stat before the stage, which
 #: is where `CalcMoveDamage` reads it.
 BURN_ATTACK_DIVISOR = 2
+#: Slow Start, Regigigas' and nothing else's. It halves physical Attack and Speed while
+#: ``totalTurns - slowStartTurnNumber < 5`` (battle_lib.c:6709-6714 and :1263-1265).
+#:
+#: `slowStartTurnNumber` is stamped when the holder enters, and a wild target is out from the
+#: start, so for every reachable case it is 0 and the condition is simply ``turn < 5`` -- the
+#: first five turns. `BattleState.turn` is the ROM's `totalTurns`, which is the same figure the
+#: Timer Ball reads (`battle.balls.ThrowContext.turn`).
+#:
+#: It halves the PHYSICAL Attack only: `attackStat` comes from `BATTLEMON_ATTACK` and
+#: `spAttackStat` is a separate variable, so a special attacker is untouched. Moot for Regigigas,
+#: whose only two attacks are physical, and worth pinning anyway because Huge Power sits three
+#: lines above with the same shape and the pair is a known Gen-4 trap.
+#:
+#: **What it buys us is a guarantee rather than a cost**: a Lv1 Regigigas with Speed halved
+#: cannot tie anything we would bring, so the no-speed-tie contract holds for free and ties stay
+#: out of the search entirely.
+ABILITY_SLOW_START = "slow start"
+SLOW_START_TURNS = 5
+SLOW_START_DIVISOR = 2
 #: Burn's end-of-turn tick: max HP / 8, rounded down, and never less than 1.
 BURN_TICK_DIVISOR = 8
 #: Leftovers' end-of-turn recovery: max HP / 16, by the same floor-but-never-zero rule as the
@@ -968,6 +996,27 @@ ABILITY_MAGIC_GUARD = "magic guard"
 #: path -- `BtlCmd_WeatherHPRecovery` (battle_script.c:5966-5979) is pure arithmetic on the
 #: user's max HP.
 EFFECT_SYNTHESIS = 132
+#: Knock Off, Regigigas' slot 2. 20 BP Dark at 100 accuracy, indirect with
+#: `MOVE_SIDE_EFFECT_ON_HIT`, so it returns from the first branch of
+#: `BattleSystem_TriggerSecondaryEffect` and spends NO proc roll.
+#:
+#: **The Regigigas plan brings no held items at all**, which makes this move plain damage: with
+#: no item to take, `BtlCmd_TryKnockOff` (battle_script.c:6608-6634) falls to its `else` branch
+#: and jumps past everything -- no message, no state change, and no `Random` on any path. The
+#: removal is modelled anyway, because a player who carries one regardless should get a correct
+#: simulation rather than a silently wrong one.
+#:
+#: Items are unnecessary here rather than merely risky: a Lv1 Regigigas' Attack is about 4 once
+#: Slow Start halves it, False Swipe reaches 1 HP on a 13 HP target in one hit, and an
+#: accuracy-raising item would actively WEAKEN the one separator this target offers (our own
+#: sub-100 move -- everything in its kit is accuracy 100 or 0).
+EFFECT_KNOCK_OFF = 188
+#: Sticky Hold, which refuses Knock Off outright -- the ROM tests it right here, in the same
+#: function, before looking at the item. A second way out, and a worse one than carrying nothing.
+#:
+#: Read with `Battler_IgnorableAbility`, so Mold Breaker would suppress it; nothing models Mold
+#: Breaker and no configured party has it.
+ABILITY_STICKY_HOLD = "sticky hold"
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -2254,7 +2303,7 @@ def screen_turns_for(held_item: str) -> int:
     return screen_turns(held_item)
 
 
-def _attacker_side(battler: Battler) -> Attacker:
+def _attacker_side(battler: Battler, turn: int | None = None) -> Attacker:
     """`battler` as `battle.damage` wants the attacking side.
 
     Pulled out of `execute_move` so that Future Sight, which banks its damage through a different
@@ -2269,6 +2318,13 @@ def _attacker_side(battler: Battler) -> Attacker:
     attack = battler.stats["atk"]
     if battler.status is Status.BURN:
         attack = max(1, attack // BURN_ATTACK_DIVISOR)
+    if slow_started(battler, turn):
+        # Slow Start, and the PHYSICAL attack only -- `spAttackStat` is a separate variable in
+        # the ROM, so special damage is untouched (`ABILITY_SLOW_START`).
+        #
+        # Order against burn's halving above is unverifiable and does not matter: both are
+        # floor-division by 2, and floor division by the same divisor commutes.
+        attack = max(1, attack // SLOW_START_DIVISOR)
     return Attacker(
         level=battler.level, attack=attack,
         special_attack=battler.stats["spa"], types=battler.types,
@@ -2316,7 +2372,7 @@ def _future_sight_damage(move: Move, attacker: Battler, defender: Battler, *,
     straight through. Light Screen is the one that can matter, Future Sight being special;
     Psychic appears in no weather table, so rain is along for completeness.
     """
-    attacker_side = _attacker_side(attacker)
+    attacker_side = _attacker_side(attacker, getattr(field, "turn", None))
     if (unsupported_reason(move, power_known=False) is not None
             or unsupported_attacker_reason(attacker_side) is not None):
         return 0
@@ -2605,7 +2661,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     #
     # Burn halves the holder's physical Attack, and that matters in both directions: it is also
     # how many more False Swipes a burned Smeargle needs before the target reaches 1 HP.
-    attacker_side = _attacker_side(attacker)
+    attacker_side = _attacker_side(attacker, getattr(field, "turn", None))
     base_power = variable_base_power(move, defender)
     if (unsupported_reason(move, power_known=base_power is not None) is None
             and unsupported_attacker_reason(attacker_side) is None):
@@ -2697,9 +2753,17 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     self_change = None if ineffective else ON_HIT_SELF_CHANGES.get(move.effect)
     if secondary and not ineffective:
         self_change = SECONDARY_SELF_CHANGES.get(move.effect, self_change)
+    # Knock Off, and it is an ON_HIT secondary like Superpower's -- no proc roll, and nothing at
+    # all to spend when there is no item to take. Sticky Hold refuses it in the same ROM function
+    # that reads the item, before reading it.
+    knocks_off = (move.effect == EFFECT_KNOCK_OFF
+                  and not ineffective
+                  and bool(defender.held_item)
+                  and (defender.ability or "").strip().lower() != ABILITY_STICKY_HOLD)
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=not ineffective,
                             damage=dealt, secondary=secondary,
                             self_stat_change=self_change,
+                            knocks_off_item=knocks_off,
                             attacker_status=attacker_status,
                             starts_uproar=starts_uproar,
                             # The charged move has fired, so the lock and the vanish come off
@@ -3238,7 +3302,26 @@ def opening_rng(seed: int, config: HuntConfig) -> int:
     return rng
 
 
-def effective_speed(battler: Battler) -> int:
+def slow_started(battler: Battler, turn: int | None) -> bool:
+    """Whether Slow Start is currently halving `battler`'s physical Attack and Speed.
+
+    ``totalTurns - slowStartTurnNumber < 5`` (battle_lib.c:1263, :6709). `slowStartTurnNumber` is
+    stamped when the holder enters and a wild target is out from the start, so it is 0 for every
+    reachable case and the condition reduces to ``turn < SLOW_START_TURNS``.
+
+    **`turn=None` means "do not apply it"**, which is a deliberate escape hatch rather than a
+    default worth relying on: the callers that know the turn pass it, and the advisory ones that
+    ask about a Pokemon outside any turn (a readiness probe, say) would otherwise have to invent
+    one. Every call site inside a simulated turn passes it, which a test pins.
+    """
+    if turn is None:
+        return False
+    if (battler.ability or "").strip().lower() != ABILITY_SLOW_START:
+        return False
+    return turn < SLOW_START_TURNS
+
+
+def effective_speed(battler: Battler, turn: int | None = None) -> int:
     """Speed as the turn-order comparison sees it: stat stage, held item, then paralysis.
 
     Paralysis quartering Speed is the whole reason it is the sanctioned tie-avoidance: it takes
@@ -3270,6 +3353,13 @@ def effective_speed(battler: Battler) -> int:
                              battler.held_item)
     if battler.status is Status.PARALYSIS:
         speed //= PARALYSIS_SPEED_DIVISOR
+    if slow_started(battler, turn):
+        # **After paralysis**, which is the ROM's order and not an arbitrary place to put it:
+        # Quick Feet and paralysis are one if/else at battle_lib.c:1257-1261 and the Slow Start
+        # halving is the next statement at :1263. Each step truncates, so a paralyzed Regigigas
+        # is `spe / 4 / 2` rather than `spe / 2 / 4` -- the same number here, but the ordering is
+        # what the next ability added to this chain will depend on.
+        speed //= SLOW_START_DIVISOR
     return speed
 
 
@@ -3292,7 +3382,8 @@ def _we_move_first(state: BattleState, action: Action, target_slot: int | None) 
     their_priority = theirs.priority if theirs is not None else 0
     if our_priority != their_priority:
         return our_priority > their_priority
-    return effective_speed(state.ours) > effective_speed(state.target)
+    return (effective_speed(state.ours, state.turn)
+            > effective_speed(state.target, state.turn))
 
 
 def _tick_uproar(state: BattleState, move_failed: dict[str, bool] | None = None) -> None:
@@ -3798,6 +3889,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Swipe after it connects against a Ghost, and the target's Double Teams stop
             # mattering.
             new.target = replace(new.target, identified=True)
+        if outcome.knocks_off_item:
+            # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 188 -- and it would be a
+            # poor idea if it were not: the only target that holds anything is Shaymin, whose
+            # Lum Berry we WANT it to spend on a status rather than have knocked away for free.
+            new.target = replace(new.target, held_item="")
         if outcome.seeds:
             # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 84, so a Leech Seed of
             # ours is refused at the point of use. Wired for the same reason Nightmare's mirror
@@ -4055,6 +4151,12 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # switching sheds it exactly as it sheds a Yawn -- and the target, which never
             # switches, has no such way out.
             new.ours = replace(new.ours, identified=True)
+        if outcome.knocks_off_item:
+            # Regigigas', and the reachable direction -- though the plan is for it to find
+            # nothing: the Regigigas fight brings no held items, which is what reduces this move
+            # to plain 20 BP damage (`EFFECT_KNOCK_OFF`). Modelled so that a player who brings
+            # one anyway gets a correct simulation rather than a silently wrong one.
+            new.ours = replace(new.ours, held_item="")
         if outcome.seeds:
             # Shaymin's, and the reachable direction. The drain itself is not here -- it is an
             # end-of-turn residual, applied in the block below next to Leftovers and the burn
