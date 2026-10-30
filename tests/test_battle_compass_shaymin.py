@@ -23,12 +23,14 @@ from claytonlib.battle.damage import WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN
 from claytonlib.battle.stats import derive_species_stats
 from claytonlib.battle_compass.sim import (
     ABILITY_MAGIC_GUARD, EFFECT_LEECH_SEED, EFFECT_SYNTHESIS, LEECH_SEED_DIVISOR,
-    MODELLED_OUR_EFFECTS, MODELLED_TARGET_EFFECTS, HuntConfig, execute_move, leech_seed_tick,
-    opening_rng, sent_out, simulate_turn, synthesis_heal, unselectable_reason, will_fail,
+    MODELLED_OUR_EFFECTS, MODELLED_TARGET_EFFECTS, HuntConfig, cure_with_held_item, execute_move,
+    leech_seed_tick, opening_rng, sent_out, simulate_turn, synthesis_heal, unselectable_reason,
+    will_fail,
 )
-from claytonlib.battle_compass.state import Action, BattleState, Battler
+from claytonlib.battle_compass.state import Action, BattleState, Battler, Status
 from claytonlib.battle_compass.targets import (
-    ENCOUNTERS, encounter_level, moveset, resolve, supported, unsupported_moves,
+    ENCOUNTERS, encounter_level, moveset, resolve, supported, target_held_item,
+    unsupported_moves,
 )
 from claytonlib.moves import resolve_move
 
@@ -52,7 +54,8 @@ def _shaymin(slot: int = LEECH_SEED, **kwargs) -> Battler:
     return replace(Battler(
         name="Shaymin", level=30, types=("Grass",),
         stats=derive_species_stats("shaymin", 30, "Timid", ivs=31),
-        moves=moveset("shaymin"), pp=tuple(pp), ability="Natural Cure"), **kwargs)
+        moves=moveset("shaymin"), pp=tuple(pp), ability="Natural Cure",
+        held_item=target_held_item("shaymin")), **kwargs)
 
 
 def _wall(**kwargs) -> Battler:
@@ -317,6 +320,115 @@ class TestTheBanner(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["whose"], "ours")
         self.assertIsNone(rows[0]["turns"])
+
+
+class TestTheLumBerry(unittest.TestCase):
+    """Shaymin is the ONLY target on the table that holds anything, and the berry changes the
+    plan rather than the arithmetic.
+
+    `wildHeldItems` is Lum Berry in BOTH the common and rare slots, which is exactly the case
+    `Pokemon_GiveHeldItem` (src/pokemon.c:4675-4701) short-circuits: same non-empty item in both
+    slots means it is always held, not 45/50/5. A static encounter really does reach that
+    function -- `StartFatefulEncounter` -> `CreateWildMon_Scripted` -> `CreateWildMon` ->
+    `AddWildMonToParty` -> `Pokemon_GiveHeldItem`.
+    """
+
+    def test_the_row_carries_it_and_the_facade_helper_reads_it(self):
+        self.assertEqual(ENCOUNTERS["shaymin"].held_item, "Lum Berry")
+        self.assertEqual(target_held_item("shaymin", "platinum"), "Lum Berry")
+
+    def test_no_other_target_holds_anything(self):
+        """Only a GUARANTEED item is on file, so every other row is empty -- there is no species
+        fallback, because a 45/50/5 roll has no honest default."""
+        for key, enc in ENCOUNTERS.items():
+            if key != "shaymin":
+                with self.subTest(key):
+                    self.assertEqual(enc.held_item, "")
+
+    def test_the_item_roll_is_spent_either_way_so_generation_is_unchanged(self):
+        """`LCRNG_Next() % 100` is called BEFORE the species lookup and before the equal-items
+        shortcut, so an encounter that holds something costs no more advances than one that does
+        not. That is what keeps `BATTLE_START_ADVANCES` shared across the whole table, and it is
+        asserted here as the reason rather than left implicit."""
+        self.assertEqual(ENCOUNTERS["suicune"].held_item, "")
+        self.assertEqual(ENCOUNTERS["shaymin"].held_item, "Lum Berry")
+
+    def test_it_cures_and_is_consumed(self):
+        mon = _shaymin(hp=40).with_status(Status.SLEEP, sleep_turns=4)
+        cured = cure_with_held_item(mon)
+        self.assertIs(cured.status, Status.NONE)
+        self.assertEqual(cured.sleep_turns, 0)
+        self.assertEqual(cured.held_item, "")
+
+    def test_it_does_nothing_to_an_unstatused_holder(self):
+        """So the berry survives until something actually lands -- it is not spent on turn 1."""
+        self.assertEqual(_shaymin().held_item, "Lum Berry")
+        self.assertEqual(cure_with_held_item(_shaymin()).held_item, "Lum Berry")
+
+    def test_it_does_nothing_without_the_berry(self):
+        statused = _wall().with_status(Status.SLEEP, sleep_turns=4)
+        self.assertIs(cure_with_held_item(statused).status, Status.SLEEP)
+
+    def test_it_cures_confusion_too(self):
+        """`itemUseParams` sets `healConfusion` alongside the five non-volatile statuses, which is
+        why this is modelled as "cures whatever it finds". Nothing inflicts confusion yet; the
+        half is here because the ROM's case is one case."""
+        confused = replace(_shaymin(), confused=True)
+        cured = cure_with_held_item(confused)
+        self.assertFalse(cured.confused)
+        self.assertEqual(cured.held_item, "")
+
+    def test_THE_FIRST_SPORE_IS_WASTED_AND_THE_SECOND_STICKS(self):
+        """The planning fact. Phase 2 wants the target asleep for the x2 catch bonus, so against
+        Shaymin the first sleep burns the berry and the second is the one that holds."""
+        config = _config()
+        ours = replace(_wall(), moves=("Spore",), pp=(15,),
+                       stats={**_wall().stats, "spa": 10, "atk": 10})
+        state = BattleState(ours=ours,
+                            target=_shaymin(GROWTH, held_item="Lum Berry"),
+                            rng=opening_rng(0x0C0E02CA, config))
+        after_one = simulate_turn(state, Action.MOVE_1, config)
+        self.assertIs(after_one.target.status, Status.NONE)
+        self.assertEqual(after_one.target.held_item, "")
+        after_two = simulate_turn(after_one, Action.MOVE_1, config)
+        self.assertIs(after_two.target.status, Status.SLEEP)
+
+    def test_the_cure_itself_cannot_spend_an_advance(self):
+        """None of the restore subscripts contains a `Random`, and the model says so
+        structurally: `cure_with_held_item` takes no RNG state and returns none, so there is no
+        way for it to cost one. Asserted as a signature property because an empirical check
+        cannot separate the cure from its consequence -- see the test below."""
+        import inspect
+        params = inspect.signature(cure_with_held_item).parameters
+        self.assertEqual(list(params), ["battler"])
+
+    def test_BUT_A_CURED_TARGET_STILL_ACTS_AND_THAT_IS_OBSERVABLE(self):
+        """The consequence that matters more than the cost, and it is visible in the TOKENS.
+
+        The berry fires immediately, before the target's half of the turn, so a Shaymin woken by
+        it goes on to use a move: the turn reads ``M1 E1`` where a sleeping one reads ``M1 Eslp``.
+        So the berry is not a silent planning tax -- the player can see it happen, and a turn
+        that spent the target's selection and move rolls is a different turn to match against.
+        """
+        config = _config()
+        ours = replace(_wall(), moves=("Spore",), pp=(15,),
+                       stats={**_wall().stats, "spa": 10, "atk": 10})
+        with_berry = simulate_turn(
+            BattleState(ours=ours, target=_shaymin(GROWTH, held_item="Lum Berry"),
+                        rng=opening_rng(0x0C0E02CA, config)),
+            Action.MOVE_1, config)
+        without = simulate_turn(
+            BattleState(ours=ours, target=_shaymin(GROWTH, held_item=""),
+                        rng=opening_rng(0x0C0E02CA, config)),
+            Action.MOVE_1, config)
+        self.assertEqual(with_berry.log[-1], ("M1", "E1"))
+        self.assertEqual(without.log[-1], ("M1", "Eslp"))
+
+    def test_it_is_on_the_modelled_items_allowlist(self):
+        """So a party member carrying one is not warned about, now that it is modelled on both
+        sides -- the ROM's trigger is per battler, not per side."""
+        from claytonlib.battle.readiness import unmodelled_held_items
+        self.assertEqual(unmodelled_held_items({"Smeargle": "Lum Berry"}), [])
 
 
 class TestTheSeedIsShed(unittest.TestCase):

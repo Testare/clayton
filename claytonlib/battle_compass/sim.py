@@ -35,7 +35,7 @@ from claytonlib.battle.damage import (
     unsupported_reason,
 )
 from claytonlib.battle.readiness import (
-    LEFTOVERS, PARALYSIS_SPEED_DIVISOR, speed_after_item,
+    LEFTOVERS, PARALYSIS_SPEED_DIVISOR, STATUS_RESTORE_ITEMS, speed_after_item,
 )
 from claytonlib.battle_compass import items, tokens as tok
 from claytonlib.battle_compass.state import Action, Battler, BattleState, Status
@@ -2111,6 +2111,46 @@ def leftovers_tick(battler: Battler) -> int:
     return max(1, battler.max_hp // LEFTOVERS_DIVISOR)
 
 
+def cure_with_held_item(battler: Battler) -> Battler:
+    """`battler` with its status cured and its berry spent, if it holds one that would.
+
+    `BattleSystem_TriggerHeldItemOnStatus` (battle_lib.c:4967, the
+    `HOLD_EFFECT_STATUS_RESTORE` case at :5052), which fires **immediately** when a status lands
+    rather than at end of turn -- it is reached from three sites, including the one right after a
+    move applies a status (battle_controller_player.c:3745). So the cure happens on the same turn
+    as the infliction, and a plan never gets a turn of value out of the status it burned.
+
+    **Zero RNG advances.** `subscript_held_item_slp_restore.s` sets the status to
+    `MON_CONDITION_NONE`, clears Nightmare, and calls `BATTLE_SUBSCRIPT_PLUCK_CHECK`; none of the
+    restore subscripts contains a `Random`.
+
+    **Consumed.** `subscript_pluck_check.s` falls through to `RemoveItem` whenever the
+    Pluck-berry self-turn flag is NOT set -- the flag's whole job is to stop a second removal
+    after Pluck already ate it. So an ordinary cure spends the berry, which is why this returns a
+    Battler with no held item and why the SECOND status we land is the one that sticks.
+
+    It also clears Nightmare, which the sleep subscript does explicitly -- waking up is that
+    volatile's cure anyway (`Battler.nightmare`), so the two agree.
+
+    Side-agnostic on purpose: our own party may hold a Lum Berry, and the ROM's trigger is per
+    battler rather than per side.
+
+    The item NAMES live in `battle.readiness.STATUS_RESTORE_ITEMS` for the same reason
+    `LEFTOVERS` does -- the modelled-items allowlist is assembled from the tables that read the
+    items, and this module imports that one. Its `itemUseParams`
+    (res/items/data/lum_berry.json) sets every one of `healSleep`, `healPoison`, `healBurn`,
+    `healFreeze`, `healParalysis` and `healConfusion`, which is why this cures whatever it finds
+    rather than branching per status. The single-status berries (Chesto, Cheri and the rest) are
+    deliberately absent: nothing holds one, and one would want a row per status instead.
+    """
+    if battler.status is Status.NONE and not battler.confused:
+        return battler
+    if item_key(battler.held_item) not in STATUS_RESTORE_ITEMS:
+        return battler
+    cured = battler.with_status(Status.NONE)
+    return replace(cured, confused=False, nightmare=False, held_item="")
+
+
 def leech_seed_tick(battler: Battler) -> int:
     """Leech Seed's end-of-turn drain on the SEEDED battler: ``max(1, max HP / 8)``, else 0.
 
@@ -3372,7 +3412,9 @@ def _tick_drowsy(rng: int, state: BattleState) -> tuple[int, int, int]:
         if side == "ours":
             ours_turns = turns
         else:
-            setattr(state, side, battler.with_status(Status.SLEEP, sleep_turns=turns))
+            setattr(state, side,
+                    cure_with_held_item(
+                        battler.with_status(Status.SLEEP, sleep_turns=turns)))
     return rng, spent, ours_turns
 
 
@@ -3736,8 +3778,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target = new.target.with_hp(new.target.hp - outcome.damage)
         if outcome.applied_status is not None:
             # The rolled duration was being thrown away, so a slept target never woke.
-            new.target = new.target.with_status(outcome.applied_status,
-                                                sleep_turns=outcome.sleep_turns)
+            new.target = cure_with_held_item(
+                new.target.with_status(outcome.applied_status,
+                                       sleep_turns=outcome.sleep_turns))
         if outcome.stat_drop is not None:
             # Flash, Screech and Charm. **Permanent**, because a wild target never switches out
             # and the ROM's stat reset runs only on the Pokemon being sent out -- which is what
@@ -3818,7 +3861,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if outcome.attacker_status is not None:
             # The target's own ability paralyzed US on contact -- nothing has this yet, but the
             # path is symmetric with `act_target` and costing nothing is the point.
-            new.ours = new.ours.with_status(outcome.attacker_status)
+            new.ours = cure_with_held_item(new.ours.with_status(outcome.attacker_status))
         secondary_landed = True
         if outcome.secondary and (sec := secondary_status(move)) is not None:
             # A secondary status, and Safeguard blocks one exactly as it blocks a primary: the
@@ -3833,7 +3876,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                                 and not new.target.fainted
                                 and new.target.status is Status.NONE)
             if secondary_landed:
-                new.target = new.target.with_status(sec)
+                new.target = cure_with_held_item(new.target.with_status(sec))
         if outcome.secondary and (drop := SECONDARY_STAT_DROPS.get(move.effect)):
             # The mirror of the same lookup in `act_target`, and it did not exist: a secondary
             # drop from one of OUR moves was applied nowhere. Nothing in a planned party has one,
@@ -3998,8 +4041,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # through turns the game had us asleep for -- every prediction after the first
             # Hypnosis wrong, with no contradiction raised. Nothing fired it until now only
             # because no configured target had a status move.
-            new.ours = new.ours.with_status(outcome.applied_status,
-                                            sleep_turns=outcome.sleep_turns)
+            new.ours = cure_with_held_item(
+                new.ours.with_status(outcome.applied_status,
+                                     sleep_turns=outcome.sleep_turns))
         if outcome.sets_heal_block:
             # Dialga's and Palkia's, aimed at us -- the reachable direction.
             new.ours = replace(new.ours, heal_block_turns=HEAL_BLOCK_TURNS)
@@ -4069,7 +4113,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Static. The target hit a Static holder of ours with a contact move and got
             # paralyzed for it -- an unplanned route to the Phase 2 precondition, and the reason
             # the roll has to be spent in the right places and nowhere else.
-            new.target = new.target.with_status(outcome.attacker_status)
+            new.target = cure_with_held_item(
+                new.target.with_status(outcome.attacker_status))
         secondary_landed = True
         if outcome.secondary and (sec := secondary_status(move)) is not None:
             # Sacred Fire's burn is the live case, and the one that made this worth getting right:
@@ -4084,7 +4129,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                                 and not new.ours.fainted
                                 and new.ours.status is Status.NONE)
             if secondary_landed:
-                new.ours = new.ours.with_status(sec)
+                new.ours = cure_with_held_item(new.ours.with_status(sec))
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
             # Ancient Power boosts the ATTACKER, so the target's own stats -- including the Speed
             # that the no-speed-tie guarantee depends on.
@@ -4280,7 +4325,8 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     # 12 -- so the Nightmare and Bad Dreams ticks above ran against a victim that was still
     # awake, and the first turn this sleep costs is the next one. The roll was already spent.
     if drowsy_sleep_turns and not battle_halted() and not new.ours.fainted:
-        new.ours = new.ours.with_status(Status.SLEEP, sleep_turns=drowsy_sleep_turns)
+        new.ours = cure_with_held_item(
+            new.ours.with_status(Status.SLEEP, sleep_turns=drowsy_sleep_turns))
 
     # The Future Sight, last of all, and NOT folded into `residual`: its hit check is a real
     # random verdict, so the HP it takes has to show up as a change the HP token reports. Folding

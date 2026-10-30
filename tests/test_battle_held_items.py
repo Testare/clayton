@@ -35,11 +35,12 @@ class TestTheAllowlist(unittest.TestCase):
         from claytonlib.battle.damage import (
             ACCURACY_RAISING_ITEMS, ACCURACY_REDUCING_ITEMS, LIGHT_CLAY, TYPE_ENHANCING_ITEMS,
         )
+        from claytonlib.battle.readiness import STATUS_RESTORE_ITEMS
         from claytonlib.battle_compass.sim import LEFTOVERS
 
         expected = (set(TYPE_ENHANCING_ITEMS) | set(CHOICE_ITEMS) | set(SPEED_HALVING_ITEMS)
                     | set(MOVES_LAST_ITEMS) | set(ACCURACY_REDUCING_ITEMS)
-                    | set(ACCURACY_RAISING_ITEMS)
+                    | set(ACCURACY_RAISING_ITEMS) | set(STATUS_RESTORE_ITEMS)
                     | {item_key(LEFTOVERS), item_key(LIGHT_CLAY)})
         self.assertEqual(ALLOWED, expected)
 

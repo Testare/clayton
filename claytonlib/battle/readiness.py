@@ -72,6 +72,17 @@ MOVES_LAST_ITEMS = frozenset(map(item_key, ("Lagging Tail", "Full Incense")))
 #: module that depends on it. `sim` imports it from here; a test asserts there is only one.
 LEFTOVERS = "leftovers"
 
+#: Items whose hold effect is `HOLD_EFFECT_STATUS_RESTORE`: they cure any non-volatile status and
+#: confusion the moment one lands, for no rolls, and are consumed doing it. The Lum Berry is the
+#: only one in Gen 4.
+#:
+#: Here for the same reason `LEFTOVERS` is: the allowlist below has to be ASSEMBLED from the
+#: tables that read the items rather than hand-listed, and `battle_compass.sim` -- which owns the
+#: behaviour (`cure_with_held_item`) -- imports this module rather than the other way round. A
+#: test asserts the allowlist equals the union of these tables, which is what catches a
+#: hand-written entry.
+STATUS_RESTORE_ITEMS = frozenset({item_key("Lum Berry")})
+
 
 #: Held items whose behaviour the simulator actually models, grouped by the mechanism that reads
 #: them. The union is the allowlist `unmodelled_held_items` checks against.
@@ -88,6 +99,9 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
     "raises the holder's accuracy": frozenset(_ACCURACY_RAISING_ITEMS),
     "restores 1/16 max HP at end of turn": frozenset({item_key(LEFTOVERS)}),
     "extends a screen from five turns to eight": frozenset({item_key(_LIGHT_CLAY)}),
+    # Shaymin's, and ours if a party member carries one. Modelled on both sides because the ROM's
+    # trigger is per battler -- see `battle_compass.sim.cure_with_held_item`.
+    "cures the holder's first status, then is used up": STATUS_RESTORE_ITEMS,
 }
 
 #: Items the simulator does NOT model whose absence fails in the Choice Scarf's *kind* rather

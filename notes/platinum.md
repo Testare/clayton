@@ -1971,6 +1971,66 @@ as well as itself — the drain is zero on both sides.
 slots before anything else. That is the other genuine party answer here, and it is a test rather
 than a comment.
 
+### 21.3b The Lum Berry — found by Testare, and it changes the plan
+
+**Shaymin holds a Lum Berry, guaranteed**, and it is the only target on the whole table that
+holds anything at all. §21 shipped without it, which made the row claim a sleep the game cures.
+
+`wildHeldItems` is Lum Berry in **both** the common and rare slots
+(`res/pokemon/shaymin/data.json`), and that is exactly the case `Pokemon_GiveHeldItem`
+(`src/pokemon.c:4675-4701`) short-circuits:
+
+```c
+u32 rand = LCRNG_Next() % 100;                         // unconditional, before the lookup
+...
+if (monItem1 == monItem2 && monItem1 != ITEM_NONE) {   // Shaymin takes this branch
+    Pokemon_SetValue(mon, MON_DATA_HELD_ITEM, &monItem1);
+    return;                                            // always held, not 45/50/5
+}
+```
+
+Two things fall out of that read, and both matter:
+
+* **It is guaranteed, not probabilistic**, so it is storable as a field (`Encounter.held_item`)
+  rather than needing a branch in the simulation.
+* **The roll is spent either way**, before the species lookup, so an encounter that holds
+  something costs no more advances than one that does not — which is what keeps
+  `BATTLE_START_ADVANCES` and the generation path shared across the table. §21's claim that
+  Shaymin's generation path is identical to every other static's survives intact.
+
+A scripted static really does reach that function: `StartFatefulEncounter` →
+`CreateWildMon_Scripted` → `CreateWildMon` → `AddWildMonToParty` → `Pokemon_GiveHeldItem`
+(`overlay006/wild_encounters.c:1227, 1047, 1085, 1462`).
+
+**What the berry does.** `HOLD_EFFECT_STATUS_RESTORE`, and `lum_berry.json`'s `itemUseParams`
+sets every one of `healSleep`, `healPoison`, `healBurn`, `healFreeze`, `healParalysis` and
+`healConfusion` — so it cures whatever it finds. It fires through
+`BattleSystem_TriggerHeldItemOnStatus` (`battle_lib.c:4967`, the case at `:5052`), which is the
+**immediate** trigger rather than the end-of-turn one, reached from the site right after a move
+applies a status (`battle_controller_player.c:3745`). It costs **zero advances** — no restore
+subscript contains a `Random` — and it is **consumed**: `subscript_pluck_check.s` falls through
+to `RemoveItem` whenever the Pluck self-turn flag is not set, that flag's only job being to stop
+a second removal after Pluck already ate the berry.
+
+**So Phase 2 against Shaymin needs two sleeps.** The first Spore burns the berry and the second
+is the one that holds. That is the planning consequence, and it is the reason this was a wrong
+prediction rather than a missing nicety: the simulator had the target asleep on a turn the game
+had already woken it, which desynchronises everything after.
+
+> **And it is observable, which is the better half.** The berry fires before the target's half of
+> the turn, so a woken Shaymin goes on to use a move: the turn reads `M1 E1` where a sleeping one
+> reads `M1 Eslp`. The player can see it happen, and the turn that spent the target's selection
+> and move rolls is a different turn to match against — so this is an identification signal, not
+> only a tax.
+
+Modelled side-agnostically (`sim.cure_with_held_item`), because the ROM's trigger is per battler
+and a party member may carry one. Hooked at all **eight** status-infliction sites rather than
+only the reachable one, since missing a site is the failure mode. The item names live in
+`battle.readiness.STATUS_RESTORE_ITEMS` for the same reason `LEFTOVERS` does — the
+modelled-items allowlist is *assembled* from the tables that read the items, and
+`test_battle_held_items` is what caught a hand-written entry when the first attempt put the row
+inline.
+
 ### 21.4 And an omission it exposed, in the same place §20's was
 
 `can_inflict` treats an unrecognised ability as capable — the right direction — and
@@ -2100,5 +2160,13 @@ readings have gone the other way.
 The Lv1 king is a different fight and is not in yet. It is blocked on three things, each filed:
 **Slow Start** (clayton-6xu.10.5 — it is in `UNMODELLED_ATTACKER_ABILITIES`, so Regigigas is
 refused outright today), **confusion aimed at us** (clayton-6xu.10.4, the only structurally new
-mechanic in the whole set), and **Knock Off** (clayton-6xu.10.6, which removes our Lagging Tail
-and so flips turn order mid-battle).
+mechanic in the whole set), and **Knock Off** (clayton-6xu.10.6, which takes our held item).
+
+> **Corrected:** an earlier version of this said Knock Off threatens "our Lagging Tail" and so
+> flips turn order. That was a mis-transplant from `metronome_compass`, which is the thing that
+> mandates a Lagging Tail (`metronome_abilities.py`, and `app/models.py` validates it on the
+> Metronome user). **Battle Compass never asks for one**, and `sim` deliberately keeps Lagging
+> Tail out of the speed-item handling because it sets a lowered-priority flag rather than
+> touching Speed. Knock Off still matters — Leftovers stops ticking, an accuracy item stops
+> applying, a Silk Scarf's 20% comes off our chip damage — but turn order is at stake only if the
+> party chose a Speed-affecting item, which is a decision rather than a mandate.

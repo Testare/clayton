@@ -60,6 +60,24 @@ class Encounter:
     forme: str = ""
     #: Where the encounter is, for a message that can say which one it means.
     where: str = ""
+    #: The item the encounter is GUARANTEED to hold, or "" for none.
+    #:
+    #: Not a probability, and that is what makes it storable. `Pokemon_GiveHeldItem`
+    #: (pokeplatinum src/pokemon.c:4675-4701) rolls `LCRNG_Next() % 100` and then splits
+    #: 45/50/5 between nothing, the species' COMMON item and its RARE one -- except that a
+    #: species whose common and rare entries are the SAME non-empty item short-circuits before
+    #: the split and always holds it. Only guaranteed items belong here; a 50% one would have to
+    #: be a branch in the simulation rather than a field.
+    #:
+    #: **The roll is spent either way**, before the species lookup, so an encounter with an item
+    #: costs no more advances than one without. That is what keeps `BATTLE_START_ADVANCES` and
+    #: the generation path shared across every target on this table.
+    #:
+    #: A static encounter really does go through it: `StartFatefulEncounter` and
+    #: `StartLegendaryBattle` both reach `CreateWildMon_Scripted` ->
+    #: `CreateWildMon` -> `AddWildMonToParty` -> `Pokemon_GiveHeldItem`
+    #: (overlay006/wild_encounters.c:1227, 1047, 1085, 1462).
+    held_item: str = ""
     #: True for a ROAMER, which is a different kind of encounter rather than a harder one: it is
     #: driven by the trainer AI (5 selection rolls where a wild spends 1), it flees unless trapped
     #: at action-selection time, and its HP, status and spread come out of the save rather than
@@ -301,9 +319,18 @@ ENCOUNTERS: dict[str, Encounter] = {
     # `forme` is likewise empty: `base_stats.json` carries both `shaymin` (Grass, the Land forme)
     # and `shaymin-sky`, and the encounter is Land. Sky forme is reachable only by using a
     # Gracidea on a caught Shaymin, so it is not an encounter at all and gets no row.
+    # **It holds a LUM BERRY, guaranteed**, and it is the only target on this table that holds
+    # anything at all. `wildHeldItems` is Lum Berry in BOTH the common and rare slots
+    # (res/pokemon/shaymin/data.json), which is exactly the case `Pokemon_GiveHeldItem`
+    # short-circuits: same non-empty item in both slots means it is always held, not 50% held.
+    #
+    # It cures the FIRST status we land and is then gone (`sim.cure_with_held_item`). That is a
+    # planning fact rather than a detail: Phase 2 wants the target asleep for the x2 catch bonus,
+    # so against Shaymin the first Spore is spent burning the berry and the SECOND one is the one
+    # that sticks.
     "shaymin": Encounter(
         "shaymin", 30, ("Growth", "Magical Leaf", "Leech Seed", "Synthesis"),
-        games=("platinum",), where="Flower Paradise"),
+        games=("platinum",), where="Flower Paradise", held_item="Lum Berry"),
     # Platinum's Giratina, met TWICE, which is the case this table's key exists for. Both at
     # **Lv47**, so the level cross-check cannot tell them apart at all -- and they differ in
     # forme, ability and base stats, not merely in moveset:
@@ -848,6 +875,22 @@ def target_ability(name: str, game: str = "") -> str:
         return row.ability
     from claytonlib.battle.stats import abilities
     return (abilities(row.species) or ("",))[0]
+
+
+def target_held_item(name: str, game: str = "") -> str:
+    """The item this encounter is guaranteed to hold, or "".
+
+    The sibling of `target_ability`, with **no species fallback** -- and that is the difference
+    worth stating. An ability is a property of the species and a sensible default exists; a wild
+    held item is a 45/50/5 roll (`Encounter.held_item`), so the only honest default is "nothing",
+    and a row opts in only where the ROM's common and rare slots agree on a non-empty item.
+
+    Shaymin's Lum Berry is the only one today, and it is the reason this exists: it cures the
+    first status we land, so a hunt that did not read it would simulate a sleep the game had
+    already woken.
+    """
+    _, row = resolve(name, game)
+    return row.held_item
 
 
 def target_types(name: str, game: str = "") -> tuple[str, ...]:

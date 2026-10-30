@@ -611,7 +611,8 @@ class Facade:
         bench = tuple(battler_for(m, item, party_slot=i + 2)
                       for i, (m, item) in enumerate(members[1:]) if m is not None)
 
-        from claytonlib.battle_compass.targets import moveset, stats_key, target_ability
+        from claytonlib.battle_compass.targets import (
+            moveset, stats_key, target_ability, target_held_item)
         from claytonlib.moves import resolve_move
         target_moves = moveset(hunt.target.species, profile.game)
         # Which base-stats row the target's numbers come from. The same as the species for every
@@ -647,7 +648,12 @@ class Facade:
             # carry no ability at all, which was invisible while the only abilities in play were
             # read from HuntConfig -- and would have gone on being invisible right up to a forme
             # whose ability differs from its species' (clayton-957.35.4).
-            ability=target_ability(hunt.target.species, profile.game))
+            ability=target_ability(hunt.target.species, profile.game),
+            # And the ITEM, off the same row. Only a GUARANTEED one is on file, so this is empty
+            # for every target but Shaymin -- whose Lum Berry cures the first status we land, so
+            # a run that did not read it would simulate a sleep the game had already woken
+            # (`sim.cure_with_held_item`).
+            held_item=target_held_item(hunt.target.species, profile.game))
         target = self._apply_opening_state(hunt, target)
         return ours, target, bench
 
@@ -1740,7 +1746,8 @@ class Facade:
         from claytonlib.battle.stats import species
         from claytonlib.battle_compass.hunt_session import survivability_warnings
         from claytonlib.battle_compass.state import Battler
-        from claytonlib.battle_compass.targets import moveset, target_ability
+        from claytonlib.battle_compass.targets import (
+            moveset, target_ability, target_held_item)
         from claytonlib.moves import resolve_move
 
         game = profile.game if profile is not None else ""
@@ -1758,7 +1765,8 @@ class Facade:
             types=tuple(info["types"]), stats=dict(target_stats),
             moves=target_moves,
             pp=tuple((resolve_move(n).pp if resolve_move(n) else 0) for n in target_moves),
-            ability=ability)
+            ability=ability,
+            held_item=target_held_item(hunt.target.species, game))
         party = []
         for slot in hunt.party:
             pokemon = profile.get_party_pokemon(slot.pokemon_id)
