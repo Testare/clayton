@@ -574,6 +574,13 @@ BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
 BATTLER_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("target", "identified", "Identified"),
     ("ours", "identified", "Identified"),
+    # Shaymin's Leech Seed. A flag with no counter, so it renders without a number -- and it is
+    # the one condition in this banner that costs HP every turn on one side and GIVES it on the
+    # other, which is exactly why a player needs to see it rather than infer it from the HP
+    # dropping. Both sides listed for the usual symmetry; only ours is reachable, since no party
+    # move has effect 84.
+    ("ours", "seeded", "Leech Seed"),
+    ("target", "seeded", "Leech Seed"),
 )
 
 

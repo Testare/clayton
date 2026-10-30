@@ -29,7 +29,8 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, Attacker, Defender, apply_accuracy_items, apply_accuracy_stage,
+    WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, apply_accuracy_items,
+    apply_accuracy_stage,
     apply_stage, damage, is_type_immune, item_key, unsupported_attacker_reason,
     unsupported_reason,
 )
@@ -142,6 +143,12 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     148: "Future Sight: one roll at use, the banked damage, and the hit check two turns later",
     159: "Uproar: the 3-6 turn lock, the selection roll it skips, and the sleep it forbids",
     187: "Yawn: the two-turn drowse, and the sleep (and its duration roll) that follows it",
+    # Shaymin's, and the pair that makes it the first target whose own moves move ITS OWN HP.
+    # Both are listed only because the full-HP cases are modelled rather than assumed: at full HP
+    # Synthesis fails outright and Leech Seed's heal is clamped to nothing, which is the whole
+    # argument for solving above 1 HP (notes/battle_compass_dialga_palkia_shaymin.md sec 4C).
+    84: "Leech Seed: the flag, the max-HP/8 drain on us, and the same figure healed to it",
+    132: "Synthesis: the weather-dependent heal, and that it FAILS at full HP",
 }
 
 
@@ -499,6 +506,21 @@ class MoveOutcome:
     #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
     #: what applies it -- only it knows which side that is.
     identifies: bool = False
+    #: A Leech Seed landed, so the move's DEFENDER is now seeded. Aimed at the other side, like
+    #: `stat_drop` and `identifies`, so `simulate_turn` is what applies it -- only it knows which
+    #: side that is.
+    seeds: bool = False
+    #: HP this move restores to its OWN USER -- Synthesis' weather-dependent recovery, and the
+    #: first self-heal on either side.
+    #:
+    #: A plain figure rather than a flag because the amount depends on the field, and
+    #: `execute_move` is where the field is in scope. Self-aimed, like `self_stat_raise`: the
+    #: side it lands on is the one that moved, which is the opposite of `stat_drop`.
+    #:
+    #: It is always clamped by `with_hp`, so a partial top-up restores less than this says -- and
+    #: it can never be zero, because a full-HP user fails in `will_fail` instead of healing
+    #: nothing.
+    self_heal: int = 0
     #: Haze: every stat stage on BOTH sides goes back to neutral. A flag rather than a list of
     #: fields, because the ROM's own loop is over every battler and every stage without exception.
     resets_all_stages: bool = False
@@ -655,7 +677,7 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
               actor_side: str = "ours") -> bool:
     """Whether this move is certain to do nothing, from state alone.
 
-    Eight families now, all costing the turn its two post-successful-move advances when they fire
+    Ten families now, all costing the turn its two post-successful-move advances when they fire
     -- which is exactly how the emulator log diverged from this simulator on turn 3, so each
     addition here is a bug avoided rather than a nicety:
 
@@ -687,6 +709,16 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
     * **Future Sight with one already in the air.** `BtlCmd_TryFutureSight` jumps to the
       "But it failed!" branch, having spent nothing at all -- so this failure is cheaper than
       every other one here by the one roll the move would otherwise have cost.
+    * **Synthesis at full HP.** Self-targeting, so it reads `actor` -- the second family here
+      that does, after Refresh. It also spends nothing before failing, but for a different reason
+      than Future Sight: accuracy 0 means there was never an accuracy roll to skip. This is the
+      load-bearing entry behind solving Phase 2 above 1 HP rather than at it
+      (notes/battle_compass_dialga_palkia_shaymin.md sec 4C) -- a full-HP Shaymin cannot move its
+      own HP, so `b` stays where the window search put it.
+    * **Leech Seed against a Grass type, or against an already-seeded victim.** Two branches of
+      one subscript, read in that order, setting two different flags
+      (`MOVE_STATUS_INEFFECTIVE` and `MOVE_STATUS_NO_MORE_WORK`) that `CheckMoveFailure` routes
+      the same way. The Grass half is a party answer: a Grass lead cannot be seeded at all.
 
     `actor` is keyword-only and optional so that callers which only care about the
     defender-facing families -- `hunt_session.move_info`, which asks "can this move of OURS do
@@ -794,6 +826,31 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
         return actor is not None and actor.status not in REFRESH_CURES
+    # **Synthesis at full HP**, and it reads `actor` rather than `defender` -- the second
+    # self-targeting family here, after Refresh. `subscript_recover_hp.s` compares the user's
+    # current HP against its maximum on its very first line and branches to ``_036``, which
+    # prints "{0}'s HP is full!" and sets `MOVE_STATUS_NO_MORE_WORK` without healing anything.
+    #
+    # This is the whole argument for Phase 2 running above 1 HP rather than at it
+    # (notes/battle_compass_dialga_palkia_shaymin.md sec 4C): a full-HP Shaymin cannot Synthesis,
+    # so its HP -- and therefore `b` -- stays where the window search put it.
+    #
+    # Accuracy is 0, so unlike every other family here this one spends NOTHING at all before
+    # failing: no accuracy roll to pay for first. Heal Block would refuse it too
+    # (`subscript_present_heal.s` ``_015``), which no configured party can inflict.
+    if move.effect == EFFECT_SYNTHESIS and actor is not None and actor.hp >= actor.max_hp:
+        return True
+    # **A second Leech Seed on an already-seeded victim**, and **Leech Seed against a Grass
+    # type**, which `subscript_leech_seed_start.s` reads in that order: the Grass check on BOTH
+    # type slots (``_065``, `MOVE_STATUS_INEFFECTIVE`) comes before the already-seeded check
+    # (``_046``, `MOVE_STATUS_NO_MORE_WORK`). Two different flags, but `CheckMoveFailure` routes
+    # both away from `BATTLE_CONTROL_USE_MOVE` [battle_controller_player.c:3312-3331], so both
+    # cost the turn the same way every other family here does.
+    #
+    # The Grass case is the one where the move does nothing whatsoever, and it is a real party
+    # answer rather than a curiosity: a Grass lead simply cannot be seeded.
+    if move.effect == EFFECT_LEECH_SEED and (defender.seeded or "Grass" in defender.types):
+        return True
     if field is None:
         return False
     if move.effect == EFFECT_RAIN_DANCE and field.rain_turns > 0:
@@ -863,6 +920,28 @@ BURN_TICK_DIVISOR = 8
 #: The NAME is re-exported from `battle.readiness` rather than declared twice, so that the
 #: modelled-items allowlist there and the tick here cannot disagree about the spelling.
 LEFTOVERS_DIVISOR = 16
+#: Leech Seed, Shaymin's slot 3. 90 accuracy, so it spends an accuracy roll -- and a sub-100
+#: move from the TARGET is free RTC-second-sibling separation (notes/seed_separation.md).
+#:
+#: The effect script sets a DIRECT side effect
+#: (``MOVE_SIDE_EFFECT_CHECK_HP|MOVE_SIDE_EFFECT_TO_DEFENDER|MOVE_SUBSCRIPT_PTR_LEECH_SEED_START``,
+#: effect_script_0084.s), so it costs no proc roll of its own, and `subscript_leech_seed_start.s`
+#: spends no `Random` either. The whole move is therefore an accuracy roll and a flag.
+EFFECT_LEECH_SEED = 84
+#: Leech Seed's divisor: max HP / 8 of the SEEDED Pokemon, by the same floor-but-never-zero rule
+#: as the burn tick and Leftovers -- `subscript_leech_seed_effect.s` divides through
+#: `DivideVarByValue`, which is `BattleSystem_Divide` (battle_lib.c:3599-3618) and clamps a zero
+#: quotient to 1.
+LEECH_SEED_DIVISOR = 8
+#: Magic Guard, which the Leech Seed drain checks by name
+#: [battle_controller_player.c:1381]. Spelled the way `battle.damage` spells `ABILITY_LEVITATE`,
+#: and compared the same way -- `(ability or "").strip().lower()` -- because an ability arrives
+#: here as a display name rather than a key.
+ABILITY_MAGIC_GUARD = "magic guard"
+#: Synthesis, Shaymin's slot 4. Accuracy 0, so no accuracy roll, and no `Random` anywhere in its
+#: path -- `BtlCmd_WeatherHPRecovery` (battle_script.c:5966-5979) is pure arithmetic on the
+#: user's max HP.
+EFFECT_SYNTHESIS = 132
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -1372,6 +1451,12 @@ _INERT_ABILITIES = frozenset({
     "insomnia", "vital spirit", "limber", "water veil", "immunity", "magma armor",
     "inner focus", "shield dust", "clear body", "white smoke", "hyper cutter", "soundproof",
     "super luck", "sniper", "scrappy",
+    # Shaymin's, and a textbook case of this set's purpose: Natural Cure heals its holder's
+    # status when it switches OUT, which a wild target never does -- so it is doubly inert here.
+    # Without this row Shaymin answered "yes, it can paralyze us" on the strength of an ability
+    # that does nothing to anybody, and filled the speed table with rows for a state the player
+    # cannot reach (clayton-36b, the bug this set exists for).
+    "natural cure",
 })
 
 
@@ -1879,6 +1964,75 @@ def leftovers_tick(battler: Battler) -> int:
     return max(1, battler.max_hp // LEFTOVERS_DIVISOR)
 
 
+def leech_seed_tick(battler: Battler) -> int:
+    """Leech Seed's end-of-turn drain on the SEEDED battler: ``max(1, max HP / 8)``, else 0.
+
+    Transcribed from `MON_COND_CHECK_STATE_LEECH_SEED`
+    [pokeplatinum src/battle/battle_controller_player.c:1378-1391] and
+    `subscript_leech_seed_effect.s`. Deterministic and RNG-free, exactly like `burn_tick` and
+    `leftovers_tick`, so it carries no token of its own.
+
+    **It lands between Leftovers and the burn tick**, which is the ROM's own order:
+    ``MON_COND_CHECK_STATE_LEFTOVERS``, ``_LEECH_SEED``, ``_POISON``, ``_TOXIC``, ``_BURN``
+    [battle_controller_player.c:1263-1267]. Order matters even though none of them spends a roll,
+    because each is clamped at 0 and whichever reaches it first is the one that faints us.
+
+    **What this function does NOT return is the heal.** The ROM hands the seeder
+    ``BTLVAR_HIT_DAMAGE`` -- the damage *actually dealt* -- rather than the figure it computed, so
+    a drain clamped by our remaining HP heals by the clamped amount. The caller therefore measures
+    the HP it really removed and heals with that, the same way the residual block already measures
+    Leftovers rather than predicting it.
+
+    `Battler_Ability(battler) != ABILITY_MAGIC_GUARD` guards the ROM's check, so a Magic Guard
+    holder of ours is drained for nothing at all -- and, because the heal is the damage dealt,
+    heals the target for nothing either. Clefable is an ordinary thing to bring, so this is a real
+    party answer rather than a hypothetical.
+
+    A Big Root on the SEEDER would raise the heal by its `HOLD_EFFECT_LEECH_BOOST` param; no wild
+    Pokemon holds one, so that branch is deliberately absent. Liquid Ooze on the seeded side would
+    reverse the heal into damage, and nothing in any configured party has it.
+    """
+    if not battler.seeded or battler.fainted:
+        return 0
+    if (battler.ability or "").strip().lower() == ABILITY_MAGIC_GUARD:
+        return 0
+    return max(1, battler.max_hp // LEECH_SEED_DIVISOR)
+
+
+def synthesis_heal(battler: Battler, field=None) -> int:
+    """Synthesis' recovery for `battler`, by weather. Zero is impossible -- it FAILS instead.
+
+    `BtlCmd_WeatherHPRecovery` [pokeplatinum src/battle/battle_script.c:5966-5979], which is pure
+    arithmetic and spends nothing:
+
+    ===============  ==========================  =======================
+    weather          heal                        Shaymin Lv30 (109 max)
+    ===============  ==========================  =======================
+    none             ``maxHP / 2``               54
+    sun              ``Divide(maxHP * 20, 30)``  72
+    rain/sand/hail   ``Divide(maxHP, 4)``        27
+    ===============  ==========================  =======================
+
+    Both weather branches go through `BattleSystem_Divide`, which floors but clamps a zero
+    quotient to 1; the no-weather branch is a plain ``/ 2`` with no such clamp, which cannot
+    matter because a 1-HP max is not reachable.
+
+    Nothing in any configured party can set sun, so the 72 figure is unreachable today -- it is
+    modelled anyway, because `weather_of` already exists and a branch that reads it costs nothing.
+    Rain IS reachable: Suicune's and Lugia's Rain Dance, and the target's own weather hurts it
+    here, halving its recovery from 54 to 27.
+
+    **Full HP is not this function's business.** At full HP the move fails before reaching the
+    heal (`subscript_recover_hp.s` ``_036``), which `will_fail` owns.
+    """
+    weather = weather_of(field)
+    if weather == WEATHER_NONE:
+        return battler.max_hp // 2
+    if weather == WEATHER_SUN:
+        return max(1, battler.max_hp * 20 // 30)
+    return max(1, battler.max_hp // 4)
+
+
 
 def status_applied_by(move: Move) -> Status | None:
     """The non-volatile status this move inflicts, if any.
@@ -2144,6 +2298,14 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             # subscript tests nothing before setting the bit, so a Foresight against an
             # already-identified target lands again and costs exactly what the first one did.
             identifies=move.effect == EFFECT_FORESIGHT,
+            # Unconditional on reaching here for the same reason Foresight is: every case the
+            # subscript refuses -- a Grass defender, an already-seeded one -- is a `will_fail`
+            # family above, so arriving here means the seed really goes on.
+            seeds=move.effect == EFFECT_LEECH_SEED,
+            # Synthesis. `will_fail` has already refused the full-HP case, so this is never zero
+            # and never a no-op heal.
+            self_heal=(synthesis_heal(attacker, field)
+                       if move.effect == EFFECT_SYNTHESIS else 0),
             # Double Team, Swords Dance, Nasty Plot, Amnesia. Mist does not guard against any of
             # them -- Mist blocks REDUCTIONS to its own side, and this is the user raising its own
             # stage.
@@ -2469,8 +2631,12 @@ def sent_out(battler: Battler) -> Battler:
                    # Foresight a target put on us is shaken off by switching. Reachable only in
                    # that direction, since the target itself never switches out -- which is what
                    # makes OUR Foresight on it last the whole battle.
+                   #
+                   # `seeded` is `moveEffectsMask`'s Leech Seed bit, so it goes the same way as
+                   # `drowsy_turns` -- switching out really does shed a Leech Seed, which is the
+                   # ordinary answer to one and the reason the solver can treat it as escapable.
                    drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0,
-                   identified=False)
+                   identified=False, seeded=False)
 
 
 #: Every stage field on a `Battler`: what Haze resets, and what a send-out resets. Named once so
@@ -3426,6 +3592,18 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Swipe after it connects against a Ghost, and the target's Double Teams stop
             # mattering.
             new.target = replace(new.target, identified=True)
+        if outcome.seeds:
+            # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 84, so a Leech Seed of
+            # ours is refused at the point of use. Wired for the same reason Nightmare's mirror
+            # is. Note it would NOT be the free chip it looks like: the drain heals its applier,
+            # so seeding the target would hand it back the HP we are trying to take off, and
+            # `target_threshold` would move under the solver every turn.
+            new.target = replace(new.target, seeded=True)
+        if outcome.self_heal:
+            # Synthesis, ours. Unreachable for the same reason -- effect 132 is not in
+            # `MODELLED_OUR_EFFECTS` -- but a healing move of ours is an ordinary thing to want,
+            # and this is the half that would have to exist for one.
+            new.ours = new.ours.with_hp(new.ours.hp + outcome.self_heal)
         if outcome.starts_charge is not None:
             new.ours = replace(new.ours, charging_slot=outcome.starts_charge)
         elif outcome.ends_charge:
@@ -3651,8 +3829,16 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # switching sheds it exactly as it sheds a Yawn -- and the target, which never
             # switches, has no such way out.
             new.ours = replace(new.ours, identified=True)
-        if outcome.sets_nightmare:
-            new.ours = replace(new.ours, nightmare=True)
+        if outcome.seeds:
+            # Shaymin's, and the reachable direction. The drain itself is not here -- it is an
+            # end-of-turn residual, applied in the block below next to Leftovers and the burn
+            # tick, because that is where the ROM's condition walk runs it.
+            new.ours = replace(new.ours, seeded=True)
+        if outcome.self_heal:
+            # Shaymin's Synthesis. `will_fail` has already refused it at full HP, so reaching
+            # here means the target really does recover -- and recovering RAISES its `b`, which
+            # is the half of this move that matters to a plan rather than to a turn.
+            new.target = new.target.with_hp(new.target.hp + outcome.self_heal)
         if outcome.starts_uproar:
             # The lock goes on the TARGET -- it is the user. From here it picks no move and
             # spends no PP until the counter runs out (`select_target_move`).
@@ -3796,6 +3982,23 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         recovery = leftovers_tick(new.ours)
         if recovery:
             new.ours = new.ours.with_hp(new.ours.hp + recovery)
+        # Leech Seed, between Leftovers and the burn tick -- the ROM's own order
+        # (`MON_COND_CHECK_STATE_LEECH_SEED` sits at 1264, `_BURN` at 1267).
+        #
+        # Measured rather than predicted, like Leftovers above and for a second reason as well:
+        # the heal handed to the seeder is `BTLVAR_HIT_DAMAGE`, the damage ACTUALLY dealt, so a
+        # drain clamped by our remaining HP heals the target by the clamped figure. Taking the
+        # difference across `with_hp` is what gets that right -- predicting `max HP / 8` would
+        # over-heal the target on the turn the drain faints us.
+        drain = leech_seed_tick(new.ours)
+        if drain:
+            hp_before_drain = new.ours.hp
+            new.ours = new.ours.with_hp(new.ours.hp - drain)
+            sapped = hp_before_drain - new.ours.hp
+            # The seeder is skipped when it is already down -- the ROM gates the whole state on
+            # the recipient's `curHP` [battle_controller_player.c:1379-1380].
+            if sapped and not new.target.fainted:
+                new.target = new.target.with_hp(new.target.hp + sapped)
         if new.ours.status is Status.BURN:
             new.ours = new.ours.with_hp(new.ours.hp - burn_tick(new.ours))
         # Leftovers -> burn -> Nightmare -> Bad Dreams, which is the ROM's own order:

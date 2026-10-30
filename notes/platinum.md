@@ -1880,3 +1880,107 @@ with it would be worse than silence.
 > alone, and the gate above would have been ungated in practice. Insomnia and fifteen other
 > purely defensive abilities are now listed. No configured target has any of them, which is why
 > nothing else moved.
+
+---
+
+## 21. As built — Shaymin, and the two moves that are inert exactly when it matters (clayton-6xu.9.7, clayton-6xu.9.9, clayton-6xu.9.11)
+
+The Flower Paradise Shaymin is in: `ENCOUNTERS["shaymin"]`, Lv30, `(Growth, Magical Leaf, Leech
+Seed, Synthesis)`, `games=("platinum",)`. All four effects are modelled, so
+`unsupported_moves("shaymin", "platinum")` is clean and the row is live rather than aspirational.
+
+It is the proof case `notes/battle_compass_dialga_palkia_shaymin.md` §4C argued for, and the
+argument survives contact: **both of its recovery moves are inert at full HP, and that is now
+modelled rather than assumed.** Synthesis fails outright; Leech Seed's heal clamps to nothing. So
+a full-HP Shaymin cannot move its own HP, and `b` stays where the window search put it. At 1 HP
+the two interact and move `b` out from under the precomputed window, which is the thing to avoid.
+
+### 21.1 Two ROM readings the design doc had slightly wrong
+
+Both would have shipped as bugs, and both came out of reading the subscripts rather than the
+move descriptions.
+
+**Leech Seed's heal is the damage *actually dealt*, not the figure it computed.**
+`subscript_leech_seed_effect.s` takes `maxHP / 8` of the seeded Pokemon, negates it, applies it —
+and then reloads `BTLVAR_HIT_DAMAGE` before handing anything to the seeder. So a drain clamped by
+our remaining HP heals the target by the *clamped* amount. The implementation measures the HP it
+removed across `with_hp` rather than predicting the divisor, the same way the residual block
+already measures Leftovers instead of predicting it. Predicting `maxHP / 8` would over-heal the
+target on exactly the turn the drain faints us — a wrong prediction, not a conservative one.
+
+**Synthesis does not set `MOVE_STATUS_FAILED` and never says "But it failed!"** The full-HP test
+is the *first line* of `subscript_recover_hp.s`, which branches to `_036`, prints "{0}'s HP is
+full!" and sets `MOVE_STATUS_NO_MORE_WORK` (`1 << 31`). That is a different flag and a different
+route through `BattleControllerPlayer_CheckMoveFailure` (battle_controller_player.c:3312-3331):
+
+| flag | route |
+| --- | --- |
+| `NO_MORE_WORK` | → `BATTLE_CONTROL_LOOP_SPREAD_MOVES` |
+| `DID_NOT_HIT` (incl. `FAILED`, `INEFFECTIVE`) | → `subscript_missed` → `LOOP_FAINTED` |
+| success | → `BATTLE_CONTROL_USE_MOVE` |
+
+Both failure routes skip `BATTLE_CONTROL_USE_MOVE`, which is *why* giving them the same
+two-advance discount should be right. But I could not find two unconditional `RandNext` calls on
+the `USE_MOVE` path by static read, and `POST_SUCCESSFUL_MOVE_ADVANCES = 2` is an
+emulator-measured figure fitted against families that all set `FAILED`. **So the equivalence is
+an inference and is owed a capture** — filed, and cheap to reach, since a full-HP Shaymin picks
+Synthesis one turn in four and the first turn of any Shaymin run is at full HP. Leech Seed's two
+failure branches cover one flag of each kind (`INEFFECTIVE` for a Grass defender,
+`NO_MORE_WORK` for an already-seeded one), so the same capture answers for both.
+
+### 21.2 What got built
+
+* `Battler.seeded` — `moveEffectsMask`'s Leech Seed bit. A flag with no counter, like
+  `identified`. Shed by `sent_out` (so switching really is the answer to a Leech Seed) and by
+  `with_hp(0)`.
+* `sim.leech_seed_tick` — `max(1, maxHP / 8)`, floored but never zero because
+  `DivideVarByValue` is `BattleSystem_Divide` (battle_lib.c:3599-3618), which clamps a zero
+  quotient to 1 — the same rule as the burn tick and Leftovers. Applied **between Leftovers and
+  the burn tick**, which is the ROM's own order (`MON_COND_CHECK_STATE_LEFTOVERS` 1263,
+  `_LEECH_SEED` 1264, `_POISON` 1265, `_BURN` 1267). Order matters even with no rolls involved,
+  because each is clamped at 0 and whichever reaches it first is the one that faints us.
+* `sim.synthesis_heal` — the three weather branches of `BtlCmd_WeatherHPRecovery`
+  (battle_script.c:5966-5979). For a Lv30 Shaymin at 109 max: 54 with no weather, 72 in sun, 27
+  in rain/sand/hail. **Rain is reachable and works for us**: Suicune's and Lugia's Rain Dance
+  halve the recovery from 54 to 27. Sun has no setter and is modelled anyway, because
+  `weather_of` already reads weather and the branch costs nothing.
+* `MoveOutcome.seeds` and `MoveOutcome.self_heal` — the first self-heal on either side.
+  `self_heal` is a figure rather than a flag because the amount depends on the field.
+* Four new `will_fail` families (ten total now), and the placement is the part worth recording:
+  **they had to go above the `if field is None: return False` guard**, next to Refresh. Put below
+  it with the screens they were unreachable whenever no field was passed, and the tests caught
+  it, not a reading.
+* `hunt_session.BATTLER_FLAGS` gained a Leech Seed row. It is the only condition in that banner
+  that takes HP off one side and gives it to the other, so a player should not have to infer it
+  from their HP dropping.
+
+### 21.3 Three things deliberately not modelled, and said so in the code
+
+**Big Root** would raise the heal by its `HOLD_EFFECT_LEECH_BOOST` param and **Liquid Ooze**
+would reverse it into damage; no wild Pokemon holds the first and nothing in any configured party
+has the second. **Heal Block** refuses Synthesis (`subscript_present_heal.s` `_015`) and refuses
+the Leech Seed heal (`subscript_leech_seed_effect.s` `_083`, keyed on the *seeder*), and no party
+can inflict it. Each is a comment rather than a branch, so that adding one later is a line.
+
+**Magic Guard is modelled**, and is the one of this family that is a real party answer: the ROM
+skips the whole Leech Seed state for a holder (battle_controller_player.c:1381), and Clefable is
+an ordinary lead. Because the heal is the damage dealt, a Magic Guard holder starves the target
+as well as itself — the drain is zero on both sides.
+
+**A Grass lead cannot be seeded at all.** `subscript_leech_seed_start.s` `_065` checks both type
+slots before anything else. That is the other genuine party answer here, and it is a test rather
+than a comment.
+
+### 21.4 And an omission it exposed, in the same place §20's was
+
+`can_inflict` treats an unrecognised ability as capable — the right direction — and
+`_INERT_ABILITIES` is what stops that swallowing everything. **Natural Cure was not in it**, so
+Shaymin answered "yes, it can paralyze us" on the strength of an ability that does nothing to
+anybody, and filled the speed table with rows for a state the player cannot reach. Caught by
+`test_no_configured_target_can_paralyze_us`, which exists precisely to make a new target that
+*can* a visible change. It is doubly inert here: Natural Cure cures its holder's status on
+switching **out**, which a wild target never does.
+
+That is twice now that this set has been the thing a new target broke (§20 was Insomnia). The
+pattern is worth naming: the conservative default is correct, and the cost of it is that every
+new ability on the table owes a row in one of the two sets.

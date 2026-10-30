@@ -258,6 +258,23 @@ class Battler:
     #: from the Pokemon being sent out, which is the opposite direction and reachable only for a
     #: Foresight aimed at US (clayton-957.26.5).
     identified: bool = False
+    #: A Leech Seed is on this battler -- the ROM's ``MOVE_EFFECT_LEECH_SEED`` in
+    #: `moveEffectsMask`, set on the move's DEFENDER by `subscript_leech_seed_start.s`.
+    #:
+    #: Shaymin's, and the only effect on either side that moves BOTH Pokemon's HP from one
+    #: place. The drain sits in the end-of-turn condition walk at
+    #: ``MON_COND_CHECK_STATE_LEECH_SEED``, immediately after Leftovers and before poison and
+    #: burn (pokeplatinum src/battle/battle_controller_player.c:1263-1267) -- which is why
+    #: `sim.leech_seed_tick` is applied where it is rather than next to the burn tick.
+    #:
+    #: A flag with no counter, like `identified`: nothing ever shakes it off except leaving the
+    #: field. So one Leech Seed lasts as long as the seeded Pokemon stays out, and a second one
+    #: aimed at an already-seeded victim FAILS (`sim.will_fail`).
+    #:
+    #: **Whose heal it is matters as much as whose damage.** The ROM hands the seeder the damage
+    #: it actually dealt, not the figure it computed, so a drain clamped by our remaining HP
+    #: heals Shaymin by the clamped amount -- see `sim.leech_seed_tick`.
+    seeded: bool = False
 
     def __post_init__(self):
         if self.hp is None:
@@ -401,7 +418,7 @@ class Battler:
                             or self.charging_slot is not None
                             or self.uproar_turns or self.drowsy_turns
                             or self.taunted_turns or self.identified
-                            or self.heal_block_turns):
+                            or self.heal_block_turns or self.seeded):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
@@ -409,7 +426,7 @@ class Battler:
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
                            drowsy_turns=0, taunted_turns=0, identified=False,
-                           heal_block_turns=0)
+                           heal_block_turns=0, seeded=False)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":

@@ -237,6 +237,41 @@ ENCOUNTERS: dict[str, Encounter] = {
     "azelf": Encounter(
         "azelf", 50, ("Swift", "Uproar", "Future Sight", "Nasty Plot"),
         games=("platinum",), where="Valor Cavern"),
+    # Platinum's Flower Paradise Shaymin, and the gentlest static on this table.
+    # `StartFatefulEncounter SPECIES_SHAYMIN, 30` (res/field/scripts/scripts_flower_paradise.s:46).
+    #
+    # **The command is a different one and it does not matter** [verified]:
+    # `StartFatefulEncounter` is `Encounter_NewVsSpeciesAtLevel` plus one data write after
+    # `CreateWildMon_Scripted` (src/encounter.c:549 vs :568), setting the fateful-encounter flag.
+    # The generation and battle-start paths are identical, so this reuses
+    # `sim.BATTLE_START_ADVANCES` unchanged and needed no new ground-truth capture.
+    #
+    # Catch rate **45**, the highest of any target here, and base stats that are 100 across the
+    # board. That combination is why it is the proof case for solving above 1 HP: full HP asleep
+    # in a Dusk Ball is a=104, against Suicune's a=18 at 1 HP in the same ball.
+    #
+    # Exactly four learnable moves at 30 -- Growth(1), Magical Leaf(10), Leech Seed(19),
+    # Synthesis(28) -- so nothing is shifted out and the slot order is simply the learn order.
+    # Sweet Scent(37) is the first one that misses, which is luck worth noting: it would drop our
+    # evasion and make our own moves missable.
+    #
+    # Two of the four were already modelled (13 Growth via `PRIMARY_SELF_RAISES`, 17 Magical Leaf
+    # -- accuracy 0, so it never misses). The other two are the reason this row could not exist
+    # until now: `sim.EFFECT_LEECH_SEED` and `sim.EFFECT_SYNTHESIS`, and **both are inert at full
+    # HP** (Synthesis fails outright, Leech Seed's heal clamps to nothing), which is the whole of
+    # notes/battle_compass_dialga_palkia_shaymin.md sec 4C.
+    #
+    # `ability` is left empty on purpose. Natural Cure is slot 0 of the species row, so the
+    # default lands on it, and it is **inert on a wild Pokemon**: it cures status on switching
+    # OUT, and a wild target never switches out. Recorded here so nobody reads its absence as an
+    # oversight.
+    #
+    # `forme` is likewise empty: `base_stats.json` carries both `shaymin` (Grass, the Land forme)
+    # and `shaymin-sky`, and the encounter is Land. Sky forme is reachable only by using a
+    # Gracidea on a caught Shaymin, so it is not an encounter at all and gets no row.
+    "shaymin": Encounter(
+        "shaymin", 30, ("Growth", "Magical Leaf", "Leech Seed", "Synthesis"),
+        games=("platinum",), where="Flower Paradise"),
     # Platinum's Giratina, met TWICE, which is the case this table's key exists for. Both at
     # **Lv47**, so the level cross-check cannot tell them apart at all -- and they differ in
     # forme, ability and base stats, not merely in moveset:
