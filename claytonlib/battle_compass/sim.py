@@ -164,6 +164,10 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # US. The duration roll at application, the `& 1` check every turn it runs, and a second
     # advance for the self-hit's damage variance. All three moduli divide 256, so none of them
     # separates RTC-second siblings -- only Dizzy Punch's `% 100` proc does.
+    # Dialga's, and the only move on this table whose user loses its OWN next turn. Free on the
+    # way in (`MOVE_SIDE_EFFECT_ON_HIT`, no proc roll) and free on the way out -- a recharge turn
+    # spends no selection roll, no PP and no status checks at all.
+    80: "Roar of Time: the recharge turn, which costs the target everything and us nothing",
     49: "Confuse Ray: the duration roll, the per-turn check, and the self-hit",
     76: "Dizzy Punch: the 20% proc, and the confusion it lands ON US",
 }
@@ -546,6 +550,9 @@ class MoveOutcome:
     #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
     #: what applies it -- only it knows which side that is.
     identifies: bool = False
+    #: This move connected and its USER must recharge next turn -- Roar of Time's. Self-aimed,
+    #: like `self_stat_change`, so `simulate_turn` sets it on whichever side moved.
+    starts_recharge: bool = False
     #: Rolled confusion turns this move put on its DEFENDER, or 0. Aimed at the other side, like
     #: `stat_drop` and `seeds`.
     #:
@@ -1088,6 +1095,16 @@ EFFECT_CONFUSE_RAY = 49
 #: (a `will_fail` family), while the same branches reached INDIRECTLY jump straight to ``_185``
 #: and end -- the move still dealt its damage and nothing extra was spent.
 EFFECT_DIZZY_PUNCH = 76
+#: Roar of Time, Dialga's slot 1. 150 power Dragon, 90 accuracy, 5 PP -- and the user loses its
+#: NEXT turn entirely.
+#:
+#: The recharge is `MOVE_SIDE_EFFECT_ON_HIT` (effect_script_0080.s), so it returns from the first
+#: branch of `BattleSystem_TriggerSecondaryEffect` and costs **no proc roll**: guaranteed on a
+#: hit, and -- because accuracy is 90 -- absent on a miss, which is the one way to dodge it.
+#:
+#: Neither subscript rolls anything. `subscript_recharge_turn.s` sets the volatile and records
+#: the move; `subscript_recharging.s` prints "must recharge!" and unlocks the move choice.
+EFFECT_ROAR_OF_TIME = 80
 #: Refresh. Self-targeting, and it cures only the three statuses below -- not sleep and not
 #: freeze, which is why sleep is the status of choice against a target that knows it (sec 4b).
 EFFECT_REFRESH = 193
@@ -2875,6 +2892,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                             self_stat_change=self_change,
                             knocks_off_item=knocks_off,
                             confuses=confuse_turns,
+                            # Guaranteed on a hit and free -- `MOVE_SIDE_EFFECT_ON_HIT`, so no
+                            # proc roll. `ineffective` is the only escape besides a miss.
+                            starts_recharge=(move.effect == EFFECT_ROAR_OF_TIME
+                                             and not ineffective),
                             attacker_status=attacker_status,
                             starts_uproar=starts_uproar,
                             # The charged move has fired, so the lock and the vanish come off
@@ -3014,7 +3035,7 @@ def sent_out(battler: Battler) -> Battler:
                    # `drowsy_turns` -- switching out really does shed a Leech Seed, which is the
                    # ordinary answer to one and the reason the solver can treat it as escapable.
                    drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0,
-                   identified=False, seeded=False)
+                   identified=False, seeded=False, confusion_turns=0, recharging=False)
 
 
 #: Every stage field on a `Battler`: what Haze resets, and what a send-out resets. Named once so
@@ -3090,6 +3111,13 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     The solver therefore never searches that far — see ``solver.struggle_deadline`` — and callers
     that might should check for None themselves.
     """
+    if target.recharging:
+        # Recharging, so the ROM never asks it to pick -- `VOLATILE_CONDITION_RECHARGING` sits in
+        # the same `Battler_CanPickCommand` condition as `MOVE_LOCKED` and `UPROAR`
+        # (battle_lib.c:6225-6236). **One advance fewer on that turn**, and the slot returned is
+        # arbitrary because the turn is lost before any move executes -- `act_target` checks
+        # `recharging` before it looks at the move at all.
+        return rng, target.charging_slot if target.charging_slot is not None else 0
     if target.charging_slot is not None:
         # Locked into the second half of a multi-turn move, so the ROM never asks it to pick:
         # `Battler_CanPickCommand` is FALSE and command selection is skipped entirely
@@ -3236,6 +3264,11 @@ def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerC
     zero-scored slots and roll, we return None and roll nothing. A 1 HP roamer dies to Struggle
     recoil, so a run that reaches it is lost either way -- see `solver.struggle_deadline`.
     """
+    if target.recharging:
+        # As in `select_target_move`: no command is picked, so no AI rolls are spent either.
+        # Unreachable today -- no roamer has Roar of Time -- and wired because the asymmetry is
+        # the trap, not the gap.
+        return RoamerChoice(rng, 0, False, 0)
     if target.charging_slot is not None:
         return RoamerChoice(rng, target.charging_slot, False, 0)
     if target.uproar_turns and target.uproar_slot is not None:
@@ -4023,6 +4056,18 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         if not awake:
             parts.append(tok.prevented_token("M", "slp"))
             return False
+        if new.ours.recharging:
+            # State 4 of the before-move walk, and it STOPS the walk
+            # (`CHECK_STATUS_DISRUPT_MOVE`), so nothing after it is reached: a recharging actor
+            # that is also flinched or paralyzed spends neither of those. The selection roll was
+            # already skipped by `Battler_CanPickCommand`, and no PP is spent -- so the whole
+            # turn costs ZERO advances.
+            #
+            # **Not a `move_failed`**: recharge is absent from `BattleContext_MoveFailed`'s nine
+            # flags, so an Uproar running alongside it counts down rather than coming off early.
+            new.ours = replace(new.ours, recharging=False)
+            parts.append(tok.prevented_token("M", "rch"))
+            return False
         if flinched["M"]:
             move_failed["M"] = True
             parts.append(tok.prevented_token("M", "fln"))
@@ -4121,6 +4166,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # `MODELLED_OUR_EFFECTS` -- but a healing move of ours is an ordinary thing to want,
             # and this is the half that would have to exist for one.
             new.ours = new.ours.with_hp(new.ours.hp + outcome.self_heal)
+        if outcome.starts_recharge:
+            # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 80 -- and wired for the
+            # usual symmetry. Note it would be a poor move for us regardless: a lost turn at
+            # 1 HP is a turn the target gets for free.
+            new.ours = replace(new.ours, recharging=True)
         if outcome.self_stat_change:
             # Signed, so one call covers Curse's mixed package and Superpower's two drops.
             # Reachable on our side: Superpower is an ordinary tutor move and Hammer Arm is a
@@ -4276,6 +4326,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "slp"))
             return broke
+        if new.target.recharging:
+            # Dialga's, and the reachable direction. State 4, and it stops the walk -- see the
+            # mirror in `act_ours`. The one free turn this target ever gives us: it is not
+            # semi-invulnerable while recharging, so everything we throw at it connects.
+            new.target = replace(new.target, recharging=False)
+            parts.append(tok.prevented_token("E", "rch"))
+            return False
         if flinched["E"]:
             move_failed["E"] = True
             broke = new.target.charging_slot is not None
@@ -4405,6 +4462,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # here means the target really does recover -- and recovering RAISES its `b`, which
             # is the half of this move that matters to a plan rather than to a turn.
             new.target = new.target.with_hp(new.target.hp + outcome.self_heal)
+        if outcome.starts_recharge:
+            # Dialga's. The flag goes on the USER, so this is the target locking itself out of
+            # its own next turn -- the only thing in any configured moveset that does.
+            new.target = replace(new.target, recharging=True)
         if outcome.self_stat_change:
             # The titans': Curse (-1 Spe, +1 Atk, +1 Def) and Superpower (-1 Atk, -1 Def), and
             # Registeel's Metal Claw (+1 Atk). **Not blocked by anything** -- Clear Body guards

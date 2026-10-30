@@ -2366,3 +2366,89 @@ that confusion exists to advise about), the **cave-terrain gdb question** for al
 (clayton-6xu.10.9), and the **Lv1 ball-and-HP readout** (clayton-6xu.10.8). The access gating —
 the ruins needing an event Regigigas and Snowpoint needing the trio — is recorded on the epic but
 not yet expressed as `ENCOUNTER_ACCESS`; it belongs with clayton-6xu.9.12.
+
+---
+
+## 25. As built — Dialga and Palkia, for one new effect between them (clayton-6xu.9.10, .11)
+
+Both Lv70, both Pressure, both catch rate 30, both at Spear Pillar. The rows are in and
+`unsupported_moves` is clean, which completes every Platinum static.
+
+| | slot 1 (the only slot that differs) | slot 2 | slot 3 | slot 4 |
+| --- | --- | --- | --- | --- |
+| Dialga | **Roar of Time** (90 acc) | Heal Block | Earth Power | Slash |
+| Palkia | **Spacial Rend** (95 acc) | Heal Block | Earth Power | Slash |
+
+**Palkia needed nothing new.** Spacial Rend is effect 43 — the high-crit group Lugia's Aeroblast
+opened — and Heal Block (236) and Earth Power (72) were already in. So one effect covered both
+targets, which is the opposite of how this pair looked from §2's work list.
+
+Nine moves are learnable at 70 and five are shifted out. Worth naming what goes with them:
+**Ancient Power(20)**, which is the one boost that threatens the no-speed-tie guarantee because
+it raises Speed along with everything else. Asserted, the way Explosion is for the titans.
+
+### 25.1 Roar of Time is free coming in and free going out
+
+Both halves cost nothing, which is unusual enough to be worth tabulating:
+
+* **Coming in:** the recharge is `MOVE_SIDE_EFFECT_ON_HIT` (`effect_script_0080.s`), so it
+  returns from the first branch of `BattleSystem_TriggerSecondaryEffect` before any `% 100` —
+  **no proc roll**, guaranteed on a hit. Neither `subscript_recharge_turn.s` nor
+  `subscript_recharging.s` contains a `Random`.
+* **Going out:** the recharge turn spends **nothing at all**. No selection roll
+  (`Battler_CanPickCommand` returns FALSE for `VOLATILE_CONDITION_RECHARGING`, sitting in the
+  same condition as `MOVE_LOCKED` and `UPROAR`), no PP for the same reason, and no status checks
+  after state 4 — `CHECK_STATUS_STATE_RECHARGING` returns `CHECK_STATUS_DISRUPT_MOVE`, which
+  stops the before-move walk.
+
+That last point has a consequence worth having a test for: recharge is **state 4** and paralysis
+is **state 12**, so a recharging *and* paralyzed Dialga spends no paralysis roll either — the
+same short-circuit the taunt refusal already models. Verified by comparing advance counts against
+a clean recharge turn.
+
+And the recharge is gated on the hit, so a **missed** Roar of Time costs Dialga nothing and buys
+us nothing. At 90 accuracy that is also this target's separator, the way Spacial Rend's 95 is
+Palkia's.
+
+### 25.2 Why `recharging` is its own field, and it is not about tidiness
+
+`Battler.recharging` sits beside `charging_slot` rather than reusing it, and the two-field
+discipline §13 established for Shadow Force applies here for a sharper reason than naming. The
+two share the half that matters most — neither spends a selection roll and neither spends PP —
+but they part company on the half that decides whether the turn is any use to us:
+
+| | charge turn (Shadow Force) | recharge turn (Roar of Time) |
+| --- | --- | --- |
+| user fires anything | no | no |
+| user is semi-invulnerable | **yes** | **no** |
+
+A shared field would have made Dialga unhittable on the one turn it hands us for free. That is
+the single most valuable turn this target has, so it is asserted directly with
+`is_semi_invulnerable` rather than left to follow from the field being separate.
+
+A bool rather than a counter, because the ROM clears the volatile whole rather than decrementing
+it.
+
+### 25.3 The finding the whole design rests on, now pinned by a test
+
+**Dialga cannot be brought to 1 HP.** Steel resists False Swipe, its Defence is 194 and its HP
+241 at Lv70, and Pressure halves our 40 PP to 20 uses — so 1 HP is 20–27 hits and arithmetically
+out of reach. That is why Phase 2 was generalised off the 1 HP precondition (clayton-6xu.9.1),
+and it is now asserted rather than recorded in prose, so it cannot quietly stop being true.
+
+Catch rate 30 is what makes that a *better* outcome rather than a concession: at full HP asleep
+in a Dusk Ball these two are `a=70`, against `a=18` for Suicune at 1 HP in the same ball. The
+chip phase is a downgrade for them.
+
+### 25.4 Still owed
+
+Unchanged and non-blocking: **whether the recharge turn gets the two post-successful-move
+advances** (clayton-6xu.9.14). It is modelled as *not* getting them, on the reasoning that a
+disrupted move resembles the taunt refusal rather than a charge turn — but `POST_SUCCESSFUL_MOVE_ADVANCES`
+is an emulator-measured figure and this is a derived application of it, so it is owed a capture
+like §21.1's. Two advances a turn, and a real run shows it immediately.
+
+The advice work for this pair is also still open: the hits-needed-vs-PP arithmetic
+(clayton-6xu.9.3), the ball-and-HP readout (clayton-6xu.9.4), survivability before chipping
+(clayton-6xu.9.5), and our side's chip-move coverage (clayton-6xu.9.2). None of it blocks a run;
+all of it is what stops a player planning a 1 HP route that cannot finish.

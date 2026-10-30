@@ -284,6 +284,20 @@ class Battler:
     #: it actually dealt, not the figure it computed, so a drain clamped by our remaining HP
     #: heals Shaymin by the clamped amount -- see `sim.leech_seed_tick`.
     seeded: bool = False
+    #: This battler spent a 150-power Roar of Time last turn and must recharge through this one.
+    #: The ROM's ``VOLATILE_CONDITION_RECHARGING``, set by `subscript_recharge_turn.s` on a hit.
+    #:
+    #: **Its own field rather than `charging_slot`**, for the reason that field already gives for
+    #: not being `uproar_turns`: one field would have to mean two things. The two DO share the
+    #: half that matters most -- `Battler_CanPickCommand` returns FALSE for either
+    #: (battle_lib.c:6225-6236), so neither spends the move-selection roll and neither spends PP
+    #: -- but they part company everywhere else. A charge turn fires nothing and makes its user
+    #: unhittable; a recharge turn fires nothing and leaves it fully exposed, which is the one
+    #: free turn Dialga ever gives us.
+    #:
+    #: A bool rather than a counter: it is always exactly one turn, and
+    #: `CHECK_STATUS_STATE_RECHARGING` clears the flag whole rather than decrementing it.
+    recharging: bool = False
 
     def __post_init__(self):
         if self.hp is None:
@@ -439,7 +453,7 @@ class Battler:
                             or self.uproar_turns or self.drowsy_turns
                             or self.taunted_turns or self.identified
                             or self.heal_block_turns or self.seeded
-                            or self.confusion_turns):
+                            or self.confusion_turns or self.recharging):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
@@ -447,7 +461,8 @@ class Battler:
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
                            drowsy_turns=0, taunted_turns=0, identified=False,
-                           heal_block_turns=0, seeded=False, confusion_turns=0)
+                           heal_block_turns=0, seeded=False, confusion_turns=0,
+                           recharging=False)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":

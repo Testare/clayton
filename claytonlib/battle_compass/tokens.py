@@ -20,7 +20,10 @@ from __future__ import annotations
 #: Markers that *replace* the slot, because no move happened at all. The three non-volatile
 #: ones carry the same spelling as ``Status``'s values; ``cfz`` (a confusion self-hit) and
 #: ``fln`` (a flinch) are volatile and have no ``Status`` member.
-PREVENTION_DETAIL = frozenset({"par", "slp", "frz", "cfz", "fln"})
+#: ``rch`` is Dialga's: the turn after a Roar of Time connects, "Dialga must recharge!" and it
+#: does nothing at all. It belongs here rather than in `RESOLUTION_DETAIL` because the move does
+#: NOT go ahead -- the recharge check returns `CHECK_STATUS_DISRUPT_MOVE` and stops the walk.
+PREVENTION_DETAIL = frozenset({"par", "slp", "frz", "cfz", "fln", "rch"})
 
 #: Markers that *precede* the slot, because the move goes ahead anyway.
 #:
@@ -508,6 +511,7 @@ _PREVENTION_PROSE = {
     "slp": "was asleep",
     "frz": "was frozen solid",
     "cfz": "hurt itself in confusion",
+    "rch": "must recharge",
     "fln": "flinched",
 }
 

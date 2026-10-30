@@ -255,6 +255,34 @@ ENCOUNTERS: dict[str, Encounter] = {
     "azelf": Encounter(
         "azelf", 50, ("Swift", "Uproar", "Future Sight", "Nasty Plot"),
         games=("platinum",), where="Valor Cavern"),
+    # Platinum's Spear Pillar pair, both **Lv70** and both Pressure.
+    # `StartLegendaryBattle SPECIES_DIALGA/PALKIA, 70`
+    # (res/field/scripts/scripts_spear_pillar_{dialga,palkia}.s:43).
+    #
+    # Nine moves are learnable at 70, so five are shifted out and the sets land on the four at
+    # 40/50/60/70 in learn order. The two differ in exactly one slot -- the signature move at 40
+    # -- and both of those are modelled already: Spacial Rend is effect 43, the high-crit group
+    # Aeroblast opened, while Roar of Time is effect 80 and needed the recharge turn
+    # (`sim.EFFECT_ROAR_OF_TIME`).
+    #
+    # **Catch rate 30**, ten times the titans' and Suicune's, which is what makes these two the
+    # targets Phase 2 was generalised off 1 HP for: at FULL HP asleep in a Dusk Ball they are
+    # a=70, against a=18 for Suicune at 1 HP in the same ball. The chip phase is a DOWNGRADE here
+    # (notes/battle_compass_dialga_palkia_shaymin.md sec 0).
+    #
+    # And it is not merely better, it is necessary for Dialga: Steel resists False Swipe, its
+    # Defence is 194 at Lv70 and Pressure halves our 40 PP to 20 uses, so 1 HP is 20-27 hits and
+    # arithmetically out of reach. That is the finding the whole design rests on.
+    #
+    # `ability` is empty because Pressure is slot 0 of both species rows -- and Pressure is the
+    # part of these two that costs us most, since `HuntConfig.target_has_pressure` doubles every
+    # PP figure the solver plans against.
+    "dialga": Encounter(
+        "dialga", 70, ("Roar of Time", "Heal Block", "Earth Power", "Slash"),
+        games=("platinum",), where="Spear Pillar"),
+    "palkia": Encounter(
+        "palkia", 70, ("Spacial Rend", "Heal Block", "Earth Power", "Slash"),
+        games=("platinum",), where="Spear Pillar"),
     # Platinum's three legendary titans, all **Lv30** and all Clear Body.
     # `StartLegendaryBattle SPECIES_REGIROCK/REGICE/REGISTEEL, 30`
     # (res/field/scripts/scripts_{rock_peak,iceberg,iron}_ruins.s:47).
