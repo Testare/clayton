@@ -237,6 +237,38 @@ ENCOUNTERS: dict[str, Encounter] = {
     "azelf": Encounter(
         "azelf", 50, ("Swift", "Uproar", "Future Sight", "Nasty Plot"),
         games=("platinum",), where="Valor Cavern"),
+    # Platinum's three legendary titans, all **Lv30** and all Clear Body.
+    # `StartLegendaryBattle SPECIES_REGIROCK/REGICE/REGISTEEL, 30`
+    # (res/field/scripts/scripts_{rock_peak,iceberg,iron}_ruins.s:47).
+    #
+    # Each has FIVE learnable moves at 30, so one is shifted out, and **the one shifted out is
+    # Explosion** -- Explosion(1), Stomp(1), <the type move>(9), Curse(17), Superpower(25), and
+    # `BoxPokemon_SetDefaultMoves` keeps the last four in learn order. That is worth stating
+    # rather than leaving implicit: an Explosion against a target we are trying to catch would end
+    # the run, it is the first thing to fear at Lv30, and it does not happen.
+    #
+    # The three differ in exactly one slot -- the type move at 9 -- and that slot is where all of
+    # the identification value is. Rock Throw is 90 accuracy, Icy Wind and Metal Claw 95, against
+    # a kit that is otherwise accuracy 100 or 0; a sub-100 move from the target is free
+    # RTC-second-sibling separation (notes/seed_separation.md).
+    #
+    # **Clear Body is the fact that shapes the fight**, and it is slot 0 of each species row so
+    # `ability` is left empty. It refuses every stat drop we aim at them -- Screech, Metal Sound,
+    # Charm and Flash are all simulated correctly and all do nothing -- while leaving the titan's
+    # own Curse free to stack +1 Def a turn. Haze is the only answer and the solver is currently
+    # kept off it (clayton-6xu.10.10). See `sim.stat_drop_blocked_by`.
+    #
+    # Catch rate 3, the same as Suicune's, and at Lv30 the Nest Ball is `max(40-30, 10)` = x1 --
+    # so the x3.9 that Regigigas gets at Lv1 must not leak into advice for these three.
+    "regirock": Encounter(
+        "regirock", 30, ("Stomp", "Rock Throw", "Curse", "Superpower"),
+        games=("platinum",), where="Rock Peak Ruins"),
+    "regice": Encounter(
+        "regice", 30, ("Stomp", "Icy Wind", "Curse", "Superpower"),
+        games=("platinum",), where="Iceberg Ruins"),
+    "registeel": Encounter(
+        "registeel", 30, ("Stomp", "Metal Claw", "Curse", "Superpower"),
+        games=("platinum",), where="Iron Ruins"),
     # Platinum's Flower Paradise Shaymin, and the gentlest static on this table.
     # `StartFatefulEncounter SPECIES_SHAYMIN, 30` (res/field/scripts/scripts_flower_paradise.s:46).
     #

@@ -169,7 +169,9 @@ class TestMistStillGuardsEveryDrop(unittest.TestCase):
             0x1234, resolve_move("Flash"), ampharos(), hooh(),
             actor="M", slot=1, field=state_with(ampharos(), hooh(), mist_turns=5))
         self.assertTrue(outcome.successful)
-        self.assertTrue(outcome.blocked_by_mist)
+        # The REASON, not a bool: the same ROM branch also holds Clear Body and White Smoke, so
+        # the field names what refused the drop (`sim.stat_drop_blocked_by`).
+        self.assertEqual(outcome.drop_blocked_by, "Mist")
         self.assertIsNone(outcome.stat_drop)
 
 

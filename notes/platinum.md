@@ -1984,3 +1984,121 @@ switching **out**, which a wild target never does.
 That is twice now that this set has been the thing a new target broke (§20 was Insomnia). The
 pattern is worth naming: the conservative default is correct, and the cost of it is that every
 new ability on the table owes a row in one of the two sets.
+
+---
+
+## 22. As built — the three legendary titans, and a block that was half-missing (clayton-6xu.10.1, .2, .3, .7)
+
+Regirock, Regice and Registeel are in: all Lv30, all Clear Body, all catch rate 3, all
+platinum-only, and `unsupported_moves` is clean for all three.
+
+| | slot 1 | slot 2 | slot 3 | slot 4 |
+| --- | --- | --- | --- | --- |
+| Regirock | Stomp | **Rock Throw** (90) | Curse | Superpower |
+| Regice | Stomp | **Icy Wind** (95) | Curse | Superpower |
+| Registeel | Stomp | **Metal Claw** (95) | Curse | Superpower |
+
+**Explosion is shifted out of all three**, and that is asserted rather than assumed because it is
+the first thing to fear about a Lv30 legendary. Five entries are learnable at 30 — Explosion(1),
+Stomp(1), the type move(9), Curse(17), Superpower(25) — and `BoxPokemon_ReplaceMove` bubbles the
+oldest off the front, so Explosion is exactly the one that goes.
+
+They differ in **exactly one slot**, and that slot is where all the identification value lives:
+the rest of the kit is accuracy 100 or 0, and two of its four moves spend no roll at all.
+
+### 22.1 Half their kit is free, which makes them quiet rather than easy
+
+| move | rolls beyond a move of its class | why |
+| --- | --- | --- |
+| Curse (109) | **0** | accuracy 0, and a DIRECT side effect — `TriggerPrimaryEffect`'s second branch applies it with no chance roll |
+| Superpower (182) | **0** | `MOVE_SIDE_EFFECT_ON_HIT`, so it returns from the FIRST branch of `TriggerSecondaryEffect`, before any `% 100` |
+| Stomp (150) | 1 | indirect without ON_HIT → the probabilistic branch, 30% |
+| Metal Claw (139) | 1 | same branch, 10% |
+
+So a Curse turn is **blind** to RTC-second siblings: the selection roll, the post-move advances,
+and nothing else. Separation on this target comes from Stomp's and Metal Claw's `% 100` procs
+(100 does not divide 256) and from the one sub-100 accuracy slot.
+
+Superpower's `effect_chance` is 0, which is a free cross-check on the flag reading:
+`GF_ASSERT(effectChance != 0)` guards both probabilistic branches, so the move provably never
+reaches one. The ON_HIT / probabilistic split is kept as **two tables**
+(`ON_HIT_SELF_CHANGES` and `SECONDARY_SELF_CHANGES`) precisely because it is an advance
+difference and not a flavour of the same thing.
+
+Stomp needed almost nothing: effect 150 was **already** in `FLINCH_EFFECTS`, so every flinch site
+already handled it and it was missing only from `MODELLED_TARGET_EFFECTS` — the same one-row shape
+Growth's addition had for Shaymin. Its `POWER_MULTI` 10/20-against-Minimize is ×1 always, since no
+party move is Minimize: effect 149's situation, modelled by being inapplicable.
+
+### 22.2 Clear Body is the Mist block with a second way in
+
+`battle_script.c:2876-2886` checks `mistTurns` and then Clear Body / White Smoke in **consecutive
+branches of the same `else`**, both setting `result = 1`. So this was never new machinery, and
+`stat_drop_blocked_by` is now one test for both. White Smoke comes along for free because the ROM
+tests the two in one condition. Keen Eye and Hyper Cutter are three lines further down and go
+through `AbilityBlocksSpecificStatReduction`, which guards one stat each — a different shape, and
+nothing in play has either.
+
+What it does **not** do is the part that makes these targets awkward. The ROM's guard is
+`attacker != sideEffectMon`, so Clear Body says nothing about a titan's own stat changes:
+
+* **Curse stacks +1 Atk and +1 Def a turn, for zero rolls, and we cannot answer it.** Screech,
+  Metal Sound, Charm and Flash are all modelled and all do precisely nothing here. Defence climbs,
+  False Swipe gets worse, Superpower gets stronger. **Haze is the only answer** and §17 currently
+  keeps the solver off it — filed as clayton-6xu.10.10, and this is the first target where that
+  refusal is wrong rather than right.
+* **Superpower softens the titan for us**, −1 Atk and −1 Def every time it lands, partly undoing
+  the Curse. It is the one thing in their kit working in our favour.
+
+### 22.3 And the block was half-missing, on both sides
+
+Secondary stat drops were blocked by **nothing at all** — not Mist, not an ability, on either
+half of the turn. The ROM's guard sits in the shared stat-stage handler and does not care which
+effect asked, so the target's Mist refused our Screech and waved our Crunch through. That was a
+latent gap before Clear Body; **with** Clear Body it is a wrong prediction, since all three titans
+would have taken a secondary drop their ability refuses.
+
+The reachable half of the fix is better than symmetry. **Metang and Metagross have Clear Body**,
+and a Metang is this project's whole reason for existing — so a party member holding it refuses
+Icy Wind's 100%-chance Speed drop and Crunch's Defence drop outright. Tested with a control run
+at Pressure, so the assertion is about the ability and not about the seed.
+
+Mist's **side** is kept straight in the process: `mist_turns` is the target's, so it is consulted
+only for a drop we aim at the target. Passing the field unconditionally would have credited the
+target's Mist with blocking the target's own Icy Wind against us.
+
+> **A field whose name stopped being true.** `MoveOutcome.blocked_by_mist` was a bool, accurate
+> while Mist was the only blocker, and would have read `True` for an ability that is not Mist. It
+> is now `drop_blocked_by: str` carrying the reason — `"Mist"`, `"Clear Body"`, `"White Smoke"`
+> — which is also what any future message would be built from. One test asserted the old field.
+
+### 22.4 Signed stage changes, and why the two old helpers were left alone
+
+Curse is the first move on either side whose self-package moves stats in **both directions at
+once**, so `apply_stat_changes` is new rather than a change to `apply_stat_drop` or
+`apply_stat_raise`. Those two carry every emulator-verified path, and a drop expressed as a
+positive number — `apply_stat_drop`'s convention — is simply not the same shape as a signed
+change, so merging them would have rewritten callers instead of adding a case.
+
+Clamped per pair and in order, which is what the ROM does: each stat is its own
+`UPDATE_STAT_STAGE` call taking its own no-change branch. A titan at −6 Speed keeps Cursing for
+the Attack and Defence at exactly the same cost, because none of the three calls spends a roll —
+so this is **not** a `will_fail` case, for the same reason §19 found the stage ceiling was
+modelled backwards.
+
+### 22.5 Checked in passing: the `effect_chance > 0` gate is right for the whole family
+
+`execute_move` spends a proc roll whenever `effect_chance > 0`, and Icy Wind's chance is 100 —
+which looked like it might be an ON_HIT move paying a roll it should not. It is not: effects 70,
+69 and 31 all set INDIRECT **without** ON_HIT, so each really does pay a `% 100` roll, Icy Wind
+included. That roll is spent and always lands (`roll % 100 < 100`), so it is blind but real. No
+pre-existing bug, which was worth confirming rather than assuming given how many of these
+readings have gone the other way.
+
+### 22.6 Still owed for Regigigas
+
+The Lv1 king is a different fight and is not in yet. It is blocked on three things, each filed:
+**Slow Start** (clayton-6xu.10.5 — it is in `UNMODELLED_ATTACKER_ABILITIES`, so Regigigas is
+refused outright today), **confusion aimed at us** (clayton-6xu.10.4, the only structurally new
+mechanic in the whole set), and **Knock Off** (clayton-6xu.10.6, which removes our Lagging Tail
+and so flips turn order mid-battle).

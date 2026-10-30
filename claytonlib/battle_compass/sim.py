@@ -149,6 +149,14 @@ MODELLED_TARGET_EFFECTS: dict[int, str] = {
     # argument for solving above 1 HP (notes/battle_compass_dialga_palkia_shaymin.md sec 4C).
     84: "Leech Seed: the flag, the max-HP/8 drain on us, and the same figure healed to it",
     132: "Synthesis: the weather-dependent heal, and that it FAILS at full HP",
+    # The three titans', and what they share is costing almost nothing: two of the four spend no
+    # roll at all, so a Curse turn and a Superpower turn are both BLIND to RTC-second siblings.
+    # The separation on this target comes from Stomp's and Metal Claw's `% 100` procs and from
+    # Rock Throw's 90 / Icy Wind's 95 / Metal Claw's 95 accuracy.
+    150: "Stomp: the 30% flinch (already `FLINCH_EFFECTS`), and a power multiplier that is x1",
+    109: "Curse, non-Ghost user: -1 Speed / +1 Atk / +1 Def on itself, for zero rolls",
+    182: "Superpower: damage plus a guaranteed -1 Atk / -1 Def on ITSELF, also for zero rolls",
+    139: "Metal Claw: damage plus a 10% +1 Atk on itself (`SECONDARY_SELF_CHANGES`)",
 }
 
 
@@ -499,9 +507,27 @@ class MoveOutcome:
     #: `stat_drop`, and a separate field for the same reason `attacker_status` is: the side it
     #: lands on is the opposite one, and `simulate_turn` is what knows which side that is.
     self_stat_raise: tuple[tuple[str, int], ...] | None = None
-    #: True when Mist blocked the stat drop. The move still counts as SUCCESSFUL -- verified on
-    #: turn 15 of test1.jsonl, which spent its post-successful-move advances anyway.
-    blocked_by_mist: bool = False
+    #: **Signed** stage changes this move puts on its own user -- Curse's -1 Speed / +1 Atk / +1
+    #: Def, Superpower's -1/-1, Metal Claw's +1.
+    #:
+    #: Separate from `self_stat_raise` rather than folded into it because the two are applied by
+    #: different helpers: raises clamp at the ceiling only, and a mixed package needs both bounds
+    #: (`apply_stat_changes`). Self-aimed either way, so `simulate_turn` puts it on the side that
+    #: moved -- the opposite of `stat_drop`.
+    #:
+    #: Nothing blocks it. Clear Body guards against another battler's reductions only, so a titan
+    #: lowering its own Speed or Defence does so freely.
+    self_stat_change: tuple[tuple[str, int], ...] | None = None
+    #: What refused this move's stat drop -- ``"Mist"``, ``"Clear Body"``, ``"White Smoke"`` --
+    #: or ``""`` if nothing did. The move still counts as SUCCESSFUL either way and still spends
+    #: its post-move advances [verified for Mist: test1.jsonl turn 15, which spent 8 skeleton
+    #: rolls rather than 6 on a Sweet Scent the game reported as "protected by Mist"].
+    #:
+    #: **A reason rather than a bool**, which it was until the titans. `blocked_by_mist` was true
+    #: and accurate while Mist was the only blocker; once Clear Body reached the same ROM branch
+    #: (`stat_drop_blocked_by`) the old name would have read True for an ability that is not Mist,
+    #: and the field is what any future message would be built from.
+    drop_blocked_by: str = ""
     #: Foresight or Odor Sleuth landed, so the move's DEFENDER is now identified. Aimed at the
     #: other side, like `stat_drop` and unlike `self_stat_raise`, which is why `simulate_turn` is
     #: what applies it -- only it knows which side that is.
@@ -1609,6 +1635,64 @@ SECONDARY_STAT_DROPS: dict[int, tuple[tuple[str, int], ...]] = {
 STAT_STAGE_FLOOR = -6
 STAT_STAGE_CEILING = 6
 
+#: Stage changes a move puts on its OWN USER with **signed** stages, applied unconditionally as
+#: the move's PRIMARY effect.
+#:
+#: Separate from `PRIMARY_SELF_RAISES` because that table is raises only, and the titans' Curse is
+#: a MIXED package -- it lowers Speed and raises Attack and Defence, in that order. Folding a
+#: negative into the raises table would have made its name a lie and its `-6` clamp absent.
+#:
+#: Curse (109) is the whole table. `effect_script_0109.s` branches on the ATTACKER's type: a Ghost
+#: user pays half its HP to curse the defender, and a non-Ghost one -- which all three titans are
+#: -- takes the `MOVE_SIDE_EFFECT_TO_ATTACKER|MOVE_SUBSCRIPT_PTR_CURSE_NORMAL` branch instead.
+#: `subscript_curse_normal.s` then calls `UPDATE_STAT_STAGE` three times: Speed down, Attack up,
+#: Defence up.
+#:
+#: **It costs nothing.** Accuracy 0, so no accuracy roll; a DIRECT side effect, so
+#: `BattleSystem_TriggerPrimaryEffect`'s second branch applies it with no chance roll
+#: (battle_lib.c:1491-1507). A Curse turn is therefore BLIND -- the selection roll and the
+#: post-move advances and nothing else.
+#:
+#: **And Clear Body does not stop it**, which is the interaction that makes the titans hard: the
+#: ROM's guard is ``attacker != sideEffectMon`` (battle_script.c:2876), so an ability that blocks
+#: every drop WE aim at it does nothing about the one it aims at itself. So Defence climbs +1 a
+#: Curse with no counter-pressure available, and `Haze` is the only answer (clayton-6xu.10.10).
+PRIMARY_SELF_CHANGES: dict[int, tuple[tuple[str, int], ...]] = {
+    109: (("speed_stage", -1), ("atk_stage", 1), ("def_stage", 1)),   # Curse, non-Ghost user
+}
+
+#: Stage changes on the USER that fire **whenever the move connects**, with no proc roll.
+#:
+#: The distinction from `SECONDARY_SELF_CHANGES` below is not cosmetic -- it is an advance
+#: difference, and it is the ROM's own. `BattleSystem_TriggerSecondaryEffect` is an if/else chain
+#: (battle_lib.c:1519-1590), and `MOVE_SIDE_EFFECT_ON_HIT` returns from the FIRST branch, before
+#: any of the later ones reach `BattleSystem_RandNext() % 100`. So an ON_HIT secondary is
+#: guaranteed and free, while a plain indirect one is probabilistic and costs an advance.
+#:
+#: Superpower (182) is the whole table, and its `effect_chance` is 0 -- which cross-checks the
+#: flag reading, since `GF_ASSERT(effectChance != 0)` guards both probabilistic branches and
+#: would have fired if the move ever reached one.
+#:
+#: It is the one thing on the titans' side working FOR us: 120 BP Fighting that softens its own
+#: Defence every time it lands, partly undoing the Curse above.
+ON_HIT_SELF_CHANGES: dict[int, tuple[tuple[str, int], ...]] = {
+    182: (("atk_stage", -1), ("def_stage", -1)),   # Superpower
+}
+
+#: Stage changes on the USER gated on the secondary PROC, the mirror of `SECONDARY_STAT_DROPS`.
+#:
+#: Metal Claw (139) is the whole table: `MOVE_SIDE_EFFECT_TO_ATTACKER|
+#: MOVE_SUBSCRIPT_PTR_ATTACK_UP_1_STAGE` with no ON_HIT flag, so it falls to the probabilistic
+#: branch at its 10% chance. Registeel's, and the roll is spent whether or not it procs -- which
+#: the existing `effect_chance > 0` gate in `execute_move` already handles, so only the EFFECT was
+#: missing.
+#:
+#: `% 100` does not divide 256, so unlike the titans' confusion-free kit this roll is a genuine
+#: RTC-second-sibling separator (notes/seed_separation.md).
+SECONDARY_SELF_CHANGES: dict[int, tuple[tuple[str, int], ...]] = {
+    139: (("atk_stage", 1),),    # Metal Claw
+}
+
 #: False Swipe's effect: damage, but never below 1 HP. The reason it is the only damaging move
 #: that stays legal once the target is at 1 -- see `solver.can_faint_target`.
 FALSE_SWIPE_EFFECT = 101
@@ -1673,6 +1757,69 @@ def apply_stat_raise(battler: Battler, raises: tuple[tuple[str, int], ...]) -> B
     for field, stages in raises:
         current = getattr(battler, field)
         battler = replace(battler, **{field: min(STAT_STAGE_CEILING, current + stages)})
+    return battler
+
+
+#: Abilities that refuse a stat REDUCTION aimed at their holder by another battler.
+#:
+#: Clear Body (all three titans) and White Smoke are the same mechanic -- the ROM tests them in one
+#: condition (battle_script.c:2883-2884) -- and they sit in the SAME `else` branch as Mist, one
+#: condition after it, returning the same `result = 1`. So this is not new machinery: it is the
+#: existing Mist block reached from an ability instead of a field condition.
+#:
+#: Keen Eye and Hyper Cutter are deliberately absent. They are three lines further down in the
+#: same chain but go through `AbilityBlocksSpecificStatReduction`, which guards ONE stat each
+#: (accuracy and Attack) -- a different shape, and nothing in play has either.
+#:
+#: Tested with `Battler_IgnorableAbility`, so Mold Breaker would suppress it. Nothing models Mold
+#: Breaker and no configured party has it.
+STAT_DROP_BLOCKING_ABILITIES: dict[str, str] = {
+    "clear body": "Clear Body",
+    "white smoke": "White Smoke",
+}
+
+
+def stat_drop_blocked_by(defender: Battler, field=None) -> str | None:
+    """What refuses a stat drop aimed at `defender`, or None -- ``"Mist"`` or an ability name.
+
+    One test for both, because the ROM makes them one test: `battle_script.c:2876-2886` checks
+    `mistTurns` and then Clear Body / White Smoke in consecutive branches of the same `else`,
+    both setting `result = 1`. Modelling only the first was correct until a target had the second.
+
+    **Mist is read off the FIELD and the ability off the DEFENDER**, which is why both arguments
+    are here: `mist_turns` is the target's Mist, raised by a move, while Clear Body is a property
+    of the Pokemon and so is up from turn one and cannot be waited out.
+
+    The move still counts as SUCCESSFUL in either case and still spends its post-move advances
+    [verified for Mist: test1.jsonl turn 15]. Clear Body is assumed to behave the same, which the
+    shared ROM branch is the argument for -- the block is one `result = 1` with two ways in.
+
+    **Only a reduction by somebody else.** The ROM's guard is ``attacker != sideEffectMon``, so
+    this says nothing about a titan's own Curse or Superpower -- see `self_stat_change`.
+    """
+    if field is not None and getattr(field, "mist_turns", 0) > 0:
+        return "Mist"
+    return STAT_DROP_BLOCKING_ABILITIES.get((defender.ability or "").strip().lower())
+
+
+def apply_stat_changes(battler: Battler, changes: tuple[tuple[str, int], ...]) -> Battler:
+    """`battler` with every **signed** pair in `changes` applied, clamped at both -6 and +6.
+
+    The generalisation of `apply_stat_drop` and `apply_stat_raise`, and it exists because Curse is
+    the first move on either side whose self-package moves stats in BOTH directions at once. The
+    two older helpers are deliberately left alone: every verified path goes through them, and a
+    drop expressed as a positive number (`apply_stat_drop`'s convention) is not the same shape as a
+    signed change, so merging them would have rewritten callers rather than added a case.
+
+    Clamped per pair and in order, which is what the ROM does: each stat is its own
+    `UPDATE_STAT_STAGE` call and each takes its own no-change branch. So a titan at -6 Speed keeps
+    Cursing for the Attack and Defence and simply stops losing Speed -- and the turn costs exactly
+    what it did before, since none of the three calls spends a roll.
+    """
+    for field, stages in changes:
+        current = getattr(battler, field)
+        landed = max(STAT_STAGE_FLOOR, min(STAT_STAGE_CEILING, current + stages))
+        battler = replace(battler, **{field: landed})
     return battler
 
 
@@ -2275,7 +2422,12 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         # drop we aim at the target -- which is the only direction any configured moveset can
         # produce.
         drop = primary_stat_drop(move)
-        blocked = (drop is not None and field is not None and field.mist_turns > 0)
+        # `field.mist_turns` is the TARGET's Mist, so it is consulted only for a drop WE aim at
+        # the target; the ability half is read off whoever the drop is aimed at, either way.
+        # Passing the field unconditionally would have credited the target's Mist with blocking
+        # the target's own Icy Wind against us.
+        blocked = (stat_drop_blocked_by(defender, field if actor == "M" else None) or ""
+                   if drop is not None else "")
         return rng, MoveOutcome(
             rolls=used, tokens=tuple(parts), successful=True,
             applied_status=status, sleep_turns=sleep_turns, starts_taunt=taunt_turns,
@@ -2310,7 +2462,9 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             # them -- Mist blocks REDUCTIONS to its own side, and this is the user raising its own
             # stage.
             self_stat_raise=PRIMARY_SELF_RAISES.get(move.effect),
-            blocked_by_mist=blocked)
+            # Curse. Signed, and never blocked -- see `self_stat_change`.
+            self_stat_change=PRIMARY_SELF_CHANGES.get(move.effect),
+            drop_blocked_by=blocked)
 
     # Damaging.
     rng, crit_roll = advance(rng)
@@ -2495,8 +2649,17 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     # "connected; it just did nothing" -- true of the animation and false of the stream. It is the
     # same answer soundproof already gave, and for the same reason: `MOVE_STATUS_INEFFECTIVE` is a
     # member of `MOVE_STATUS_DID_NOT_HIT`, so the ROM does not treat the move as having gone off.
+    # Self-stage changes from a damaging move, and the two tables are kept apart because the
+    # ROM keeps them apart: Superpower's is `MOVE_SIDE_EFFECT_ON_HIT` and so fires whenever the
+    # move connects, for free, while Metal Claw's goes through the probabilistic branch and rides
+    # the `secondary` proc above. Gated on `not ineffective` for the same reason the proc roll is:
+    # the side-effect function is never reached on an ineffective hit.
+    self_change = None if ineffective else ON_HIT_SELF_CHANGES.get(move.effect)
+    if secondary and not ineffective:
+        self_change = SECONDARY_SELF_CHANGES.get(move.effect, self_change)
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=not ineffective,
                             damage=dealt, secondary=secondary,
+                            self_stat_change=self_change,
                             attacker_status=attacker_status,
                             starts_uproar=starts_uproar,
                             # The charged move has fired, so the lock and the vanish come off
@@ -3604,6 +3767,11 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # `MODELLED_OUR_EFFECTS` -- but a healing move of ours is an ordinary thing to want,
             # and this is the half that would have to exist for one.
             new.ours = new.ours.with_hp(new.ours.hp + outcome.self_heal)
+        if outcome.self_stat_change:
+            # Signed, so one call covers Curse's mixed package and Superpower's two drops.
+            # Reachable on our side: Superpower is an ordinary tutor move and Hammer Arm is a
+            # plausible chip move, so this is not a symmetry stub.
+            new.ours = apply_stat_changes(new.ours, outcome.self_stat_change)
         if outcome.starts_charge is not None:
             new.ours = replace(new.ours, charging_slot=outcome.starts_charge)
         elif outcome.ends_charge:
@@ -3671,7 +3839,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # drop from one of OUR moves was applied nowhere. Nothing in a planned party has one,
             # so it cost nothing -- but the asymmetry was a trap, since the two halves of a turn
             # are meant to differ only in which side they read.
-            new.target = apply_stat_drop(new.target, drop)
+            #
+            # **Blocked by the same two things a PRIMARY drop is**, which this did not check:
+            # the ROM's guard is in the shared stat-stage handler and does not care which effect
+            # asked (battle_script.c:2876-2886). So the target's Mist blocked our Screech and not
+            # our Crunch, which was a gap before Clear Body and is a wrong prediction with it --
+            # all three titans would have taken a secondary drop their ability refuses.
+            if stat_drop_blocked_by(new.target, new) is None:
+                new.target = apply_stat_drop(new.target, drop)
         if outcome.secondary and move.effect == EFFECT_ALL_STATS_UP:
             new.target = _all_stats_up(new.target)
         if outcome.secondary and move.effect in FLINCH_EFFECTS:
@@ -3808,7 +3983,14 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # Defence. One lookup where there were three branches in two places: each drop
             # reaches the damage calculation the same way every other stage does, and none of
             # them is inert -- our own damage is what brings the target to 1 HP.
-            new.ours = apply_stat_drop(new.ours, drop)
+            #
+            # The mirror of the block in `act_ours`, and reachable in a way that one is not just
+            # symmetric: **Metagross and Metang have Clear Body**, and a Metang is this project's
+            # whole reason for existing. A party member holding it refuses Icy Wind's Speed drop
+            # and Crunch's Defence drop outright. No our-side Mist field exists -- `mist_turns` is
+            # the target's -- so only the ability half is asked.
+            if stat_drop_blocked_by(new.ours) is None:
+                new.ours = apply_stat_drop(new.ours, drop)
         if outcome.applied_status is not None:
             # Hypnosis. **This branch did not exist before Darkrai**, and its absence was the
             # exact failure `MODELLED_TARGET_EFFECTS` guards against: the duration roll was spent
@@ -3839,6 +4021,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # here means the target really does recover -- and recovering RAISES its `b`, which
             # is the half of this move that matters to a plan rather than to a turn.
             new.target = new.target.with_hp(new.target.hp + outcome.self_heal)
+        if outcome.self_stat_change:
+            # The titans': Curse (-1 Spe, +1 Atk, +1 Def) and Superpower (-1 Atk, -1 Def), and
+            # Registeel's Metal Claw (+1 Atk). **Not blocked by anything** -- Clear Body guards
+            # against another battler's reductions, so a titan lowering its own stats does so
+            # freely. That is what lets Curse stack Defence against us and what lets Superpower
+            # soften it for us.
+            new.target = apply_stat_changes(new.target, outcome.self_stat_change)
         if outcome.starts_uproar:
             # The lock goes on the TARGET -- it is the user. From here it picks no move and
             # spends no PP until the counter runs out (`select_target_move`).
