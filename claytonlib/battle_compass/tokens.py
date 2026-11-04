@@ -456,8 +456,21 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
             continue
         if not token.startswith("E"):
             continue
+        detail = token[1:]
+        # **A prevented turn first, and it is a substring trap rather than a nicety.** The scan
+        # below looks for the hit markers ANYWHERE in the token, and ``rch`` ENDS IN ``h`` -- so
+        # ``Erch``, a Dialga doing nothing at all on the turn after a Roar of Time, read as a
+        # hit and `validate_turn` rejected the turn with "the target hit us, so this turn needs
+        # an HP token". The recharge turn was unreportable, and a pasted path containing one
+        # stopped there (reported by Testare).
+        #
+        # Skipping every prevention marker rather than spelling ``rch`` out: no move happened on
+        # any of them, so none can have damaged us, and the next marker to carry an ``h`` or a
+        # ``!`` costs nothing. `TestPreventedTurnsNeedNoHp` pins that for the whole set.
+        if any(detail.startswith(marker) for marker in PREVENTION_DETAIL):
+            continue
         # The target's move landing on us is the only other thing in scope that can damage us.
-        if any(marker in token for marker in (HIT, CRIT)):
+        if any(marker in detail for marker in (HIT, CRIT)):
             return True
     return False
 

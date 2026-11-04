@@ -18,7 +18,13 @@ candidate could render, so the honest answer eliminated every seed including the
 Paralysis is the state the whole run is built on reaching, so (2) was live on nearly every turn
 after the one that mattered.
 
-3. **And the regression dropping (2) caused.** `hrTurnComplete` -- which decides whether "Report
+3. **The recharge turn was ungrammatical.** `turn_requires_hp` scanned for the hit markers
+   anywhere in a token, and ``rch`` ENDS IN ``h`` -- so ``Erch`` read as a hit and
+   `validate_turn` refused the turn with "the target hit us, so this turn needs an HP token".
+   Pre-existing since ``rch`` was added, and invisible until (1) made the turn reportable at
+   all. See `TestPreventedTurnsNeedNoHp`.
+
+4. **And the regression dropping (2) caused.** `hrTurnComplete` -- which decides whether "Report
    turn" is enabled -- carried its own copy of the secondary question's condition, so when the
    question stopped being asked the copy went on waiting for its answer. The button sat disabled
    with nothing on screen to explain it, on the turn after a Thunder Wave, which is every turn
@@ -304,6 +310,101 @@ class TestTheButtonGate(unittest.TestCase):
         pending = html[start:html.index("\n}\n", start)]
         self.assertIn("!info.secondary_cannot_show", pending)
         self.assertIn("hrOurSecondaryPending()", self._gate())
+
+
+class TestPreventedTurnsNeedNoHp(unittest.TestCase):
+    """A substring collision, and the reason the recharge turn could not be reported at all.
+
+    `tokens.turn_requires_hp` asked whether the hit markers appeared anywhere in an ``E`` token.
+    ``rch`` ends in ``h``, so ``Erch`` -- a Dialga doing nothing whatever -- read as a hit, and
+    `validate_turn` rejected the turn with "the target hit us, so this turn needs an HP token".
+
+    Pre-existing since ``rch`` was added, and invisible until the interview started producing the
+    turn: before that nobody could report one, so nothing ever handed this function an `Erch`.
+    """
+
+    def test_no_prevention_marker_demands_hp(self):
+        """The structural guard. Written over the whole set rather than over ``rch`` so the next
+        marker carrying an ``h`` or a ``!`` fails here instead of silently reading as a hit --
+        which is how this one got in."""
+        for marker in sorted(tok.PREVENTION_DETAIL):
+            with self.subTest(marker):
+                turn = ("M1", tok.prevented_token("E", marker))
+                self.assertFalse(tok.turn_requires_hp(turn))
+                self.assertEqual(tok.validate_turn(turn), [])
+
+    def test_the_reported_turn(self):
+        self.assertFalse(tok.turn_requires_hp(("M2", "Erch")))
+        self.assertEqual(tok.validate_turn(("M2", "Erch")), [])
+
+    def test_a_real_hit_still_demands_it(self):
+        """The control -- a fix that stopped asking for HP at all would pass everything above."""
+        for turn in (("M1", "E1h"), ("M1", "E1!")):
+            with self.subTest(turn):
+                self.assertTrue(tok.turn_requires_hp(turn))
+                self.assertIn("the target hit us, so this turn needs an HP token",
+                              tok.validate_turn(turn))
+
+    def test_a_RESOLVED_status_is_not_skipped_with_them(self):
+        """`scfz` precedes a slot because the move went AHEAD, so a turn that snapped out of
+        confusion and then hit us still needs its HP. Only `PREVENTION_DETAIL` is skipped, and
+        this is the token that proves the distinction is load-bearing."""
+        self.assertTrue(tok.turn_requires_hp(("Escfz2h",)))
+
+    def test_a_taunt_refusal_needs_none_either(self):
+        """Not a prevention marker -- it keeps its slot -- but the move never executed. It was
+        already right, because `tnt` carries no ``h``; pinned so it stays right."""
+        self.assertFalse(tok.turn_requires_hp(("M1", "E2tnt")))
+
+
+class TestReportingARechargeTurnEndToEnd(unittest.TestCase):
+    """The whole path the player walks: a Roar of Time connects, then the recharge is reported.
+
+    Through `HuntSession.observe`, because that is where both failures lived -- the grammar check
+    rejected the turn before the candidate comparison ever ran.
+    """
+
+    #: Roar of Time is 90 accuracy and Dialga is paralyzed, so most seeds give a miss or a full
+    #: paralysis. This one connects.
+    CONNECTS = SEED + 3
+
+    def _session(self):
+        ours = Battler(
+            name="Magneton", level=100, types=("Electric", "Steel"),
+            stats={"hp": 400, "atk": 60, "def": 200, "spa": 120, "spd": 200, "spe": 300},
+            moves=("Thunder Wave", "Flash"), pp=(20, 20), ability="Sturdy")
+        window = CandidateWindow(
+            key_seed=0x1234, initial_time=dt.datetime(2026, 1, 1, 12, 0, 0), vector_ms=5000.0,
+            frame_centre=1000, second_centre=30, frame_window=0, second_window=0,
+            candidates=(Candidate(seed=self.CONNECTS, frame=1000, second=30),))
+        session = HuntSession(window, ours, _dialga(pp=(5, 0, 0, 0), status=Status.PARALYSIS),
+                              HUNT, capture_ball="Dusk Ball")
+        session.enter_pinning()
+        return session
+
+    def test_both_turns_are_accepted(self):
+        session = self._session()
+        first = session.predict(Action.MOVE_2)[self.CONNECTS]
+        self.assertEqual(tok.render_turn(first), "M2E1hHP321")
+        snapshot = session.observe(Action.MOVE_2, first)
+        self.assertIsNone(snapshot["contradiction"])
+        self.assertTrue(snapshot["target"]["recharging"])
+
+        second = session.predict(Action.MOVE_2)[self.CONNECTS]
+        self.assertEqual(tok.render_turn(second), "M2Erch")
+        snapshot = session.observe(Action.MOVE_2, second)
+        self.assertIsNone(snapshot["contradiction"])
+        self.assertFalse(snapshot["target"]["recharging"])
+
+    def test_the_recharge_turn_carries_no_hp_and_is_not_asked_to(self):
+        """Which is the agreement that was broken: the simulator rendered no HP token and the
+        grammar demanded one, so the turn the tool itself predicted was unreportable."""
+        session = self._session()
+        session.observe(Action.MOVE_2, session.predict(Action.MOVE_2)[self.CONNECTS])
+        second = session.predict(Action.MOVE_2)[self.CONNECTS]
+        self.assertFalse(any(t.startswith("HP") for t in second))
+        self.assertFalse(tok.turn_requires_hp(second))
+        self.assertEqual(tok.validate_turn(list(second)), [])
 
 
 def _html():
