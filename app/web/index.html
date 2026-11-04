@@ -5703,19 +5703,26 @@ function hrTurnComplete(){
   else if (t.action === "X") { /* our half produced nothing; only the target's did */ }
   else {
     if (!t.ours) return false;
-    const info = hrOurMoveInfo();
-    // A flinch secondary is never asked -- it is read off the victim's answer instead -- so it
-    // must not hold the turn open waiting for one.
-    if (info.has_secondary && !info.flinch_secondary && hrLanded(t.ours)
-        && t.ours.secondary === undefined) return false;
+    // **Delegated rather than restated.** This used to carry its own copy of
+    // `hrOurSecondaryPending`'s condition, and the copy went stale the moment
+    // `secondary_cannot_show` was added to the other one: the question stopped being asked and
+    // this kept waiting for its answer, so "Report turn" sat disabled with nothing on screen
+    // explaining why -- a Discharge into a Dialga the previous turn's Thunder Wave had already
+    // paralyzed, which is the commonest turn the plan has (reported by Testare).
+    //
+    // One source of truth now. A flinch secondary is never asked either -- it is read off the
+    // victim's answer -- and that exclusion lives in the same place.
+    if (hrOurSecondaryPending()) return false;
   }
   const caught = (t.action === "C" || t.action === "P") && t.ours?.result === "c";
   if (!caught){
     if (!t.target) return false;
     if (!t.target.prevented){
       const info = hrTargetMoveRows()[t.target.slot];
-      if (info.has_secondary && !info.flinch_secondary && hrLanded(t.target)
-          && t.target.secondary === undefined) return false;
+      // `secondary_cannot_show` for the same reason as our half above: a proc that could not
+      // have shown is not asked about, so waiting on its answer hangs the button.
+      if (info.has_secondary && !info.flinch_secondary && !info.secondary_cannot_show
+          && hrLanded(t.target) && t.target.secondary === undefined) return false;
       // Static's question is the one the player is most likely to be looking at, so the turn
       // must not report without it.
       if (hrStaticPossibleOnTarget() && t.target.static === undefined) return false;

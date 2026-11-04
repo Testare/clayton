@@ -17,6 +17,12 @@ candidate could render, so the honest answer eliminated every seed including the
 
 Paralysis is the state the whole run is built on reaching, so (2) was live on nearly every turn
 after the one that mattered.
+
+3. **And the regression dropping (2) caused.** `hrTurnComplete` -- which decides whether "Report
+   turn" is enabled -- carried its own copy of the secondary question's condition, so when the
+   question stopped being asked the copy went on waiting for its answer. The button sat disabled
+   with nothing on screen to explain it, on the turn after a Thunder Wave, which is every turn
+   the plan has. The fix is to delegate rather than restate: see `TestTheButtonGate`.
 """
 import datetime as dt
 import unittest
@@ -218,6 +224,93 @@ def _pinned(seed=SEED):
     session = HuntSession(window, _ours(), _dialga(), HUNT, capture_ball="Dusk Ball")
     session.enter_pinning()
     return session
+
+
+class TestTheButtonGate(unittest.TestCase):
+    """The reported turn, and the gate that refused to report it.
+
+    Raichu Thunder Waves Dialga; next turn it Discharges, Dialga crits with Slash and Raichu
+    faints. Every answer the interview asks for is given and "Report turn" stays disabled,
+    because the completeness check was still waiting on a secondary question that is no longer
+    asked -- the proc could not have shown against a target the Thunder Wave had already
+    paralyzed (reported by Testare).
+    """
+
+    #: The crit, found by sweeping rather than chosen.
+    CRIT_SEED = SEED + 14
+
+    def _turn(self):
+        raichu = Battler(
+            name="Raichu", level=50, types=("Electric",),
+            stats={"hp": 130, "atk": 90, "def": 55, "spa": 90, "spd": 80, "spe": 110},
+            moves=("Discharge", "Thunder Wave"), pp=(15, 20), ability="Static", hp=69)
+        bench = (Battler(
+            name="Magneton", level=50, types=("Electric", "Steel"),
+            stats={"hp": 120, "atk": 60, "def": 95, "spa": 120, "spd": 70, "spe": 70},
+            moves=("Thunder Wave",), pp=(20,), party_slot=2),)
+        state = BattleState(ours=raichu, target=_dialga(pp=(0, 0, 0, 20),
+                                                        status=Status.PARALYSIS),
+                            bench=bench, rng=opening_rng(self.CRIT_SEED, HUNT))
+        return simulate_turn(state, Action.MOVE_1, HUNT)
+
+    def test_the_turn_the_player_watched(self):
+        """`M1hE4!X2` -- and no `~` on the Discharge, which is the whole point: the proc either
+        happened or did not and the turn reads the same either way."""
+        after = self._turn()
+        rendered = tok.render_turn(after.log[-1])
+        self.assertEqual(rendered, "M1hE4!X2")
+        self.assertNotIn(tok.SECONDARY, rendered)
+
+    def test_it_needs_no_HP_and_the_grammar_accepts_it(self):
+        """So nothing else in the interview was holding the button -- a faint replaces the HP
+        token rather than joining it."""
+        after = self._turn()
+        self.assertFalse(tok.turn_requires_hp(after.log[-1]))
+        self.assertEqual(tok.validate_turn(after.log[-1]), [])
+
+    def test_static_was_never_the_blocker(self):
+        """Worth pinning, because Slash makes contact and Raichu's ability is Static -- so this
+        turn has a second question of exactly the same shape. `hrStaticPossibleOnTarget` already
+        reads the target's status, which is the precedent `secondary_cannot_show` follows."""
+        self.assertIn('if (s.target.status && s.target.status !== "none") return false;',
+                      _html())
+
+    def _gate(self):
+        """`hrTurnComplete`'s body, so the assertions below cannot be satisfied by some other
+        function that happens to mention the same names."""
+        html = _html()
+        start = html.index("function hrTurnComplete(){")
+        return html[start:html.index("\n}\n", start)]
+
+    def test_our_half_delegates_instead_of_restating(self):
+        """One source of truth. A second copy of the condition is what broke, so the test is that
+        there is no second copy rather than that the copy was updated."""
+        gate = self._gate()
+        self.assertIn("if (hrOurSecondaryPending()) return false;", gate)
+        self.assertNotIn("t.ours.secondary === undefined", gate)
+
+    def test_the_target_half_reads_the_flag(self):
+        """It cannot delegate the same way -- there is no target-side pending helper -- so it
+        carries the flag explicitly."""
+        gate = self._gate()
+        self.assertIn("!info.secondary_cannot_show", gate)
+        self.assertIn("t.target.secondary === undefined", gate)
+
+    def test_the_two_gates_cannot_disagree_about_our_half(self):
+        """The rendering gate and the button gate are now the same predicate, which is the
+        invariant that was violated: a question nobody asks must not be waited on."""
+        html = _html()
+        start = html.index("function hrOurSecondaryPending(){")
+        pending = html[start:html.index("\n}\n", start)]
+        self.assertIn("!info.secondary_cannot_show", pending)
+        self.assertIn("hrOurSecondaryPending()", self._gate())
+
+
+def _html():
+    import pathlib
+
+    return (pathlib.Path(__file__).resolve().parent.parent
+            / "app" / "web" / "index.html").read_text()
 
 
 if __name__ == "__main__":
