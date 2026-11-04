@@ -1085,6 +1085,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "can_miss": False, "guaranteed_fail": False, "has_secondary": False,
                         "flinch_secondary": False, "applies_status": None,
                         "secondary_status": None, "secondary_label": None,
+                        "secondary_cannot_show": False,
                         "status_cured_by_item": False,
                         "secondary_side": None, "stat_drop": None, "self_raise": None,
                         "deals_nothing": False, "applies_foresight": False,
@@ -1176,6 +1177,26 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # `sim.SECONDARY_DESCRIPTIONS` for why a wrong name is worse than a vague one.
             "secondary_side": (desc[0] if (desc := secondary_description(move)) else None),
             "secondary_label": (desc[1] if desc else None),
+            # **Whether a proc would show the player anything at all.** Non-volatile statuses
+            # are mutually exclusive, so a Discharge proc against an already-paralyzed target
+            # sets nothing and says nothing -- `sim._visible_tokens` suppresses the ``~`` for
+            # exactly this case (its `secondary_landed` argument), which means a turn where the
+            # proc happened and a turn where it did not render IDENTICALLY.
+            #
+            # So the interview must not ask. It did, and the question had no right answer: "Yes"
+            # described something the player never saw and eliminated every candidate, the true
+            # seed included, while "No" was indistinguishable from the truth. Published here
+            # rather than decided in the page so the suppression and the question read the same
+            # state (reported by Testare, the Dialga run).
+            #
+            # Only the STATUS half. A secondary stat drop that Clear Body refuses still prints a
+            # message ("Regirock's Clear Body prevents stat loss!") and still renders its ``~``,
+            # so that one stays a question.
+            "secondary_cannot_show": (
+                defender is not None
+                and move.effect_chance > 0
+                and secondary_status(move) is not None
+                and defender.status is not Status.NONE),
             # Whether a Taunt refuses this move at EXECUTION time, which is a different question
             # from `selectable` and the two have to be published separately. `selectable` is read
             # off the opening state, so on the turn a Taunt LANDS it still offers the status
@@ -2200,6 +2221,18 @@ class HuntSession:
                        # spends its rolls, so the candidate filtering is unaffected; what the
                        # page does with this is say why.
                        "vanished": is_semi_invulnerable(state.target),
+                       # **It must recharge, so it does nothing at all this turn** -- the turn
+                       # after a Roar of Time connects. Published because the interview asked
+                       # which move it used, and there is no answer: `select_target_move`
+                       # short-circuits before any selection roll and `act_target` checks this
+                       # before it looks at a move, so every candidate renders `Erch` and any
+                       # slot the player picked eliminated all of them.
+                       #
+                       # Target-side only, and that is not an omission: effect 80 is absent from
+                       # `MODELLED_OUR_EFFECTS`, so `unselectable_reason` refuses to let our own
+                       # side use a recharge move and our half of a turn can never be in this
+                       # state (reported by Testare, the Dialga run).
+                       "recharging": state.target.recharging,
                        # **Whether our move can reach it THIS turn, which is not the same
                        # question** -- and the page used to conflate them, asserting a miss and
                        # removing the question whenever `vanished` was true. That is right only

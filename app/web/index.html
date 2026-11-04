@@ -5250,6 +5250,20 @@ function hrSwitchTargetName(){
   return s.ours.name;
 }
 
+// The status of whoever the TARGET's move lands on -- the same switch-aware pick as
+// `hrSwitchTargetName`, because a switch resolves before any move and so the newcomer is the
+// one a secondary would have to paralyze. Only used to word the note that explains why a
+// secondary question is absent (`secondary_cannot_show`).
+function hrDefenderStatus(){
+  const s = _huntSnap, t = _hrTurn;
+  const slot = t.ours && t.ours.bench;
+  if (t.action === "S" && slot !== undefined && slot !== null){
+    const incoming = (s.bench || []).find(b => b.slot === slot);
+    if (incoming) return incoming.status;
+  }
+  return s.ours.status;
+}
+
 function hrTargetMoveRows(){
   const s = _huntSnap, t = _hrTurn;
   const slot = t.ours && t.ours.bench;
@@ -5979,7 +5993,8 @@ function hrOurOutcomeBlock(){
 // which also renders informational notes that must not stall the interview.
 function hrOurSecondaryPending(){
   const t = _hrTurn, info = hrOurMoveInfo();
-  return !!info && info.has_secondary && !info.flinch_secondary && hrLanded(t.ours)
+  return !!info && info.has_secondary && !info.flinch_secondary
+         && !info.secondary_cannot_show && hrLanded(t.ours)
          && t.ours.secondary === undefined;
 }
 
@@ -5995,6 +6010,15 @@ function hrOurSecondaryBlock(){
          </div>`
       : `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(info.name)} moved
            second, so a flinch would never have shown. Nothing to report.</div></div>`;
+  // A proc that could not possibly have shown. Non-volatile statuses are mutually exclusive,
+  // so a Discharge proc against an already-paralyzed target sets nothing and announces nothing
+  // -- and `sim._visible_tokens` suppresses the `~` for it, so the two turns render the same
+  // tokens. Asking had no right answer: "Yes" reported something the player never saw and
+  // eliminated every candidate (see `move_info`'s `secondary_cannot_show`).
+  if (info.secondary_cannot_show)
+    return `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(_huntSnap.target.name)}
+         is already ${esc(_huntSnap.target.status)}, so ${esc(info.name)}'s extra effect could
+         not land or show either way — nothing to report.</div></div>`;
   return hrChips(`Did ${info.name}'s extra effect happen?`, [
     hrChip("No", `hrSet('ours',{result:'${t.ours.result}',secondary:false})`,
            t.ours.secondary === false),
@@ -6017,6 +6041,24 @@ function hrTargetBlocks(){
     if (!t.target || t.target.prevented !== "slp") t.target = {prevented: "slp"};
     out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
         fell asleep before its turn, so it could not move — nothing to report.</div></div>`);
+    return {blocks: out, done: true};
+  }
+
+  // The turn after a Roar of Time connects: "DIALGA must recharge!" and it does nothing at all.
+  // One option, not a question -- and it was not an option either, so the interview asked which
+  // move it used and every slot the player could pick eliminated every candidate: the ROM never
+  // asks a recharging battler to choose (`Battler_CanPickCommand` is FALSE, so no selection roll
+  // is spent) and `act_target` checks the flag before it looks at a move, so the only turn any
+  // candidate can render is `Erch`.
+  //
+  // **Below the sleep case, matching the ROM's before-move walk**: `tick_sleep` precedes the
+  // recharge check at state 4, so a target we put to sleep on its recharge turn reports as
+  // asleep. Both tokens cost the turn nothing, but only one of them is what the player saw.
+  if (s.target.recharging){
+    if (!t.target || t.target.prevented !== "rch") t.target = {prevented: "rch"};
+    out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)}
+        must recharge after Roar of Time, so it does nothing this turn and nothing can stop it
+        from being hit — nothing to report.</div></div>`);
     return {blocks: out, done: true};
   }
 
@@ -6154,6 +6196,12 @@ function hrTargetBlocks(){
                ${esc(hrActive().name)}'s own turn.`
             : `moved second, so a flinch would never have shown. Nothing to report.`}
         </div></div>`);
+    } else if (info.has_secondary && info.secondary_cannot_show && hrLanded(t.target)){
+      // The mirror of `hrOurSecondaryBlock`'s gate: a Dragon Breath proc cannot paralyze an
+      // already-statused Pokemon of ours, and the suppressed `~` means there is nothing to see.
+      out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(hrSwitchTargetName())}
+          is already ${esc(hrDefenderStatus())}, so ${esc(info.name)}'s extra effect could not
+          land or show either way — nothing to report.</div></div>`);
     } else if (info.has_secondary && hrLanded(t.target)){
       out.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
         hrChip("No", `hrSet('target',${base},result:'${t.target.result}',secondary:false})`,

@@ -1,12 +1,17 @@
-* DONE (2026-10-28) URGENT FIXES:
-  * Can't open battle compass because stopwatch isn't input - That should be an input during battle compass, not during configuration.
-    * The reading is no longer a configuration `hard_error`, so Start Run is reachable; the run
-      page takes it and Start is gated on it there, with a reason naming it.
-  * Can't input Cresselia's beginning parameters during configuration (HP, status conditions)
-    * When species is a roamer, we should disable/hide the target advances and vector ms field, but show fields for HP and status conditions (For now only support "No status" or "Paralyzed")
-    * Configure now has "What it walks in with" (HP + status, none/paralyzed only) for a roamer,
-      and hides Advances, Vector ms and the starting advance frame.
+* DONE (2026-11-04) Two interview questions with no right answer (the Dialga run):
+  * Interview does not understand the "must recharge" requirement of roar of time, and asks for
+    dialga's move on the following turn.
+    * The snapshot now publishes `target.recharging` and the interview settles the turn as
+      `Erch`, below the sleep case to match the ROM's before-move walk. Nothing can be asked:
+      no selection roll is spent, so every candidate renders that one token.
+  * Interview asks if discharge paralyzes an already status'd target.
+    * `move_info` now publishes `secondary_cannot_show` and both secondary questions drop out.
+      `sim._visible_tokens` was already suppressing the `~` for it, so the two turns rendered
+      identically and "Yes" eliminated every candidate.
 
+
+* Against a roamer, if they are not currently trapped all actions other than mean look should have a warning icon that explains target is not trapped and will flee if mean look is not chosen.
+* If the roamer is not trapped, it will always try to flee. If we use mean look, it will fail to flee, if we don't, it will, we don't need to ask in the interview what happened.
 * Messaging on the holding still is bad: "Do not switch voluntarily." The actual expression should be "Do not switch while <target> is not trapped." If target has been trapped with mean look or shadow tag, switching is totally safe and important.
 * Messaging on a pokemon with mean look not outspeeding should be RED and block using compass. Same for party members that do not have a means of trapping the opponent.
 * One thing we need to figure out is how to handle roamers that are already asleep at the start of battle Since RNG won't tell us how long their sleep duration is at the beginning. Maybe we should drop support for initial sleep for now and figure 
