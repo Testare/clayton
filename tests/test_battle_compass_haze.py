@@ -142,9 +142,15 @@ class TestItResetsBothSides(unittest.TestCase):
 
     def test_it_leaves_status_and_the_volatiles_alone(self):
         """`BtlCmd_ResetAllStatChanges` touches `statBoosts` and Focus Energy and nothing else --
-        not status, not the other volatiles, not field conditions."""
+        not status, not the other volatiles, not field conditions.
+
+        `hp` is full rather than 1 because `pp=(0, 0, 0, 0)` now means the target STRUGGLES
+        (`sim.EFFECT_STRUGGLE`) instead of doing nothing, and a quarter of its max HP in recoil
+        faints a 1 HP target -- which clears its status on the way down and would fail this test
+        for a reason that has nothing to do with Haze.
+        """
         config = _config()
-        target = _target("uxie", pp=(0, 0, 0, 0), hp=1, status=Status.PARALYSIS, spatk_stage=3)
+        target = _target("uxie", pp=(0, 0, 0, 0), status=Status.PARALYSIS, spatk_stage=3)
         state = BattleState(ours=_honchkrow(drowsy_turns=1), target=target,
                             rng=opening_rng(0x0C0E02CA, config), rain_turns=3, mist_turns=2)
         state = simulate_turn(state, Action.MOVE_1, config)

@@ -705,9 +705,27 @@ Moves: Encore
 * If successful: Roll for encore duration.
 
 If the move hits and is successful, the target is locked into their last successful move for a random duration of 3-7 turns. If the metronome user moved second, this does not count the turn encore is used.
-Duration: 3 + RAND % 4.
+
+**The two lines below disagree with each other, and the prose above is the one that matches
+Platinum's ROM.** `BtlCmd_TryEncore` is `BattleSystem_RandNext(battleSys) % 5 + 3`
+(pret/pokeplatinum src/battle/battle_script.c:4742), i.e. 3-7 — while the formula this file has
+carried says `% 4`, i.e. 3-6. `metronome_compass.effects._eff_encore` took the formula, so the
+simulated wear-off turn is wrong there; `battle_compass.sim.EFFECT_ENCORE` uses `% 5`. Which is
+right for **HGSS** is not settled, because only Platinum is decompiled — see clayton-ek3, and note
+that one observed 7-turn lock would settle it, since `% 4` cannot produce one. The modulus is not
+only a duration: 4 divides 256 and 5 does not, so under `% 4` the wear-off is blind to two seeds
+one RTC second apart and under `% 5` it is not (notes/seed_separation.md).
+
+Duration: 3 + RAND % 4. ← **suspect; see above**
 
 Fails if the target's last move failed or was prevented, but not if their move simply missed.
+
+**"Failed" is too strong.** `movePrevByBattler` is written to the move whenever
+`SYSCTL_MOVE_SUCCEEDED` is up, and that flag goes up the moment the move's script is loaded
+(battle_controller_player.c:3212 and 3945-3949) — *before* the accuracy check and before anything
+inside the script can set `MOVE_STATUS_FAILED`. So a move that executed and then printed "But it
+failed!" still records, exactly as a miss does. What clears the record is a move that never
+executed at all: sleep, a flinch, full paralysis, a confusion self-hit, a Taunt refusal.
 
 ## Effect 91
 Moves: Pain Split

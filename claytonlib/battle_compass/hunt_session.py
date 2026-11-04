@@ -571,6 +571,21 @@ BATTLER_CONDITIONS: tuple[tuple[str, str, str], ...] = (
     ("target", "confusion_turns", "Confused"),
 )
 
+#: Encore is deliberately NOT in the table above, and `encored_turns` is the one `*_turns` field
+#: on a `Battler` that the completeness test excludes for a reason other than having a status chip.
+#:
+#: Every row in that table is shown when its counter is ``> 0``, and Encore's counter reaches zero
+#: one tick BEFORE the lock comes off: `sim._tick_encore` releases on the tick it finds the counter
+#: at zero, and selection on that turn happened before the walk ran, so the victim is still locked
+#: on a turn where ``encored_turns == 0``. Rendered through that table the row would vanish on the
+#: final locked turn -- the single turn a player is most likely to be looking at it, because it is
+#: the turn the question "did the Encore end?" is asked.
+#:
+#: So it gets its own block in `field_conditions`, which reports ``encored_turns + 1``: the turns
+#: the lock still has INCLUDING this one. Keyed on `encored_slot` rather than on the counter, which
+#: is the field that actually says whether a lock exists.
+ENCORE_ROW_LABEL = "Encore"
+
 
 #: Battler-level flags that belong in the banner -- the mirror of `FIELD_FLAGS`, which holds the
 #: state-level ones, and of `BATTLER_CONDITIONS`, which holds the battler-level *counters*.
@@ -630,6 +645,21 @@ def field_conditions(state) -> list[dict]:
     # keep in your head: it lasts exactly one turn, it is announced once ("Giratina vanished
     # instantly!"), and while it is up it changes both what the target can pick and whether your
     # move can reach it. Both sides are listed; only the target can reach it today.
+    # Encore, which needs its own block for the off-by-one `ENCORE_ROW_LABEL` explains: the
+    # counter hits zero one tick before the lock comes off, so a `> 0` row would disappear on the
+    # final locked turn. Reported as the turns remaining INCLUDING this one, which is also how the
+    # Confused row above reads its counter.
+    #
+    # The sharpest row in the banner, and the reason the number matters rather than just the
+    # label: while a lock runs the target's selection roll has a modulus of ONE, so its half of
+    # every turn is predictable -- and the lock's length was a 3-7 ROLL that only the wear-off
+    # message reveals. It also counts down whether or not the victim acted, unlike Confused, so a
+    # sleeping target burns a turn of it every turn. That is the half a player gets wrong by eye.
+    for side in ("target", "ours"):
+        battler = getattr(state, side, None)
+        if battler is not None and battler.encored_slot is not None:
+            out.append({"name": ENCORE_ROW_LABEL, "turns": battler.encored_turns + 1,
+                        "whose": side})
     for side in ("target", "ours"):
         battler = getattr(state, side, None)
         if battler is not None and is_semi_invulnerable(battler):
@@ -2209,6 +2239,28 @@ class HuntSession:
             # runs, and a faint from any cause stops it (`sim._roll_future_sight`) -- so the page
             # drops the question in both cases rather than this flag trying to predict them.
             "future_sight_due": state.future_sight_turns == 1,
+            # Whether an Encore could wear off at the END of this turn, which the interview has
+            # to ask about for the same reason Future Sight's hit check is asked about: the
+            # duration was a 3-7 ROLL (`sim.EFFECT_ENCORE`) and the wear-off message is the only
+            # place it surfaces. Candidates that rolled different durations render different
+            # turns only on the turn one of them says "Encore ended", so an unasked wear-off is
+            # an unfilterable roll -- and this one separates RTC-second siblings, which the
+            # ``% 4`` and ``% 16`` rolls cannot (notes/seed_separation.md).
+            #
+            # Over ALL the candidates rather than the representative one, unlike
+            # `future_sight_due`: the whole point is that they disagree about the duration, so
+            # reading one state would drop the question on exactly the turns it matters.
+            #
+            # Two routes to a release and both are covered, because `_tick_encore` reads them in
+            # one breath: the counter reaching zero, and the encored move running out of PP on
+            # this very turn (a lock is forced into its slot, so a last point of PP is spent the
+            # turn it is reached). "Could", not "will" -- a prevented turn spends no PP, so the
+            # PP route is a maybe rather than a certainty. That is precisely when to ask.
+            "encore_due": any(
+                st.target.encored_slot is not None
+                and (st.target.encored_turns == 0
+                     or st.target.pp_left(st.target.encored_slot) <= 1)
+                for st in states),
             # `slot` is the BENCH index, which is what every call back into the session takes;
             # `party_slot` is the stable number the player sees in-game and the one the S/X/R
             # tokens name. Both, because they are not the same once anybody has switched.

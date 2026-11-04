@@ -258,13 +258,16 @@ class TestBadDreams(unittest.TestCase):
     def test_both_residuals_apply_in_the_same_turn(self):
         """A quarter plus an eighth, which for 400 HP is exactly 150.
 
-        The target is given no PP so that `select_target_move` returns nothing and it does not
-        act at all -- otherwise the turn's own hit is mixed into the figure and the test would be
-        asserting a damage roll as well as the residuals.
+        The target is put to SLEEP so that it does not act at all -- otherwise the turn's own hit
+        is mixed into the figure and the test would be asserting a damage roll as well as the
+        residuals. It used to be given no PP instead, which stopped working the day Struggle was
+        modelled: a target with nothing usable now Struggles rather than standing still, and that
+        hit is exactly what this test is trying to keep out of the figure.
         """
         state = BattleState(
             ours=_ours(status=Status.SLEEP, sleep_turns=5, nightmare=True),
-            target=_darkrai(pp=(0, 0, 0, 0)), rng=opening_rng(0x0C0E02CA, _config()))
+            target=_darkrai(status=Status.SLEEP, sleep_turns=9),
+            rng=opening_rng(0x0C0E02CA, _config()))
         before = state.ours.hp
         state = simulate_turn(state, Action.MOVE_1, _config())
         self.assertEqual(before - state.ours.hp, 150)

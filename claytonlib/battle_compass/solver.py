@@ -402,6 +402,11 @@ _STAGES_IN_OUR_FAVOUR: tuple[tuple[str, str, int], ...] = (
     # The target's, lowered: six Flashes are the biggest accuracy investment a run makes, and
     # permanent, because a wild target never switches out.
     ("target", "accuracy_stage", -1),
+    # The target's evasion, lowered, which is the same investment from the other end -- and newly
+    # worth protecting, because Defog is the first thing of ours likely to be in a party that
+    # lowers it (HM05 in Platinum; Sweet Scent is the only other carrier and nobody brings one).
+    # Without this row the solver would plan a Haze that throws a Defog's evasion drop away.
+    ("target", "evasion_stage", -1),
     # Ours, raised: X Sp. Def is `choose_item`'s preferred filler, so after one filler turn this
     # is nonzero in most plans -- which is why the solver stops planning Haze almost immediately.
     ("ours", "spdef_stage", +1),
@@ -677,6 +682,15 @@ def _dominance_key(state: BattleState) -> tuple:
             # hard the target hits, which `_dominates` already weighs through our HP, not how many
             # advances the turn costs.
             state.target.accuracy_stage,
+            # ...and its EVASION stage, for the mirror of that argument: it decides whether OUR
+            # move hits, and a miss returns from `execute_move` unsuccessful, which costs the turn
+            # its two post-successful-move advances. So two states at one offset that disagree
+            # about it reach different offsets next turn.
+            #
+            # A pre-existing gap rather than a new one -- Sweet Scent and Darkrai's Double Team
+            # could already move it -- and listed now because Defog makes it ordinary: a Platinum
+            # party can teach HM05 to anything, so an evasion drop stops being a curiosity.
+            state.target.evasion_stage,
             # The target's HP, because `b` is computed from it: two states at one offset that
             # disagree about it are not interchangeable, and it is not better-or-worse either --
             # lower HP is a bigger `b` but also fewer legal filler moves, so it belongs in the
@@ -702,7 +716,34 @@ def _dominance_key(state: BattleState) -> tuple:
             # Uproar (`MODELLED_OUR_EFFECTS` omits 272 and 159), so a row for it could never fire.
             state.target.charging_slot,
             state.target.uproar_turns,
-            state.target.uproar_slot)
+            state.target.uproar_slot,
+            # **The Encore lock, for a reason the three above do not cover.** Encore does NOT
+            # skip the selection roll -- it collapses the roll's MODULUS to one
+            # (`Battler.encored_slot`) -- so unlike a charge or an Uproar it changes which move
+            # fires rather than whether a roll is spent. That lands in the same place: two states
+            # at one offset that disagree about the lock fire different moves next turn, and two
+            # moves need not cost the same number of rolls.
+            #
+            # `encored_turns` as well as the slot, because it decides WHEN the modulus widens
+            # back out -- and the wear-off is the end of a rolled 3-7 countdown, so two states
+            # that agree on the slot and disagree on the counter diverge later rather than never.
+            state.target.encored_slot,
+            state.target.encored_turns,
+            # The target's last-move record, because our own Encore's success is keyed on it
+            # (`sim.will_fail`) and a failing Encore costs the turn two fewer advances than a
+            # landing one. Same argument as the field conditions: it is not better-or-worse, it
+            # changes what the next turn COSTS.
+            state.target.last_move_slot,
+            # Yawn's countdown, on both sides. It became reachable the day effect 187 entered
+            # `MODELLED_OUR_EFFECTS`: the sleep lands at the end of the turn the counter reaches
+            # zero and its DURATION roll is spent there (`sim._tick_drowsy`), so two states that
+            # disagree about the counter spend different advances at end of turn.
+            #
+            # Ours is here because Uxie's Yawn can land on us; the target's because ours can land
+            # on it. Both halves are live now, which is why they are a pair rather than a
+            # symmetric gesture.
+            state.ours.drowsy_turns,
+            state.target.drowsy_turns)
 
 
 def _dominates(a: BattleState, a_dist: int, b: BattleState, b_dist: int) -> bool:

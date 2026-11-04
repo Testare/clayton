@@ -21,10 +21,23 @@ class TestRendering(unittest.TestCase):
         self.assertEqual(tok.target_move_token(3), "E4")
 
     def test_out_of_range_slots_raise(self):
+        """-1 used to be out of range too, and is now `STRUGGLE_SLOT` -- see the test below."""
         for fn in (tok.our_move_token, tok.target_move_token):
-            for slot in (-1, 4):
+            for slot in (-2, 4):
                 with self.assertRaises(ValueError):
                     fn(slot)
+
+    def test_the_struggle_slot_renders_as_zero(self):
+        """Slots are 1-based wherever a player sees them, so the digit 0 is unambiguously "none
+        of its four moves". Which is what lets every grammar rule stay as it was -- a Struggle is
+        a move that really happened, with the usual hit/crit/miss detail after it."""
+        self.assertEqual(tok.target_move_token(tok.STRUGGLE_SLOT), "E0")
+        self.assertEqual(tok.our_move_token(tok.STRUGGLE_SLOT), "M0")
+        self.assertEqual(tok.resolved_token("E", "scfz", tok.STRUGGLE_SLOT), "Escfz0")
+        self.assertEqual(tok.validate_turn(["E0h", "HP123"]), [])
+        self.assertEqual(
+            tok.explain_turn(["E0h"], target="Regirock", ours="Quagsire"),
+            ["Regirock used Struggle and hit Quagsire"])
 
     def test_prevented_tokens_put_the_status_after_the_actor(self):
         self.assertEqual(tok.prevented_token("E", "par"), "Epar")

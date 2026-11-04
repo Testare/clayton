@@ -202,11 +202,29 @@ class TestTheSelectionCost(unittest.TestCase):
                  for d in range(64)}
         self.assertEqual(slots, {0, 1, 2, 3})
 
-    def test_nothing_usable_is_the_unmodelled_struggle_case(self):
+    def test_nothing_usable_is_a_struggle_and_costs_nothing(self):
+        """It used to assert `ROAMER_AI_ADVANCES` here, and that was four rolls too many.
+
+        `TrainerAI_Init`'s four rolls are reached through `TrainerAI_Main`, which lives inside
+        `Task_TrainerShowMoveSelectMenu` -- and a battler with nothing usable never starts that
+        task, because command selection takes the ``STRUGGLING_ALL`` branch to
+        ``COMMAND_SELECTION_STRUGGLE_MESSAGE`` instead (battle_controller_player.c:433-441).
+        So the turn is free, and the RNG comes back untouched. [derived, not captured]
+        """
         choice = select_roamer_action(SEED, _cresselia(pp=(0, 0, 0, 0)), trapped=True)
         self.assertIsNone(choice.slot)
         self.assertFalse(choice.fled)
-        self.assertEqual(choice.rolls, ROAMER_AI_ADVANCES)
+        self.assertEqual(choice.rolls, 0)
+        self.assertEqual(choice.rng, SEED)
+
+    def test_a_roamer_with_no_pp_cannot_flee_either(self):
+        """The startling half of the same finding, and the one that makes it falsifiable: the
+        escape decision is inside `TrainerAI_Main` too, so a turn that skips the menu skips the
+        flee with it. An untrapped PP-less roamer Struggles rather than leaving."""
+        choice = select_roamer_action(SEED, _cresselia(pp=(0, 0, 0, 0)), trapped=False)
+        self.assertFalse(choice.fled)
+        self.assertIsNone(choice.slot)
+        self.assertEqual(choice.rolls, 0)
 
     def test_a_relocked_roamer_is_never_asked_and_spends_nothing(self):
         """`Battler_CanPickCommand` is FALSE mid-charge, so TrainerAI_Init is never reached."""

@@ -29,7 +29,7 @@ from claytonlib.battle.catch import (
     shake_threshold, shakes_for_rolls,
 )
 from claytonlib.battle.damage import (
-    WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, apply_accuracy_items,
+    LIFE_ORB, WEATHER_NONE, WEATHER_RAIN, WEATHER_SUN, Attacker, Defender, apply_accuracy_items,
     apply_accuracy_stage,
     apply_stage, damage, is_type_immune, item_key, unsupported_attacker_reason,
     unsupported_reason,
@@ -200,9 +200,11 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # side, so a Sketched Night Slash or Psycho Cut simulates correctly and may as well say so.
     43: "high crit ratio: one crit stage up, so `% 8` rather than `% 16`",
     # Nasty Plot and Amnesia. Reached through `PRIMARY_SELF_RAISES` on both halves of the turn, so
-    # a party member carrying either is modelled for free -- unlike Uproar, Yawn and Future Sight,
+    # a party member carrying either is modelled for free -- unlike Uproar and Future Sight,
     # which are deliberately NOT listed: each needs state only the target's side maintains, and
-    # nothing a party can carry has them.
+    # nothing a party can carry has them. **Yawn used to be in that sentence and no longer is**
+    # -- Quagsire learns it at 31, so "nothing a party can carry" was simply false, and the
+    # machinery it needed was already symmetric (see 187 below).
     # --- the pure stat-stage family, in full ---
     #
     # Every effect whose script is a single `MOVE_SIDE_EFFECT_*|MOVE_SUBSCRIPT_PTR_<stat>_<up or
@@ -293,6 +295,32 @@ MODELLED_OUR_EFFECTS: dict[int, str] = {
     # Smeargle -- though note Earthquake is Ground, so a Levitate holder (Giratina Origin, both
     # Lati twins) is immune and `deals_nothing` will say so.
     147: "Earthquake: hits-all-adjacent, which in a single battle is plain damage",
+    # Recover, and the first self-heal on OUR side. Half the user's max HP, no weather term, and
+    # it FAILS at full HP rather than healing nothing -- which is a cheaper turn, not a wasted
+    # one. Zero rolls either way.
+    32: "Recover: half our max HP, and the full-HP failure that makes it a 2-advance turn",
+    # Yawn, pointed the other way round. The machinery was already symmetric before this row
+    # existed -- `execute_move` sets `sets_drowsy` for either actor, `simulate_turn` puts the
+    # counter on whichever side the move was aimed at, and `_tick_drowsy` walks both sides and
+    # applies the sleep to the target with its duration roll -- so the only thing missing was
+    # permission. **It is the only way to sleep a Clear Body target without an accuracy roll**:
+    # Yawn's own accuracy is 0, so nothing about landing it can go wrong, and the titans' Clear
+    # Body is irrelevant to a status.
+    #
+    # Two turns of warning is the cost, and `will_fail` is where every refusal lives: an
+    # already-statused victim, an already-drowsy one, Insomnia, Vital Spirit, or an Uproar.
+    187: ("Yawn: the two-turn drowse, and the sleep -- with its duration roll -- landing at "
+           "end of turn"),
+    # Encore, and a genuinely new KIND of move for this tool: it does not damage, status or
+    # re-stage anything, it takes the target's move choice away. While it runs the selection roll
+    # survives but its modulus collapses to one, so the target's half of the turn becomes
+    # predictable without becoming free -- see `select_target_move` and `Battler.usable_slots`.
+    90: "Encore: the 3-7 turn lock, the selection modulus it collapses to one, and the PP release",
+    # Defog, and the only move of ours that can REMOVE a condition the target put up. Which makes
+    # it the answer to the two that block Phase 2's precondition: Safeguard refuses every status
+    # move and Mist refuses every stat drop. Zero rolls.
+    258: ("Defog: the target's evasion -1, and its Mist and Safeguard cleared -- in that order, "
+          "so a standing Mist blocks the drop and is then removed"),
 }
 
 
@@ -580,12 +608,39 @@ class MoveOutcome:
     #: it can never be zero, because a full-HP user fails in `will_fail` instead of healing
     #: nothing.
     self_heal: int = 0
+    #: HP this move takes off its OWN USER: Struggle's recoil, the Life Orb's tenth, or **both**
+    #: added together -- the ROM's two blocks are in different walks and neither knows about the
+    #: other, so a Life Orb Struggle costs its holder a quarter plus a tenth.
+    #:
+    #: The mirror of `self_heal` and a separate field rather than a negative one, because the two
+    #: are clamped from opposite ends and because a reader should not have to check a sign to know
+    #: which way a number moves. Self-aimed, so `simulate_turn` puts it on the side that moved.
+    #:
+    #: Zero when the move missed, and zero when the hit was INEFFECTIVE: both recoils ride the hit
+    #: rather than the use (`subscript_struggle` is a `MOVE_SIDE_EFFECT_ON_HIT` subscript, and the
+    #: Life Orb block tests `SYSCTL_MOVE_HIT`), and the ROM counts an immunity as not a hit.
+    self_damage: int = 0
     #: Haze: every stat stage on BOTH sides goes back to neutral. A flag rather than a list of
     #: fields, because the ROM's own loop is over every battler and every stage without exception.
     resets_all_stages: bool = False
+    #: Defog: every side condition on the move's VICTIM's side goes away. A flag for the same
+    #: reason `resets_all_stages` is one -- the subscript's own list is exhaustive rather than
+    #: selective -- and aimed at the other side, like `stat_drop`, so `simulate_turn` applies it
+    #: through `apply_field`, which is the only place that knows which side that is.
+    #:
+    #: Distinct from the evasion drop the same move lands, which rides `stat_drop` as Sweet
+    #: Scent's does. Two fields because the two halves are blocked by different things: Mist and
+    #: Clear Body can refuse the drop, and nothing can refuse the clearing.
+    clears_side_conditions: bool = False
     #: Turns of Taunt this move just rolled for its VICTIM, or 0. Ours to inflict; the mirror in
     #: `act_target` is wired for symmetry and no configured target has the move.
     starts_taunt: int = 0
+    #: Turns of Encore this move just rolled for its VICTIM, or 0. Ours to inflict, like
+    #: `starts_taunt`, and aimed at the other side -- so `simulate_turn` applies it, and the slot
+    #: it locks is read off the victim's own `last_move_slot` rather than carried here. One
+    #: number, not a pair, because the ROM's own pair is redundant: `BtlCmd_TryEncore` sets
+    #: `encoredMoveSlot` from exactly that lookup.
+    starts_encore: int = 0
     #: Turns of Uproar this move just rolled for its user, or 0. Azelf's, and the value is the
     #: TOTAL including the turn it was used on (`UPROAR_TURNS_MIN`..+span).
     starts_uproar: int = 0
@@ -633,6 +688,12 @@ def move_roll_cost(move: Move) -> int:
         # The duration roll, spent only when the Uproar actually STARTS -- a continuation turn
         # re-runs the effect script, finds the volatile already set and jumps straight to
         # CalcCrit/CalcDamage (`effect_script_0159.s`). An upper bound, like the sleep line above.
+        rolls += 1
+    if move.effect == EFFECT_ENCORE:
+        # Its hidden duration, spent only when the lock actually goes on -- all four of
+        # `will_fail`'s Encore failures sit before the `Random`. An upper bound, like the three
+        # lines above, and the commonest real outcome is the cheaper one: a victim whose last
+        # turn was prevented cannot be encored at all.
         rolls += 1
     return rolls
 
@@ -841,6 +902,34 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         # tests `BATTLEMON_TAUNTED_TURNS != 0` before reaching its Random. The accuracy roll is
         # still spent, as it is for every other failure in this function.
         return defender.taunted_turns > 0
+    if move.effect == EFFECT_ENCORE:
+        # Four ways an Encore fails, all of them read off the VICTIM and all of them before
+        # `BtlCmd_TryEncore` reaches its `Random` -- so each costs the accuracy roll and nothing
+        # more, exactly as Taunt's single failure does. In the ROM's own order
+        # (battle_script.c:4730-4746):
+        #
+        # 1. **Its last turn was prevented, or it has not moved yet.** `DEFENDER_LAST_MOVE` is
+        #    `movePrevByBattler`, which is MOVE_NONE unless the previous move EXECUTED -- see
+        #    `Battler.last_move_slot` for why a miss still counts and a full paralysis does not.
+        #    This is the commonest failure in a real run and the one a plan has to sequence
+        #    around: the turn after we paralyze the target is a turn we may not be able to Encore.
+        # 2. **The move cannot be encored** -- `Move_CanBeEncored`, by effect
+        #    (`CANNOT_ENCORE_EFFECTS`). Unreachable with every configured moveset.
+        # 3. **It is already Encored.** The ROM tests ``encoredMove == MOVE_NONE``, so a second
+        #    Encore fails rather than refreshing the counter -- the same shape as Taunt, Mist and
+        #    Lucky Chant.
+        # 4. **That slot is out of PP.** Also unreachable in sequence, because state 17 of the
+        #    end-of-turn walk releases a lock whose move has run dry, but the ROM tests it here
+        #    and so does this.
+        #
+        # The slot being absent from the victim's moveset is folded into (1): `last_move_slot`
+        # can only name a slot the victim used, and `Battler.move` answers None for an empty one.
+        slot = defender.last_move_slot
+        if slot is None or defender.move(slot) is None:
+            return True
+        if defender.move(slot).effect in CANNOT_ENCORE_EFFECTS:
+            return True
+        return defender.encored_slot is not None or defender.pp_left(slot) == 0
     if move.effect == EFFECT_FUTURE_SIGHT:
         # Keyed on the FIELD, because the ROM keys it on the victim's battler position rather
         # than on the move's user: `futureSightTurns[defender]`. One can be in the air per side.
@@ -885,19 +974,26 @@ def will_fail(move: Move, defender: "Battler", field=None, *, actor: "Battler" =
         # No actor given means "cannot tell", and guessing True would suppress a question the
         # interview must still ask. Only a known-unstatused user is a known failure.
         return actor is not None and actor.status not in REFRESH_CURES
-    # **Synthesis at full HP**, and it reads `actor` rather than `defender` -- the second
-    # self-targeting family here, after Refresh. `subscript_recover_hp.s` compares the user's
-    # current HP against its maximum on its very first line and branches to ``_036``, which
-    # prints "{0}'s HP is full!" and sets `MOVE_STATUS_NO_MORE_WORK` without healing anything.
+    # **Synthesis or Recover at full HP**, and it reads `actor` rather than `defender` -- the
+    # second self-targeting family here, after Refresh. `subscript_recover_hp.s` compares the
+    # user's current HP against its maximum on its very first line and branches to ``_036``,
+    # which prints "{0}'s HP is full!" and sets `MOVE_STATUS_NO_MORE_WORK` without healing
+    # anything. Both moves end in that same subscript, which is why one row covers them
+    # (`FULL_HP_FAILS_EFFECTS`).
     #
     # This is the whole argument for Phase 2 running above 1 HP rather than at it
     # (notes/battle_compass_dialga_palkia_shaymin.md sec 4C): a full-HP Shaymin cannot Synthesis,
-    # so its HP -- and therefore `b` -- stays where the window search put it.
+    # so its HP -- and therefore `b` -- stays where the window search put it. Pointed at our own
+    # side it is the mirror of that: a full-HP Recover is a deliberately cheaper turn, and the
+    # one lever we have on a turn's advance count that needs no roll to go our way.
     #
     # Accuracy is 0, so unlike every other family here this one spends NOTHING at all before
-    # failing: no accuracy roll to pay for first. Heal Block would refuse it too
-    # (`subscript_present_heal.s` ``_015``), which no configured party can inflict.
-    if move.effect == EFFECT_SYNTHESIS and actor is not None and actor.hp >= actor.max_hp:
+    # failing: no accuracy roll to pay for first. Heal Block refuses both as well -- it lists
+    # Recover and Synthesis among its fourteen moves (`Move_HealBlocked`, battle_lib.c:3427-3440)
+    # -- and that half is deliberately absent: it would have to read `actor.heal_block_turns`,
+    # and Dialga and Palkia are the only carriers, so a row for it is reachable only in a matchup
+    # where nobody would bring a healer. See `Battler.heal_block_turns`.
+    if move.effect in FULL_HP_FAILS_EFFECTS and actor is not None and actor.hp >= actor.max_hp:
         return True
     # **A second Leech Seed on an already-seeded victim**, and **Leech Seed against a Grass
     # type**, which `subscript_leech_seed_start.s` reads in that order: the Grass check on BOTH
@@ -1034,6 +1130,26 @@ ABILITY_MAGIC_GUARD = "magic guard"
 #: path -- `BtlCmd_WeatherHPRecovery` (battle_script.c:5966-5979) is pure arithmetic on the
 #: user's max HP.
 EFFECT_SYNTHESIS = 132
+#: Recover, Softboiled, Milk Drink, Slack Off, Roost -- the flat half-max-HP heals, and the first
+#: one of OURS. Quagsire's, as an egg move, which is what brought it here.
+#:
+#: `effect_script_0032.s` is a single line -- ``MOVE_SIDE_EFFECT_ON_HIT|RECOVER_HALF_MAX_HP`` --
+#: and `subscript_recover_half_max_hp.s` is ``maxHP`` through `DivideVarByValue 2` and then the
+#: same `BATTLE_SUBSCRIPT_RECOVER_HP` that Synthesis ends in. So the two moves share their
+#: failure branch exactly: ``_036`` of `subscript_recover_hp.s` prints "{0}'s HP is full!" and
+#: sets `MOVE_STATUS_NO_MORE_WORK`. They differ in the heal only -- Recover ignores weather, where
+#: `BtlCmd_WeatherHPRecovery` reads it -- which is why `FULL_HP_FAILS_EFFECTS` holds both and
+#: `synthesis_heal` holds one.
+#:
+#: Accuracy 0 and no `Random` on any path, so it spends NOTHING either way. What it does spend is
+#: the turn's two post-successful-move advances when it heals and not when it fails, which makes
+#: it the one move of ours whose COST the player controls directly: at full HP it is a 2-advance
+#: turn and below it a 4-advance one.
+EFFECT_RECOVER = 32
+#: The self-targeting heals that FAIL at full HP rather than healing nothing, keyed by effect.
+#: Both reach ``_036`` of `subscript_recover_hp.s` and both spend nothing before failing -- see
+#: `will_fail`, which is the only reader.
+FULL_HP_FAILS_EFFECTS = frozenset({EFFECT_SYNTHESIS, EFFECT_RECOVER})
 #: Knock Off, Regigigas' slot 2. 20 BP Dark at 100 accuracy, indirect with
 #: `MOVE_SIDE_EFFECT_ON_HIT`, so it returns from the first branch of
 #: `BattleSystem_TriggerSecondaryEffect` and spends NO proc roll.
@@ -1140,6 +1256,47 @@ EFFECT_ALL_STATS_UP = 140
 #: Safeguard: protects its own side from new non-volatile statuses for five turns.
 EFFECT_SAFEGUARD = 124
 SAFEGUARD_TURNS = 5
+
+#: Defog (BATTLE_EFFECT_DEFOG), and it is **the answer to the two conditions that block a Phase 2
+#: precondition outright**: the target's Safeguard, which refuses every status move we need, and
+#: the target's Mist, which refuses every stat drop we aim at it. Three configured encounters
+#: carry one -- Suicune and Cresselia have Mist, Ho-Oh has Safeguard -- so this is a live tool
+#: rather than a completeness exercise.
+#:
+#: `effect_script_0258.s` is a single line, ``MOVE_SIDE_EFFECT_ON_HIT |
+#: MOVE_SIDE_EFFECT_TO_DEFENDER | MOVE_SUBSCRIPT_PTR_DEFOG``, and `subscript_defog.s` has no
+#: `Random` on any path. Accuracy 0, so no accuracy roll either: **zero rolls, like Haze**.
+#:
+#: What it does, in the subscript's own order, because the order is the one surprising thing
+#: about it:
+#:
+#: 1. ``_043`` drops the DEFENDER's evasion by one -- unconditionally, which is why Defog never
+#:    fails and never needs a `will_fail` row. (A single-stat drop already at -6 is not a failure;
+#:    see `will_fail`'s `PRIMARY_STAT_DROPS` branch.)
+#: 2. ``_065`` onward then clears the defender's side: Reflect, Light Screen, Mist, Safeguard,
+#:    Spikes, Toxic Spikes, Stealth Rock, and the field's deep fog.
+#:
+#: **The drop is attempted BEFORE the Mist is cleared, so a standing Mist blocks it and Defog
+#: then removes the Mist that blocked it.** One Defog into a misted target therefore drops no
+#: evasion; a second one does. That falls out correctly here rather than needing a special case,
+#: because `execute_move` computes `drop_blocked_by` against the field as it stands and
+#: `apply_field` does the clearing afterwards -- but it is the detail a reimplementation would get
+#: wrong, so it is written down. Clear Body and White Smoke block the drop the same way
+#: (`stat_drop_blocked_by`), and Defog cannot clear an ABILITY, so against the titans the evasion
+#: half is simply unavailable.
+#:
+#: Three of the eight conditions it clears are unreachable here and are listed so a reader need
+#: not wonder: Spikes, Toxic Spikes and Stealth Rock have no state fields at all, because neither
+#: side can set one in a wild single battle. Deep fog is the overworld fog weather, which this
+#: simulator does not model in any form -- no configured encounter is in a foggy area, and a
+#: battle in one would already be mispredicted by the accuracy term rather than by this.
+#:
+#: **Availability is the real constraint, and it is version-split.** Defog is HM05 in DPPt, so a
+#: Platinum party can simply teach it; HGSS gives HM05 to Whirlpool instead and has no other
+#: source, so a Suicune or Ho-Oh run needs a Pokemon traded in already knowing it. Worth stating
+#: because it decides whether the answer to Ho-Oh's Safeguard is reachable at all on that
+#: cartridge.
+EFFECT_DEFOG = 258
 #: Five, and the counter is the three bits 12-14 of the side-condition mask: the start subscript
 #: sets `0x5000`, i.e. 5 in that field (subscript_lucky_chant_start.s), and the end-of-turn walk
 #: subtracts one `SIDE_CONDITION_LUCKY_CHANT_SHIFT` per turn including the turn it was used
@@ -1464,6 +1621,135 @@ EFFECT_TAUNT = 175
 TAUNT_TURNS_MIN = 3
 TAUNT_TURNS_SPAN = 3
 
+#: Struggle (BATTLE_EFFECT_STRUGGLE), which is not in anybody's moveset and is reached only by
+#: running out of PP on every slot that has a move.
+#:
+#: **It used to be outside the model entirely**, and the docstring on `select_target_move` still
+#: explains why that was dangerous: a `None` slot spent no roll, dealt no damage and applied no
+#: recoil, so the turn was silently wrong rather than visibly unsupported. The roll COUNT was
+#: already right -- a wild battler with nothing valid never reaches move select at all, because
+#: `BattleSystem_CheckInvalidMoves(..., CHECK_INVALID_ALL) == STRUGGLING_ALL` sets
+#: ``turnFlags[i].struggling`` and skips it (battle_controller_player.c:433-441) -- so what was
+#: missing was the move, not the accounting.
+#:
+#: What it costs and does, from the ROM:
+#:
+#: * `effect_script_0254.s` is ``MOVE_SIDE_EFFECT_ON_HIT|MOVE_SUBSCRIPT_PTR_STRUGGLE`` then
+#:   `CalcCrit` and `CalcDamage` -- **two rolls**, and no accuracy roll, because its accuracy is
+#:   0. So it is priced exactly like Faint Attack and friends (effect 17).
+#: * `subscript_struggle.s` takes ``maxHP / 4`` off the USER with no `Random` anywhere.
+#: * It is **typeless**: `BattleSystem_ApplyTypeMultipliers` and `BattleSystem_CalcEffectiveness`
+#:   both early-return on ``move == MOVE_STRUGGLE`` (battle_lib.c:2573 and 2686), so no STAB, no
+#:   type chart and no Ghost immunity -- which is why the damage call passes ``type_chart=False``,
+#:   the same switch Future Sight uses. A type-ENHANCING item still applies, because that one is
+#:   a power multiplier in `CalcMoveDamage` (battle_lib.c:6716) with no Struggle exemption; the
+#:   Technician exemption right beside it names the move explicitly, which is the corroboration
+#:   that the omission is deliberate.
+#:
+#: **Simulating it is not the same as planning into it**, and the two decisions are made in
+#: different places on purpose. At 1 HP the recoil kills the prize outright, so
+#: `solver.struggle_deadline` and the per-path cutoff still refuse to search past the target's
+#: last PP -- that is a policy about what is worth planning. This is about what is worth
+#: REPORTING: a Phase 1 turn where the target Struggled is a real turn a player can see, and
+#: until now it could not be narrowed against at all.
+EFFECT_STRUGGLE = 254
+#: ``maxHP / 4``, floored -- `subscript_struggle.s`'s `DivideVarByValue 4` over
+#: ``BATTLEMON_MAX_HP``. A Lv30 titan has 97 max HP for every IV spread worth considering, so
+#: this is 24 a turn: four Struggles bring it from 97 to exactly 1, and the fifth faints it.
+STRUGGLE_RECOIL_DIVISOR = 4
+#: The Life Orb's recoil: ``maxHP / 10`` off the holder, floored, every time one of its attacks
+#: HITS. `BattleSystem_Divide` floors but clamps a zero quotient to 1, which cannot matter --
+#: a 9 HP maximum is not reachable for anything that holds items.
+#:
+#: The other half of the item; the ×1.3 is `battle.damage.LIFE_ORB_MODIFIER_PERCENT`. Split
+#: between the two modules because the two halves are different kinds of thing: one is damage
+#: arithmetic and one is a residual on the attacker, and `damage()` answers only the first.
+#:
+#: `BattleControllerPlayer_TriggerAfterMoveHitEffects`, state `AFTER_MOVE_HIT_STATE_LIFE_ORB`
+#: (battle_controller_player.c:4758-4775), with the same block mirrored at battle_lib.c:7357-7366.
+#: Its conditions, in the ROM's order -- and each is a way to get this wrong:
+#:
+#: * the holder is not Magic Guard;
+#: * ``battleStatusMask & SYSCTL_MOVE_HIT`` -- it keys on the move HITTING, **not on damage
+#:   dealt**. So a False Swipe into a 1 HP target deals zero and still costs the tenth, which is
+#:   exactly the chip phase; and an ineffective hit, which the ROM counts as not having hit at all
+#:   (`MOVE_STATUS_INEFFECTIVE` is in `MOVE_STATUS_DID_NOT_HIT`), costs nothing;
+#: * ``CURRENT_MOVE_DATA.class != CLASS_STATUS`` -- so a Flash, Screech or Thunder Wave turn is
+#:   free;
+#: * the holder is still alive.
+#:
+#: It fires after Shell Bell in the same walk (the order is Rage, Shell Bell, Life Orb) and spends
+#: **no rolls at all** -- `subscript_lose_hp_from_item` has no `Random`. Which is the whole reason
+#: leaving it unmodelled was dangerous rather than merely imprecise: nothing about the stream
+#: disagrees, so there is no desync to notice -- the predicted HP is just quietly wrong, on OUR
+#: side, where it feeds `worst_incoming_hit` and the solver's healing budget.
+LIFE_ORB_RECOIL_DIVISOR = 10
+
+#: The move itself, by name. Looked up rather than built, because `basedata/moves.json` already
+#: carries it (number 165, effect 254, 50 BP physical Normal at accuracy 0) and a hand-built Move
+#: would be a second source of truth for the same row.
+STRUGGLE_MOVE_NAME = "Struggle"
+
+
+def struggle_move() -> Move:
+    """The Struggle row, resolved from the move table.
+
+    Imported locally and under a different name for the reason `_fire_future_sight` gives:
+    `claytonlib.moves.resolve_move` looks a Move up by NAME, and a module-level import of it here
+    would shadow it into this module's namespace -- the exact confusion `execute_move` is named
+    the way it is to avoid, and which tests/test_claytonlib_exports.py asserts against.
+
+    The table itself is cached (`moves._moves_by_name`), so calling this per Struggle turn costs
+    a dict lookup.
+    """
+    from claytonlib.moves import resolve_move as move_by_name
+
+    move = move_by_name(STRUGGLE_MOVE_NAME)
+    if move is None:                     # a move table missing its own last row
+        raise ValueError(f"{STRUGGLE_MOVE_NAME!r} is not in the move table")
+    return move
+
+#: Encore (BATTLE_EFFECT_ENCORE), and the second move of ours that changes what the target's turn
+#: costs -- but in the opposite direction from Taunt. Taunt shrinks the selection modulus from
+#: four to two; Encore shrinks it to **one**, which makes the target's half of the turn fully
+#: predictable while still spending its roll. See `Battler.encored_slot` for why the roll
+#: survives, which is the fact a run desynchronises on if it is got wrong.
+#:
+#: `BtlCmd_TryEncore` (battle_script.c:4725-4749), read in its own order:
+#:
+#: * `Battler_SlotForMove(&DEFENDING_MON, DEFENDER_LAST_MOVE)` -- the victim must still KNOW the
+#:   move it last used, and `Move_CanBeEncored` (battle_lib.c:7212-7231) must allow it;
+#: * ``encoredMove == MOVE_NONE`` -- a second Encore on an already-Encored victim fails;
+#: * ``ppCur[moveSlot]`` -- the move must have PP left;
+#: * ``DEFENDER_LAST_MOVE`` nonzero -- so a victim whose last turn was PREVENTED cannot be
+#:   encored at all (`Battler.last_move_slot` has the ROM's definition of "last");
+#: * then, and only then, ``BattleSystem_RandNext(battleSys) % 5 + 3``.
+#:
+#: **``% 5``, so 3 to 7 turns.** Worth stating against its neighbours because they differ and
+#: because one of them is wrong elsewhere in this repo: Disable is ``% 4 + 3`` (battle_script.c:
+#: 4594) and Taunt is ``Random 2, 3``, while `metronome_compass.effects._eff_encore` rolls
+#: ``% 4`` -- see clayton-ek3, which is the HGSS half of this and is not assumed from Platinum.
+#: The modulus is not only a duration: ``4`` divides 256 and ``5`` does not, so under ``% 4`` the
+#: wear-off turn would be identical for two seeds one RTC second apart and under ``% 5`` it is
+#: not (notes/seed_separation.md).
+#:
+#: The accuracy is 100, so the accuracy roll is spent either way: **two rolls when it lands, one
+#: when it fails** -- exactly Taunt's shape.
+EFFECT_ENCORE = 90
+ENCORE_TURNS_MIN = 3
+ENCORE_TURNS_SPAN = 5
+
+#: What `Move_CanBeEncored` refuses, and it tests by **EFFECT** rather than by move number:
+#: ``MOVE_DATA(sCannotEncoreMoves[i]).effect == MOVE_DATA(move).effect`` (battle_lib.c:7221-7231).
+#: So the ban covers every move sharing an effect with one of the six, not just the six.
+#:
+#: Transform (57), Mimic (82), Sketch (95), Mirror Move (9), Encore (90) and Struggle (254),
+#: which is the order the ROM lists them in -- effect numbers read off `basedata/moves.json`
+#: rather than assumed. Nothing in any configured moveset is in here, so this is a correctness
+#: guard rather than a live branch -- but it is the cheap half of Encore to get right, and
+#: getting it wrong would mean predicting a lock the game refused.
+CANNOT_ENCORE_EFFECTS = frozenset({57, 82, 95, 9, EFFECT_ENCORE, EFFECT_STRUGGLE})
+
 
 def taunt_refuses(move: Move, actor: Battler) -> bool:
     """Whether a Taunt on `actor` refuses `move` at execution time.
@@ -1740,6 +2026,12 @@ PRIMARY_STAT_DROPS: dict[int, tuple[tuple[str, int], ...]] = {
     20: (("speed_stage", 1),),    # String Shot
     23: (("accuracy_stage", 1),), # Flash, Sand Attack, Smoke Screen, Kinesis
     24: (("evasion_stage", 1),),  # Sweet Scent
+    # Defog, and the same single row Sweet Scent gets -- `subscript_defog.s` reaches the evasion
+    # drop through `MOVE_SUBSCRIPT_PTR_EVASION_DOWN_1_STAGE`, the identical subscript pointer. The
+    # side-condition CLEARING is the half this table cannot carry; it rides
+    # `MoveOutcome.clears_side_conditions`. See `EFFECT_DEFOG` for why the drop is attempted
+    # before the Mist that may block it is cleared.
+    258: (("evasion_stage", 1),), # Defog
     58: (("atk_stage", 2),),      # Charm, Feather Dance
     59: (("def_stage", 2),),      # Screech
     60: (("speed_stage", 2),),    # Cotton Spore, Scary Face -- Speed movers, as 20 above
@@ -2623,6 +2915,17 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             rng, duration_roll = advance(rng)
             used += 1
             taunt_turns = TAUNT_TURNS_MIN + duration_roll % TAUNT_TURNS_SPAN
+        encore_turns = 0
+        if move.effect == EFFECT_ENCORE:
+            # The same shape as Taunt's above, and the same guarantee: all four of `will_fail`'s
+            # Encore failures sit before `BtlCmd_TryEncore`'s `Random`, so reaching here means
+            # the lock really is going on and the roll really is spent.
+            #
+            # ``% 5``, not ``% 4``. See `EFFECT_ENCORE` -- the span is the difference between a
+            # wear-off turn that separates RTC-second siblings and one that cannot.
+            rng, duration_roll = advance(rng)
+            used += 1
+            encore_turns = ENCORE_TURNS_MIN + duration_roll % ENCORE_TURNS_SPAN
         # Mist guards its own side's stats, against EVERY reduction and not just Sweet Scent's.
         # The move still executed, so it stays SUCCESSFUL and still spends the post-move advances
         # [verified: test1.jsonl turn 15 spent 8 skeleton rolls, not 6, on a Sweet Scent the game
@@ -2639,6 +2942,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
         return rng, MoveOutcome(
             rolls=used, tokens=tuple(parts), successful=True,
             applied_status=status, sleep_turns=sleep_turns, starts_taunt=taunt_turns,
+            starts_encore=encore_turns,
             stat_drop=None if blocked else drop,
             sets_rain=move.effect == EFFECT_RAIN_DANCE,
             sets_mist=move.effect == EFFECT_MIST,
@@ -2654,6 +2958,10 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             sets_nightmare=move.effect == EFFECT_NIGHTMARE,
             sets_drowsy=move.effect == EFFECT_YAWN,
             resets_all_stages=move.effect == EFFECT_HAZE,
+            # Defog, and unconditional on reaching here for the same reason Foresight is: the
+            # subscript tests the conditions only to decide whether to print its animation, and
+            # clears whatever is up either way.
+            clears_side_conditions=move.effect == EFFECT_DEFOG,
             # Unconditional on reaching here, which is the whole of this move's behaviour: the
             # subscript tests nothing before setting the bit, so a Foresight against an
             # already-identified target lands again and costs exactly what the first one did.
@@ -2662,10 +2970,13 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             # subscript refuses -- a Grass defender, an already-seeded one -- is a `will_fail`
             # family above, so arriving here means the seed really goes on.
             seeds=move.effect == EFFECT_LEECH_SEED,
-            # Synthesis. `will_fail` has already refused the full-HP case, so this is never zero
-            # and never a no-op heal.
+            # Synthesis and Recover. `will_fail` has already refused the full-HP case for both,
+            # so this is never zero and never a no-op heal. Recover's half is weather-blind,
+            # which is the only way the two differ -- see `EFFECT_RECOVER`.
             self_heal=(synthesis_heal(attacker, field)
-                       if move.effect == EFFECT_SYNTHESIS else 0),
+                       if move.effect == EFFECT_SYNTHESIS
+                       else attacker.max_hp // 2 if move.effect == EFFECT_RECOVER
+                       else 0),
             # Double Team, Swords Dance, Nasty Plot, Amnesia. Mist does not guard against any of
             # them -- Mist blocks REDUCTIONS to its own side, and this is the user raising its own
             # stage.
@@ -2747,7 +3058,12 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
     # Deliberately NOT an early return, unlike soundproof's: the rolls after this point are
     # still spent. See `ineffective`'s use at the secondary below, which is where the ROM draws
     # the line -- the roll happens, the effect does not.
-    ineffective = deals_nothing(move, defender, attacker)
+    # **A Struggle is never ineffective**, because it is never checked against the type chart at
+    # all: `BattleSystem_CalcEffectiveness` early-returns on it (battle_lib.c:2686), so the
+    # Normal-against-Ghost zero that `deals_nothing` would report is a verdict the game never
+    # reaches. Suppressed here rather than inside `deals_nothing`, which answers a question about
+    # types and would have to be told about a move that has none.
+    ineffective = move.effect != EFFECT_STRUGGLE and deals_nothing(move, defender, attacker)
     if not ineffective:
         parts.append(tok.CRIT if critical else tok.HIT)
 
@@ -2793,10 +3109,42 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
             # OUR screens, so they apply only when the TARGET is the one attacking. Both are
             # ignored on a crit, which `damage` handles itself.
             reflect=actor == "E" and getattr(field, "reflect_turns", 0) > 0,
-            light_screen=actor == "E" and getattr(field, "light_screen_turns", 0) > 0)
+            light_screen=actor == "E" and getattr(field, "light_screen_turns", 0) > 0,
+            # Struggle is TYPELESS: no STAB, no effectiveness and no Ghost immunity, because
+            # `BattleSystem_ApplyTypeMultipliers` and `BattleSystem_CalcEffectiveness` both
+            # early-return on it (battle_lib.c:2573 and 2686). The same switch Future Sight uses,
+            # and it stops at exactly the right step -- a type-ENHANCING item still applies,
+            # since that one is a power multiplier in `CalcMoveDamage` (battle_lib.c:6716) with
+            # no Struggle exemption, unlike the Technician check three lines above it which names
+            # the move explicitly.
+            type_chart=move.effect != EFFECT_STRUGGLE)
         # False Swipe cannot knock out: it leaves the target on 1 HP.
         if move.effect == FALSE_SWIPE_EFFECT:
             dealt = min(dealt, max(0, defender.hp - 1))
+
+    # Struggle's recoil: a quarter of the USER's max HP, floored, with no roll anywhere
+    # (`subscript_struggle.s`). It rides the hit rather than the use, so a Struggle that somehow
+    # missed -- only possible against a semi-invulnerable defender, which returns above -- costs
+    # nothing.
+    self_damage = (attacker.max_hp // STRUGGLE_RECOIL_DIVISOR
+                   if move.effect == EFFECT_STRUGGLE else 0)
+    # The Life Orb's tenth, which ADDS to that rather than replacing it -- a Struggle boosted by a
+    # Life Orb costs its holder both, since the ROM's two blocks are in different walks and
+    # neither knows about the other.
+    #
+    # Reached only from here, which is where the ROM's conditions land us anyway: this is past the
+    # miss return, past the soundproof return, and in the damaging branch, so "the move hit" and
+    # "the move is not a status move" are already true. `ineffective` is the one that has to be
+    # asked -- the ROM counts an immunity as not having hit at all
+    # (`MOVE_STATUS_INEFFECTIVE` is a member of `MOVE_STATUS_DID_NOT_HIT`), so a Normal move into
+    # a Ghost costs the holder nothing. Soundproof is the same answer by the same route.
+    #
+    # NOT gated on `dealt`: it keys on the hit, so a False Swipe into a 1 HP target costs the
+    # tenth for zero damage. See `LIFE_ORB_RECOIL_DIVISOR`.
+    if (not ineffective
+            and item_key(attacker.held_item) == item_key(LIFE_ORB)
+            and (attacker.ability or "").strip().lower() != ABILITY_MAGIC_GUARD):
+        self_damage += attacker.max_hp // LIFE_ORB_RECOIL_DIVISOR
 
     secondary = False
     if move.effect_chance > 0 and not ineffective:
@@ -2889,6 +3237,7 @@ def execute_move(rng: int, move: Move, attacker: Battler, defender: Battler, *,
                   and (defender.ability or "").strip().lower() != ABILITY_STICKY_HOLD)
     return rng, MoveOutcome(rolls=used, tokens=tuple(parts), successful=not ineffective,
                             damage=dealt, secondary=secondary,
+                            self_damage=self_damage,
                             self_stat_change=self_change,
                             knocks_off_item=knocks_off,
                             confuses=confuse_turns,
@@ -3034,8 +3383,17 @@ def sent_out(battler: Battler) -> Battler:
                    # `seeded` is `moveEffectsMask`'s Leech Seed bit, so it goes the same way as
                    # `drowsy_turns` -- switching out really does shed a Leech Seed, which is the
                    # ordinary answer to one and the reason the solver can treat it as escapable.
+                   #
+                   # The Encore pair is `moveEffectsData`, which the same fresh BattleMon zeroes,
+                   # and `last_move_slot` is `movePrevByBattler` -- a separate array that
+                   # `BattleSystem_UpdateAfterSwitch` clears explicitly for the departing battler
+                   # (battle_lib.c:2124). So the newcomer cannot be encored into a move the
+                   # Pokemon before it used, which is the right answer in both directions: for
+                   # the target it is unreachable (a wild Pokemon never switches), and for us it
+                   # means a switch is the clean way out of a lock.
                    drowsy_turns=0, uproar_turns=0, uproar_slot=None, taunted_turns=0,
-                   identified=False, seeded=False, confusion_turns=0, recharging=False)
+                   identified=False, seeded=False, confusion_turns=0, recharging=False,
+                   encored_slot=None, encored_turns=0, last_move_slot=None)
 
 
 #: Every stage field on a `Battler`: what Haze resets, and what a send-out resets. Named once so
@@ -3260,9 +3618,27 @@ def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerC
     spent. Unreachable for Cresselia, which has neither kind of move, and modelled anyway because
     the next roamer need not be so kind.
 
-    Struggle stays outside the model, as it is for a wild target: the ROM would tie all four
-    zero-scored slots and roll, we return None and roll nothing. A 1 HP roamer dies to Struggle
-    recoil, so a run that reaches it is lost either way -- see `solver.struggle_deadline`.
+    **Struggle costs the roamer NOTHING, not four** -- and this row used to say four, which was
+    the whole of the mistake. [derived, not captured] The four AI rolls come from `TrainerAI_Init`
+    (trainer_ai.c:234-241), which is reached only through `TrainerAI_Main` -- and that is called
+    from inside `Task_TrainerShowMoveSelectMenu` (battle_display.c:3580-3590), the move-select
+    menu task. A battler with nothing usable never starts that task: command selection takes the
+    ``STRUGGLING_ALL`` branch, which sets ``turnFlags[i].struggling`` and routes to
+    ``COMMAND_SELECTION_STRUGGLE_MESSAGE`` instead of ``COMMAND_SELECTION_MOVE_SELECT_INIT``
+    (battle_controller_player.c:433-441). So the menu is never emitted, the AI never runs, and
+    the same zero applies to the wild path for the same reason.
+
+    Which has a consequence worth stating because it is startling and falsifiable: **a roamer
+    with no PP left cannot decide to flee either.** The escape decision is also inside
+    `TrainerAI_Main` (`AI_STATUS_FLAG_ESCAPE` short-circuiting `TrainerAI_MainSingles`,
+    trainer_ai.c:311-339), so a turn that skips the menu skips the escape with it -- the roamer
+    Struggles instead. The ROM chain is unambiguous at every link, but no capture covers it: the
+    measured roamer logs are all turns with PP in hand (clayton-c3c4).
+
+    The Struggle itself is modelled now -- `act_target` turns a None slot into
+    `EFFECT_STRUGGLE` -- which is a change of kind from when this docstring was written. A 1 HP
+    roamer still dies to the recoil, so a run that reaches this is lost either way; see
+    `solver.struggle_deadline` for why the solver refuses to plan into it regardless.
     """
     if target.recharging:
         # As in `select_target_move`: no command is picked, so no AI rolls are spent either.
@@ -3273,6 +3649,14 @@ def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerC
         return RoamerChoice(rng, target.charging_slot, False, 0)
     if target.uproar_turns and target.uproar_slot is not None:
         return RoamerChoice(rng, target.uproar_slot, False, 0)
+    usable = target.usable_slots()
+    if not usable:
+        # **Struggle, and it is checked BEFORE the four AI rolls rather than after.** That order
+        # is the fix rather than a tidy-up: the ``STRUGGLING_ALL`` branch of command selection
+        # never starts the move-select menu task, and `TrainerAI_Main` -- which is where both the
+        # four rolls and the escape decision live -- is inside it. So the turn costs nothing at
+        # all and the roamer cannot even flee. See the docstring.
+        return RoamerChoice(rng, None, False, 0)
     rolls = ROAMER_AI_ADVANCES
     for _ in range(ROAMER_AI_ADVANCES):
         rng = advance_rng(rng)
@@ -3281,9 +3665,6 @@ def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerC
         # `TrainerAI_MainSingles`, trainer_ai.c:311-339), which is why a fleeing turn is 4 and not
         # 5 -- and why the count is readable as the decision.
         return RoamerChoice(rng, None, True, rolls)
-    usable = target.usable_slots()
-    if not usable:
-        return RoamerChoice(rng, None, False, rolls)
     rng, roll = advance(rng)
     return RoamerChoice(rng, usable[roll % len(usable)], False, rolls + 1)
 
@@ -3668,6 +4049,53 @@ def _tick_uproar(state: BattleState, move_failed: dict[str, bool] | None = None)
                                      uproar_slot=battler.uproar_slot if left else None))
 
 
+def _tick_encore(state: BattleState) -> tuple[str, ...]:
+    """Encore's countdown, state 17 of the end-of-turn condition walk. Costs no rolls.
+
+    Returns the sides whose Encore ended on this tick, so `simulate_turn` can emit a token for
+    each -- the wear-off is the one half of the lock a player observes directly ("{0}'s Encore
+    ended!", `subscript_encore_end`), and its turn is a rolled quantity, so it has to be
+    reportable or the roll is unfilterable.
+
+    `MON_COND_CHECK_STATE_ENCORE` (battle_controller_player.c:1591-1615), transcribed in its own
+    order, which is where all three of its surprises live:
+
+    1. **The move is re-checked before the counter is.** If the encored move has left the
+       moveset, or ``ppCur[slot] == 0``, the ROM sets ``encoredTurns = 0`` -- and then falls into
+       the zero branch on the same tick, so the lock is released immediately. **Encore therefore
+       never forces a Struggle**; it gets out of the way instead.
+    2. **The decrement is not gated on anything the victim did.** Unlike `Battler.tick_confusion`,
+       which only moves when its holder tries to act, this runs in the end-of-turn walk for every
+       battler. A turn the victim spent asleep, flinched or fully paralyzed still costs a turn of
+       Encore -- so a Yawn aimed at an Encored target spends the lock rather than protecting it.
+    3. **The release is one tick LATE, which is what makes the lock last `encoredTurns` turns
+       after the Encore rather than `encoredTurns - 1`.** The counter is decremented while it is
+       nonzero and the wear-off happens on the tick it is *found* at zero, so a rolled 3 gives
+       ticks of 3->2, 2->1, 1->0 and then the release -- and selection on that fourth turn
+       happened before the release, so it was still locked. Three forced turns for a rolled 3,
+       seven for a rolled 7.
+
+    Ordered between `_tick_uproar` (state 14) and `_tick_taunt` (state 20), which is the walk's
+    order. Like Taunt's, it spends nothing, so it needs no position inside the measured
+    end-of-turn advances.
+    """
+    ended: list[str] = []
+    for side in ("ours", "target"):
+        battler = getattr(state, side)
+        slot = battler.encored_slot
+        if slot is None:
+            continue
+        turns = battler.encored_turns
+        if battler.move(slot) is None or battler.pp_left(slot) == 0:
+            turns = 0
+        if turns:
+            setattr(state, side, replace(battler, encored_turns=turns - 1))
+            continue
+        setattr(state, side, replace(battler, encored_slot=None, encored_turns=0))
+        ended.append(side)
+    return tuple(ended)
+
+
 def _tick_taunt(state: BattleState) -> None:
     """Taunt's countdown, state 20 of the end-of-turn condition walk. Costs no rolls.
 
@@ -3881,6 +4309,26 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.reflect_turns = outcome.screen_turns
         if outcome.sets_light_screen:
             new.light_screen_turns = outcome.screen_turns
+        if outcome.clears_side_conditions:
+            # Defog, and it reads `side` the OPPOSITE way round from Safeguard above: the effect
+            # script is `MOVE_SIDE_EFFECT_TO_DEFENDER`, so a Defog of ours clears the TARGET's
+            # side and one of the target's would clear ours.
+            #
+            # Only the fields that exist. The target's side holds Mist and Safeguard -- the two
+            # conditions that block a Phase 2 precondition outright, which is the whole reason to
+            # carry the move. The target has no Reflect or Light Screen in this model because no
+            # configured moveset can set one on that side; our side has all three, and that half
+            # is unreachable (`MODELLED_TARGET_EFFECTS` has no 258) and wired anyway.
+            #
+            # Lucky Chant is deliberately NOT cleared: `subscript_defog.s` does not check it.
+            # Nor is rain, which is a FIELD condition rather than a side one.
+            if side == "ours":
+                new.mist_turns = 0
+                new.safeguard_turns = 0
+            else:
+                new.our_safeguard_turns = 0
+                new.reflect_turns = 0
+                new.light_screen_turns = 0
 
     #: Set when the actor that moved FIRST procced a flinch, so the second actor loses its move.
     #: A dict rather than two nonlocals because both sides are symmetric and only one can ever be
@@ -4047,6 +4495,19 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         move = new.ours.move(slot)
         if move is None:
             return False
+        # **Clear the last-move record here, and set it again only if the move executes.** That is
+        # the ROM's own shape rather than a convenience: `BattleControllerPlayer_UpdateMoveBuffers`
+        # writes `movePrevByBattler[attacker]` to the move when `SYSCTL_MOVE_SUCCEEDED` is up and
+        # to MOVE_NONE when it is not (battle_controller_player.c:3945-3949), and that flag goes
+        # up the moment the move's script is loaded -- so every prevention below lands on the
+        # MOVE_NONE branch and every execution lands on the other one, a miss and an ineffective
+        # hit included.
+        #
+        # Placed AFTER the bag, switch, Revive and FAINTED returns above, because none of those
+        # enters `FightCommand` at all: a Pokemon that used an item never reaches MoveEnd, so its
+        # record is preserved rather than cleared. Which is the half that matters for a plan --
+        # throwing a ball does not cost us the Encore we were lining up.
+        new.ours = replace(new.ours, last_move_slot=None)
         # sleep -> flinch -> paralysis, which is metronome_compass's verified turn order.
         # A sleeping or flinched turn spends no roll; the paralysis CHECK does.
         # An Uproar ends our sleep before the counter would -- and before the counter is read, so
@@ -4114,6 +4575,10 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             resolved="scfz" if confusion == "snapped" else "")
         new.rng_offset += outcome.rolls
         new.ours = new.ours.spend_pp(slot, 2 if config.target_has_pressure else 1)
+        # The move executed, so the record goes back on -- see the clear above for why this is
+        # unconditional on the outcome. Ours is never read by anything today (no configured
+        # target has Encore), and it is kept because the asymmetry is the trap.
+        new.ours = replace(new.ours, last_move_slot=slot)
         # A Choice item locks its holder into the first move it uses, and stays locked until the
         # Pokemon leaves the field. Set here rather than on the attempt, because the ROM records
         # it alongside the move actually going off.
@@ -4162,10 +4627,16 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # `target_threshold` would move under the solver every turn.
             new.target = replace(new.target, seeded=True)
         if outcome.self_heal:
-            # Synthesis, ours. Unreachable for the same reason -- effect 132 is not in
-            # `MODELLED_OUR_EFFECTS` -- but a healing move of ours is an ordinary thing to want,
-            # and this is the half that would have to exist for one.
+            # Recover, ours -- and Synthesis, which is still unreachable here because effect 132
+            # is not in `MODELLED_OUR_EFFECTS`. `will_fail` has already refused the full-HP case
+            # for both, so reaching here means the heal really lands; `with_hp` clamps it.
             new.ours = new.ours.with_hp(new.ours.hp + outcome.self_heal)
+        if outcome.self_damage:
+            # Struggle's recoil, ours. Unreachable: our own move arrives as an `Action` with a
+            # slot, so the model never chooses a Struggle for us -- running our own PP out is a
+            # planning failure rather than something the simulator produces. Wired because the
+            # two halves of a turn are meant to differ only in which side they read.
+            new.ours = new.ours.with_hp(new.ours.hp - outcome.self_damage)
         if outcome.starts_recharge:
             # Unreachable today -- `MODELLED_OUR_EFFECTS` omits effect 80 -- and wired for the
             # usual symmetry. Note it would be a poor move for us regardless: a lost turn at
@@ -4207,6 +4678,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # move. Permanent in the sense that matters -- a wild target never switches out, so
             # nothing resets it but the counter running down.
             new.target = replace(new.target, taunted_turns=outcome.starts_taunt)
+        if outcome.starts_encore:
+            # Ours to inflict, and the slot comes from the VICTIM rather than from the outcome:
+            # `BtlCmd_TryEncore` derives `encoredMoveSlot` from `DEFENDER_LAST_MOVE`, so carrying
+            # it on the outcome would be a second copy of the same lookup `will_fail` has already
+            # validated. Reaching here means that lookup succeeded.
+            new.target = replace(new.target, encored_turns=outcome.starts_encore,
+                                 encored_slot=new.target.last_move_slot)
         if outcome.sets_drowsy:
             new.target = replace(new.target, drowsy_turns=YAWN_DROWSY_TURNS)
         if outcome.banked_future_sight is not None:
@@ -4258,13 +4736,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # Emitted AFTER the state changes above, because whether the flinch is reportable depends
         # on them: a KO or a sleep that holds hides it. See `flinch_visible`.
         #
-        # A wild Pokemon always picks a move -- it has no bag -- so the only question for the
-        # target as victim is whether it still has that move to take. `target_slot is None` is
-        # the exception: with no PP anywhere it would Struggle, which is unmodelled, and
-        # `act_target` returns without moving at all.
+        # **Always True for the target**, which it was not until Struggle was modelled. A wild
+        # Pokemon has no bag, so it always tries to use a move -- and with no PP anywhere it
+        # tries to use Struggle, which goes through the same before-move walk and so can be
+        # flinched out of in the same visible way ("{0} flinched!"). The old
+        # ``target_slot is not None`` was right only while `act_target` returned without moving
+        # at all on that case.
         parts.extend(_visible_tokens(
             outcome, move, victim=new.target,
-            victim_selected_a_move=target_slot is not None,
+            victim_selected_a_move=True,
             victim_moves_second=ours_first,
             secondary_landed=secondary_landed))
         # **`or ends_charge`: a charge that COMPLETES runs its cleanup whether or not the hit
@@ -4305,8 +4785,31 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # ours at all. The tail is unobservable in any case, because there is no next turn to
             # predict: the roamer is gone and `MoveRoamersOffMap` has moved it off the route.
             return False
-        if target_slot is None:
-            return False
+        # **No usable slot means a Struggle**, which is a real turn rather than the model's edge.
+        # `select_target_move` has already answered None and spent no selection roll, which is the
+        # ROM's own behaviour: `BattleSystem_CheckInvalidMoves(..., CHECK_INVALID_ALL) ==
+        # STRUGGLING_ALL` sets ``turnFlags[i].struggling`` and skips move select entirely
+        # (battle_controller_player.c:433-441). So the roll count was already right and what was
+        # missing was the move -- see `EFFECT_STRUGGLE` for what it costs and why rendering it is
+        # a different decision from planning into it.
+        #
+        # The slot becomes `tokens.STRUGGLE_SLOT`, which renders as ``E0`` and which every check
+        # below reads correctly: `Battler.move` answers None for it (so a later Encore fails, as
+        # `Move_CanBeEncored` says it must), `charging_slot` can never equal it, and `spend_pp` is
+        # skipped outright because there is no slot to spend from.
+        #
+        # A LOCAL name rather than rebinding `target_slot`, which `act_ours` also reads: that one
+        # keeps meaning "what the selection roll chose", with None still meaning "nothing was
+        # usable". Two different questions, and conflating them would make what `act_ours` sees
+        # depend on which side happened to move first.
+        struggling = target_slot is None
+        acting_slot = tok.STRUGGLE_SLOT if struggling else target_slot
+        # Cleared here and set again below if the move executes -- the mirror of the block in
+        # `act_ours`, and the LIVE direction: this is the record our own Encore reads through
+        # `will_fail`. So a target that spent its turn asleep, flinched, fully paralyzed, hurt by
+        # its own confusion or refused by a Taunt cannot be encored on the next turn, and one
+        # whose move merely missed can.
+        new.target = replace(new.target, last_move_slot=None)
         # Symmetric with our side, and reachable: nothing in a party can start an Uproar
         # (`MODELLED_OUR_EFFECTS` omits it), but the target's OWN Uproar wakes the target too if
         # we ever slept it and it then started one -- which `will_fail` makes impossible in the
@@ -4339,7 +4842,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             new.target = broken_charge(new.target)
             parts.append(tok.prevented_token("E", "fln"))
             return broke
-        move = new.target.move(target_slot)
+        move = struggle_move() if struggling else new.target.move(acting_slot)
         if move is None:
             return False
         if taunt_refuses(move, new.target):
@@ -4351,7 +4854,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             move_failed["E"] = True
             broke = new.target.charging_slot is not None
             new.target = broken_charge(new.target)
-            parts.append(tok.taunted_token("E", target_slot))
+            parts.append(tok.taunted_token("E", acting_slot))
             return broke
         # Confusion, state 10 of the before-move walk -- after Heal Block and **before**
         # paralysis (battle_controller_player.c:2378-2392). Order matters for the usual reason:
@@ -4384,15 +4887,15 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
                 new.target = broken_charge(new.target)
                 parts.append(tok.prevented_token("E", "par"))
                 return broke
-        was_charging = new.target.charging_slot == target_slot
+        was_charging = new.target.charging_slot == acting_slot
         # An Uproar continuation turn is the same case as a charge turn and for the same reason:
         # `Battler_CanPickCommand` is FALSE, so `ppDecremented` is set TRUE at command selection
         # and the move goes off free. Spending PP on all 3-6 turns would empty a 10-PP Uproar in
         # two uses, shrink `usable_slots` early and change the selection modulus -- a desync.
         was_locked = was_charging or (new.target.uproar_turns > 0
-                                      and new.target.uproar_slot == target_slot)
+                                      and new.target.uproar_slot == acting_slot)
         rng, outcome = execute_move(
-            rng, move, new.target, new.ours, actor="E", slot=target_slot, field=new,
+            rng, move, new.target, new.ours, actor="E", slot=acting_slot, field=new,
             resolved="scfz" if confusion == "snapped" else "")
         new.rng_offset += outcome.rolls
         # **PP is spent on the charge turn only.** The ROM marks `ppDecremented` TRUE for a
@@ -4400,8 +4903,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # Shadow Force fires costs no PP. Spending it twice would empty a 5-PP move in two uses,
         # shrink `usable_slots` early and change the selection modulus -- a desync, not a
         # rounding error.
-        if not was_locked:
-            new.target = new.target.spend_pp(target_slot, 1)
+        # `struggling` as well as `was_locked`: a Struggle has no slot and therefore no PP, and
+        # `BattleControllerPlayer_DecrementPP` skips it by name (battle_lib.c:6699).
+        if not was_locked and not struggling:
+            new.target = new.target.spend_pp(acting_slot, 1)
+        # The move executed, so the record goes back on -- the mirror of `act_ours`, and the one
+        # our Encore actually reads.
+        new.target = replace(new.target, last_move_slot=acting_slot)
         if outcome.starts_charge is not None:
             new.target = replace(new.target, charging_slot=outcome.starts_charge)
         elif outcome.ends_charge:
@@ -4462,6 +4970,18 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # here means the target really does recover -- and recovering RAISES its `b`, which
             # is the half of this move that matters to a plan rather than to a turn.
             new.target = new.target.with_hp(new.target.hp + outcome.self_heal)
+        if outcome.self_damage:
+            # Struggle's recoil, and the LIVE direction -- the target is the side that can run
+            # out of PP, because it picks its own moves and we cannot stop it.
+            #
+            # **This is what makes a Struggle turn lose the run**, and the number says how
+            # quickly: a Lv30 titan has 97 max HP for every plausible spread, so the recoil is 24
+            # and five of them faint it from full -- while at 1 HP the FIRST one does. The
+            # simulator applies it because a player who got here needs the turn rendered
+            # correctly; the SOLVER
+            # still refuses to plan a path that reaches it (`solver.struggle_deadline` and the
+            # per-path cutoff beside it), which is a separate decision and the right one.
+            new.target = new.target.with_hp(new.target.hp - outcome.self_damage)
         if outcome.starts_recharge:
             # Dialga's. The flag goes on the USER, so this is the target locking itself out of
             # its own next turn -- the only thing in any configured moveset that does.
@@ -4477,7 +4997,7 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # The lock goes on the TARGET -- it is the user. From here it picks no move and
             # spends no PP until the counter runs out (`select_target_move`).
             new.target = replace(new.target, uproar_turns=outcome.starts_uproar,
-                                 uproar_slot=target_slot)
+                                 uproar_slot=acting_slot)
         if outcome.resets_all_stages:
             # Symmetric, and unreachable: no configured target has Haze. Worth noting what it
             # would mean if one did -- it would wipe our Flash investment on its own turn, with
@@ -4490,6 +5010,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
             # side they read. Note what it would mean: OUR status moves would stop being
             # selectable, which includes the paralyzer the whole run is built on.
             new.ours = replace(new.ours, taunted_turns=outcome.starts_taunt)
+        if outcome.starts_encore:
+            # The mirror, and unreachable: Encore is in no configured target's moveset. Worth
+            # noting what it would cost if one had it, because it is the opposite of what the
+            # lock costs the target -- OUR selection is not a roll, so an Encore aimed at us
+            # would take a choice away and give the stream nothing back.
+            new.ours = replace(new.ours, encored_turns=outcome.starts_encore,
+                               encored_slot=new.ours.last_move_slot)
         if outcome.sets_drowsy:
             # Uxie's Yawn, aimed at us. `will_fail` has already refused every case the ROM
             # refuses, so reaching here means the counter really is being set.
@@ -4660,6 +5187,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     #: state 24 of the condition walk and Nightmare and Bad Dreams are states 9 and 12, so both
     #: of those have already ticked on a victim that was still awake.
     drowsy_sleep_turns = 0
+    #: The sides whose Encore wore off in the end-of-turn walk, for `_tick_encore` to report and
+    #: the token block below to render. Empty on all but one turn of a lock.
+    encore_ended: tuple[str, ...] = ()
     #: Whether a Future Sight landed, missed, or was not in the air at all (None).
     future_sight_hit: bool | None = None
     if not battle_halted():
@@ -4685,6 +5215,9 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # Uproar, state 14: it wakes before it counts down, and a turn on which it woke somebody
         # does not count down at all.
         _tick_uproar(new, move_failed)
+        # Encore, state 17. Spends nothing, like Taunt below, but unlike Taunt it has an
+        # observable wear-off -- and the turn it wears off on is a rolled quantity.
+        encore_ended = _tick_encore(new)
         # Taunt, state 20. Spends nothing, which is why it needs no anchor of its own.
         _tick_taunt(new)
         # Yawn, state 24.
@@ -4728,6 +5261,13 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
     if drowsy_sleep_turns and not battle_halted() and not new.ours.fainted:
         new.ours = cure_with_held_item(
             new.ours.with_status(Status.SLEEP, sleep_turns=drowsy_sleep_turns))
+
+    # The Encore wear-off, BEFORE the Future Sight token because state 17 comes before the
+    # side-condition walk the Future Sight sits in -- and the grammar's rule is that tokens
+    # appear in the order the events occur. It changes no HP and so needs no coordination with
+    # the HP token below; what it reports is a rolled duration reaching its end.
+    for side in encore_ended:
+        parts.append(tok.encore_ended_token(side))
 
     # The Future Sight, last of all, and NOT folded into `residual`: its hit check is a real
     # random verdict, so the HP it takes has to show up as a change the HP token reports. Folding

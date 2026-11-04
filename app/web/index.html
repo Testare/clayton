@@ -5179,7 +5179,12 @@ function hrTurnReset(){
               // question is outstanding. Unanswered rather than defaulted, unlike the faint:
               // both outcomes are common and the verdict is the sharpest filter the turn has,
               // so a default would be a guess applied to the candidate set.
-              future_sight: undefined };
+              future_sight: undefined,
+              // "y"/"n" once a possible Encore wear-off has been reported, undefined while the
+              // question is outstanding. Unanswered rather than defaulted for the same reason
+              // the Future Sight verdict is: the lock's length was a 3-7 roll, so both answers
+              // are live and a default would be a guess applied to the candidate set.
+              encore_ended: undefined };
 }
 
 const HR_PREVENTED = [
@@ -5379,6 +5384,22 @@ function hrFutureSightDue(){
   if (!s || !s.future_sight_due) return false;
   if ((t.action === "C" || t.action === "P") && t.ours?.result === "c") return false;
   if (hrFainted()) return false;
+  return true;
+}
+
+// Whether an Encore on the target could wear off at the END of this turn, so "did the Encore
+// end?" is a question. `encore_due` is computed over EVERY surviving candidate rather than the
+// representative one (see hunt_session.snapshot), because the whole value of the answer is that
+// candidates which rolled different durations disagree about it.
+//
+// Two ways it does not fire even when the lock is due, and both are the Future Sight gates for
+// the same reason: a capture ends the turn before the end-of-turn walk runs at all, and a faint
+// of ours... does NOT stop it, actually -- the walk runs per battler and the target is alive, so
+// unlike the Future Sight check there is no `curHP` test to fail. Only the capture gate applies.
+function hrEncoreDue(){
+  const s = _huntSnap, t = _hrTurn;
+  if (!s || !s.encore_due) return false;
+  if ((t.action === "C" || t.action === "P") && t.ours?.result === "c") return false;
   return true;
 }
 
@@ -5638,8 +5659,11 @@ function hrTokens(){
   // Terminal, like a capture: nothing follows it, so neither the Future Sight line nor an HP
   // report nor a faint may be appended.
   if (fled) return ordered.join("");
-  // After both halves and before the HP: it resolves in the end-of-turn block, which is where
-  // `sim.simulate_turn` appends it too.
+  // After both halves and before the HP: both resolve in the end-of-turn block, which is where
+  // `sim.simulate_turn` appends them too -- and the Encore comes FIRST, because its countdown is
+  // state 17 of the condition walk while the Future Sight is in the side-condition walk after it.
+  // The grammar's rule is that tokens appear in the order the events occur.
+  if (hrEncoreDue() && t.encore_ended === "y") ordered.push("Ne");
   if (hrFutureSightDue() && t.future_sight) ordered.push("F" + t.future_sight);
   // Gated on the RULE, not merely on the field being filled in. Changing the target's move from
   // Gust to Rain Dance leaves an HP value that is no longer part of the turn, and emitting it
@@ -5683,6 +5707,7 @@ function hrTurnComplete(){
       if (hrStaticPossibleOnTarget() && t.target.static === undefined) return false;
     }
   }
+  if (hrEncoreDue() && !t.encore_ended) return false;
   if (hrFutureSightDue() && !t.future_sight) return false;
   if (hrNeedsHp() && (t.hp === "" || t.hp === null)) return false;
   // The faint question answers itself -- it defaults to no -- so there is nothing to wait for
@@ -5697,6 +5722,25 @@ function hrTurnComplete(){
 //
 // It decides whether to ASK *and* whether the token is emitted, so a stale value left behind by
 // a changed answer cannot survive into the report.
+// Whether a move of OURS that just landed cost us the Life Orb's tenth.
+//
+// `s.ours.held_item` rather than hrActive()'s, and that is correct rather than lazy: hrActive()
+// differs only on a SWITCH turn, and a switch turn has no move of ours to recoil from.
+//
+// Three gates, which are the ROM's own (sim.LIFE_ORB_RECOIL_DIVISOR): the move has to be
+// damaging (a status move is free), it has to have HIT, and the hit must not have been
+// ineffective -- the ROM counts an immunity as not having hit, so a Normal move into a Ghost
+// costs nothing. Note it is NOT gated on damage dealt: a False Swipe into a 1 HP target deals
+// zero and still costs the tenth, which is why `deals_nothing` is asked and `t.hp` is not.
+function hrLifeOrbRecoiled(){
+  const t = _hrTurn, s = _huntSnap, info = hrOurMoveInfo();
+  if (!s || !s.ours || !info || !info.damaging) return false;
+  if (String(s.ours.held_item || "").toLowerCase().replace(/[^a-z0-9]/g, "") !== "lifeorb")
+    return false;
+  if (info.deals_nothing) return false;
+  return hrLanded(t.ours);
+}
+
 function hrNeedsHp(){
   const t = _hrTurn, s = _huntSnap;
   // A faint replaces the HP token rather than joining it: zero is implied by the X, and the
@@ -5707,6 +5751,10 @@ function hrNeedsHp(){
   // A Future Sight that landed takes HP with no E token in sight, exactly as
   // `tokens.turn_requires_hp` says -- the move that banked it was used two turns ago.
   if (t.future_sight === "h") return true;
+  // The Life Orb's recoil, which is the one cause in this function that `turn_requires_hp`
+  // cannot mirror: it is decided by what we HOLD rather than by anything in the token stream,
+  // and that function takes only tokens. So the gate lives here, where the snapshot is.
+  if (hrLifeOrbRecoiled()) return true;
   if ((t.action === "I" || t.action === "Ic") && t.ours && t.ours.item){
     const entry = (s.items || []).find(i => i.code === t.ours.item);
     if (entry && entry.heals) return true;
@@ -5719,11 +5767,12 @@ function hrSet(path, value){
   if (path === "action"){
     if (t.action === value) return;      // re-clicking the same action must not wipe answers
     t.action = value; t.ours = null; t.target = null; t.hp = "";
-    t.future_sight = undefined;
+    t.future_sight = undefined; t.encore_ended = undefined;
   } else if (path === "ours"){ t.ours = value; }
   else if (path === "target"){ t.target = value; }
   else if (path === "hp"){ t.hp = value; }
   else if (path === "future_sight"){ t.future_sight = value; }
+  else if (path === "encore_ended"){ t.encore_ended = value; }
   else if (path === "fainted"){
     t.fainted = value;
     if (!value) t.replacement = undefined;   // no faint, nobody came in
@@ -5735,6 +5784,10 @@ function hrSet(path, value){
   // The Future Sight answer goes the same way: report a faint or a capture and it is no longer
   // part of the turn, so a stale "it hit" must not survive into the token.
   if (path !== "future_sight" && !hrFutureSightDue()) t.future_sight = undefined;
+  // The Encore answer goes the same way, and for the one reason that can withdraw it: report a
+  // capture and the end-of-turn walk never ran, so a stale "it ended" must not survive into the
+  // token.
+  if (path !== "encore_ended" && !hrEncoreDue()) t.encore_ended = undefined;
   if (path !== "hp" && !hrNeedsHp()) t.hp = "";
   // Same rule for the faint: change the target's move to one that cannot touch us and the faint
   // answer is no longer part of the turn either.
@@ -6264,7 +6317,20 @@ function hrInterview(){
     }
   }
 
-  // 3a. The Future Sight banked two turns ago, which lands now. Asked after both halves and
+  // 3a. An Encore running out, which is state 17 of the end-of-turn walk -- so it is asked
+  // after both halves and BEFORE the Future Sight, which resolves in the side-condition walk
+  // after it. Both answers are live: the lock was 3-7 turns and nothing before this message
+  // reveals which.
+  if (hrEncoreDue()){
+    blocks.push(hrChips(`Did ${_huntSnap.target.name}'s Encore end?`, [
+      hrChip("No", "hrSet('encore_ended','n')", t.encore_ended === "n"),
+      hrChip("Yes", "hrSet('encore_ended','y')", t.encore_ended === "y"),
+    ], "the 3-7 turn duration was rolled, and this message is the only place it shows — "
+     + "one of the few rolls that tells two candidates one second apart apart"));
+    if (!t.encore_ended) return blocks.join("");
+  }
+
+  // 3b. The Future Sight banked two turns ago, which lands now. Asked after both halves and
   // before the faint, which is the order it resolves in -- and before the faint for a second
   // reason: it can be what put us down.
   if (hrFutureSightDue()){
@@ -6275,7 +6341,7 @@ function hrInterview(){
     if (!t.future_sight) return blocks.join("");
   }
 
-  // 3b. Did we go down? Asked before HP, because a faint REPLACES the HP token rather than
+  // 3c. Did we go down? Asked before HP, because a faint REPLACES the HP token rather than
   // joining it. Skipped when the action itself already said so.
   if (!caught && hrCanFaint() && t.action !== "X"){
     const who = hrActive();

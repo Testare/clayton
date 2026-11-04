@@ -27,6 +27,7 @@ from claytonlib.battle.damage import (
     item_key,
     ACCURACY_RAISING_ITEMS as _ACCURACY_RAISING_ITEMS,
     ACCURACY_REDUCING_ITEMS as _ACCURACY_REDUCING_ITEMS,
+    LIFE_ORB as _LIFE_ORB,
     LIGHT_CLAY as _LIGHT_CLAY,
     TYPE_ENHANCING_ITEMS as _TYPE_ENHANCING_ITEMS,
 )
@@ -102,6 +103,14 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
     # Shaymin's, and ours if a party member carries one. Modelled on both sides because the ROM's
     # trigger is per battler -- see `battle_compass.sim.cure_with_held_item`.
     "cures the holder's first status, then is used up": STATUS_RESTORE_ITEMS,
+    # Both halves, which is why one line covers it: the x1.3 is `damage.LIFE_ORB_MODIFIER_PERCENT`
+    # and the recoil is `battle_compass.sim.LIFE_ORB_RECOIL_DIVISOR`. It used to sit in the generic
+    # "not modelled" bucket, and the comment on `HAZARDOUS_UNMODELLED_ITEMS` below still cites it
+    # as the EXAMPLE of a merely-imprecise item -- which was true of the damage and not of the
+    # recoil: an unmodelled tenth is HP missing from our own side every attacking turn, which
+    # feeds the solver's healing budget rather than producing a visible contradiction.
+    "raises damage 30% and costs the holder a tenth of its max HP per hit":
+        frozenset({item_key(_LIFE_ORB)}),
 }
 
 #: Items the simulator does NOT model whose absence fails in the Choice Scarf's *kind* rather
@@ -109,10 +118,15 @@ MODELLED_HELD_ITEMS: dict[str, frozenset[str]] = {
 #: the run and the contradiction names a cause that did not happen.
 #:
 #: Separated from the generic "not modelled" message because the two call for different
-#: decisions. A Life Orb produces one wrong HP and a visible contradiction on the turn it fires;
+#: decisions. A Silk Scarf produces one wrong HP and a visible contradiction on the turn it fires;
 #: a Quick Claw silently re-orders a turn and poisons everything after it. The measured version
 #: of that distinction is in clayton-957.10.15: removing the Choice Scarf from the hooh1 party
 #: left 56 of 57 turns wrong, against 11 for the Silk Scarf and 2 for Leftovers.
+#:
+#: The Life Orb used to be this comment's example of the merely-imprecise kind, and it has since
+#: been modelled (see `MODELLED_HELD_ITEMS`) -- which also showed the example was half wrong: the
+#: ×1.3 produces a contradiction, but the recoil takes HP off our OWN side every attacking turn
+#: and nothing contradicts that, it just under-reports what the run has left.
 #: Each value is a short verb phrase that reads inside "it ..." -- the message is one line, so
 #: the "how" has to fit in a clause rather than a sentence of its own.
 HAZARDOUS_UNMODELLED_ITEMS: dict[str, str] = {item_key(k): v for k, v in {
@@ -187,6 +201,14 @@ def estimated_move_rolls(move: Move) -> int:
     roll.  `effects.py` holds the verified counts, but they live inside handler bodies rather
     than as a table, so extracting them is part of R7/the simulator work.  Until then this is
     good enough for the only thing it is used for: telling whether a party's costs *differ*.
+
+    **`battle_compass.sim.move_roll_cost` is the accurate version now** and this is deliberately
+    not merged into it: that one lives in `battle_compass`, which imports this module, so reaching
+    for it here would invert the dependency -- and copying its effect numbers across would make
+    two sources of truth for the same table. What this misses is the hidden-duration family, each
+    of which spends one more roll than the metadata implies when it LANDS: sleep, Taunt, Uproar
+    and Encore. So a party carrying one of those has at least one action this under-counts by one,
+    which can hide a distinct cost rather than invent one.
     """
     rolls = 1 if move.accuracy > 0 else 0
     if move.category != CATEGORY_STATUS:

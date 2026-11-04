@@ -33,7 +33,8 @@ class TestTheAllowlist(unittest.TestCase):
         mechanism is added -- and stale here means FAILING TO WARN, the direction that costs a
         run."""
         from claytonlib.battle.damage import (
-            ACCURACY_RAISING_ITEMS, ACCURACY_REDUCING_ITEMS, LIGHT_CLAY, TYPE_ENHANCING_ITEMS,
+            ACCURACY_RAISING_ITEMS, ACCURACY_REDUCING_ITEMS, LIFE_ORB, LIGHT_CLAY,
+            TYPE_ENHANCING_ITEMS,
         )
         from claytonlib.battle.readiness import STATUS_RESTORE_ITEMS
         from claytonlib.battle_compass.sim import LEFTOVERS
@@ -41,7 +42,7 @@ class TestTheAllowlist(unittest.TestCase):
         expected = (set(TYPE_ENHANCING_ITEMS) | set(CHOICE_ITEMS) | set(SPEED_HALVING_ITEMS)
                     | set(MOVES_LAST_ITEMS) | set(ACCURACY_REDUCING_ITEMS)
                     | set(ACCURACY_RAISING_ITEMS) | set(STATUS_RESTORE_ITEMS)
-                    | {item_key(LEFTOVERS), item_key(LIGHT_CLAY)})
+                    | {item_key(LEFTOVERS), item_key(LIGHT_CLAY), item_key(LIFE_ORB)})
         self.assertEqual(ALLOWED, expected)
 
     def test_leftovers_is_spelled_in_exactly_one_place(self):
@@ -88,8 +89,11 @@ class TestTheWarnings(unittest.TestCase):
         self.assertTrue(warning.startswith("Take "), warning)
 
     def test_an_ordinary_unmodelled_item_is_reported_more_gently(self):
-        (warning,) = unmodelled_held_items({"Natu": "Life Orb"})
-        self.assertIn("Life Orb", warning)
+        """A Shell Bell rather than a Life Orb, which used to be the example here and is now
+        modelled on both halves (`readiness.MODELLED_HELD_ITEMS`). The Shell Bell is the same
+        shape of gap pointed the other way -- it HEALS its holder off the damage dealt."""
+        (warning,) = unmodelled_held_items({"Natu": "Shell Bell"})
+        self.assertIn("Shell Bell", warning)
         self.assertIn("not modelled", warning)
         self.assertFalse(warning.startswith("Take "))
         self.assertIn("harmless if inert", warning)
@@ -115,7 +119,7 @@ class TestTheWarnings(unittest.TestCase):
 
     def test_the_name_of_the_holder_is_always_in_the_message(self):
         """Six party members and one warning is useless without it."""
-        for item in ("Quick Claw", "Life Orb"):
+        for item in ("Quick Claw", "Shell Bell"):
             with self.subTest(item=item):
                 (warning,) = unmodelled_held_items({"Tentacruel": item})
                 self.assertIn("Tentacruel", warning)
@@ -199,8 +203,8 @@ class TestSpellingTolerance(unittest.TestCase):
     def test_the_message_echoes_what_the_PLAYER_typed(self):
         """Normalised for matching, not for display -- the warning has to name the thing they
         can see in their own field."""
-        (warning,) = unmodelled_held_items({"X": "Life  Orb"})
-        self.assertIn("Life  Orb", warning)
+        (warning,) = unmodelled_held_items({"X": "Shell  Bell"})
+        self.assertIn("Shell  Bell", warning)
 
     def test_every_table_key_is_already_normalised(self):
         """Or a lookup through `item_key` would never reach it. Asserted over the tables rather

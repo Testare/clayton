@@ -368,6 +368,27 @@ CHOICE_POWER_ITEMS: dict[str, int] = {
     "choicespecs": CATEGORY_SPECIAL,
 }
 
+#: The Life Orb, and it is the one damage item in Gen 4 that is **not** a power multiplier -- which
+#: is why it is a constant of its own here rather than a row in either table above.
+#:
+#: `BattleScript_CalcMoveDamage` applies it to the DAMAGE, after the critical multiplier and before
+#: the variance roll:
+#:
+#:     battleCtx->damage *= battleCtx->criticalMul;
+#:     if (Battler_HeldItemEffect(...) == HOLD_EFFECT_HP_DRAIN_ON_ATK) {
+#:         battleCtx->damage = battleCtx->damage * (100 + Battler_HeldItemPower(...)) / 100;
+#:     }
+#:
+#: [pret/pokeplatinum src/battle/battle_script.c:1340-1348; `heldItemPower` is the item's
+#: ``effectParam``, 30 for ITEM_LIFE_ORB (res/items/data/life_orb.json)]. `CalcDamageVariance` is a
+#: separate, later battle command, so the chain is base -> crit -> Life Orb -> variance. Every step
+#: truncates, so the position is not cosmetic.
+#:
+#: Its other half -- ``maxHP / 10`` of recoil on the holder -- is not here at all, because it is
+#: not damage arithmetic: see `battle_compass.sim.LIFE_ORB_RECOIL_DIVISOR`.
+LIFE_ORB = "Life Orb"
+LIFE_ORB_MODIFIER_PERCENT = 30
+
 #: What a Choice Band or Specs adds, as the ROM's `heldItemPower` percentage: +50%, i.e. x1.5.
 #: Expressed as a percentage rather than a fraction because the ROM's expression is
 #: ``movePower * (100 + heldItemPower) / 100`` and the integer division has to happen in that
@@ -593,6 +614,12 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     and **both are ignored on a critical hit** -- see the screens section above. Callers pass them
     unconditionally; the crit gate is applied here so no caller has to remember it.
 
+    The attacker's **Life Orb** is applied here rather than through `effective_power`, because the
+    ROM multiplies the damage rather than the power -- see `LIFE_ORB_MODIFIER_PERCENT` for where in
+    the chain and why the position matters. Its recoil is the caller's business
+    (`battle_compass.sim.LIFE_ORB_RECOIL_DIVISOR`): this function answers "how much did the hit
+    do", and the tenth the holder loses is not that.
+
     `type_chart=False` stops after the damage range: **no STAB, no type effectiveness and no
     Levitate immunity.** It exists for exactly one move family and is not a tuning knob. STAB,
     effectiveness and Levitate all live in one ROM function, `BattleSystem_ApplyTypeChart`
@@ -659,6 +686,14 @@ def damage(move: Move, attacker: Attacker, defender: Defender, *,
     # DamageCalcDefault applies the crit multiplier straight after CalcMoveDamage returns.
     if critical:
         value *= 2
+
+    # The Life Orb, which goes HERE and nowhere else: after the crit multiplier and before the
+    # damage range. See `LIFE_ORB_MODIFIER_PERCENT` for the ROM lines -- and note it is the only
+    # damage item that is not a power multiplier, so `effective_power` deliberately does not know
+    # about it. Struggle is not exempt (unlike the Technician check beside it, which names the
+    # move), so a Life Orb boosts a Struggle too.
+    if item_key(attacker.held_item) == item_key(LIFE_ORB):
+        value = value * (100 + LIFE_ORB_MODIFIER_PERCENT) // 100
 
     # ApplyDamageRange, then STAB, then type effectiveness -- IN THAT ORDER. This is the part an
     # earlier version had backwards: it applied STAB and type first and the roll last. The set of

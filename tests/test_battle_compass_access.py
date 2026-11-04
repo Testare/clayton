@@ -171,9 +171,12 @@ class TestTheReasonDistinguishesDamageFromStatus(unittest.TestCase):
         self.assertNotIn("doing nothing", why)
 
     def test_a_status_move_still_says_it_changed_nothing(self):
-        defog = resolve_move("Defog")
-        self.assertEqual(defog.category, CATEGORY_STATUS)
-        (_, why), = unsupported_our_moves(["Defog"])
+        """Substitute rather than Defog, which used to be the example here and is now modelled
+        (`sim.EFFECT_DEFOG`). Substitute is the same shape of hazard and a real TM: a status move
+        with no recognised effect simulates as having worked and done nothing."""
+        substitute = resolve_move("Substitute")
+        self.assertEqual(substitute.category, CATEGORY_STATUS)
+        (_, why), = unsupported_our_moves(["Substitute"])
         self.assertIn("doing nothing", why)
 
     def test_a_move_that_is_not_in_the_table_is_reported_separately(self):
@@ -190,12 +193,15 @@ class TestTheOtherFieldMovesWeMightCarry(unittest.TestCase):
     """
 
     def test_these_are_already_modelled(self):
-        for name in ("Surf", "Strength", "Cut", "Waterfall", "Rock Climb"):
+        """**Defog joined this list** rather than being tolerated on a mule: it is the answer to
+        the target's Mist and Safeguard, so it is worth carrying on purpose
+        (`sim.EFFECT_DEFOG`)."""
+        for name in ("Surf", "Strength", "Cut", "Waterfall", "Rock Climb", "Defog"):
             with self.subTest(name):
                 self.assertEqual(unsupported_our_moves([name]), (), name)
 
     def test_and_these_are_not(self):
-        for name in ("Whirlpool", "Fly", "Dive", "Defog", "Rock Smash"):
+        for name in ("Whirlpool", "Fly", "Dive", "Rock Smash"):
             with self.subTest(name):
                 self.assertEqual(len(unsupported_our_moves([name])), 1, name)
 

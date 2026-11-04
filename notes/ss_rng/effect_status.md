@@ -83,8 +83,49 @@ RAND & 1 == 0 => Immobilized by love.
 
 While under the effect of encore, just like when it has no useable moves it skips the roll to determine which move to perform, and performs the last used move. If that move is not in the useable move pool, they struggle instead as they have no useable moves (see below).
 
+**Two corrections, both from the Platinum decomp, and the first is side-dependent — which is why
+the sentence above is right here and wrong for `battle_compass`.**
+
+*The skipped roll is OUR side's only.* Magikarp is the player's Pokémon, and an Encored player
+Pokémon really is forced at command selection with no roll
+(battle_controller_player.c:443-446). A WILD Encored Pokémon is not: `BattleSystem_CheckInvalidMoves`
+marks every other slot invalid — unconditionally, outside any `opMask`, which is why the ROM calls
+that flag "only implicit" (battle_lib.c:2302-2305 and constants/battle.h:129) — and the wild picker
+then still rolls, `validMoves[RandNext % 1]` (battle_display.c:3611). One roll, one outcome: the
+modulus collapses to one rather than the roll disappearing. Getting this backwards in Battle
+Compass would desynchronise every turn of a lock.
+
+*Encore does not cause a Struggle.* `MON_COND_CHECK_STATE_ENCORE` re-checks the move before the
+counter: if the slot is gone or `ppCur[slot] == 0` it zeroes `encoredTurns` and falls into the
+release branch on that same end-of-turn tick (battle_controller_player.c:1591-1615). So the lock
+gets out of the way rather than forcing Struggle, and the next selection happens with Encore
+already gone.
+
+*And the counter ticks whether or not its victim acted*, because that same check is in the
+end-of-turn condition walk and is gated on nothing. Unlike confusion (below), sleep and full
+paralysis **spend** Encore turns rather than preserving them — so a Yawn aimed at an Encored
+target wastes the lock.
+
 ## NO USEABLE MOVES
 If the user has no useable moves when it comes time to select a move, the usual roll is not performed, and Magikarp uses Struggle. This move always hits, but still rolls crit and damage, and counts as successful. If magikarp's move is prevented after it has chosen that move, it fails, but does not struggle that turn.
+
+**Confirmed in the decomp, and it holds for every battler rather than only ours** — which is the
+part that was load-bearing elsewhere. Command selection takes the `STRUGGLING_ALL` branch, sets
+`turnFlags[i].struggling` and routes to `COMMAND_SELECTION_STRUGGLE_MESSAGE` instead of
+`COMMAND_SELECTION_MOVE_SELECT_INIT` (battle_controller_player.c:433-441). The move-select menu
+task is therefore never started, and **both** roll sites live inside it: the wild
+`% validMovesCount` and the AI's `TrainerAI_Main` (battle_display.c:3590 and 3611). So a
+struggling trainer, roamer or wild Pokémon all spend zero selection rolls — and a roamer cannot
+even decide to flee on such a turn, since the escape decision is inside `TrainerAI_Main` too.
+[derived, not captured: clayton-c3c4]
+
+Its own cost, for the record: `effect_script_0254.s` is `CalcCrit` + `CalcDamage` (two rolls, and
+no accuracy roll — its accuracy is 0), and `subscript_struggle.s` takes `maxHP / 4` off the user
+with no `Random` anywhere. It is **typeless**: `BattleSystem_ApplyTypeMultipliers` and
+`BattleSystem_CalcEffectiveness` both early-return on `MOVE_STRUGGLE` (battle_lib.c:2573 and
+2686), so no STAB, no type chart and no Ghost immunity — though a type-*enhancing* item still
+applies, because that one is a power multiplier in `CalcMoveDamage` with no Struggle exemption,
+unlike the Technician check three lines from it.
 
 
 # Effects that might affect the metronome user's moves

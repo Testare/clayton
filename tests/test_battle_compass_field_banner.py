@@ -12,6 +12,7 @@ turn will cost what it costs.
 clayton-gni.
 """
 import unittest
+from dataclasses import replace
 
 from claytonlib.battle_compass.hunt_session import (
     BATTLER_CONDITIONS, FIELD_CONDITIONS, FIELD_FLAGS, field_conditions,
@@ -102,9 +103,28 @@ class TestItCoversWhatTheSimulatorTracks(unittest.TestCase):
         and it is excluded because it DOES have a chip.
         """
         reported = {attr for _, attr, _ in BATTLER_CONDITIONS}
-        excluded = {"sleep_turns"}
+        # `encored_turns` is reported, but not through this table -- see `ENCORE_ROW_LABEL`. Its
+        # counter reaches zero one tick before the lock comes off, so a `> 0` row would vanish on
+        # the final locked turn, which is the one turn a player is certainly looking at it. It has
+        # its own block in `field_conditions` instead, reporting the count INCLUDING this turn.
+        excluded = {"sleep_turns", "encored_turns"}
         on_battler = {name for name in vars(_state().ours) if name.endswith("_turns")}
         self.assertEqual(on_battler - reported - excluded, set())
+
+    def test_an_encore_is_reported_on_its_final_locked_turn_too(self):
+        """The reason it is not in `BATTLER_CONDITIONS`. `encored_turns == 0` still means locked:
+        `sim._tick_encore` releases on the tick it FINDS the counter at zero, and selection on
+        that turn already happened. So the row has to survive a zero, and the number it shows is
+        the turns left including this one."""
+        state = _state()
+        state.target = replace(state.target, encored_slot=1, encored_turns=0)
+        self.assertIn({"name": "Encore", "turns": 1, "whose": "target"},
+                      field_conditions(state))
+        state.target = replace(state.target, encored_slot=1, encored_turns=3)
+        self.assertIn({"name": "Encore", "turns": 4, "whose": "target"},
+                      field_conditions(state))
+        state.target = replace(state.target, encored_slot=None, encored_turns=0)
+        self.assertEqual([c for c in field_conditions(state) if c["name"] == "Encore"], [])
 
     def test_a_pending_future_sight_is_reported_first(self):
         """Ahead of the weather, because it is the only row here that will take HP off us on a

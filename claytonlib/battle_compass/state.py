@@ -298,6 +298,53 @@ class Battler:
     #: A bool rather than a counter: it is always exactly one turn, and
     #: `CHECK_STATUS_STATE_RECHARGING` clears the flag whole rather than decrementing it.
     recharging: bool = False
+    #: The move slot an Encore has locked this battler into, or None -- the ROM's
+    #: ``moveEffectsData.encoredMove``/``encoredMoveSlot`` pair, kept as a slot because that is
+    #: what the M1-M4 and E1-E4 tokens speak in.
+    #:
+    #: **The lock narrows selection; it does not skip it.** That is the one fact about Encore
+    #: that decides whether a run desynchronises, and it is the opposite of `charging_slot`,
+    #: `uproar_turns` and `recharging`: those three sit in `Battler_CanPickCommand`
+    #: (battle_lib.c:6224-6236), so no roll is spent at all, while Encore is nowhere in that
+    #: function. What it does instead is mark every OTHER slot invalid, unconditionally and
+    #: outside any `opMask` (`BattleSystem_CheckInvalidMoves`, battle_lib.c:2302-2305 -- the ROM
+    #: itself calls the flag "only implicit"), so the wild picker still rolls and still indexes:
+    #: ``validMoves[RandNext % 1]`` (battle_display.c:3611). One roll, one outcome.
+    #:
+    #: Which is why it lives here and is read by `usable_slots` rather than short-circuiting
+    #: `sim.select_target_move` the way the other three locks do.
+    #:
+    #: Ours to inflict. Quagsire's, as an egg move, and the first move of ours that takes the
+    #: target's CHOICE away rather than changing what the choice is worth.
+    encored_slot: int | None = None
+    #: Encore's countdown, 3-7 when it lands (`sim.ENCORE_TURNS_MIN`/`_SPAN`).
+    #:
+    #: **It ticks whether or not its victim acted**, which is the half worth recording here:
+    #: `MON_COND_CHECK_STATE_ENCORE` is state 17 of the end-of-turn condition walk
+    #: (battle_controller_player.c:1591-1615) and the decrement is not gated on anything the
+    #: victim did. So sleep, full paralysis and a flinch all burn Encore turns for free -- the
+    #: opposite of `confusion_turns`, which only moves when its holder tries to act. A Yawn aimed
+    #: at an Encored target therefore spends the lock rather than extending it.
+    encored_turns: int = 0
+    #: The slot of the last move this battler actually EXECUTED, or None -- the ROM's
+    #: ``movePrevByBattler``, which is what `BtlCmd_TryEncore` reads through `DEFENDER_LAST_MOVE`.
+    #:
+    #: "Executed" is the ROM's own line, not a paraphrase: `movePrevByBattler` is set to the move
+    #: when `SYSCTL_MOVE_SUCCEEDED` is up and to MOVE_NONE otherwise
+    #: (battle_controller_player.c:3945-3949), and that flag is set the moment the move's script
+    #: is loaded (battle_controller_player.c:3212) -- before the accuracy check. So **a move that
+    #: missed still counts and a move that was PREVENTED does not**: sleep, a flinch, full
+    #: paralysis, a confusion self-hit and a Taunt refusal all clear it, which is why every
+    #: prevention branch in `sim` sets it to None.
+    #:
+    #: Cleared on switching out, like the Encore lock itself (`movePrevByBattler[battler] =
+    #: MOVE_NONE` in `BattleSystem_UpdateAfterSwitch` and `BattleSystem_CleanupFaintedMon`,
+    #: battle_lib.c:2124 and 2202) -- see `sim.sent_out`.
+    #:
+    #: A SLOT rather than a move name, which differs from the ROM in one way that cannot bite any
+    #: configured moveset: a Pokemon holding the same move in two slots would have one slot's use
+    #: encore the other. No static encounter does, and nor does any sane party.
+    last_move_slot: int | None = None
 
     def __post_init__(self):
         if self.hp is None:
@@ -414,6 +461,26 @@ class Battler:
         # four of Giratina's moves on a turn it can only continue Shadow Force.
         if self.charging_slot is not None and self.move(self.charging_slot) is not None:
             return (self.charging_slot,)
+        # **Encore comes next, and unlike the charge lock it DOES consult PP** -- because the ROM
+        # consults it in a different clause of the same loop. `BattleSystem_CheckInvalidMoves`
+        # marks every slot but the encored one invalid (battle_lib.c:2302-2305) and separately
+        # marks any 0-PP slot invalid (`CHECK_INVALID_NO_PP`, line 2265), so an Encored move with
+        # no PP leaves NOTHING valid.
+        #
+        # That state is unreachable in play rather than merely unlikely: state 17 of the
+        # end-of-turn walk zeroes `encoredTurns` the moment ``ppCur[slot] == 0`` and releases the
+        # lock on that same tick, so the next selection happens with Encore already gone. **So
+        # Encore never forces a Struggle** -- the claim in notes/ss_rng/effects.md that it does is
+        # wrong for Gen 4. The empty tuple is returned anyway, because it is what the ROM's own
+        # arithmetic says and because `sim.select_target_move` already means "Struggle" by it.
+        #
+        # Ordered before the Choice branch for no stronger reason than that a wild target holds
+        # no item: in the ROM both clauses sit in one loop, so a Pokemon Encored into one move and
+        # Choice-locked into another has every slot invalid and Struggles. Nothing can reach that
+        # here -- the target holds nothing and nothing in any party gets Encored.
+        if self.encored_slot is not None:
+            slot = self.encored_slot
+            return (slot,) if self.move(slot) is not None and self.pp_left(slot) > 0 else ()
         if self.choice_locked_slot is not None:
             slot = self.choice_locked_slot
             return (slot,) if self.move(slot) is not None and self.pp_left(slot) > 0 else ()
@@ -453,16 +520,24 @@ class Battler:
                             or self.uproar_turns or self.drowsy_turns
                             or self.taunted_turns or self.identified
                             or self.heal_block_turns or self.seeded
-                            or self.confusion_turns or self.recharging):
+                            or self.confusion_turns or self.recharging
+                            or self.encored_slot is not None or self.encored_turns
+                            or self.last_move_slot is not None):
             # The volatiles go too. `statusVolatile` and `moveEffectsMask` are cleared wholesale
             # when a Pokemon leaves the field, and a fainted one always does -- so a Revive cannot
             # bring back something that is still locked in a nightmare, still mid-Uproar, or still
             # drowsy from a Yawn it will never now fall asleep from.
+            #
+            # The Encore pair and `last_move_slot` go with them, and for a second reason as well
+            # as the shared one: `BattleSystem_CleanupFaintedMon` clears `movePrevByBattler`
+            # explicitly (battle_lib.c:2202), so a revived Pokemon's first move cannot be
+            # encored on the strength of what it did before it fainted.
             return replace(self, hp=0, status=Status.NONE, sleep_turns=0, nightmare=False,
                            charging_slot=None, uproar_turns=0, uproar_slot=None,
                            drowsy_turns=0, taunted_turns=0, identified=False,
                            heal_block_turns=0, seeded=False, confusion_turns=0,
-                           recharging=False)
+                           recharging=False, encored_slot=None, encored_turns=0,
+                           last_move_slot=None)
         return replace(self, hp=landed)
 
     def with_status(self, status: Status, *, sleep_turns: int = 0) -> "Battler":

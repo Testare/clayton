@@ -92,6 +92,25 @@ TAUNTED = "tnt"
 #: (notes/seed_separation.md).
 FUTURE_SIGHT = "F"
 
+#: An Encore wearing off at the end of a turn: ``Ne`` the target's, ``Nm`` ours.
+#:
+#: The second token that belongs to no actor's move, after ``F``, and it needs a prefix of its own
+#: for the same reason: by the time the lock expires, the turn that applied it is three to seven
+#: turns gone, and the ``E`` slot of THIS turn is whatever the target was forced into. The letter
+#: is simply the first free one that reads as "the e**N**d of an Encore" -- ``E`` is the target's
+#: action and ``F`` is taken.
+#:
+#: It has to be reportable because the duration is **rolled** -- ``RandNext % 5 + 3``
+#: (`sim.EFFECT_ENCORE`) -- and the wear-off message is the only place that roll surfaces. Two
+#: candidates whose Encores expire on different turns would otherwise render identically on every
+#: turn where the target's forced move happens to match its free pick, which is one turn in
+#: however many slots it has left. And ``% 5`` does not divide 256, so unlike the lock's own
+#: effect this is a verdict that separates RTC-second siblings (notes/seed_separation.md).
+#:
+#: The actor is a lowercase detail rather than the usual uppercase prefix because the prefix is
+#: already spent on the event: ``NE`` would tokenise as ``N`` followed by an ``E`` action.
+ENCORE_ENDED = "N"
+
 #: A ROAMER got away: ``Eesc``. **Terminal, like ``C`` and ``XX``** -- the battle ends, and the
 #: roamer is relocated by `MoveRoamersOffMap`, so there is no next turn to report and no state to
 #: carry (notes/roamers.md sec 3).
@@ -120,7 +139,7 @@ ESCAPE_FAILED = "trp"
 #: Uppercase action prefixes, longest-match, so LONGER ONES MUST COME FIRST. Prefix-free apart
 #: from that: "H" alone is deliberately not one, which is what lets "HP" be two characters, and
 #: "XX" has to be tried before "X" or a wipe would tokenise as two separate faints.
-ACTION_PREFIXES = ("HP", "XX", "I", "C", "M", "P", "R", "S", "X", "E", "F")
+ACTION_PREFIXES = ("HP", "XX", "I", "C", "M", "N", "P", "R", "S", "X", "E", "F")
 
 #: We fainted and nobody is left. Terminal, like ``C`` and ``Pc``.
 WIPED = "XX"
@@ -137,16 +156,41 @@ def hp_token(hp: int) -> str:
     return f"HP{hp:03d}"
 
 
+#: The slot a STRUGGLE is reported in: ``-1``, which renders as the digit ``0``.
+#:
+#: Struggle is not in anybody's moveset, so it has no slot of its own -- and the grammar needed a
+#: way to say so that cost it nothing. ``E0`` is that way: slots are 1-based everywhere a player
+#: sees them, so the digit ``0`` is unambiguously "none of its four moves", and **every existing
+#: rule keeps working unchanged**. A marker that replaced the slot instead (``Estr``) would have
+#: needed `validate_turn`'s prevention/resolution rules relaxed and `resolved_token`'s
+#: digit-after-``scfz`` requirement with it, for no gain -- a Struggle is a move that really
+#: happens, with the usual hit, crit and miss detail following it.
+#:
+#: The ROM uses the same trick in the same place: `Battler_SlotForMove` answers
+#: `LEARNED_MOVES_MAX` for "it does not know this move", which is what `BtlCmd_TryEncore` tests.
+STRUGGLE_SLOT = -1
+
+
 def our_move_token(slot: int) -> str:
-    """``M1``..``M4`` — our move, by slot in the registered moveset."""
-    if not 0 <= slot <= 3:
+    """``M1``..``M4`` — our move, by slot in the registered moveset. ``M0`` is a Struggle.
+
+    Our own Struggle is not reachable today: `sim.simulate_turn` takes the move we played as an
+    `Action`, so running our own PP out is a planning failure rather than something the model
+    produces. Rendered anyway, because the two sides' token functions are meant to differ only in
+    their letter.
+    """
+    if slot != STRUGGLE_SLOT and not 0 <= slot <= 3:
         raise ValueError(f"move slot out of range: {slot}")
     return f"M{slot + 1}"
 
 
 def target_move_token(slot: int) -> str:
-    """``E1``..``E4`` — the target's move, by slot in its known moveset."""
-    if not 0 <= slot <= 3:
+    """``E1``..``E4`` — the target's move, by slot in its known moveset.
+
+    ``E0`` is a Struggle: the target had no slot left with PP, so the game chose for it. See
+    `STRUGGLE_SLOT`.
+    """
+    if slot != STRUGGLE_SLOT and not 0 <= slot <= 3:
         raise ValueError(f"move slot out of range: {slot}")
     return f"E{slot + 1}"
 
@@ -188,13 +232,18 @@ def resolved_token(actor: str, status: str, slot: int) -> str:
 
     The slot is part of the token rather than a separate one because the move did happen: the
     usual hit/crit/miss detail follows as it would after a plain ``M2``.
+
+    ``Escfz0`` is the Struggle case, and it is the whole reason `STRUGGLE_SLOT` is a slot rather
+    than a marker: the digit this rule requires is simply ``0``. Reachable, if barely -- a Signal
+    Beam of ours can confuse the target (effect 76 is in `sim.MODELLED_OUR_EFFECTS`), and a
+    confused target can also be out of PP.
     """
     if actor not in ("M", "E"):
         raise ValueError(f"actor must be M or E, got {actor!r}")
     if status not in RESOLUTION_DETAIL:
         raise ValueError(f"{status!r} is not a resolution marker; known: "
                          f"{sorted(RESOLUTION_DETAIL)}")
-    if not 0 <= slot <= 3:
+    if slot != STRUGGLE_SLOT and not 0 <= slot <= 3:
         raise ValueError(f"move slot out of range: {slot}")
     return f"{actor}{status}{slot + 1}"
 
@@ -287,6 +336,21 @@ def future_sight_token(hit: bool) -> str:
     return f"{FUTURE_SIGHT}{HIT if hit else MISS}"
 
 
+def encore_ended_token(side: str) -> str:
+    """``Ne`` / ``Nm`` — an Encore on the target, or on us, wore off at the end of this turn.
+
+    `side` is ``"target"`` or ``"ours"``, which is what `sim._tick_encore` reports in. It is
+    translated to a single lowercase letter here rather than at the call site so the two spellings
+    cannot drift: ``e`` matches the ``E`` actor prefix and ``m`` matches ``M``.
+
+    No HP of its own and no slot: the lock coming off changes nothing except what the victim may
+    select from the NEXT turn onward.
+    """
+    if side not in ("ours", "target"):
+        raise ValueError(f"side must be 'ours' or 'target', got {side!r}")
+    return f"{ENCORE_ENDED}{'e' if side == 'target' else 'm'}"
+
+
 def render_turn(tokens: list[str] | tuple[str, ...]) -> str:
     """One turn's tokens, concatenated with no delimiter."""
     return "".join(tokens)
@@ -350,9 +414,18 @@ def turn_requires_hp(tokens: list[str] | tuple[str, ...]) -> bool:
     Phase 2 runs to a precomputed path and HP is how a desync is caught (sec 2.5).
 
     Deliberately one-directional: `validate_turn` errors on a MISSING HP token but not on a
-    surplus one. Causes this does not know about -- a burn or poison tick, recoil -- would make
-    the converse reject correct reports, and none of them is modelled yet. The interview gates on
-    this function instead, so it cannot produce a surplus token in the first place.
+    surplus one. Causes this does not know about would make the converse reject correct reports.
+    The interview gates on this function instead, so it cannot produce a surplus token in the
+    first place.
+
+    **Two of those causes are now modelled, and neither can be read off the tokens**, which is
+    why they are named here rather than quietly added: a burn tick is decided by our status, and
+    the Life Orb's recoil by what we HOLD (`sim.LIFE_ORB_RECOIL_DIVISOR`). This function takes a
+    token list and nothing else, so it cannot see either. The interview knows both, because it
+    has the snapshot -- see ``hrLifeOrbRecoiled`` in app/web/index.html, which is the gate that
+    actually decides whether the player is asked for HP on a Life Orb turn. A pasted path that
+    omits that HP will validate here and then match no candidate, which is the one-directional
+    rule working as designed rather than a second bug.
     """
     from claytonlib.battle_compass.items import BY_CODE
 
@@ -462,6 +535,15 @@ def validate_turn(tokens: list[str] | tuple[str, ...]) -> list[str]:
                     f"{token!r} is not a Future Sight outcome; expected "
                     f"{future_sight_token(True)!r} or {future_sight_token(False)!r}")
             continue
+        if token[0] == ENCORE_ENDED:
+            # One of exactly two spellings, checked for the reason ``F`` and the ball tokens are:
+            # anything else is a well-formed token that matches no prediction and says nothing
+            # about why.
+            if token not in (encore_ended_token("target"), encore_ended_token("ours")):
+                problems.append(
+                    f"{token!r} is not an Encore wear-off; expected "
+                    f"{encore_ended_token('target')!r} or {encore_ended_token('ours')!r}")
+            continue
         if token[0] == "X":
             if token != WIPED and not (len(token) == 2 and token[1] in "123456"):
                 problems.append(
@@ -517,7 +599,12 @@ _PREVENTION_PROSE = {
 
 
 def _move_name(names: tuple[str, ...] | list[str], slot: int) -> str:
-    """Move `slot` (0-based) by name, falling back to its number."""
+    """Move `slot` (0-based) by name, falling back to its number.
+
+    `STRUGGLE_SLOT` has a name rather than a number, because "move 0" would read as a bug.
+    """
+    if slot == STRUGGLE_SLOT:
+        return "Struggle"
     if 0 <= slot < len(names) and names[slot]:
         return names[slot]
     return f"move {slot + 1}"
@@ -613,6 +700,9 @@ def explain_turn(tokens, *, ours: str = "We", ours_moves=(), target: str = "the 
         elif prefix == FUTURE_SIGHT:
             out.append(f"The Future Sight hit {active}" if detail == HIT
                        else f"The Future Sight missed {active}")
+        elif prefix == ENCORE_ENDED:
+            out.append(f"{target}'s Encore ended" if detail == "e"
+                       else f"{active}'s Encore ended")
         elif prefix == "I":
             name = item_name(detail) if callable(item_name) else detail
             out.append(f"You used {name}")
