@@ -4893,10 +4893,11 @@ function renderHuntSetup(){
   // The ONLY thing that keeps you off this page: the simulation needs these numbers exactly, so
   // a missing Speed or moveset would desynchronise rather than degrade.
   const errors = blocked
-    ? `<div class="notice danger"><b>This hunt isn't configured yet.</b>
+    ? `<div class="notice danger"><b>This hunt can't be run yet.</b>
         <ul>${s.hard_errors.map(e => `<li>${esc(e)}</li>`).join("")}</ul>
         <div class="hr-small">Battle Compass simulates the whole battle, so these are exact
-          requirements rather than warnings.</div></div>
+          requirements rather than warnings — and on a roamer hunt a party that cannot hold it
+          is one of them: an escape ends the run with no turn to recover in.</div></div>
        <button class="btn primary" onclick="huntConfigure('${esc(s.hunt_id)}')">Configure hunt</button>`
     : "";
 

@@ -1245,9 +1245,6 @@ def trap_warnings(species: str, party: "list[TrapCandidate] | tuple[TrapCandidat
     if lead.unknown:
         out.append(f"{lead.name} leads and {lead.problem} — so whether this party can hold the "
                    f"roamer at all is still unknown.")
-    elif not lead.traps:
-        out.append(f"{lead.name} leads and {lead.problem}. The roamer flees on turn 1 and the "
-                   f"run is over before it starts.")
     if lead.traps and lead.how not in ("Shadow Tag", "Arena Trap"):
         out.append(f"{lead.name} holds it with {lead.how}, which only works because it outspeeds "
                    f"— the roamer chooses Escape on turn 1 either way and {lead.how} refuses it "
@@ -1255,19 +1252,86 @@ def trap_warnings(species: str, party: "list[TrapCandidate] | tuple[TrapCandidat
     for check in bench:
         if check.unknown:
             out.append(f"{check.name}: {check.problem}.")
-        elif not check.traps:
-            out.append(f"{check.name} {check.problem} — so if {lead.name} faints, the roamer "
-                       f"leaves.")
+    # **The negative verdicts are not here any more**: a member that cannot trap is a
+    # `trap_errors` row, which blocks the run instead of advising about it. Only the UNKNOWN ones
+    # remain, which is the one trap state a player can legitimately run in -- see there.
     if any(c.unknown for c in checks):
         return out
-    if any(c.traps for c in checks) and not all(c.traps for c in checks):
-        out.append("A roamer hunt wants EVERY member able to trap, not just the lead: the trap is "
-                   "released when our side leaves the field, so a faint hands the roamer a free "
-                   "turn to escape on.")
     if all(c.traps for c in checks) and len(checks) > 1:
-        out.append("Do not switch voluntarily: a Shadow Tag Pokemon switched in behind an "
-                   "already-chosen escape does not stop it, so only a faint's replacement gets a "
-                   "second chance at the trap.")
+        out.append(_switch_advice(species, game))
+    return out
+
+
+def _switch_advice(species: str, game: str = "") -> str:
+    """What switching actually costs on a roamer hunt, which is not "never do it".
+
+    It used to read "Do not switch voluntarily", and that is advice the player cannot follow: the
+    chip phase needs a False Swipe in and the heals need somebody who can take a hit, so a run
+    that never switches is a run that cannot be finished. What is actually true is narrower and
+    turns on **when** the switch happens (notes/roamers.md sec 2.2, 2.4):
+
+    * **While the roamer is NOT trapped it has already chosen Escape**, and our switch resolves
+      first (``PARTY`` before ``FIGHT``) with Shadow Tag on the field — and it leaves anyway,
+      because `FleeCommand` looks only for the Mean Look and Bind volatiles [verified:
+      `mesprit1.jsonl` T2]. Nothing on the bench rescues that turn.
+    * **While it IS trapped it chose a move**, so the switch turn itself is safe. It costs the
+      trap — leaving the field clears Mean Look off the roamer — so whoever comes in has to
+      re-establish it on their first action, which on this party every member can.
+
+    Only emitted when every member traps, which is why the second bullet reads as a cost rather
+    than a risk.
+    """
+    from claytonlib.species_names import display_species_name
+
+    try:
+        display = display_species_name(resolve(species, game)[1].species)
+    except (KeyError, ValueError):
+        display = "the roamer"
+    return (f"Do not switch while {display} is not trapped: it has already chosen Escape by then, "
+            f"and a Shadow Tag Pokemon switched in behind that decision does not stop it — only a "
+            f"faster Mean Look does. While the trap IS up, switching is safe and sometimes "
+            f"necessary: {display} chose a move rather than Escape, so the turn costs you the "
+            f"trap and nothing else, and whoever comes in re-establishes it on their first "
+            f"action.")
+
+
+def trap_errors(species: str, party: "list[TrapCandidate] | tuple[TrapCandidate, ...]", *,
+                target_speed: int | None, game: str = "") -> list[str]:
+    """`trap_checks`'s fatal rows: the ones that end the run rather than cost a turn.
+
+    These were advisory, sitting in `trap_warnings` among the notes, and they are not advice. A
+    roamer that is not trapped at action selection chooses Escape, and an escape that resolves
+    ends the run as definitively as a capture — there is no recovering turn to spend. Two rows
+    qualify and both are **blocking** now, at the player's request:
+
+    * **A member that cannot trap at all** — no Shadow Tag, no Arena Trap that reaches, and no
+      Mean Look, Block or Spider Web. Every member is checked and not only the lead, because the
+      trap is released when our side leaves the field, so a faint hands the roamer a free escape
+      unless the replacement can re-trap (notes/roamers.md sec 2.4).
+    * **A trapping move that does not outspeed**, the speed tie included. The roamer has already
+      chosen Escape and the move refuses it only by landing first (sec 2.3), and a tie is decided
+      by a roll — so it holds half the time and spends an advance the simulation does not predict.
+
+    What never blocks is an **unknown** verdict: a Speed missing on either side. That is the
+    normal state of a half-configured roamer hunt rather than a bad party, and it stays a
+    `trap_warnings` sentence telling the player what to finish entering.
+
+    Returns ``[]`` for a static target, which cannot leave at all.
+    """
+    checks = trap_checks(species, party, target_speed=target_speed, game=game)
+    if not checks or any(c.unknown for c in checks):
+        # One unknown Speed makes every verdict in the table provisional, and refusing a run over
+        # a provisional verdict is how the player gets blocked by a number they cannot look up.
+        return []
+    out: list[str] = []
+    for index, check in enumerate(checks):
+        if check.traps:
+            continue
+        where = ("leads, and" if index == 0 else
+                 "is on the bench, and — because the trap is released when our side leaves the "
+                 "field —")
+        out.append(f"{check.name} {where} {check.problem}. A roamer that is not trapped chooses "
+                   f"Escape, and an escape ends the run.")
     return out
 
 

@@ -15,16 +15,11 @@ from app import calibration as calibration_lib
 from app import chart as chart_lib
 from app import metronome
 from app.models import (
-    ENCOUNTER_ROAMER, ENCOUNTER_STATIC, CalibrationModelDoc, Chart, Expedition, Hunt,
-    MetronomeUser, PartyPokemon, Profile, Run, Seed, Target, _default_preferences,
+    ASSUMED_NATURE, ENCOUNTER_ROAMER, ENCOUNTER_STATIC, FASTEST_NATURE, CalibrationModelDoc,
+    Chart, Expedition, Hunt, MetronomeUser, PartyPokemon, Profile, Run, Seed, Target,
+    _default_preferences,
 )
 from app.store import FileStore, Store
-
-#: The spread a ROAMER is simulated with when the player cannot know its real one. Neutral and
-#: maximal, which is conservative where it matters -- see `Facade._hunt_battlers`. A +Speed nature
-#: for the Speed question only (`_target_max_speed`), because that one wants the ceiling.
-ASSUMED_NATURE = "Hardy"
-FASTEST_NATURE = "Timid"
 from claytonlib.battle.catch import shake_messages
 from claytonlib.games import (
     ALL_TOOLS, GAMES, LEGACY_DEFAULT_SIGNAL, TOOL_GLASS, TOOL_HUNTS, UNSET_HINT,
@@ -636,7 +631,7 @@ class Facade:
             # phase needs, and at 1 HP the HP IV changes the catch maths not at all
             # (notes/roamers.md sec 5). The one direction it is NOT conservative in is Speed -- a
             # +Speed nature is faster still -- which is why the trap check asks
-            # `_target_max_speed` instead of this.
+            # `Hunt.trap_target_speed` instead of this.
             nature, ivs = ASSUMED_NATURE, {k: 31 for k in STAT_KEYS}
         target = Battler(
             name=hunt.target.species.title(), level=hunt.target.level,
@@ -687,42 +682,18 @@ class Facade:
         return target
 
     @staticmethod
-    def _target_max_speed(hunt) -> int | None:
-        """The fastest this target could possibly be: 31 IV and a +Speed nature.
+    def _target_trap_speed(hunt) -> int | None:
+        """The Speed the trap check reads the target against. See `Hunt.trap_target_speed`.
 
-        What the trap check wants when the spread is unknown, because the two errors are not
-        symmetric. A trapper that turns out to be slower than the roamer loses the whole run on
-        turn 1; a trapper warned about a Speed the roamer did not actually have costs a sentence.
-        So an unknown spread is checked against the ceiling rather than against an average.
+        One line now, and kept as a name here because the readiness payload is where the figure
+        is consumed. It moved onto the model when a party that cannot hold a roamer started
+        BLOCKING the run: `Hunt.hard_errors` needs the same number, and the facade is the layer
+        above it. The two cases it folds together -- the configured spread's figure, and the
+        ceiling when no spread has been entered -- are the asymmetry it exists for: a trapper
+        that turns out slower than the roamer loses the whole run on turn 1, where one warned
+        about a Speed the roamer did not have costs a sentence.
         """
-        from claytonlib.battle.stats import derive_species_stats
-
-        if hunt.target.level is None:
-            return None
-        try:
-            return int(derive_species_stats(hunt.target.species, hunt.target.level,
-                                            FASTEST_NATURE, ivs=31)["spe"])
-        except (KeyError, ValueError):
-            return None
-
-    @staticmethod
-    def _target_derived_speed(hunt) -> int | None:
-        """The target's Speed from its configured spread, or None if it cannot be derived yet.
-
-        None rather than zero or a guess: the trap check needs to tell "this party cannot hold
-        it" from "we cannot tell yet", and a roamer hunt sits in the second state far more often
-        than a static one -- its spread was rolled when the roam began and no seed names it
-        (notes/roamers.md sec 7).
-        """
-        from claytonlib.battle.stats import derive_species_stats
-
-        if hunt.target.spread_errors():
-            return None
-        try:
-            return int(derive_species_stats(hunt.target.species, hunt.target.level,
-                                            hunt.target.nature, ivs=dict(hunt.target.ivs))["spe"])
-        except (KeyError, ValueError):
-            return None
+        return hunt.trap_target_speed()
 
     @staticmethod
     def _target_speed_stages(target) -> tuple[int, ...]:
@@ -1636,9 +1607,8 @@ class Facade:
         # misconfiguration, and `trap_checks` says which of the two it is.
         if trap_party:
             # The ceiling when the spread is unknown, the real figure when it is known -- see
-            # `_target_max_speed` for why the two cases want different numbers.
-            speed = (self._target_max_speed(h) if h.target.spread_is_blank
-                     else self._target_derived_speed(h))
+            # `Hunt.trap_target_speed` for why the two cases want different numbers.
+            speed = self._target_trap_speed(h)
             result["trap"] = trap_warnings(
                 h.target.species, trap_party, target_speed=speed,
                 game=profile.game if profile else "")

@@ -38,6 +38,16 @@ from claytonlib.battle.balls import TERRAIN_OTHER, TERRAINS as TERRANS_OK
 ENCOUNTER_STATIC = "static"
 ENCOUNTER_ROAMER = "roamer"
 ENCOUNTER_KINDS = (ENCOUNTER_STATIC, ENCOUNTER_ROAMER)
+
+#: The spread a ROAMER is simulated with when the player cannot know its real one. Neutral and
+#: maximal, which is conservative where it matters -- see `Facade._hunt_battlers`. A +Speed nature
+#: for the Speed question only (`Hunt.trap_target_speed`), because that one wants the ceiling.
+#:
+#: Here rather than in `facade`, where they used to live, because `Hunt.hard_errors` needs the
+#: ceiling now: a party that cannot hold a roamer blocks the run, and models cannot import the
+#: facade that imports it.
+ASSUMED_NATURE = "Hardy"
+FASTEST_NATURE = "Timid"
 from claytonlib.games import canonical_game_key, game_name, tool_refusal
 from claytonlib.metronome_abilities import ability_info, unsupported_abilities
 
@@ -913,7 +923,68 @@ class Hunt:
                     errors.append(f"party pokemon #{slot.pokemon_id} is no longer on the profile")
                 else:
                     errors.extend(f"{pokemon.name}: {e}" for e in pokemon.hard_errors())
+            errors.extend(self._trap_errors(profile))
         return errors
+
+    #: The Speed the trap check reads the target against: the configured spread's figure, or the
+    #: fastest the target could possibly be when no spread has been entered. The two cases want
+    #: different numbers because the two errors are not symmetric -- a trapper that turns out to
+    #: be slower than the roamer loses the whole run on turn 1, where one warned about a Speed
+    #: the roamer did not have costs a sentence. A roamer's spread is not lookupable from the key
+    #: seed (notes/roamers.md sec 7), so the blank case is the common one.
+    def trap_target_speed(self) -> int | None:
+        """What `targets.trap_checks` should compare our trappers against, or None.
+
+        None rather than zero or a guess: the check has to tell "this party cannot hold it" from
+        "we cannot tell yet", and only the first of those is worth refusing a run over.
+        """
+        from claytonlib.battle.stats import derive_species_stats
+
+        if self.target.level is None or not self.target.species:
+            return None
+        if self.target.spread_is_blank:
+            nature, ivs = FASTEST_NATURE, 31
+        elif self.target.spread_errors():
+            # Half-entered. `spread_errors` is already a hard error of its own, and deriving off
+            # a partial spread would mix one Pokemon's nature with another's IVs.
+            return None
+        else:
+            nature, ivs = self.target.nature, dict(self.target.ivs)
+        try:
+            return int(derive_species_stats(self.target.species, self.target.level,
+                                            nature, ivs=ivs)["spe"])
+        except (KeyError, ValueError):
+            return None
+
+    def _trap_errors(self, profile: "Profile") -> list[str]:
+        """Party members that cannot hold a roamer, which ends the run rather than costing a turn.
+
+        Blocking at the player's request, and `targets.trap_errors` carries the reasoning. Empty
+        for a static encounter and for any party whose verdict is still unknown, so this refuses
+        a configuration and never an unfinished one.
+        """
+        from claytonlib.battle.readiness import speed_after_item
+        from claytonlib.battle_compass.targets import TrapCandidate, trap_errors
+
+        party: list[TrapCandidate] = []
+        for slot in self.party:
+            pokemon = profile.get_party_pokemon(slot.pokemon_id)
+            if pokemon is None:
+                continue
+            party.append(TrapCandidate(
+                name=pokemon.name, ability=pokemon.ability or "",
+                moves=tuple(pokemon.moveset),
+                # Item-adjusted, exactly as `hunt_readiness` builds it: a Choice Scarf is what
+                # turns a Mean Look user that cannot trap into one that can, so the bare stat
+                # would refuse a party the player had already fixed.
+                speed=(speed_after_item(pokemon.speed, slot.held_item)
+                       if pokemon.speed is not None else 0),
+                held_item=slot.held_item))
+        if not party:
+            return []
+        return trap_errors(self.target.species, party,
+                           target_speed=self.trap_target_speed(),
+                           game=profile.game)
 
     def _opening_errors(self) -> list[str]:
         """Whether the declared opening state is one the game could actually produce.

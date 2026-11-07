@@ -326,6 +326,12 @@ class TestTheTrapValidation(RoamerHuntCase):
     def _trap(self, hunt):
         return self.api.hunt_readiness(hunt["id"])["trap"]
 
+    def _errors(self, hunt):
+        """The blocking half. A member that cannot hold the roamer lands here rather than in
+        `_trap`: an escape ends the run, so there is no turn left in which the advice could have
+        been useful (round 9 feedback)."""
+        return self.api.hunt_readiness(hunt["id"])["hard_errors"]
+
     def test_a_lone_fast_mean_look_user_passes_with_a_note_about_why(self):
         """One trap line, and it is the "how" rather than a problem. (The Repel ceiling adds its
         own line for this Lv64 lead -- see TestTheRepelCeiling -- which is why this counts the
@@ -334,47 +340,110 @@ class TestTheTrapValidation(RoamerHuntCase):
         self.assertEqual(len(warnings), 1, warnings)
         self.assertIn("outspeeds", warnings[0])
 
-    def test_a_bench_member_that_cannot_trap_is_called_out(self):
-        warnings = self._trap(self._with_bench(self.MAGNETON))
-        self.assertTrue([w for w in warnings if "Magneton" in w and "cannot trap" in w], warnings)
-        self.assertTrue([w for w in warnings if "if Smeargle faints" in w], warnings)
+    def test_a_bench_member_that_cannot_trap_blocks_the_run(self):
+        hunt = self._with_bench(self.MAGNETON)
+        errors = self._errors(hunt)
+        self.assertTrue([e for e in errors if "Magneton" in e and "cannot trap" in e], errors)
+        # Said in the error itself, because a bench member's failure needs the reason a lead's
+        # does not: it only costs the run after a faint.
+        self.assertTrue([e for e in errors if "Magneton" in e and "on the bench" in e], errors)
+        self.assertTrue([e for e in errors if "Magneton" in e and "escape ends the run" in e],
+                        errors)
+        # And it is not ALSO an advisory line, which would be the same sentence twice.
+        self.assertEqual([w for w in self._trap(hunt) if "Magneton" in w], [])
 
     def test_shadow_tag_on_the_bench_passes(self):
         warnings = self._trap(self._with_bench(self.WOBBUFFET))
         self.assertEqual([w for w in warnings if "Wobbuffet" in w], [])
 
     def test_arena_trap_does_not_reach_a_levitating_roamer(self):
-        warnings = self._trap(self._with_bench(self.DUGTRIO))
-        self.assertTrue([w for w in warnings if "Dugtrio" in w and "not grounded" in w], warnings)
+        errors = self._errors(self._with_bench(self.DUGTRIO))
+        self.assertTrue([e for e in errors if "Dugtrio" in e and "not grounded" in e], errors)
 
     def test_a_slow_mean_look_user_is_told_a_choice_scarf_would_fix_it(self):
-        warnings = self._trap(self._with_bench(self.SLOWBRO))
-        self.assertTrue([w for w in warnings if "Slowbro" in w and "Choice Scarf" in w], warnings)
+        """Blocking AND actionable: the error names the item that lifts it, so the player is not
+        left to work out why a Mean Look user was refused."""
+        errors = self._errors(self._with_bench(self.SLOWBRO))
+        self.assertTrue([e for e in errors if "Slowbro" in e and "Choice Scarf" in e], errors)
 
     def test_and_the_scarf_actually_fixes_it(self):
         """Not advice for its own sake: the item is per hunt, so readiness can see it applied."""
         party = self._party()
         party.append({"pokemon_id": self.api.add_party_pokemon(
             self.profile, self.SLOWBRO)["pokemon_id"], "held_item": "Choice Scarf"})
-        warnings = self._trap(self._hunt(party=party))
-        self.assertEqual([w for w in warnings if "Slowbro" in w], [], warnings)
+        hunt = self._hunt(party=party)
+        self.assertEqual([w for w in self._trap(hunt) if "Slowbro" in w], [])
+        self.assertEqual([e for e in self._errors(hunt) if "Slowbro" in e], [])
 
-    def test_a_party_that_can_all_trap_is_warned_off_switching(self):
+    def test_a_party_that_can_all_trap_is_told_WHEN_switching_costs_the_run(self):
+        """It used to read "Do not switch voluntarily", which is advice a run cannot follow: the
+        chip phase needs a False Swipe in and the heals need somebody who can take a hit. What is
+        actually true turns on whether the roamer is trapped at the moment of the switch
+        (notes/roamers.md sec 2.2, 2.4), and the sentence now says so and names the target.
+        """
         warnings = self._trap(self._with_bench(self.WOBBUFFET))
-        self.assertTrue([w for w in warnings if "Do not switch" in w], warnings)
+        advice = [w for w in warnings if "Do not switch" in w]
+        self.assertTrue(advice, warnings)
+        self.assertIn("while Cresselia is not trapped", advice[0])
+        self.assertNotIn("voluntarily", advice[0])
+        # And the other half, which is the point of rewording it at all.
+        self.assertIn("switching is safe", advice[0])
+
+    def test_a_lead_that_cannot_trap_blocks_the_run_rather_than_warning(self):
+        """The roamer chooses Escape on turn 1 and leaves. There is no turn in which advice about
+        it could have been acted on, which is why this stopped being advice (round 9 feedback)."""
+        slow = dict(self.SMEARGLE, name="Slowgle",
+                    stats={**self.SMEARGLE["stats"], "spe": 40})
+        party = [{"pokemon_id": self.api.add_party_pokemon(self.profile, slow)["pokemon_id"]}]
+        hunt = self._hunt(party=party)
+        errors = [e for e in self._errors(hunt) if "Slowgle" in e]
+        self.assertTrue(errors, self._errors(hunt))
+        self.assertIn("leads", errors[0])
+        self.assertIn("does not outspeed", errors[0])
+
+    def test_and_starting_the_run_is_actually_refused(self):
+        """The readiness panel and the start gate read the same list, so a block is a block --
+        `hunt_session_start` raises on `hard_errors` and this is now one of them."""
+        slow = dict(self.SMEARGLE, name="Slowgle",
+                    stats={**self.SMEARGLE["stats"], "spe": 40})
+        party = [{"pokemon_id": self.api.add_party_pokemon(self.profile, slow)["pokemon_id"]}]
+        hunt_id = self._hunt(party=party)["id"]
+        with self.assertRaises(ValueError) as caught:
+            self.api.hunt_session_start(hunt_id)
+        self.assertIn("Slowgle", str(caught.exception))
+
+    def test_a_static_hunt_is_never_blocked_by_any_of_this(self):
+        """A static encounter cannot leave, so a party that cannot trap is a fine party."""
+        party = self._party()
+        party.append({"pokemon_id": self.api.add_party_pokemon(
+            self.profile, self.MAGNETON)["pokemon_id"]})
+        hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS, party=party)
+        self.assertEqual([e for e in self._errors(hunt) if "Magneton" in e], [])
+
+    def test_an_unknown_verdict_never_blocks(self):
+        """A Speed missing on either side is a half-configured hunt, not a bad party -- and
+        refusing a run over a number the player cannot look up is how a roamer hunt becomes
+        unreachable. Checked against the library directly, since the facade's own hard errors
+        catch a missing Speed first."""
+        from claytonlib.battle_compass.targets import TrapCandidate, trap_errors, trap_warnings
+
+        party = [TrapCandidate(name="Smeargle", moves=("Mean Look",), speed=0)]
+        self.assertEqual(trap_errors("cresselia", party, target_speed=105, game="platinum"), [])
+        self.assertTrue(trap_warnings("cresselia", party, target_speed=105, game="platinum"))
 
     def test_a_static_hunt_is_not_asked_any_of_this(self):
         hunt = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS)
         self.assertEqual(self._trap(hunt), [])
 
     def test_a_speed_tie_is_called_out_as_worse_than_being_slower(self):
-        """A scarf that lands exactly on the target's Speed is not a fix (ss_rng/speed.md)."""
+        """A scarf that lands exactly on the target's Speed is not a fix (ss_rng/speed.md), and
+        a trap that holds half the time is not a trap -- so the tie blocks like a loss."""
         party = self._party()
         party.append({"pokemon_id": self.api.add_party_pokemon(
             self.profile, self.SLOWKING)["pokemon_id"], "held_item": "Choice Scarf"})
-        warnings = self._trap(self._hunt(party=party))
-        tie = [w for w in warnings if "Slowking" in w]
-        self.assertTrue(tie, warnings)
+        errors = self._errors(self._hunt(party=party))
+        tie = [e for e in errors if "Slowking" in e]
+        self.assertTrue(tie, errors)
         self.assertIn("coin flip", tie[0])
         self.assertIn("ties", tie[0])
 
@@ -386,7 +455,9 @@ class TestTheTrapValidation(RoamerHuntCase):
         hunt = self._hunt(party=party)
         # Magneton cannot trap at all, so the scarf is irrelevant -- but the Slowking case above
         # is the one that regressed, and this pins the other half: nothing suggests a second one.
-        self.assertEqual([w for w in self._trap(hunt) if "a Choice Scarf would" in w], [])
+        # Both lists, since the negative verdicts moved to the blocking one.
+        lines = self._trap(hunt) + self._errors(hunt)
+        self.assertEqual([w for w in lines if "a Choice Scarf would" in w], [])
 
     def test_a_blank_spread_is_checked_against_the_fastest_it_could_be(self):
         """A roamer's spread IS knowable -- its IVs are rolled when the roam starts, which is a
@@ -397,9 +468,11 @@ class TestTheTrapValidation(RoamerHuntCase):
         hunt["target"] = {**hunt["target"], "nature": "", "ivs": {}}
         saved = self.api.save_hunt(hunt)
         warnings = self._trap(saved)
-        # Timid 31 Cresselia is 115, against the Modest 105 the entered spread gives.
+        # Timid 31 Cresselia is 115, against the Modest 105 the entered spread gives. The lone
+        # Smeargle outspeeds both, so the pessimistic figure costs this party nothing -- what the
+        # test pins is that the player is TOLD which figure was used.
         self.assertTrue([w for w in warnings if "No spread entered" in w], warnings)
-        self.assertEqual([w for w in warnings if "run is over" in w], [])
+        self.assertEqual([e for e in self._errors(saved) if "Smeargle" in e], [])
 
     def test_and_a_blank_spread_does_not_block_the_run(self):
         hunt = self._hunt()
@@ -697,14 +770,14 @@ class TestReportingAFlee(RoamerHuntCase):
         from claytonlib.battle_compass import tokens as tok
         from claytonlib.battle_compass.state import Action
 
-        # A lead that cannot outspeed it, so every candidate predicts the flee.
-        slow = dict(self.SMEARGLE, name="Slowgle",
-                    stats={**self.SMEARGLE["stats"], "spe": 40})
-        party = [{"pokemon_id": self.api.add_party_pokemon(self.profile, slow)["pokemon_id"]}]
-        hunt_id = self._hunt(party=party, seconds_window=1, delay_window=4)["id"]
+        # **Spore rather than Mean Look**, which is the only way a startable hunt reaches this:
+        # a lead that cannot outspeed the roamer is a `trap_errors` row now and never opens a
+        # run at all. Picking a non-trapping move on an untrapped turn is what is left, and it
+        # is a real mistake a player can make -- sleep is not a trap (notes/roamers.md sec 2.3).
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
         started = self.api.hunt_session_start(hunt_id)
-        snap = self.api.hunt_session_observe(started["session_id"], Action.MOVE_1.value,
-                                             [tok.escaped_token()])
+        snap = self.api.hunt_session_observe(started["session_id"], Action.MOVE_3.value,
+                                             ["M3", tok.escaped_token()])
         self.assertTrue(snap["target_fled"])
         self.assertTrue(snap["over"])
         session = self.api._hunt_sessions.get(started["session_id"])
