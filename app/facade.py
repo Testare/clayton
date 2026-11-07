@@ -1121,6 +1121,16 @@ class Facade:
         params = params or {}
         if params:
             self._apply_hunt_targeting(h, params)
+            # Re-checked AFTER the override, for the opening state only. `params` carries the
+            # roamer's HP and status per attempt, so the pre-flight above validated a hunt the
+            # session is not actually going to run -- which let an unsupported opening (an asleep
+            # roamer, whose sleep counter nothing can know) in through the one door the UI no
+            # longer has. Scoped to `_opening_errors` rather than redoing `hard_errors`, because
+            # the rest of `params` is targeting and its problems come back from
+            # `hunt_candidates` as a window to fix.
+            opening = h._opening_errors() if h.is_roamer else []
+            if opening:
+                raise ValueError("this hunt is not ready: " + "; ".join(opening))
             self._store.write(_HUNTS, h.id, h.to_dict())
 
         probe = self.hunt_candidates(hunt_id)

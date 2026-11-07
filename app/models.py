@@ -39,6 +39,30 @@ ENCOUNTER_STATIC = "static"
 ENCOUNTER_ROAMER = "roamer"
 ENCOUNTER_KINDS = (ENCOUNTER_STATIC, ENCOUNTER_ROAMER)
 
+#: The one opening status a roamer hunt cannot be configured with, and why.
+#:
+#: Sleep is the obvious thing to walk in with -- the prep encounter chips the roamer to 1 HP and
+#: Spores it, and sleep is worth x2 on the catch rate -- and it is the one status with a HIDDEN
+#: COUNTER behind it. The duration was rolled in that prep encounter and the counter does not
+#: tick while the roamer is out of battle, so nobody observed either: the player cannot read the
+#: number off a screen, and no seed names it.
+#:
+#: That makes it unlike every other persistent status. Paralysis, poison, burn and freeze are
+#: states, and the simulation reads a state correctly or not at all. Sleep is a state plus a
+#: number that every prediction from turn 1 depends on, so a guess there is not a vaguer run --
+#: it is a confidently wrong one that eliminates the true seed on the turn the roamer wakes.
+#: Assuming the maximum, which is what the run page used to do, is still a guess.
+#:
+#: Dropped rather than approximated, at the player's request (round 9 feedback), and the plumbing
+#: is deliberately left in place: `opening_sleep_turns` still round-trips, so a stored value
+#: survives and lifting this is one check rather than a feature.
+UNSUPPORTED_OPENING_SLEEP = "slp"
+OPENING_SLEEP_PROBLEM = (
+    "a roamer that walks in asleep is not supported yet: the sleep counter was rolled in a prep "
+    "encounter nobody could observe and it does not tick out of battle, so there is no way to "
+    "know how many turns are left — and every prediction from turn 1 reads that number. Chip it "
+    "and paralyze it instead, or let it wake before you hunt the seed.")
+
 #: The spread a ROAMER is simulated with when the player cannot know its real one. Neutral and
 #: maximal, which is conservative where it matters -- see `Facade._hunt_battlers`. A +Speed nature
 #: for the Speed question only (`Hunt.trap_target_speed`), because that one wants the ceiling.
@@ -1003,6 +1027,8 @@ class Hunt:
         known = {s.value for s in Status}
         if self.opening_status and self.opening_status not in known:
             errors.append(f"opening status must be one of {', '.join(sorted(known))}")
+        elif self.opening_status == UNSUPPORTED_OPENING_SLEEP:
+            errors.append(OPENING_SLEEP_PROBLEM)
         return errors
 
     def _ball_errors(self, profile: "Profile") -> list[str]:

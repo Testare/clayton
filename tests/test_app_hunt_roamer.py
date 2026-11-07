@@ -517,11 +517,16 @@ class TestTheOpeningState(RoamerHuntCase):
     def test_a_declared_status_is_applied(self):
         from claytonlib.battle_compass.state import Status
 
-        target = self._target_of(self._hunt(opening_hp=1, opening_status="slp"))
-        self.assertIs(target.status, Status.SLEEP)
+        target = self._target_of(self._hunt(opening_hp=1, opening_status="par"))
+        self.assertIs(target.status, Status.PARALYSIS)
 
     def test_an_unknown_sleep_counter_becomes_the_maximum_not_zero(self):
-        """Zero is the one value certain to be wrong: it wakes the target on its first turn."""
+        """Zero is the one value certain to be wrong: it wakes the target on its first turn.
+
+        Sleep is no longer a CONFIGURABLE opening (`models.OPENING_SLEEP_PROBLEM`), and the
+        plumbing under it is deliberately left in place -- so this and the test below go on
+        pinning it. Lifting the drop should be one check rather than a feature.
+        """
         from claytonlib.battle_compass.sim import SLEEP_DURATION_MIN, SLEEP_DURATION_SPAN
 
         target = self._target_of(self._hunt(opening_hp=1, opening_status="slp"))
@@ -531,6 +536,27 @@ class TestTheOpeningState(RoamerHuntCase):
         target = self._target_of(
             self._hunt(opening_hp=1, opening_status="slp", opening_sleep_turns=2))
         self.assertEqual(target.sleep_turns, 2)
+
+    def test_but_an_asleep_roamer_is_refused_rather_than_guessed_at(self):
+        """The counter was rolled in a prep encounter nobody could observe and it does not tick
+        out of battle, so there is no turn count to read off a screen -- and every prediction
+        from turn 1 depends on it. Assuming the maximum is still a guess (round 9 feedback)."""
+        errors = self.api.hunt_readiness(self._hunt(opening_status="slp")["id"])["hard_errors"]
+        asleep = [e for e in errors if "walks in asleep" in e]
+        self.assertTrue(asleep, errors)
+        self.assertIn("does not tick out of battle", asleep[0])
+        # And it names the alternative, which is what the plan actually wants: paralysis is
+        # observable and worth x1.5.
+        self.assertIn("paralyze it instead", asleep[0])
+
+    def test_and_a_per_attempt_override_cannot_sneak_it_in(self):
+        """`hunt_session_start` validated the STORED hunt and then applied `params` over it, so
+        the opening state the session really ran with was never checked."""
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        with self.assertRaises(ValueError) as caught:
+            self.api.hunt_session_start(hunt_id, {"opening_hp": 1, "opening_status": "slp",
+                                                  "seconds_window": 1, "delay_window": 4})
+        self.assertIn("walks in asleep", str(caught.exception))
 
     def test_hp_is_clamped_to_the_targets_maximum(self):
         target = self._target_of(self._hunt(opening_hp=9999))
@@ -560,20 +586,20 @@ class TestTheOpeningState(RoamerHuntCase):
 
     def test_the_page_may_set_it_per_attempt(self):
         hunt_id = self._hunt()["id"]
-        self.api.hunt_session_start(hunt_id, {"opening_hp": 1, "opening_status": "slp",
+        self.api.hunt_session_start(hunt_id, {"opening_hp": 1, "opening_status": "par",
                                               "seconds_window": 1, "delay_window": 4})
         self.assertEqual(self.api.get_hunt(hunt_id)["opening_hp"], 1)
-        self.assertEqual(self.api.get_hunt(hunt_id)["opening_status"], "slp")
+        self.assertEqual(self.api.get_hunt(hunt_id)["opening_status"], "par")
 
     def test_a_session_really_starts_from_it(self):
         from claytonlib.battle_compass.state import Status
 
-        hunt_id = self._hunt(opening_hp=1, opening_status="slp", seconds_window=1,
+        hunt_id = self._hunt(opening_hp=1, opening_status="par", seconds_window=1,
                              delay_window=4)["id"]
         started = self.api.hunt_session_start(hunt_id)
         session = self.api._hunt_sessions.get(started["session_id"])
         self.assertEqual(session.target.hp, 1)
-        self.assertIs(session.target.status, Status.SLEEP)
+        self.assertIs(session.target.status, Status.PARALYSIS)
 
 
 class TestTheRoamerRunPage(unittest.TestCase):
@@ -639,19 +665,24 @@ class TestTheRoamerRunPage(unittest.TestCase):
         self.assertIn("key seed and initial time above are", body)
         self.assertIn("leaves on turn 1", body)
 
-    def test_the_opening_panel_offers_the_statuses_the_model_accepts(self):
+    def test_the_opening_panel_offers_every_status_the_model_accepts(self):
+        """Every one but sleep, which is refused on the Python side -- and the panel says so
+        rather than silently lacking an option the player came looking for."""
+        from app.models import UNSUPPORTED_OPENING_SLEEP
         from claytonlib.battle_compass.state import Status
 
         body = self._body("renderHuntOpening")
         for status in Status:
-            if status is Status.NONE:
+            if status is Status.NONE or status.value == UNSUPPORTED_OPENING_SLEEP:
                 continue
             self.assertIn(f'"{status.value}"', body)
 
-    def test_the_sleep_counter_is_only_enabled_for_sleep(self):
+    def test_asleep_is_not_offered_and_the_panel_explains_itself(self):
         body = self._body("renderHuntOpening")
-        self.assertIn('asleep = status === "slp"', body)
-        self.assertIn("assumed to be the maximum", body)
+        self.assertNotIn('["slp", "asleep"]', body)
+        self.assertIn("asleep is not supported yet", body)
+        # The guessed counter is gone with it: that field's whole hint was the assumption.
+        self.assertNotIn("assumed to be the maximum", body)
 
     def test_the_suggested_window_is_offered_rather_than_imposed(self):
         self.assertIn("function huntUseSuggestedWindow", self._html())

@@ -4829,6 +4829,9 @@ function huntTargetingFromForm(){
     out.stopwatch_ms = vector;
     out.opening_hp = $("hrOpeningHp") ? $("hrOpeningHp").value.trim() : "";
     out.opening_status = $("hrOpeningStatus") ? $("hrOpeningStatus").value : "";
+    // Sleep is not configurable any more (`renderHuntOpening`), so there is no control to
+    // read -- and the key is still sent, because a hunt that stored one before the drop should
+    // not have it silently reinterpreted as something else.
     out.opening_sleep_turns = $("hrOpeningSleep") ? $("hrOpeningSleep").value.trim() : "";
   } else {
     out.vector_ms = vector;
@@ -4878,7 +4881,7 @@ function huntCaptureTargeting(){
     const o = _huntSetup.opening || (_huntSetup.opening = {});
     o.hp = $("hrOpeningHp").value.trim() === "" ? null : Number($("hrOpeningHp").value);
     o.status = $("hrOpeningStatus").value;
-    o.sleep_turns = Number($("hrOpeningSleep").value || 0);
+    o.sleep_turns = $("hrOpeningSleep") ? Number($("hrOpeningSleep").value || 0) : 0;
   }
 }
 
@@ -5036,30 +5039,31 @@ function renderHuntRoamerNote(){
 }
 
 // What the target walks in with. A roamer carries its damage and its status between encounters,
-// so the usual plan chips it to 1 HP and sleeps it in a throwaway encounter and then hunts the
-// seed with that already done -- and the simulation has to be told, because turn 1's prediction
-// depends on it.
+// so the usual plan chips it down in a throwaway encounter and then hunts the seed with that
+// already done -- and the simulation has to be told, because turn 1's prediction depends on it.
+//
+// **Asleep is not on the list.** It was, with "blank = unknown, which is assumed to be the
+// maximum of 5", and that assumption is the problem rather than the blank: the duration was
+// rolled in the prep encounter and the counter does not tick out of battle, so nobody observed
+// it and no seed names it. Every prediction from turn 1 reads that number, so a guess is not a
+// vaguer run -- it is a confidently wrong one that eliminates the true seed on the turn the
+// roamer wakes. `models.OPENING_SLEEP_PROBLEM` refuses it on the Python side too, which is what
+// actually closes the hole: this list is a convenience and that check is the rule.
 function renderHuntOpening(){
   const o = _huntSetup.opening || {};
   const status = o.status || "";
-  const asleep = status === "slp";
   return `<div class="rel-row" style="margin-bottom:10px">
     <div class="field"><label>Its HP now</label>
       <input id="hrOpeningHp" type="number" min="1" value="${o.hp ?? ""}" placeholder="full">
       <div class="hint">blank = full health</div></div>
     <div class="field"><label>Its status now</label>
       <select id="hrOpeningStatus" onchange="renderHuntSetup()">
-        ${[["", "none"], ["slp", "asleep"], ["par", "paralyzed"], ["psn", "poisoned"],
+        ${[["", "none"], ["par", "paralyzed"], ["psn", "poisoned"],
            ["brn", "burned"], ["frz", "frozen"]]
           .map(([v, label]) => `<option value="${v}"${v === status ? " selected" : ""}
             >${label}</option>`).join("")}
-      </select></div>
-    <div class="field"><label>Sleep turns left</label>
-      <input id="hrOpeningSleep" type="number" min="0" max="5" value="${o.sleep_turns || ""}"
-        placeholder="unknown" ${asleep ? "" : "disabled"}>
-      <div class="hint">${asleep
-        ? "blank = unknown, which is assumed to be the maximum of 5"
-        : "only for sleep"}</div></div>
+      </select>
+      <div class="hint">asleep is not supported yet — no way to know the turns left</div></div>
   </div>`;
 }
 
