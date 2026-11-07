@@ -17,7 +17,7 @@ from app import metronome
 from app.models import (
     ASSUMED_NATURE, ENCOUNTER_ROAMER, ENCOUNTER_STATIC, FASTEST_NATURE, CalibrationModelDoc,
     Chart, Expedition, Hunt, MetronomeUser, PartyPokemon, Profile, Run, Seed, Target,
-    _default_preferences,
+    _default_preferences, _now_iso,
 )
 from app.store import FileStore, Store
 from claytonlib.battle.catch import shake_messages
@@ -96,6 +96,14 @@ _TARGETS = "targets"
 _CALIBRATION_MODELS = "calibration_models"
 _HUNTS = "hunts"
 _SEEDS = "seeds"
+#: Where a parked Battle Compass run lives, and the one id in it.
+#:
+#: ONE slot, deliberately. A live run is a thing the player is physically in front of a DS for, so
+#: there is only ever one; a list of them would be a list of runs nobody is going to finish. Asked
+#: for as "cache a single battle compass run to resume later; makes bug fixes easier" (round 9
+#: feedback), and that last clause is the shape of the feature: see `HuntSession.history`.
+_RUN_CACHE = "run_cache"
+_RUN_CACHE_ID = "current"
 
 
 
@@ -1230,6 +1238,98 @@ class Facade:
 
     def hunt_session_state(self, session_id: str) -> dict:
         return self._hunt_sessions.get(session_id).snapshot()
+
+    # --- parking a run ------------------------------------------------------------------
+    #
+    # Live runs are held in memory, so closing the app ends them (`HuntSessionRegistry`). That is
+    # fine for a run you finish in one sitting and expensive for one you do not: the turns already
+    # reported are the costly half, and re-entering thirty of them by hand is what `replay_path`
+    # exists to avoid. Parking is the same idea one level up -- it keeps the turns AND the phase
+    # AND the page's Seed A work, across a restart.
+    #
+    # What is stored is the HISTORY, not the state. The feature was asked for to make bug fixes
+    # easier, and a pickled candidate set would carry the old simulation's conclusions across the
+    # fix; replaying the observations puts the new model to work on them. `_replay` refuses a
+    # history the model can no longer explain, which is the honest outcome when a fix really does
+    # change what a turn means.
+
+    def hunt_session_park(self, session_id: str, page: dict | None = None) -> dict:
+        """Save this run so `hunt_session_resume` can pick it up. Replaces any parked run.
+
+        `page` is an opaque blob the UI hands over -- its Seed A panel, the pinned frame, the
+        confirmed spread. Opaque on purpose: those are view concerns the facade has no business
+        having an opinion about, and a resumed run that drops them would be back at step one with
+        a full history behind it.
+        """
+        from claytonlib.battle_compass import tokens as tok
+
+        session = self._hunt_sessions.get(session_id)
+        hunt_id = self._hunt_sessions.hunt_of(session_id)
+        if not hunt_id:
+            raise ValueError("this session is not attached to a hunt any more")
+        hunt = self._load_hunt(hunt_id)
+        doc = {
+            "id": _RUN_CACHE_ID,
+            "hunt_id": hunt_id,
+            "hunt_name": hunt.name,
+            "profile_id": hunt.profile_id,
+            "saved_at": _now_iso(),
+            "turns": len(session.turns),
+            "phase": int(session.phase),
+            "path": tok.render_path([list(t.tokens) for t in session.turns]),
+            # The window ACTUALLY in use, which is not always the hunt's: a mid-run widen moves
+            # it. Written in the spelling `_apply_hunt_targeting` reads, so resuming goes back
+            # through the same door as starting.
+            "params": {
+                "key_seed": hunt.key_seed,
+                "initial_time": hunt.initial_time,
+                "vector_ms": hunt.vector_ms,
+                "stopwatch_ms": hunt.stopwatch_ms,
+                "opening_hp": hunt.opening_hp,
+                "opening_status": hunt.opening_status,
+                "delay_window": session.window.frame_window,
+                "seconds_window": session.window.second_window,
+                # The spread the run was STARTED with, which on any Seed A that is not the key
+                # seed is not the hunt's configured one -- and the hunt does not remember it,
+                # because it is per attempt.
+                "target_nature": session.target_nature,
+                "target_ivs": dict(session.target_ivs),
+            },
+            "history": session.history(),
+            "page": dict(page or {}),
+        }
+        self._store.write(_RUN_CACHE, _RUN_CACHE_ID, doc)
+        return doc
+
+    def hunt_session_parked(self) -> dict | None:
+        """The parked run, or None. Cheap enough to call on every page load."""
+        return self._store.read(_RUN_CACHE, _RUN_CACHE_ID)
+
+    def hunt_session_resume(self) -> dict:
+        """Re-open the parked run: start a session on the same window, then replay its history.
+
+        Returns the same shape `hunt_session_start` does, plus the `page` blob that was parked
+        with it. The parked record is KEPT rather than consumed -- a resume that goes wrong should
+        be repeatable, and parking again overwrites it anyway.
+        """
+        doc = self.hunt_session_parked()
+        if not doc:
+            raise ValueError("there is no parked Battle Compass run")
+        started = self.hunt_session_start(doc["hunt_id"], dict(doc.get("params") or {}))
+        if not started.get("session_id"):
+            # The window came back empty, which `hunt_session_start` reports rather than raises.
+            # Pass it straight through: the problem is the window, and the page already knows how
+            # to show that.
+            return dict(started, page=dict(doc.get("page") or {}), resumed=False)
+        session = self._hunt_sessions.get(started["session_id"])
+        snapshot = session.restore(doc.get("history") or {})
+        return {"session_id": started["session_id"], "hunt_id": doc["hunt_id"],
+                "window": started.get("window"), "snapshot": snapshot,
+                "page": dict(doc.get("page") or {}), "resumed": True}
+
+    def hunt_session_unpark(self) -> bool:
+        """Throw the parked run away. True if there was one."""
+        return self._store.delete(_RUN_CACHE, _RUN_CACHE_ID)
 
     def hunt_session_advice(self, session_id: str) -> dict:
         """Actions ranked by how much each would narrow the candidate set.

@@ -3954,6 +3954,29 @@ function renderSafariCalibrateModel(){
 // other half of that: an HGSS hunt's apricorn balls surviving into a Platinum hunt's picker.
 let _huntBalls = null;
 let _huntBallsFor = "";
+//: The parked Battle Compass run, or null. ONE slot, which is the whole feature: a live run is
+//: something you are sitting in front of a DS for, so there is only ever one worth keeping.
+//: Refreshed wherever it could be offered, because it outlives the page -- it is on disk.
+let _huntParked = null;
+
+// The offer to pick a parked run back up, or "". Shown on both the Hunts list and a hunt's own
+// page: the list is where you land after restarting the app, and the hunt page is where you
+// would otherwise start a second run over the top of it.
+function huntParkedBanner(){
+  const p = _huntParked;
+  if (!p || !p.hunt_id) return "";
+  return `<div class="notice warn"><b>A parked run is waiting.</b>
+    <div class="hr-small">${esc(p.hunt_name || "a hunt")} — ${p.turns}
+      turn${p.turns === 1 ? "" : "s"} reported, saved ${esc(fmtSavedAt(p.saved_at))}.
+      Resuming replays those turns against the current simulation, so a fix since you parked it
+      takes effect.</div>
+    ${p.path ? `<div class="muted hr-small" style="margin-top:4px">Path:
+      <code style="overflow-wrap:anywhere">${esc(p.path)}</code></div>` : ""}
+    <div class="chip-row" style="margin-top:8px">
+      <button class="btn small" onclick="huntResumeParked()">Resume it</button>
+      <button class="btn small" onclick="huntDiscardParked()">Discard</button>
+    </div></div>`;
+}
 const STATS = ["hp", "atk", "def", "spa", "spd", "spe"];
 const STAT_LABEL = {hp:"HP", atk:"Attack", def:"Defense", spa:"Sp. Atk", spd:"Sp. Def", spe:"Speed"};
 const NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","Relaxed","Impish",
@@ -3961,7 +3984,9 @@ const NATURES = ["Hardy","Lonely","Brave","Adamant","Naughty","Bold","Docile","R
   "Calm","Gentle","Sassy","Careful","Quirky"];
 
 async function renderHunts(){
-  const [hunts, profiles] = await Promise.all([api("list_hunts"), api("list_profiles")]);
+  const [hunts, profiles, parked] = await Promise.all([
+    api("list_hunts"), api("list_profiles"), api("hunt_session_parked")]);
+  _huntParked = parked;
   state.profiles = profiles;
   const byId = Object.fromEntries(profiles.map(p => [p.id, p.name]));
   let body;
@@ -3984,7 +4009,7 @@ async function renderHunts(){
   }
   mount(`<div class="head"><h2>Hunts</h2>
       <button class="btn primary" ${profiles.length?"":"disabled"} onclick="huntForm()">New</button>
-    </div>${body}`);
+    </div>${huntParkedBanner()}${body}`);
 }
 
 function huntForm(){
@@ -4017,6 +4042,7 @@ async function openHuntHome(id){
   _hunt = await api("get_hunt", id);
   _huntProfile = await api("get_profile", _hunt.profile_id);
   _huntReadiness = await api("hunt_readiness", id);
+  _huntParked = await api("hunt_session_parked");
   renderHuntHome();
 }
 
@@ -4060,6 +4086,7 @@ function renderHuntHome(){
         Configure this hunt</button></div></div>`
       : `<div class="notice" style="margin-top:12px"><b>Ready to run.</b></div>`}
 
+    ${huntParkedBanner()}
     ${huntReadinessPanel(r)}
 
     <div class="section-label">Calibration</div>
@@ -6952,6 +6979,55 @@ function huntReportWidening(){
 // part the session has never seen -- Seed A and its advance frame, which were identified before
 // the session existed -- plus the tag and notes.
 
+// --- parking a run -------------------------------------------------------------------
+//
+// Live runs are in memory, so closing the app ends them. Parking keeps the turns, the phase and
+// this page's own Seed A work across a restart -- `Facade.hunt_session_park` stores the HISTORY
+// rather than the state, so resuming replays the observations against whatever the simulator does
+// now. That is the point of it: "makes bug fixes easier" (round 9 feedback).
+//
+// `_hsa` goes along as the opaque `page` blob. Without it a resumed run is back at step one with
+// a full history behind it, which is worse than useless -- the page would ask for a Seed A that
+// the candidates have already been filtered by.
+async function huntParkRun(){
+  try {
+    const doc = await api("hunt_session_park", _huntRun, {hsa: _hsa, signal: _hsaSignal});
+    _huntParked = doc;
+    toast(`Parked ${doc.turns} turn${doc.turns === 1 ? "" : "s"}. Resume it from the hunt page `
+        + `— it survives closing the app.`);
+  } catch (e) { toast(String(e.message || e)); }
+}
+
+async function huntResumeParked(){
+  let out;
+  try { out = await api("hunt_session_resume"); }
+  catch (e) { toast(String(e.message || e)); return; }
+  if (!out.session_id){
+    // The window came back empty, which is a window problem and not a resume problem.
+    toast(out.problem || "That run's window no longer finds any candidates.");
+    return;
+  }
+  const page = out.page || {};
+  if (page.hsa) _hsa = page.hsa;
+  if (page.signal) _hsaSignal = page.signal;
+  _huntRun = out.session_id;
+  _huntSnap = out.snapshot;
+  _huntParked = await api("hunt_session_parked");
+  huntAdviceInvalidate();
+  setView("huntrun");
+  renderHuntRun();
+  huntAdviceLoad();
+  toast(`Resumed ${out.snapshot.turns.length} reported `
+      + `turn${out.snapshot.turns.length === 1 ? "" : "s"}.`);
+}
+
+async function huntDiscardParked(){
+  if (!confirm("Throw the parked run away? The turns already reported go with it.")) return;
+  await api("hunt_session_unpark");
+  _huntParked = null;
+  if (state.view === "hunts" && _hunt) renderHuntHome(); else renderHunts();
+}
+
 async function openSaveHuntRunModal(){
   let record;
   try {
@@ -7504,6 +7580,11 @@ function renderHuntRun(){
           ${_hrBusy ? "disabled" : ""}
           title="Paste a path from a previous run to re-apply every elimination at once.">
           Load path</button>
+        <button class="btn small" onclick="huntParkRun()"
+          ${s.turns.length && !_hrBusy ? "" : "disabled"}
+          title="${s.turns.length
+            ? "Keep this run -- turns, phase and Seed A -- so you can close the app and pick it up where you left off. One run is kept; parking again replaces it."
+            : "Nothing reported yet."}">Park run</button>
         <button class="btn small" onclick="huntRunDo('hunt_session_undo')"
           ${s.turns.length && !_hrBusy ? "" : "disabled"}
           title="${s.turns.length

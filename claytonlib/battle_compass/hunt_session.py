@@ -1446,6 +1446,47 @@ class HuntSession:
         self.transitions = [(at, p) for at, p in self.transitions if at <= len(replayed)]
         self._apply_transitions_at(len(replayed))
 
+    def history(self) -> dict:
+        """The run's history as plain JSON-safe data, enough for `restore` to rebuild it.
+
+        Why this and not a pickle of the live state: the whole point of resuming is to carry a run
+        across a code change -- "makes bug fixes easier" is how it was asked for -- and a pickled
+        candidate set would carry the OLD simulation's conclusions with it, which is the one thing
+        a bug fix is supposed to change. Replaying the reported turns puts the fixed model to
+        work on the same observations, and `_replay` already refuses a history the model can no
+        longer explain, in those words.
+
+        The turns carry their `extra` kwargs rather than only their tokens, because an action is
+        not fully described by what it rendered: an item's code and a switch's bench index are
+        part of the action. `transitions` comes along for the same reason -- which turn the player
+        declared Phase 1.5 on is a decision, not something the tokens imply.
+        """
+        return {
+            "turns": [{"action": t.action.value, "tokens": list(t.tokens),
+                       "item_code": t.item_code, "bench_slot": t.bench_slot,
+                       "replacement": t.replacement}
+                      for t in self.turns],
+            "transitions": [[at, int(phase)] for at, phase in self.transitions],
+        }
+
+    def restore(self, history: dict) -> dict:
+        """Re-apply a `history` to this freshly-started session. Returns the snapshot.
+
+        Raises `ValueError` through `_replay` when a recorded turn no longer matches any
+        candidate, which is a real and useful outcome rather than a failure to hide: it means the
+        simulation changed under the run, and continuing would report later turns against a state
+        the game never reached.
+        """
+        self.transitions = [(int(at), Phase(phase)) for at, phase in history.get("transitions")
+                            or []]
+        self._replay([TurnLog(action=Action(row["action"]), tokens=tuple(row["tokens"]),
+                              survivors_before=0, survivors_after=0,
+                              item_code=row.get("item_code"),
+                              bench_slot=row.get("bench_slot"),
+                              replacement=row.get("replacement"))
+                      for row in history.get("turns") or []])
+        return self.snapshot()
+
     def rebase(self, window: CandidateWindow) -> dict:
         """Swap in a wider candidate window and replay the run against it.
 
