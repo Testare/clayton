@@ -1353,3 +1353,44 @@ def supported(game: str = "") -> tuple[str, ...]:
     `resolve` for why that is permissive rather than refused.
     """
     return tuple(sorted(k for k, row in ENCOUNTERS.items() if _in_game(row, game)))
+
+
+def supported_options(game: str = "") -> list[dict]:
+    """`supported`, as much as a picker needs to render one row per encounter.
+
+    The configure screen used to take the species as free text, which is a worse question than it
+    looks. Three things are wrong with typing it: the key is a SLUG, so "Ho-Oh" and "Ho oh" are
+    both near-misses of `ho-oh`; a species met twice has a venue-qualified key that nobody would
+    guess (`latios-museum`); and the LEVEL is not a choice at all -- every encounter on this table
+    has exactly one, which `HuntTarget.encounter_errors` already refuses any other value for. So
+    the player was being asked to retype two facts the table holds (round 9 feedback).
+
+    `label` is built to disambiguate rather than to decorate: the Lati twins are each on file at
+    two venues and two levels, and the venue is the only thing that tells those apart on screen.
+    """
+    from claytonlib.species_names import display_species_name
+
+    out: list[dict] = []
+    for key in supported(game):
+        row = ENCOUNTERS[key]
+        name = display_species_name(row.species)
+        # The forme slug carries the species as a prefix (`giratina-origin`), so rendering it
+        # whole reads "Giratina (giratina-origin)". What distinguishes the two fights is the part
+        # after the species, which is also what a player says out loud: "Origin Giratina".
+        if row.forme:
+            suffix = row.forme[len(row.species):].lstrip("-") or row.forme
+            name = f"{name} ({suffix.replace('-', ' ').title()})"
+        where = f", {row.where}" if row.where else ""
+        out.append({
+            "key": key,
+            "species": row.species,
+            "level": row.level,
+            "where": row.where,
+            "roamer": row.roamer,
+            "label": f"{name} — Lv{row.level}{where}",
+        })
+    # By what the player reads rather than by the slug, so "Ho-Oh" does not sort under `h` while
+    # its display name starts with an H anyway -- the two orders differ for the venue-qualified
+    # keys, where `latios-museum` sorts away from `latios`.
+    out.sort(key=lambda row: (row["label"].lower(), row["key"]))
+    return out

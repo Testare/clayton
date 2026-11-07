@@ -441,3 +441,98 @@ class TestTheSnapshotCarriesTheSpreadInputs(HuntFacadeCase):
             target["stats"],
             derive_species_stats("suicune", target["level"], target["nature"],
                                  ivs=target["ivs"]))
+
+
+class TestTheTargetIsOfferedRatherThanTyped(HuntFacadeCase):
+    """The configure screen asked for the species as free text and the level as a number, and
+    both were questions the encounter table already answers (round 9 feedback).
+
+    Typing the species is worse than it looks: the stored value is a SLUG, so "Ho-Oh" and "Ho oh"
+    are near-misses of `ho-oh`; a species met twice has a venue-qualified key nobody would guess
+    (`latios-museum`); and the level is not a choice -- `HuntTarget.encounter_errors` refuses
+    every value but the row's.
+    """
+
+    @staticmethod
+    def _page():
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
+
+    @staticmethod
+    def _body(name):
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+        return _function_body(name)
+
+    def test_every_row_carries_what_a_picker_needs(self):
+        from claytonlib.battle_compass.targets import ENCOUNTERS, supported_options
+
+        rows = supported_options("platinum")
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertIn(row["key"], ENCOUNTERS)
+            self.assertEqual(row["level"], ENCOUNTERS[row["key"]].level)
+            self.assertIn(f"Lv{row['level']}", row["label"])
+
+    def test_it_is_filtered_to_the_game(self):
+        """A picker that offered both cartridges' rows would offer a hunt that is then refused:
+        Darkrai is Platinum's and the Lugia on file is SoulSilver's."""
+        from claytonlib.battle_compass.targets import supported_options
+
+        platinum = {r["key"] for r in supported_options("platinum")}
+        hgss = {r["key"] for r in supported_options("soulsilver")}
+        self.assertIn("darkrai", platinum)
+        self.assertNotIn("darkrai", hgss)
+        self.assertIn("lugia", hgss)
+        self.assertNotIn("lugia", platinum)
+
+    def test_a_species_met_twice_is_told_apart_by_its_venue(self):
+        """The only thing on screen that distinguishes the two Giratina fights, which differ in
+        ability and in nothing else a label could show."""
+        from claytonlib.battle_compass.targets import supported_options
+
+        formes = {r["key"]: r["label"] for r in supported_options("platinum")
+                  if r["key"].startswith("giratina")}
+        self.assertEqual(len(formes), 2, formes)
+        self.assertIn("Origin", formes["giratina-origin"])
+        self.assertIn("the Distortion World", formes["giratina-origin"])
+        self.assertIn("Turnback Cave", formes["giratina-altered"])
+        # The forme slug carries the species as a prefix, so rendering it whole read
+        # "Giratina (giratina-origin)".
+        self.assertNotIn("giratina-origin", formes["giratina-origin"])
+
+    def test_the_roamer_flag_rides_along(self):
+        """So the picker can say which rows change the shape of the hunt."""
+        from claytonlib.battle_compass.targets import supported_options
+
+        rows = {r["key"]: r["roamer"] for r in supported_options("platinum")}
+        self.assertTrue(rows["cresselia"])
+        self.assertFalse(rows["uxie"])
+
+    def test_readiness_publishes_the_list(self):
+        rows = self.api.hunt_readiness(self._hunt()["id"])["targets"]
+        self.assertTrue(rows)
+        self.assertTrue(all({"key", "label", "level", "roamer"} <= set(r) for r in rows))
+
+    def test_the_page_offers_them_and_takes_the_level_with_the_species(self):
+        html = self._page()
+        self.assertIn('<select id="hc-species" onchange="huntPickTarget(this.value)">', html)
+        self.assertIn("function huntPickTarget(key){", html)
+        body = self._body("huntPickTarget")
+        self.assertIn("level: row.level", body)
+        # `encounter_kind` is derived by `save_hunt` and must not get a second writer.
+        self.assertNotIn("encounter_kind =", body)
+
+    def test_an_unrecognised_stored_species_is_kept_rather_than_rewritten(self):
+        """A picker that drops the value it was given has changed the hunt without being asked,
+        and a legacy or mistyped species has to stay visible to be fixable."""
+        body = self._body("huntTargetOptions")
+        self.assertIn("not a configured", body)
+        self.assertIn("!huntTargetRow(chosen)", body)
+
+    def test_the_level_is_read_only_for_a_recognised_species(self):
+        html = self._page()
+        self.assertIn('${huntTargetRow(t.species || "") ? "readonly" : ""}', html)
+        self.assertIn("from the encounter table", html)

@@ -7666,12 +7666,16 @@ function renderHuntConfigure(){
     <div class="section-label">Target</div>
     <div class="panel">
       <div class="grid4">
-        <div class="field"><label>Species</label>
-          <input id="hc-species" value="${esc(t.species||"")}" placeholder="suicune"
-            onchange="huntSetTarget('species', this.value.trim().toLowerCase())"></div>
-        <div class="field"><label>Level</label>
+        <div class="field">${helpLabel('Species', "Only the encounters Battle Compass can simulate, filtered to this profile's game. A species met twice is listed once per venue, because the two fights differ.")}
+          <select id="hc-species" onchange="huntPickTarget(this.value)">
+            ${huntTargetOptions(t.species || "")}
+          </select></div>
+        <div class="field">${helpLabel('Level', 'Every encounter on the table has exactly one level, so this comes from the species rather than being typed. It stays editable only for a species the table does not recognise.')}
           <input id="hc-level" type="number" min="1" max="100" value="${t.level ?? ""}"
-            onchange="huntSetTarget('level', this.value ? +this.value : null)"></div>
+            ${huntTargetRow(t.species || "") ? "readonly" : ""}
+            onchange="huntSetTarget('level', this.value ? +this.value : null)">
+          ${huntTargetRow(t.species || "")
+            ? `<div class="hint">from the encounter table</div>` : ""}</div>
         <div class="field"><label>Nature</label>
           <select id="hc-nature" onchange="huntSetTarget('nature', this.value)">
             <option value="">—</option>
@@ -7861,6 +7865,47 @@ function huntReadinessPanel(r){
 function huntConfigurePickTime(t){
   closeModal();
   huntSetField("initial_time", t);
+}
+
+// The encounters this profile's game can hunt, off `hunt_readiness`. Empty until readiness has
+// loaded, which is also when the rest of the Target panel has nothing to show.
+function huntTargetList(){
+  return (_huntReadiness && _huntReadiness.targets) || [];
+}
+
+// The row for a stored species, or undefined. Matched on the KEY, which is what the hunt stores
+// -- a venue-qualified one (`latios-museum`) included.
+function huntTargetRow(key){
+  return huntTargetList().find(r => r.key === key);
+}
+
+// One option per encounter, with a stored-but-unrecognised value kept at the end rather than
+// silently rewritten. Same rule as `huntOpeningStatusOptions`: a picker that drops the value it
+// was given has changed the hunt without being asked to, and a legacy or mistyped species needs
+// to stay visible so the player can see what is wrong with it.
+function huntTargetOptions(chosen){
+  const rows = huntTargetList();
+  const opts = [`<option value=""${chosen ? "" : " selected"}>—</option>`];
+  rows.forEach(r => opts.push(
+    `<option value="${esc(r.key)}"${r.key === chosen ? " selected" : ""}>${esc(r.label)}</option>`));
+  if (chosen && !huntTargetRow(chosen))
+    opts.push(`<option value="${esc(chosen)}" selected>${esc(chosen)} — not a configured
+      encounter</option>`);
+  return opts.join("");
+}
+
+// Picking a target sets the LEVEL with it, in one save. Every encounter on the table has exactly
+// one level -- `HuntTarget.encounter_errors` refuses any other -- so asking for it separately was
+// asking the player to restate the table and then be told they got it wrong.
+function huntPickTarget(key){
+  const row = huntTargetRow(key);
+  _hunt.target = {...(_hunt.target||{}), species: key,
+                  ...(row ? {level: row.level} : {})};
+  // `encounter_kind` is NOT set here even though the row says which it is. `save_hunt` derives it
+  // (`Facade._sync_encounter_kind`) and that is deliberately the only place that decides, so a
+  // second writer here could only ever disagree with it. `huntSaveAndRefresh` re-reads the hunt,
+  // so the roamer panels switch on the same render anyway.
+  huntSaveAndRefresh();
 }
 
 function huntSetField(key, value){ _hunt[key] = value; huntSaveAndRefresh(); }

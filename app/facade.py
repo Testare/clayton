@@ -1485,7 +1485,8 @@ class Facade:
         from claytonlib.battle.stats import derive_species_stats, species
         from claytonlib.battle_compass.sim import unsupported_our_moves
         from claytonlib.battle_compass.targets import (
-            TrapCandidate, access_warnings, chip_warnings, repel_warnings, trap_warnings,
+            TrapCandidate, access_warnings, chip_warnings, repel_warnings, supported_options,
+            trap_warnings,
         )
         from claytonlib.moves import resolve_move
 
@@ -1494,6 +1495,12 @@ class Facade:
         result: dict = {
             "hunt_id": h.id,
             "hard_errors": h.hard_errors(profile),
+            # Every encounter this profile's game can hunt, one row apiece, so the configure
+            # screen can OFFER the target instead of asking the player to spell its slug and
+            # then retype a level the table already holds. Game-filtered here rather than on the
+            # page: Darkrai is Platinum's and Lugia's row on file is SoulSilver's, and a picker
+            # that listed both would offer a hunt that `encounter_errors` then refuses.
+            "targets": supported_options(profile.game if profile else ""),
             "alphabet": None,
             "speed": None,
             "survivability": [],
