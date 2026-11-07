@@ -51,6 +51,7 @@ from claytonlib.battle_compass.sim import (
     SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
     can_flinch, can_inflict, can_miss, could_vanish_before_us, deals_nothing,
+    bench_slot_for_party_number, party_number,
     is_semi_invulnerable, pending_future_sight, starts_charge_turn,
     effective_speed, immune_to_status, nightmare_tick, primary_stat_drop, secondary_description,
     secondary_status,
@@ -682,6 +683,13 @@ def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
     `Ic` before `I` matters: the prefixes are matched longest-first, or a cure would read as a
     plain item and the turn would be simulated with the wrong one. Same for `X` being tried after
     the moves, since nothing else starts with it.
+
+    **A switch and a revive come back as ``party_slot``**, which is what the token says and NOT
+    what `observe` takes. The two numbers are deliberately different -- a party slot is stable for
+    the whole run, a bench index is a position a switch rearranges -- and only the caller has the
+    live bench to translate between them (`sim.bench_slot_for_party_number`). Returning the token's
+    own number keeps this function a pure reader of the turn; handing it over as a bench index is
+    what broke replaying any path with a switch in it (clayton-fag).
     """
     if not tokens:
         raise ValueError("empty turn")
@@ -707,10 +715,13 @@ def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
             digits = "".join(c for c in first[len(action.value):] if c.isdigit())
             if not digits:
                 raise ValueError(f"{first!r} names no party slot")
-            # `observe` takes a BENCH index for a switch and a PARTY SLOT for a revive, which is
-            # the one asymmetry here; `replacement` is the party slot a faint switched in.
-            key = "bench_slot" if action is Action.SWITCH else "replacement"
-            return action, {key: int(digits)}
+            # The PARTY SLOT, for both. `simulate_turn` wants a bench index for either (a Revive
+            # indexes `state.bench` exactly as a switch does), and the caller does that
+            # conversion -- see the docstring. This used to hand the switch's number over as
+            # `bench_slot` and the revive's as `replacement`, and both were wrong: the first by
+            # one number system, the second by one question (a `replacement` is who came in after
+            # a FAINT, which a Revive is not).
+            return action, {"party_slot": int(digits)}
     if first.startswith(Action.FAINTED.value):
         digits = "".join(c for c in first[len(Action.FAINTED.value):] if c.isdigit())
         return Action.FAINTED, ({"replacement": int(digits)} if digits else {})
@@ -1753,6 +1764,26 @@ class HuntSession:
                     "problems": [f"turn {replayed + 1} ({turn!r}): {exc}"],
                     "observed": turn}
                 return self.snapshot()
+            # The token's PARTY SLOT becomes the bench index `observe` takes, against the bench
+            # as it stands at this turn -- which is why it is resolved here, one turn at a time,
+            # rather than up front: a switch earlier in the path has already rearranged it.
+            if "party_slot" in extra:
+                wanted = extra.pop("party_slot")
+                bench = next(iter(self._session.states.values())).bench
+                index = bench_slot_for_party_number(bench, wanted)
+                if index is None:
+                    # A grammar-shaped failure rather than an exception: the path is a thing the
+                    # player pasted, so a slot naming nobody is a typo to report and not a bug to
+                    # crash on. It used to reach `simulate_turn` and raise.
+                    named = ", ".join(
+                        f"{party_number(m, i)} ({m.name})" for i, m in enumerate(bench)) or "none"
+                    self.contradiction = {
+                        "kind": "grammar",
+                        "problems": [f"turn {replayed + 1} ({turn}) names party slot {wanted}, "
+                                     f"which is not on the bench — available: {named}"],
+                        "observed": turn}
+                    return self.snapshot()
+                extra["bench_slot"] = index
             self.observe(action, tokens, **extra)
             if self.contradiction:
                 problems = list(self.contradiction.get("problems", []))

@@ -68,11 +68,22 @@ class TestTheActionIsReadOffTheTokens(unittest.TestCase):
         self.assertEqual(_action_from_tokens(tok.tokenise("IhpE2"))[1], {"item_code": "hp"})
         self.assertEqual(_action_from_tokens(tok.tokenise("I"))[1], {})
 
-    def test_a_switch_gives_a_bench_slot_and_a_revive_a_party_slot(self):
-        """The one asymmetry `observe` imposes, so getting them the same way round would send a
-        revive to the wrong Pokemon."""
-        self.assertEqual(_action_from_tokens(tok.tokenise("S3"))[1], {"bench_slot": 3})
-        self.assertEqual(_action_from_tokens(tok.tokenise("R2"))[1], {"replacement": 2})
+    def test_a_switch_and_a_revive_both_give_the_PARTY_SLOT(self):
+        """Which is what the token says, and not what `observe` takes.
+
+        The old reading had a switch coming back as `bench_slot` and a revive as `replacement`,
+        and both were wrong. A switch's number is a PARTY SLOT -- stable for the whole run, which
+        is why switching out and back reads ``S3`` then ``S1`` -- while `simulate_turn` indexes
+        `state.bench`, which a switch rearranges; so a one-member bench got `bench_slot=2` and
+        raised. And a revive indexes the bench exactly as a switch does, while `replacement` is a
+        different question entirely (who came in after a FAINT), so a Revive turn reached
+        `simulate_turn` with no slot at all.
+
+        Translating needs the live bench, which only the caller has, so this stays a pure reader
+        of the turn -- see `replay_path` and `sim.bench_slot_for_party_number`.
+        """
+        self.assertEqual(_action_from_tokens(tok.tokenise("S3"))[1], {"party_slot": 3})
+        self.assertEqual(_action_from_tokens(tok.tokenise("R2"))[1], {"party_slot": 2})
 
     def test_a_turn_with_no_action_of_ours_is_refused(self):
         with self.assertRaises(ValueError):
@@ -129,6 +140,110 @@ class TestTheRoundTrip(unittest.TestCase):
         replayed = _session()
         replayed.replay_path(played.snapshot()["path"])
         self.assertEqual(set(replayed.survivors), before)
+
+
+class TestASwitchInThePathReplays(unittest.TestCase):
+    """The reported break (round 9 feedback): "Loading from path breaks for switch tokens?".
+
+    It did, and loudly -- a raw `ValueError` out of `simulate_turn` rather than a contradiction --
+    because an ``S`` token carries the PARTY SLOT and `observe` takes a BENCH INDEX. The fixture
+    below is the smallest shape that shows it: one Pokemon on the bench, at party slot 2, so the
+    token reads ``S2`` and the index is 0.
+    """
+
+    @staticmethod
+    def _with_bench():
+        session = _session()
+        magneton = Battler(name="Magneton", level=54, types=("Electric", "Steel"),
+                           stats={"hp": 134, "atk": 70, "def": 95, "spa": 120, "spd": 70,
+                                  "spe": 124},
+                           moves=("Thunder Wave",), pp=(20,), party_slot=2)
+        session.bench = (magneton,)
+        for state in session._session.states.values():
+            state.bench = (magneton,)
+        return session
+
+    def _switch_turn(self, session):
+        from claytonlib.battle_compass.sim import simulate_turn
+        from claytonlib.battle_compass.state import BattleState
+
+        state = BattleState(rng=session._session.states[SEED].rng, ours=session.ours,
+                            target=session.target, bench=session.bench)
+        nxt = simulate_turn(state, Action.SWITCH, session.config, bench_slot=0)
+        return tok.render_turn(tok.normalise(list(nxt.log[-1])))
+
+    def test_the_token_names_the_party_slot_and_not_the_bench_index(self):
+        """Which is the whole reason a translation is needed. Pinned first, because if this ever
+        stopped being true the fix below would be the bug."""
+        turn = self._switch_turn(self._with_bench())
+        self.assertTrue(turn.startswith("S2"), turn)
+
+    def test_and_replaying_that_turn_works(self):
+        session = self._with_bench()
+        turn = self._switch_turn(session)
+        replayed = self._with_bench()
+        snap = replayed.replay_path(turn)
+        self.assertIsNone(replayed.contradiction, snap.get("contradiction"))
+        self.assertEqual(len(replayed.turns), 1)
+        self.assertEqual(replayed.turns[0].rendered, turn)
+
+    def test_a_slot_that_names_nobody_is_reported_rather_than_raised(self):
+        """A path is something the player pasted, so a slot naming nobody is a typo to report."""
+        session = self._with_bench()
+        session.replay_path("S5E1")
+        self.assertIsNotNone(session.contradiction)
+        problems = " ".join(session.contradiction["problems"])
+        self.assertIn("party slot 5", problems)
+        self.assertIn("Magneton", problems)
+        self.assertEqual(len(session.turns), 0)
+
+    def test_a_revive_in_the_path_replays_too(self):
+        """The second half of the same bug, and the louder one: a Revive came back as
+        `replacement`, so `simulate_turn` got no slot at all and raised "a Revive needs which
+        party member it was used on". `replacement` is who came in after a FAINT -- a different
+        question, resolved at the end of the turn."""
+        from claytonlib.battle_compass.sim import simulate_turn
+        from claytonlib.battle_compass.state import BattleState
+
+        def with_fainted():
+            session = _session()
+            down = Battler(name="Magneton", level=54, types=("Electric", "Steel"),
+                           stats={"hp": 134, "atk": 70, "def": 95, "spa": 120, "spd": 70,
+                                  "spe": 124},
+                           moves=("Thunder Wave",), pp=(20,), party_slot=2).with_hp(0)
+            session.bench = (down,)
+            for state in session._session.states.values():
+                state.bench = (down,)
+            return session
+
+        session = with_fainted()
+        state = BattleState(rng=session._session.states[SEED].rng, ours=session.ours,
+                            target=session.target, bench=session.bench)
+        nxt = simulate_turn(state, Action.REVIVE, session.config, bench_slot=0)
+        turn = tok.render_turn(tok.normalise(list(nxt.log[-1])))
+        self.assertTrue(turn.startswith("R2"), turn)
+
+        replayed = with_fainted()
+        snap = replayed.replay_path(turn)
+        self.assertIsNone(replayed.contradiction, snap.get("contradiction"))
+        self.assertEqual(replayed.turns[0].rendered, turn)
+
+    def test_the_inverse_mapping_round_trips_against_party_number(self):
+        """Including the positional fallback for a Battler with no slot set, which the
+        simulator's own fixtures rely on."""
+        from claytonlib.battle_compass.sim import bench_slot_for_party_number, party_number
+
+        named = Battler(name="A", level=5, types=("Normal",),
+                        stats={"hp": 20, "atk": 5, "def": 5, "spa": 5, "spd": 5, "spe": 5},
+                        moves=("Tackle",), pp=(35,), party_slot=4)
+        bare = Battler(name="B", level=5, types=("Normal",),
+                       stats={"hp": 20, "atk": 5, "def": 5, "spa": 5, "spd": 5, "spe": 5},
+                       moves=("Tackle",), pp=(35,))
+        bench = (named, bare)
+        for index, member in enumerate(bench):
+            self.assertEqual(bench_slot_for_party_number(bench, party_number(member, index)),
+                             index)
+        self.assertIsNone(bench_slot_for_party_number(bench, 99))
 
 
 class TestItStopsAtTheFirstBadTurn(unittest.TestCase):

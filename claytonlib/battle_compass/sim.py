@@ -3445,6 +3445,26 @@ def party_number(battler: Battler, bench_slot: int) -> int:
     return battler.party_slot or bench_slot + 2
 
 
+def bench_slot_for_party_number(bench: "tuple[Battler, ...]", number: int) -> int | None:
+    """`party_number` read backwards: which bench index names party slot `number`, or None.
+
+    The inverse exists because the token stream and the simulator speak different numbers on
+    purpose. An ``S``/``R`` token carries the **party slot**, which is stable for the whole run --
+    switching out and back reads ``S3`` then ``S1`` -- while `simulate_turn` takes a **bench
+    index**, which is a position in a tuple that a switch rearranges. Replaying a path therefore
+    has to translate, and the translation needs the live bench rather than arithmetic
+    (clayton-fag: `replay_path` handed the party slot straight through as an index, so a path
+    with a switch in it died on `bench_slot=2 with 1 on the bench`).
+
+    Mirrors `party_number`'s fallback exactly, including the positional guess for a Battler with
+    no `party_slot` set, so a round trip through the pair is the identity on both kinds.
+    """
+    for index, member in enumerate(bench):
+        if party_number(member, index) == number:
+            return index
+    return None
+
+
 def party_order(bench: tuple[Battler, ...]) -> tuple[Battler, ...]:
     """`bench` in party order, so a bench index means the same thing all run.
 
