@@ -1019,14 +1019,35 @@ class TestTextareasMatchTheRestOfTheForm(unittest.TestCase):
                 self.assertIn('class="field"', before)
 
     def test_glasss_notes_are_a_writing_surface(self):
-        """Reported as "too small, even if it is resizable" -- a box you have to drag open on
-        every visit is a box that is the wrong size."""
+        """Reported in round 6 as "too small, even if it is resizable", which got it `rows="8"`
+        and a 180px floor -- and in round 9 as too TALL, at four lines. Both readings are right,
+        and the thing that reconciles them is not the number: a dragged height that survives a
+        re-render makes the default a starting point rather than a setting. The floor came down
+        with the default, because an 180px minimum is also what made dragging it smaller
+        impossible.
+        """
         field = _HTML[_HTML.index('id="gl-notes"'):]
         field = field[:field.index(">")]
-        self.assertIn('rows="8"', field)
+        self.assertIn('rows="4"', field)
         self.assertIn("gl-notes", field)
         css = self._css()
-        self.assertIn(".gl-notes{min-height:", css)
+        self.assertIn(".gl-notes{min-height:84px}", css)
+
+    def test_a_dragged_notes_height_survives_a_re_render(self):
+        """Generate and every readout refresh rebuild the page, and a rebuilt textarea has no
+        memory of being resized -- so the box snapped back every time the player touched anything
+        else, which reads as the page undoing their work."""
+        self.assertIn("let _glassNotesHeight = null;", _HTML)
+        self.assertIn("function glassWatchNotesHeight(){", _HTML)
+        body = _function_body("glassWatchNotesHeight")
+        # A ResizeObserver, because the resize handle fires neither `change` nor `input`.
+        self.assertIn("ResizeObserver", body)
+        self.assertIn("_glassNotesHeight = el.offsetHeight", body)
+        # Applied on render, and only when there is one to apply.
+        self.assertIn('${_glassNotesHeight ? `style="height:${_glassNotesHeight}px"` : ""}',
+                      _HTML)
+        # ...and the watcher is actually attached after the mount that builds the field.
+        self.assertIn("glassWatchNotesHeight();", _HTML)
 
 
 class TestTheCandidateSeedsAreCopyable(unittest.TestCase):

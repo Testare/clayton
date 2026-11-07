@@ -302,7 +302,11 @@
   /* A Seed's notes are the only free-form writing in the app and the reason a Seed is kept at
      all (notes/glass.md), so the box is sized to be written in rather than dragged open on every
      visit. Still resizable; this is the floor, not a cap. */
-  .gl-notes{min-height:180px}
+  /* Four lines, and the min-height matches: the floor used to be 180px against `rows="8"`,
+     which made the field the tallest thing on the page for a seed with one line of notes --
+     and made dragging it SMALLER impossible. `glassNotesHeight` remembers a drag across
+     re-renders, so the default only has to be a sensible starting point. */
+  .gl-notes{min-height:84px}
   .ok-cta{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));
     background:color-mix(in srgb,var(--ok) 7%,var(--surface))}
 </style>
@@ -8019,6 +8023,14 @@ let _glass = null;            // the open seed's whole page state
 let _glassSaveTimer = null;   // the page saves as you type, debounced
 let _glassReadTimer = null;
 let _glassPlanTimer = null;
+//: The pixel height the player dragged the notes field to, or null for the default.
+//:
+//: Re-rendering the page -- which Generate and every readout refresh do -- rebuilds the textarea,
+//: and a rebuilt element has no memory of being resized. So the notes box snapped back to its
+//: default every time the player touched anything else, which reads as the page undoing their
+//: work (round 9 feedback). Page-local rather than stored on the seed: it is a view preference,
+//: like a dragged column width, and it should not travel to another machine.
+let _glassNotesHeight = null;
 
 // --- the list -------------------------------------------------------------
 
@@ -8277,7 +8289,8 @@ function renderSeedPage(){
         </div>
         <div class="info-line" id="gl-readout">${glassReadoutHtml()}</div>
         <div class="field"><label>Notes</label>
-          <textarea id="gl-notes" rows="8" class="gl-notes"
+          <textarea id="gl-notes" rows="4" class="gl-notes"
+            ${_glassNotesHeight ? `style="height:${_glassNotesHeight}px"` : ""}
             placeholder="anything you need to remember about this seed — the route you walked, what the clock read, which attempt this was"
             oninput="glassFieldInput()">${esc(f.notes)}</textarea></div>
         <div class="hr-small muted">Saved as you type.</div>
@@ -8287,6 +8300,7 @@ function renderSeedPage(){
       <div class="panel" id="gl-history">${renderGlassHistory()}</div>
     </div>`);
   glassValidateStartRel();
+  glassWatchNotesHeight();
 }
 
 function confirmDeleteSeed(){
@@ -8306,6 +8320,19 @@ async function deleteSeedConfirmed(){
 }
 
 // --- Seed A, exactly as every other compass does it -----------------------
+
+// Keep the notes field at whatever height it was dragged to. A `ResizeObserver` rather than a
+// resize event, because a textarea's resize handle fires neither `change` nor `input` -- and the
+// observer's first callback reports the height we just applied, which is a no-op by construction.
+function glassWatchNotesHeight(){
+  const el = $("gl-notes");
+  if (!el || typeof ResizeObserver === "undefined") return;
+  new ResizeObserver(() => {
+    // `offsetHeight` rather than the box entry: it is the number that goes back into
+    // `style.height`, so what is remembered is exactly what will be re-applied.
+    if (el.offsetHeight) _glassNotesHeight = el.offsetHeight;
+  }).observe(el);
+}
 
 function glassValidateStartRel(){
   // Absent entirely on Platinum, which has no roamer relocation at game load -- so this is a
