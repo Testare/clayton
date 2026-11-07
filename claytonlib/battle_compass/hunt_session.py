@@ -45,7 +45,8 @@ from claytonlib.battle_compass import items
 from claytonlib.battle_compass.candidates import CandidateWindow
 from claytonlib.battle_compass.identify import AdviceAborted, Phase, Session
 from claytonlib.battle_compass.sim import (
-    ABILITY_BAD_DREAMS, EFFECT_FORESIGHT, EFFECT_NIGHTMARE, EFFECT_TAUNT, FLINCH_EFFECTS,
+    ABILITY_BAD_DREAMS, EFFECT_FORESIGHT, EFFECT_MEAN_LOOK, EFFECT_NIGHTMARE, EFFECT_TAUNT,
+    FLINCH_EFFECTS,
     HuntConfig,
     SLEEP_DURATION_MIN,
     SLEEP_DURATION_SPAN, _effective_accuracy, accuracy_net_stage, bad_dreams_tick, burn_tick,
@@ -903,6 +904,20 @@ def prevention_options(actor: Battler, other: Battler, *, actor_moves_first: boo
     return options
 
 
+def _roamer_untrapped(state, config) -> bool:
+    """Whether this turn opens with the roamer having chosen Escape.
+
+    The snapshot's `roamer_untrapped`, and the gate on both halves of the roamer interview. Its
+    negation is not "safe" in general -- a trapped roamer is held only for this turn -- but it is
+    exactly the condition under which the turn's actions are and are not fatal.
+    """
+    from claytonlib.battle_compass.sim import roamer_trapped_at_selection
+
+    if not getattr(config, "target_is_roamer", False):
+        return False
+    return not roamer_trapped_at_selection(state)
+
+
 def flee_options(state, config) -> list[dict]:
     """The two roamer outcomes, when this turn could have produced one.
 
@@ -911,19 +926,17 @@ def flee_options(state, config) -> list[dict]:
     fled" there invites a report no candidate can predict -- which looks exactly like a wrong
     model constant rather than like a mis-click.
 
-    Both are offered together whenever it was untrapped, because the player can tell them apart
-    off the screen ("The wild X fled!" against "The wild X can't escape!") and the simulator
-    decides which one each candidate predicted. They are prevention-shaped -- no move happened --
-    so they ride in the same list and the page's ``"E" + code`` assembly renders them without
-    knowing they exist.
+    Both are listed together whenever it was untrapped, because that is what the STATE allows and
+    this function sees only the state. **Which of the two actually happened is settled by our own
+    action**, which the page knows and this does not: an untrapped roamer has already chosen
+    Escape, and the escape is refused only if a trapping move of ours lands first. So the page
+    does not render these as chips -- it states the outcome (`hrRoamerSettledFlee`) -- and they
+    remain here as the authority on when a flee is possible at all. They are prevention-shaped
+    -- no move happened -- so the ``"E" + code`` assembly renders either without special-casing.
 
     Returns ``[]`` for a static target, which cannot leave at all.
     """
-    from claytonlib.battle_compass.sim import roamer_trapped_at_selection
-
-    if not getattr(config, "target_is_roamer", False):
-        return []
-    if roamer_trapped_at_selection(state):
+    if not _roamer_untrapped(state, config):
         return []
     return [
         {"code": tok.ESCAPED, "label": "fled — the run is over"},
@@ -1089,6 +1102,7 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
                         "status_cured_by_item": False,
                         "secondary_side": None, "stat_drop": None, "self_raise": None,
                         "deals_nothing": False, "applies_foresight": False,
+                        "applies_trap": False,
                         "no_effect_hint": None, "charges": False,
                         "makes_contact": False,
                         "effect_chance": 0, "priority": 0, "pp": 0,
@@ -1240,6 +1254,12 @@ def move_info(battler: Battler, defender: Battler | None = None) -> list[dict]:
             # resolves before the target's half of the turn, so the immunity is gone by the time
             # anything else is asked about that turn.
             "applies_foresight": move.effect == EFFECT_FORESIGHT,
+            # ...and whether THIS move is the one that traps a roamer. Mean Look, Block and
+            # Spider Web share effect 106. The page needs it for the one question a roamer turn
+            # settles rather than asks: an untrapped roamer has already chosen Escape, so the
+            # move we pick decides whether the escape is refused or the run ends, and there is
+            # nothing left for the player to report (notes/roamers.md sec 2.2-2.3).
+            "applies_trap": move.effect == EFFECT_MEAN_LOOK,
             #: Priority decides turn order before Speed does, so the page needs it to know
             #: which side's tokens come first.
             "priority": move.priority,
@@ -2164,6 +2184,17 @@ class HuntSession:
             # Who acts first when we use a MOVE. A bag action or switch always resolves before
             # any move, so the page ignores this for those (sec 12.1).
             "we_move_first": we_first,
+            # **The roamer has already chosen Escape for this turn.** True only on a roamer hunt,
+            # and only while nothing holds it at action selection -- a Mean Look or Bind volatile,
+            # or our active Pokemon's Shadow Tag or Arena Trap (`sim.roamer_trapped_at_selection`).
+            #
+            # It changes the shape of the turn rather than adding a warning to it. Every action
+            # but a trapping move loses the run, which is why the page marks them all; and the
+            # outcome is then settled rather than asked, because the escape fails if and only if
+            # our trap lands first (notes/roamers.md sec 2.2-2.3). The Speed half of "lands first"
+            # is guaranteed by configuration: a trapper that does not outspeed is a
+            # `targets.trap_errors` row and never opens a run.
+            "roamer_untrapped": _roamer_untrapped(state, self.config),
             "prevention": {
                 "ours": prevention_options(state.ours, state.target,
                                            actor_moves_first=we_first),

@@ -5521,6 +5521,73 @@ function hrFaintBlock(){
        : "assumed no");
 }
 
+// --- roamers ---------------------------------------------------------------
+//
+// An untrapped roamer has ALREADY CHOSEN ESCAPE by the time we pick an action, and the escape is
+// refused only by a trapping move of ours landing first (notes/roamers.md sec 2.2-2.3). Two
+// consequences for this page, and they are the same fact read twice:
+//
+//   * every action but a trapping move ends the run, so all of them are marked;
+//   * the roamer's half of the turn is then SETTLED rather than asked, because our own action
+//     decides it and the player has nothing left to report.
+//
+// The Speed half of "lands first" is guaranteed by configuration rather than checked here: a
+// trapper that does not outspeed the roamer is a `targets.trap_errors` row and never opens a run.
+
+// Has the roamer chosen Escape for this turn? Off the snapshot, which reads
+// `sim.roamer_trapped_at_selection` -- a Mean Look or Bind volatile on it, or our active
+// Pokemon's Shadow Tag or Arena Trap. False on every static hunt.
+function hrRoamerUntrapped(){
+  return !!_huntSnap && !!_huntSnap.roamer_untrapped;
+}
+
+// Does the action we picked hold it? Only a trapping MOVE can: a bag action, a ball, a switch and
+// a Revive all resolve before the escape and none of them is a volatile, and a Shadow Tag Pokemon
+// switched in behind an already-chosen escape does not stop it either [verified: mesprit1.jsonl
+// T2]. So "did we pick Mean Look, Block or Spider Web" is the whole question.
+function hrActionTraps(){
+  const info = hrOurMoveInfo();
+  return !!info && !!info.applies_trap;
+}
+
+// The roamer's settled half of an untrapped turn, as its prevention code -- or null when the turn
+// is not one of those. `trp` is "The wild X can't escape!", `esc` is "The wild X fled!".
+function hrRoamerSettledFlee(){
+  const t = _hrTurn, info = hrOurMoveInfo();
+  if (!hrRoamerUntrapped() || !t.action) return null;
+  if (!hrActionTraps()) return "esc";
+  // Mean Look, Block and Spider Web all bypass the accuracy check, so this is dormant -- and it
+  // is here because a trap that COULD miss settles nothing, and falling through to the chips is
+  // the honest answer rather than asserting the escape failed.
+  return (info && info.can_miss) ? null : "trp";
+}
+
+// Why this action loses an untrapped roamer, or "" when it does not. One sentence per action
+// KIND, because the reasons are genuinely different and a single generic warning would be wrong
+// about the capture ball — which is the one action that can still win the turn.
+function hrRoamerActionWarning(kind){
+  if (!hrRoamerUntrapped()) return "";
+  const name = _huntSnap.target.name;
+  if (kind === "trap") return "";
+  if (kind === "capture")
+    return `${name} has already chosen Escape. If the ball lands you have won — the battle ends `
+         + `before the escape resolves — and if it breaks free, ${name} is gone.`;
+  if (kind === "ball")
+    return `${name} has already chosen Escape, and a standard ball is the worst bet you have: `
+         + `anything short of a capture ends the run.`;
+  if (kind === "switch")
+    return `${name} has already chosen Escape, and a switch does not stop it — our switch `
+         + `resolves first and it leaves anyway, Shadow Tag on the field or not. The run ends.`;
+  return `${name} has already chosen Escape, and only a trapping move landing first refuses it. `
+       + `This action ends the run.`;
+}
+
+// The marker that puts `hrRoamerActionWarning` on the chip itself. A title alone is a warning
+// nobody sees until they hover the thing they were about to click.
+function hrRoamerMark(kind){
+  return hrRoamerActionWarning(kind) ? " \u26a0" : "";
+}
+
 // The HP an item implies, when the item is the ONLY thing that touched our HP this turn.
 //
 // That makes the new value arithmetic rather than an observation: a Potion on 73 of 120 lands on
@@ -6117,6 +6184,30 @@ function hrOurSecondaryBlock(){
 function hrTargetBlocks(){
   const s = _huntSnap, t = _hrTurn, out = [];
 
+  // **An untrapped roamer settles its own half of the turn.** It chose Escape before we picked
+  // anything, so there are exactly two outcomes and our action picks which: a trapping move
+  // lands first and the escape fails, or it does not and the roamer leaves. Asking produced a
+  // question with one right answer that the player was being invited to get wrong — and getting
+  // it wrong on a roamer is not a mis-click, it is a reported ending.
+  //
+  // Above the sleep case, and that order is the mechanic rather than a preference: an escape is
+  // an ACTION and sleep belongs to move execution, so a roamer selects and leaves while fast
+  // asleep [verified: mesprit2.jsonl T9-T11] (notes/roamers.md sec 2.3).
+  const settled = hrRoamerSettledFlee();
+  if (settled){
+    if (!t.target || t.target.prevented !== settled) t.target = {prevented: settled};
+    out.push(settled === "trp"
+      ? `<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(s.target.name)} chose to
+           flee before you picked anything, and ${esc(hrOurMoveInfo().name)} lands first and
+           refuses it — "${esc(s.target.name)} can't escape!". Its turn is spent on nothing, and
+           there is nothing to report.</div></div>`
+      : `<div class="notice danger"><b>${esc(s.target.name)} fled.</b>
+         <div class="hr-small">An untrapped roamer has already chosen Escape, and only a trapping
+           move landing first refuses it — so this action ends the run. Report the turn to record
+           where the seed got to.</div></div>`);
+    return {blocks: out, done: true};
+  }
+
   // A sleep move of ours that just connected settles the target's whole turn: sleep lasts a
   // minimum of two turns, so a Pokemon put to sleep before its own turn CANNOT act on it. That
   // is one option, not a question -- and it was not even on the list, because the snapshot's
@@ -6350,32 +6441,47 @@ function hrInterview(){
   // put -- so disabling it would refuse an answer the game really did produce. What it must not
   // do is look like a working move: against a Ghost target that is half a chipper's moveset, and
   // `no_effect_hint` carries both the reason and the fix (`hunt_session._no_effect_hint`).
+  //
+  // **Every action is marked on an untrapped roamer turn except the trapping move**, because
+  // every one of them ends the run: the escape was chosen before we picked anything and only a
+  // volatile refuses it (`hrRoamerActionWarning`). Marked rather than disabled — a capture-ball
+  // throw really can win the turn, and a player who has already lost the trap may well want to
+  // spend the turn rather than abandon it.
   const actionChips = s.ours.move_info
     .filter(m => m.known && m.pp > 0 && s.legal_actions.includes("M" + (m.slot + 1)))
     .map(m => m.unselectable_reason
           ? hrChipOff(`${m.name}`, m.unselectable_reason)
-          : hrChip(`${m.name}${m.deals_nothing ? " \u2298" : ""}`,
+          : hrChip(`${m.name}${m.deals_nothing ? " \u2298" : ""}${
+                     hrRoamerMark(m.applies_trap ? "trap" : "move")}`,
                    `hrSet('action','M${m.slot + 1}')`,
                    t.action === "M" + (m.slot + 1),
-                   m.no_effect_hint || `${m.pp} PP left`));
-  actionChips.push(hrChip("Used an item", "hrSet('action','I')", t.action === "I"));
+                   hrRoamerActionWarning(m.applies_trap ? "trap" : "move")
+                     || m.no_effect_hint || `${m.pp} PP left`));
+  actionChips.push(hrChip(`Used an item${hrRoamerMark("move")}`, "hrSet('action','I')",
+                          t.action === "I", hrRoamerActionWarning("move") || undefined));
   // Both balls, in every phase. The capture ball never carried a risk -- a landing wins -- and
   // a standard ball's risk is DISCLOSED rather than forbidden: it is smallest early (0.35% per
   // throw at full HP against 1.25% at 1 HP and paralyzed), and the shake check separates
   // RTC-second siblings better than any 100%-accuracy move can. See notes/seed_separation.md.
   const ballLabel = `Threw the ${s.capture_ball || "capture ball"}`;
-  actionChips.push(hrChip(ballLabel, "hrSet('action','C')", t.action === "C",
-                          "Always safe to throw — if it lands, the run is won."));
-  actionChips.push(hrChip("Threw a Poké Ball", "hrSet('action','P')", t.action === "P",
-                          hrStandardBallWarning()));
+  actionChips.push(hrChip(ballLabel + hrRoamerMark("capture"), "hrSet('action','C')",
+                          t.action === "C",
+                          hrRoamerActionWarning("capture")
+                            || "Always safe to throw — if it lands, the run is won."));
+  actionChips.push(hrChip("Threw a Poké Ball" + hrRoamerMark("ball"), "hrSet('action','P')",
+                          t.action === "P",
+                          hrRoamerActionWarning("ball") || hrStandardBallWarning()));
   if (s.legal_actions.includes("S"))
-    actionChips.push(hrChip("Switched", "hrSet('action','S')", t.action === "S"));
+    actionChips.push(hrChip("Switched" + hrRoamerMark("switch"), "hrSet('action','S')",
+                            t.action === "S", hrRoamerActionWarning("switch") || undefined));
   else if (s.phase === 1)
     actionChips.push(hrChipOff("Switched", "Nobody else on the hunt's party to switch to."));
   // Only while somebody is actually down to revive -- and unlike every other item, it names who.
   if (s.legal_actions.includes("R"))
-    actionChips.push(hrChip("Used a Revive", "hrSet('action','R')", t.action === "R",
-                            `₽${s.revive_price} — back on half HP`));
+    actionChips.push(hrChip("Used a Revive" + hrRoamerMark("move"), "hrSet('action','R')",
+                            t.action === "R",
+                            hrRoamerActionWarning("move")
+                              || `₽${s.revive_price} — back on half HP`));
   // "I never got my move off." Offered only when the target could move before us, by Speed or by
   // priority: if we always move first, this cannot have happened and reporting it would produce
   // a turn no candidate predicts.
@@ -6383,6 +6489,14 @@ function hrInterview(){
     actionChips.push(hrChip(`${s.ours.name} fainted before moving`, "hrSet('action','X')",
                             t.action === "X",
                             "The move you picked never executed, so it cost no PP."));
+  // Said once, above the chips, because a ⚠ on five of six actions is a pattern the player has
+  // to hover to read -- and the thing being warned about is not the action, it is the state the
+  // turn opened in.
+  if (hrRoamerUntrapped())
+    blocks.push(`<div class="notice warn"><b>${esc(s.target.name)} is not trapped.</b>
+      <div class="hr-small">It has already chosen Escape for this turn, and only a trapping move
+        landing first refuses it — a switch, an item or a ball that breaks free all end the run.
+        Every other action is marked ⚠.</div></div>`);
   blocks.push(hrChips(`What did ${s.ours.name} do?`, actionChips));
   if (!t.action) return blocks.join("");
 

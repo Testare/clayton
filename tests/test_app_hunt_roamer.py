@@ -789,6 +789,96 @@ class TestReportingAFlee(RoamerHuntCase):
         self.assertIn("if (fled) return ordered.join", html)
 
 
+class TestAnUntrappedTurnIsSettledNotAsked(RoamerHuntCase):
+    """An untrapped roamer has chosen Escape before we pick anything, and a trapping move landing
+    first is the only thing that refuses it (notes/roamers.md sec 2.2-2.3). So the outcome follows
+    from OUR action, and the interview used to ask the player to report it -- a question with one
+    right answer, on a turn where the wrong answer is a reported ending (round 9 feedback).
+    """
+
+    @staticmethod
+    def _html():
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
+
+    def test_the_snapshot_says_whether_it_is_trapped_this_turn(self):
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.assertTrue(session.snapshot()["roamer_untrapped"])
+
+    def test_and_says_so_no_longer_once_mean_look_is_up(self):
+        from claytonlib.battle_compass import tokens as tok
+        from claytonlib.battle_compass.state import Action
+
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.api.hunt_session_observe(started["session_id"], Action.MOVE_1.value,
+                                      ["M1", tok.escape_failed_token()])
+        self.assertFalse(session.snapshot()["roamer_untrapped"])
+
+    def test_a_static_hunt_is_never_flagged(self):
+        hunt_id = self._hunt(species="uxie", level=50, vector_ms=STOPWATCH_MS,
+                             seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        self.assertFalse(session.snapshot()["roamer_untrapped"])
+
+    def test_the_trapping_move_is_published_per_slot(self):
+        """Mean Look, Block and Spider Web share effect 106, so the page asks the flag rather
+        than matching a name."""
+        hunt_id = self._hunt(seconds_window=1, delay_window=4)["id"]
+        started = self.api.hunt_session_start(hunt_id)
+        session = self.api._hunt_sessions.get(started["session_id"])
+        rows = session.snapshot()["ours"]["move_info"]
+        self.assertEqual([r["name"] for r in rows if r["applies_trap"]], ["Mean Look"])
+
+    def test_an_empty_slot_carries_the_same_key(self):
+        """A missing key reads as `undefined` in the page, which is falsey by luck rather than
+        by design -- and the next flag added this way would not be."""
+        from claytonlib.battle_compass.hunt_session import move_info
+        from claytonlib.battle_compass.state import Battler
+
+        blank = Battler(name="Blank", level=50, types=("Normal",),
+                        stats={"hp": 100, "atk": 50, "def": 50, "spa": 50, "spd": 50, "spe": 50},
+                        moves=("",), pp=(0,))
+        self.assertIn("applies_trap", move_info(blank)[0])
+
+    def test_the_page_settles_the_roamers_half_from_our_action(self):
+        html = self._html()
+        self.assertIn("function hrRoamerSettledFlee(){", html)
+        body = TestTheRoamerRunPage._body("hrRoamerSettledFlee")
+        self.assertIn("hrRoamerUntrapped()", body)
+        self.assertIn('return "esc";', body)
+        self.assertIn('return (info && info.can_miss) ? null : "trp";', body)
+        # And it is applied ABOVE the sleep short-circuit, because an escape is an action while
+        # sleep belongs to move execution: a roamer selects and leaves while fast asleep.
+        target = TestTheRoamerRunPage._body("hrTargetBlocks")
+        self.assertLess(target.index("hrRoamerSettledFlee()"),
+                        target.index('hrStatusWeJustApplied() === "slp"'))
+
+    def test_a_fatal_action_is_marked_and_says_why(self):
+        html = self._html()
+        self.assertIn("function hrRoamerActionWarning(kind){", html)
+        body = TestTheRoamerRunPage._body("hrRoamerActionWarning")
+        # The trapping move is the one action that is not a warning.
+        self.assertIn('if (kind === "trap") return "";', body)
+        # ...and the capture ball is the one that can still WIN the turn, so it must not be
+        # warned about in the same words as a switch.
+        self.assertIn("you have won", body)
+        self.assertIn("a switch does not stop it", body)
+
+    def test_every_action_chip_carries_the_marker(self):
+        """A warning on the state that is missing from one of the six actions is a warning the
+        player will read as "this one is fine"."""
+        body = TestTheRoamerRunPage._body("hrInterview")
+        for kind in ('"trap" : "move"', 'hrRoamerMark("capture")', 'hrRoamerMark("ball")',
+                     'hrRoamerMark("switch")'):
+            self.assertIn(kind, body)
+        self.assertIn("is not trapped.</b>", body)
+
+
 class TestTheRepelCeiling(RoamerHuntCase):
     """The lead is both the trapper and what Repel reads, so the two cannot be tuned apart."""
 
