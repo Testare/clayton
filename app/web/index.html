@@ -7541,6 +7541,22 @@ async function huntSaveAndRefresh(){
   renderHuntConfigure();
 }
 
+// Does the chosen ball's multiplier read this `ThrowContext` field? Off `list_balls`, which gets
+// it from `balls.ball_inputs`.
+//
+// The form used to ask for the terrain and for "already caught" on every hunt, and each is a
+// question exactly one ball cares about -- a Fast Ball Suicune run was being asked both and
+// neither mattered. Asking unconditionally teaches the player that the answer does not matter,
+// which is the opposite of true on the one hunt where it does (round 9 feedback). The stored
+// values are left alone when the question is hidden: changing the ball back has to bring the
+// answer back with it, not a default.
+function huntBallNeeds(input){
+  const chosen = _hunt && _hunt.capture_ball;
+  if (!chosen) return false;
+  const row = (_huntBalls || []).find(b => b.name === chosen);
+  return !!row && (row.inputs || []).includes(input);
+}
+
 function huntBallOptions(chosen){
   const names = (_huntBalls || []).map(b => b.name);
   // A ball stored on the hunt but absent from this game still appears, selected, so the picker
@@ -7718,17 +7734,17 @@ function renderHuntConfigure(){
           </select>
           <div class="hint">One ball, no fallback — the solver aims at a single threshold.</div></div>
       </div>
-      <div class="grid4" style="margin-top:10px">
-        <div class="field">${helpLabel('Terrain', 'Where the encounter happens, for the conditional balls. A Dusk Ball is x3.5 in ANY cave at any hour, and a Dive Ball is x3.5 only on water. Terrain comes from the tile you stand on rather than from the map, so a cave entrance room still counts as a cave.')}
+      ${huntBallNeeds("terrain") || huntBallNeeds("registered") ? `<div class="grid4" style="margin-top:10px">
+        ${huntBallNeeds("terrain") ? `<div class="field">${helpLabel('Terrain', 'Where the encounter happens. A Dusk Ball is x3.5 in ANY cave at any hour, and a Dive Ball is x3.5 only on water. Terrain comes from the tile you stand on rather than from the map, so a cave entrance room still counts as a cave.')}
           <select id="hc-terrain" onchange="huntSetField('terrain', this.value)">
             ${["other","cave","water"].map(v =>
               `<option value="${v}" ${(h.terrain||"other")===v?"selected":""}>${v}</option>`).join("")}
-          </select></div>
-        <div class="field check" style="align-self:end">
+          </select></div>` : ""}
+        ${huntBallNeeds("registered") ? `<div class="field check" style="align-self:end">
           <input type="checkbox" id="hc-registered" ${h.target_registered?"checked":""}
             onchange="huntSetField('target_registered', this.checked)">
-          <label for="hc-registered" style="margin:0">Already caught (Repeat Ball ×3)</label></div>
-      </div>
+          <label for="hc-registered" style="margin:0">Already caught (Repeat Ball ×3)</label></div>` : ""}
+      </div>` : ""}
       ${huntBallReadoutHtml(r.ball, h)}
       ${huntOpeningPanelHtml(h)}
       <div class="section-label" style="margin-top:14px">IVs

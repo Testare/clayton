@@ -247,3 +247,86 @@ class TestWhatThisChangesForACapture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheInputsTableMatchesTheRules(unittest.TestCase):
+    """`_RULE_INPUTS` is declared beside the rules rather than derived from them, because its
+    whole purpose is to be asked BEFORE a throw is simulated -- a configuration screen deciding
+    which questions to show has nothing to inspect yet. Declared means it can drift, so this
+    checks every row against the rule it describes by actually moving the field.
+    """
+
+    #: One `ThrowContext` field -> two values that must give different multipliers for a rule
+    #: that reads it, and the same multiplier for a rule that does not.
+    PROBES = {
+        "terrain": ({"terrain": "cave"}, {"terrain": "water"}),
+        "registered": ({"registered": True}, {"registered": False}),
+        "target_level": ({"target_level": 5}, {"target_level": 60}),
+        "turn": ({"turn": 0}, {"turn": 9}),
+        "target_types": ({"target_types": ("Water",)}, {"target_types": ("Fire",)}),
+        "time_of_day": ({"time_of_day": "night"}, {"time_of_day": "day"}),
+    }
+
+    #: Neutral on every axis, so a difference can only come from the field being probed.
+    BASE = dict(terrain="other", registered=False, target_types=("Normal",), target_level=60,
+                turn=4, time_of_day="day", target_base_speed=60)
+
+    def _multiplier(self, name, **overrides):
+        from claytonlib.battle.balls import ThrowContext, ball_effect
+
+        ctx = ThrowContext(**{**self.BASE, **overrides})
+        # A fixed base catch rate: this compares MULTIPLIERS, and the rate only matters to the
+        # apricorn balls, whose multiplier is x1 whatever it is.
+        return ball_effect(name, 45, ctx).multiplier
+
+    def test_every_declared_input_really_moves_the_multiplier(self):
+        from claytonlib.battle.balls import BALLS, ball_inputs
+
+        checked = 0
+        for row in BALLS:
+            for field in ball_inputs(row.name):
+                a, b = self.PROBES[field]
+                with self.subTest(ball=row.name, field=field):
+                    self.assertNotEqual(self._multiplier(row.name, **a),
+                                        self._multiplier(row.name, **b))
+                checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_and_no_undeclared_one_does(self):
+        """The direction that actually matters: a field a ball reads but does not declare is a
+        question the form would stop asking, silently, on the hunt that needed it."""
+        from claytonlib.battle.balls import BALLS, ball_inputs
+
+        for row in BALLS:
+            declared = ball_inputs(row.name)
+            for field, (a, b) in self.PROBES.items():
+                if field in declared:
+                    continue
+                with self.subTest(ball=row.name, field=field):
+                    self.assertEqual(self._multiplier(row.name, **a),
+                                     self._multiplier(row.name, **b))
+
+    def test_only_two_of_them_are_questions_for_the_player(self):
+        """The rest come off the configured target, the run's own turn count, or the key seed --
+        see `ball_inputs`. If a third ever becomes a question the form has to grow a field for
+        it, and this is where that shows up."""
+        from claytonlib.battle.balls import BALLS, ball_inputs
+
+        asked = {"terrain", "registered"}
+        every = set().union(*(ball_inputs(r.name) for r in BALLS))
+        self.assertEqual(every & asked, asked)
+        self.assertEqual(every - asked,
+                         {"target_types", "target_level", "turn", "time_of_day"})
+
+    def test_a_plain_ball_asks_for_nothing(self):
+        from claytonlib.battle.balls import ball_inputs
+
+        for name in ("Poke Ball", "Great Ball", "Ultra Ball", "Master Ball"):
+            self.assertEqual(ball_inputs(name), frozenset(), name)
+
+    def test_an_apricorn_ball_asks_for_nothing_either(self):
+        """They scale the catch rate off the target's own stats, which are configured."""
+        from claytonlib.battle.balls import ball_inputs
+
+        self.assertEqual(ball_inputs("Fast Ball"), frozenset())
+        self.assertEqual(ball_inputs("Love Ball"), frozenset())

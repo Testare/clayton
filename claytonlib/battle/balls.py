@@ -186,6 +186,44 @@ _CONDITIONAL = {
     "timer": _timer, "dusk": _dusk, "quick": _quick,
 }
 
+#: Which `ThrowContext` fields each conditional rule actually reads.
+#:
+#: Declared beside the rules rather than derived, because the point of it is to be asked BEFORE a
+#: throw is simulated: a configuration screen that wants to show only the questions the chosen
+#: ball depends on has nothing to inspect yet. Keep a row in step with its rule above -- the rules
+#: are four lines each, and the whole table is checked against them by
+#: `test_battle_balls.TestTheInputsTableMatchesTheRules`.
+#:
+#: Note what is NOT a question for the player even though a rule reads it: `target_types`,
+#: `target_level` and `target_base_speed` come off the configured target, `turn` is the run's own
+#: count, and `time_of_day` is derived from the key seed. The two that are genuinely asked are
+#: `terrain` and `registered`.
+_RULE_INPUTS: dict[str, frozenset[str]] = {
+    "net": frozenset({"target_types"}),
+    "dive": frozenset({"terrain"}),
+    "nest": frozenset({"target_level"}),
+    "repeat": frozenset({"registered"}),
+    "timer": frozenset({"turn"}),
+    "dusk": frozenset({"terrain", "time_of_day"}),
+    "quick": frozenset({"turn"}),
+}
+
+
+def ball_inputs(name: str) -> frozenset[str]:
+    """The `ThrowContext` fields this ball's multiplier depends on.
+
+    Empty for a plain ball, for a guaranteed one, and for an apricorn ball -- the apricorn rules
+    scale the catch rate off the target's own stats, which are configured rather than asked.
+
+    What it is for: the hunt form used to ask for the terrain and for "already caught" on every
+    hunt, and each is a question exactly one ball cares about. A form that asks unconditionally
+    teaches the player that the answer does not matter, which is the opposite of true on the one
+    hunt where it does (round 9 feedback).
+
+    Raises `ValueError` for a name that is not a ball, like `ball`.
+    """
+    return _RULE_INPUTS.get(ball(name).rule, frozenset())
+
 
 # --- apricorn rules (HGSS only) -------------------------------------------------------------
 #

@@ -655,3 +655,57 @@ class TestTheSeedASearchSettingsPersist(HuntPlatinumCase):
         after = self.api.hunt_run_setup(hunt_id)["seed_a_defaults"]
         self.assertIs(after["match_parity"], False)
         self.assertEqual(after["delay_window"], 77, "the other settings were dropped")
+
+
+class TestTheFormOnlyAsksWhatTheBallReads(unittest.TestCase):
+    """Terrain and "already caught" were asked on every hunt, and each is a question exactly one
+    ball cares about -- a Fast Ball Suicune run was asked both and neither mattered. A form that
+    asks unconditionally teaches the player that the answer does not matter, which is the
+    opposite of true on the one hunt where it does (round 9 feedback).
+    """
+
+    @staticmethod
+    def _html():
+        from pathlib import Path
+        return (Path(__file__).resolve().parent.parent / "app" / "web" / "index.html").read_text()
+
+    def test_list_balls_says_what_each_one_reads(self):
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        profile = api.create_profile({"name": "P", "game": "platinum"})["id"]
+        rows = {b["name"]: b["inputs"] for b in api.list_balls(profile)}
+        self.assertEqual(rows["Dusk Ball"], ["terrain", "time_of_day"])
+        self.assertEqual(rows["Dive Ball"], ["terrain"])
+        self.assertEqual(rows["Repeat Ball"], ["registered"])
+        self.assertEqual(rows["Ultra Ball"], [])
+
+    def test_the_page_gates_both_prompts_on_the_chosen_ball(self):
+        html = self._html()
+        self.assertIn("function huntBallNeeds(input){", html)
+        self.assertIn('huntBallNeeds("terrain")', html)
+        self.assertIn('huntBallNeeds("registered")', html)
+        # ...and the whole row goes when neither applies, rather than leaving an empty grid.
+        self.assertIn('${huntBallNeeds("terrain") || huntBallNeeds("registered") ?', html)
+
+    def test_it_reads_the_published_inputs_rather_than_naming_balls(self):
+        """A table of ball names in the page would have to be kept in step with `balls.py` by
+        hand, and the Dusk Ball reads TWO fields -- so the name is not even the right key."""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        body = _function_body("huntBallNeeds")
+        self.assertIn("row.inputs", body)
+        self.assertNotIn("Dusk", body)
+        self.assertNotIn("Repeat", body)
+
+    def test_the_stored_answers_are_not_cleared_when_the_question_is_hidden(self):
+        """Changing the ball back has to bring the answer back with it, not a default."""
+        api = Facade(FileStore(tempfile.mkdtemp()))
+        profile = api.create_profile({"name": "P", "game": "platinum"})["id"]
+        hunt = api.create_hunt({"profile_id": profile, "name": "Dusk Uxie",
+                                "capture_ball": "Dusk Ball", "terrain": "cave",
+                                "target_registered": True})
+        hunt = api.save_hunt({**hunt, "capture_ball": "Ultra Ball"})
+        self.assertEqual(hunt["terrain"], "cave")
+        self.assertTrue(hunt["target_registered"])

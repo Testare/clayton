@@ -1406,7 +1406,7 @@ class Facade:
         Platinum and the Sport Ball does not exist outside HGSS, and offering one a player cannot
         hold is how a plan gets built around a throw they cannot make.
         """
-        from claytonlib.battle.balls import balls_for_game
+        from claytonlib.battle.balls import ball_inputs, balls_for_game
         game_key = ""
         if profile_id:
             try:
@@ -1422,7 +1422,11 @@ class Facade:
                 game_key = ""
         return [{"name": b.name, "note": b.note,
                  "turn_dependent": bool(b.rule in ("timer", "quick")),
-                 "conditional": bool(b.rule), "apricorn": bool(b.apricorn)}
+                 "conditional": bool(b.rule), "apricorn": bool(b.apricorn),
+                 # What the multiplier actually depends on, so the configure form can ask for
+                 # the terrain and for "already caught" only on a hunt whose ball reads them.
+                 # See `balls.ball_inputs` for why the other inputs are never questions.
+                 "inputs": sorted(ball_inputs(b.name))}
                 for b in balls_for_game(game_key)]
 
     def _ball_readout(self, hunt) -> dict | None:
