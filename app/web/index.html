@@ -5062,10 +5062,9 @@ function renderHuntOpening(){
       <div class="hint">blank = full health</div></div>
     <div class="field"><label>Its status now</label>
       <select id="hrOpeningStatus" onchange="renderHuntSetup()">
-        ${[["", "none"], ["par", "paralyzed"], ["psn", "poisoned"],
-           ["brn", "burned"], ["frz", "frozen"]]
-          .map(([v, label]) => `<option value="${v}"${v === status ? " selected" : ""}
-            >${label}</option>`).join("")}
+        ${["", "par", "psn", "brn", "frz"]
+          .map(v => `<option value="${v}"${v === status ? " selected" : ""}
+            >${esc(HUNT_STATUS_LABELS[v])}</option>`).join("")}
       </select>
       <div class="hint">asleep is not supported yet — no way to know the turns left</div></div>
   </div>`;
@@ -7572,7 +7571,7 @@ function huntBallReadoutHtml(ball, h){
   if(!ball) return "";
   const times = ball.multiplier === 10 ? "×1" : `×${(ball.multiplier/10).toFixed(1).replace(/\.0$/,"")}`;
   const bits = [];
-  if(ball.terrain) bits.push(`terrain: ${esc(ball.terrain)}`);
+  if(ball.terrain) bits.push(`terrain: ${esc(HUNT_TERRAIN_LABELS[ball.terrain] || ball.terrain)}`);
   if(ball.time_of_day) bits.push(`time of day: ${esc(ball.time_of_day)} (from the key seed's hour)`);
   return `<div class="hr-small" style="margin-top:10px">
       ${esc(ball.name)}: <b>${ball.guaranteed ? "always catches" : times}</b>
@@ -7599,9 +7598,19 @@ function huntCfgIsRoamer(){ return (_hunt && _hunt.encounter_kind) === "roamer";
 //
 // A value stored by some other surface (the run page still offers the full set) stays in the
 // list, selected, rather than being silently rewritten to something the player did not choose.
-const HUNT_OPENING_STATUSES = [["", "no status"], ["par", "paralyzed"]];
-const HUNT_STATUS_LABELS = {par: "paralyzed", slp: "asleep", psn: "poisoned",
-                            brn: "burned", frz: "frozen"};
+// One spelling per stored value, and Title Case to match every other menu on the configure
+// screen -- the natures, the balls and the species are all Title Case, and these three menus
+// were lowercase, so the panel read as two different forms stitched together (round 9 feedback).
+// Shared rather than repeated: the run page offers the same statuses and the same terrains, and
+// the two surfaces disagreeing about how to spell "paralyzed" is how a label drifts.
+const HUNT_STATUS_LABELS = {"": "None", par: "Paralyzed", slp: "Asleep", psn: "Poisoned",
+                            brn: "Burned", frz: "Frozen"};
+//: What the CONFIGURE menu offers, which is narrower than what the model accepts -- see
+//: `models.OPENING_SLEEP_PROBLEM`. "No status" rather than "None" because this one reads as an
+//: answer to "its status now" rather than as a list entry.
+const HUNT_OPENING_STATUSES = [["", "No status"], ["par", HUNT_STATUS_LABELS.par]];
+//: Terrain, as `balls.TERRAINS` spells the stored values.
+const HUNT_TERRAIN_LABELS = {other: "Other", cave: "Cave", water: "Water"};
 function huntOpeningStatusOptions(chosen){
   const known = HUNT_OPENING_STATUSES.map(([v]) => v);
   const list = known.includes(chosen || "")
@@ -7737,8 +7746,8 @@ function renderHuntConfigure(){
       ${huntBallNeeds("terrain") || huntBallNeeds("registered") ? `<div class="grid4" style="margin-top:10px">
         ${huntBallNeeds("terrain") ? `<div class="field">${helpLabel('Terrain', 'Where the encounter happens. A Dusk Ball is x3.5 in ANY cave at any hour, and a Dive Ball is x3.5 only on water. Terrain comes from the tile you stand on rather than from the map, so a cave entrance room still counts as a cave.')}
           <select id="hc-terrain" onchange="huntSetField('terrain', this.value)">
-            ${["other","cave","water"].map(v =>
-              `<option value="${v}" ${(h.terrain||"other")===v?"selected":""}>${v}</option>`).join("")}
+            ${Object.entries(HUNT_TERRAIN_LABELS).map(([v, label]) =>
+              `<option value="${v}" ${(h.terrain||"other")===v?"selected":""}>${esc(label)}</option>`).join("")}
           </select></div>` : ""}
         ${huntBallNeeds("registered") ? `<div class="field check" style="align-self:end">
           <input type="checkbox" id="hc-registered" ${h.target_registered?"checked":""}

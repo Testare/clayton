@@ -724,9 +724,26 @@ class TestTheRoamerRunPage(unittest.TestCase):
         """Sleep is left out on purpose: the counter was rolled in a prep encounter nobody could
         observe, so declaring it would be declaring a guess the simulation reads from turn 1."""
         html = self._html()
-        self.assertIn('const HUNT_OPENING_STATUSES = [["", "no status"], ["par", "paralyzed"]];',
-                      html)
+        self.assertIn('const HUNT_OPENING_STATUSES = [["", "No status"], '
+                      '["par", HUNT_STATUS_LABELS.par]];', html)
         self.assertNotIn("slp", self._body("huntOpeningStatusOptions"))
+
+    def test_the_menus_agree_on_how_to_spell_a_status_and_a_terrain(self):
+        """Title Case, matching the natures, the balls and the species on the same screen -- and
+        from ONE table, because the run page offers the same statuses and the two surfaces
+        disagreeing about "paralyzed" is how a label drifts (round 9 feedback)."""
+        html = self._html()
+        self.assertIn('const HUNT_STATUS_LABELS = {"": "None", par: "Paralyzed", '
+                      'slp: "Asleep", psn: "Poisoned",', html)
+        self.assertIn('const HUNT_TERRAIN_LABELS = {other: "Other", cave: "Cave", '
+                      'water: "Water"};', html)
+        # The run page's own status menu reads the shared table rather than its own list.
+        run = self._body("renderHuntOpening")
+        self.assertIn("HUNT_STATUS_LABELS[v]", run)
+        self.assertNotIn('"paralyzed"', run)
+        # ...and so does the terrain menu, and the readout that echoes the answer back.
+        self.assertIn("Object.entries(HUNT_TERRAIN_LABELS)", html)
+        self.assertIn("HUNT_TERRAIN_LABELS[ball.terrain]", html)
 
     def test_but_a_status_already_stored_is_kept_rather_than_rewritten(self):
         """The run page still offers the full set, and a value the player chose there must not be
