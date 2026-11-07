@@ -11,6 +11,14 @@ from app.store import FileStore
 
 INDEX = pathlib.Path(__file__).resolve().parent.parent / "app" / "web" / "index.html"
 
+
+def _js_body(name):
+    """One page function's source, so an assertion cannot be satisfied by a different one."""
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    from test_app_web_ui import _function_body
+    return _function_body(name)
+
 LEAD = {
     "name": "Smeargle", "species": "smeargle", "level": 60, "ability": "Technician",
     "stats": {"hp": 170, "atk": 65, "def": 80, "spa": 60, "spd": 80, "spe": 160},
@@ -1065,14 +1073,42 @@ class TestWideningMidRun(unittest.TestCase):
         self.assertEqual(widened["widened"]["second_window"], 1)
         self.assertGreater(widened["survivors"], 0)
 
-    def test_the_page_offers_both_and_prices_the_second_axis(self):
+    def test_the_page_offers_all_three_and_prices_the_second_axis(self):
         """The warning used to say seconds could NEVER be told apart. They can -- median 19
-        turns -- so it now states the cost instead of claiming impossibility."""
+        turns -- so it states the cost instead of claiming impossibility, and it is stated once
+        for both buttons that touch that axis."""
         html = INDEX.read_text()
         self.assertTrue("function huntWiden(" in html)
         self.assertTrue("function huntWidenSeconds(" in html)
+        self.assertTrue("function huntWidenBoth(" in html)
         self.assertIn("19 turns", html)
+        self.assertEqual(html.count("const HR_SECOND_WIDEN_WARNING ="), 1)
         self.assertFalse("no move can ever tell apart" in html)
+
+    def test_adding_a_second_no_longer_widens_the_delay_too(self):
+        """`hunt_session_widen` DOUBLES the frame range when it is handed null, so the seconds
+        button was quietly widening both axes -- and a player who had decided the clock second
+        was wrong then could not tell which axis admitted the seed (round 9 feedback)."""
+        body = _js_body("huntWidenSeconds")
+        self.assertIn('huntRunDo("hunt_session_widen", _huntSnap.window.frame_window,', body)
+        self.assertNotIn('"hunt_session_widen", null', body)
+
+    def test_and_there_is_a_button_that_does_want_both(self):
+        """Which is what the seconds button used to do by accident, and a perfectly good thing
+        to want on purpose: it costs one round of replay instead of two."""
+        body = _js_body("huntWidenBoth")
+        self.assertIn("frame_window || 0) * 2", body)
+        self.assertIn("second_window || 0) + 1", body)
+        self.assertIn("Expand both", INDEX.read_text())
+
+    def test_the_second_axis_is_what_the_facade_actually_leaves_alone(self):
+        """The page's half pinned above is only half the claim; this is the other half."""
+        facade, _, sid, _ = self._run_with_a_narrow_window()
+        before = facade.hunt_session_widen(sid, second_window=0)["widened"]["frame_window"]
+        after = facade.hunt_session_widen(sid, frame_window=before,
+                                          second_window=1)["widened"]
+        self.assertEqual(after["frame_window"], before)
+        self.assertEqual(after["second_window"], 1)
 
     def test_the_notice_no_longer_tells_you_to_restart(self):
         html = INDEX.read_text()

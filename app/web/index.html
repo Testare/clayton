@@ -6896,16 +6896,38 @@ async function huntWiden(){
   huntReportWidening();
 }
 
+// Said the same way by both buttons that touch the second axis, because it is a property of the
+// axis rather than of either button.
+const HR_SECOND_WIDEN_WARNING =
+  "Widening the SECOND range is expensive: it multiplies the candidate set, and candidates one "
+  + "second apart take about 19 turns to tell apart (the move choice and the crit and damage "
+  + "rolls are identical between them — only accuracy and proc rolls differ).";
+
 // Separate, and warned, because the second axis is not like the frame axis: the RTC second lives
 // in the seed's top 8 bits and every in-game modulo discards it, so candidates added here can
 // never be separated by play (sec 17.1). It buys permanent ambiguity, not coverage.
+//
+// **The current frame window is passed explicitly**, and that is the fix rather than a tidy-up:
+// `hunt_session_widen` DOUBLES the frame range when it is handed null, so "add a second" was
+// quietly doubling the delay window too. A player who had decided the clock second was wrong got
+// both axes widened and could not tell which one had admitted the seed (round 9 feedback).
 async function huntWidenSeconds(){
-  if (!confirm("Widening the SECOND range is expensive: it multiplies the candidate set, and "
-             + "candidates one second apart take about 19 turns to tell apart (the move choice "
-             + "and the crit and damage rolls are identical between them — only accuracy and "
-             + "proc rolls differ).\n\n"
+  if (!confirm(HR_SECOND_WIDEN_WARNING + "\n\n"
              + "Worth it only if you think the clock second itself was wrong. Continue?")) return;
-  await huntRunDo("hunt_session_widen", null, (_huntSnap.window.second_window || 0) + 1);
+  await huntRunDo("hunt_session_widen", _huntSnap.window.frame_window,
+                  (_huntSnap.window.second_window || 0) + 1);
+  huntReportWidening();
+}
+
+// Both axes at once, which is what "add a second" used to do by accident and is a perfectly good
+// thing to want on purpose: when the report matches nothing and you have no idea which axis is
+// short, widening one at a time costs two rounds of replay.
+async function huntWidenBoth(){
+  if (!confirm(HR_SECOND_WIDEN_WARNING + "\n\n"
+             + "This widens the delay window as well, so you will not know which axis admitted "
+             + "the seed. Continue?")) return;
+  await huntRunDo("hunt_session_widen", (_huntSnap.window.frame_window || 0) * 2,
+                  (_huntSnap.window.second_window || 0) + 1);
   huntReportWidening();
 }
 
@@ -7292,11 +7314,15 @@ function renderHuntRun(){
           seed was never in the window, which widening fixes without losing the
           ${s.turns.length} turn${s.turns.length === 1 ? "" : "s"} already reported.</div>
         <div class="chip-row">
-          <button class="btn" onclick="huntWiden()">Widen the search
-            (delay ±${s.window.frame_window} → ±${s.window.frame_window * 2})</button>
+          <button class="btn" onclick="huntWiden()">Widen the delay
+            (±${s.window.frame_window} → ±${s.window.frame_window * 2})</button>
           <button class="btn" onclick="huntWidenSeconds()"
-            title="Rarely the answer — see the warning before confirming.">
+            title="Rarely the answer — see the warning before confirming. The delay window is left alone.">
             Add a second (±${s.window.second_window} → ±${s.window.second_window + 1})</button>
+          <button class="btn" onclick="huntWidenBoth()"
+            title="When you do not know which axis is short. Costs one round of replay instead of two.">
+            Expand both (delay ±${s.window.frame_window} → ±${s.window.frame_window * 2},
+            second ±${s.window.second_window} → ±${s.window.second_window + 1})</button>
         </div></div>`
     : "";
 
