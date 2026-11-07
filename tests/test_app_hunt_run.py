@@ -1597,7 +1597,20 @@ class TestTheInterviewCanReportAFaint(unittest.TestCase):
         the candidate set on something the player could not have seen."""
         body = self.html[self.html.index("function hrSecondaryMark(side){"):]
         body = body[:body.index("\n}") + 2]
-        self.assertIn('if (side === "target" && hrFainted()) return "";', body)
+        self.assertIn('if (side === "target" && hrFaintHidesTargetSecondary()) return "";', body)
+
+    def test_the_suppression_is_keyed_on_the_cause_rather_than_on_the_turn(self):
+        """`hrFainted()` was too broad. `sim._visible_tokens` reads the victim's HP straight
+        after the move, so a hit we LIVE through keeps its `~` even when the end-of-turn burn
+        tick then finishes us -- the simulator renders `E1h~M1X4` for that turn, and dropping
+        the marker there builds a token no candidate matches."""
+        body = self.html[self.html.index("function hrFaintHidesTargetSecondary(){"):]
+        body = body[:body.index("\n}") + 2]
+        self.assertIn("if (!hrLanded(t.target)) return false;", body)
+        self.assertIn('if (t.action === "X") return true;', body)
+        for alternative in ("hrActive().burn_tick > 0", 't.future_sight === "h"',
+                            't.ours.prevented === "cfz"', "hrLifeOrbRecoiled()"):
+            self.assertIn(alternative + ") return false;", body, alternative)
 
     def test_the_replacement_reaches_the_facade(self):
         import inspect

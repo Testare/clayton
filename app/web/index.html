@@ -5363,7 +5363,14 @@ function hrSecondaryMark(side){
   if (!info || !info.has_secondary) return "";
   // A move that faints the victim rolls its secondary and shows nothing -- no "was burned!", no
   // stat-drop message. The roll is spent; the marker is not reported.
-  if (side === "target" && hrFainted()) return "";
+  //
+  // Gated on `hrFaintHidesTargetSecondary` rather than on `hrFainted`, which was too broad. The
+  // suppression belongs to a faint THE MOVE caused, which is why `sim._visible_tokens` reads the
+  // victim's HP immediately after the move rather than at the end of the turn: survive the hit
+  // and go down to the burn tick and the message was on screen all along -- the simulator renders
+  // `M1hE3h~X2` for that turn [verified: a burned Smeargle under Latias's Mist Ball] -- so
+  // dropping the `~` there built a token no candidate matches.
+  if (side === "target" && hrFaintHidesTargetSecondary()) return "";
   if (info.flinch_secondary){
     // Gated on the same predicate that decides whether to OFFER the flinch, so the marker and
     // the question cannot disagree: no offer, no marker, whatever is sitting in the answer.
@@ -5442,6 +5449,75 @@ function hrCanFaint(){
 function hrFainted(){
   const t = _hrTurn;
   return t.action === "X" ? true : t.fainted === true;
+}
+
+// Whether a faint of ours is one the TARGET'S MOVE must have caused -- the only faint that hides
+// its own secondary.
+//
+// The rule is about the CAUSE, not about the turn. A KO prints no "was burned!" and no stat-drop
+// message, while a hit we live through prints both, and an end-of-turn residual that finishes us
+// afterwards cannot take them back. So every alternative cause below returns false: we were alive
+// to read the message, and `sim._visible_tokens` keeps the `~` on exactly those turns.
+//
+// Conservative on purpose. Suppressing a marker the player really saw eliminates the true seed;
+// asking about one that could not have shown costs a click.
+function hrFaintHidesTargetSecondary(){
+  const t = _hrTurn;
+  if (!hrFainted()) return false;
+  if (!hrLanded(t.target)) return false;                   // the move cannot be what did it
+  if (t.action === "X") return true;                       // nothing else had happened yet
+  if (hrActive().burn_tick > 0) return false;              // the tick could have finished us
+  if (t.future_sight === "h") return false;                // so could the Future Sight
+  if (t.ours && t.ours.prevented === "cfz") return false;  // so could a confusion self-hit
+  if (hrLifeOrbRecoiled()) return false;                   // so could our own Life Orb
+  return true;
+}
+
+// Whether the target's secondary is a question to put to the player at all, and therefore whether
+// its `~` is reportable. One predicate for three callers -- the block that asks,
+// `hrTurnComplete`'s wait and `hrSecondaryMark` -- because the three drifting apart is how the
+// Report button hangs on a question nobody is being asked.
+function hrTargetSecondaryAsked(){
+  const t = _hrTurn, info = hrTargetMoveInfo();
+  if (!info || !info.has_secondary || info.flinch_secondary) return false;
+  if (info.secondary_cannot_show) return false;            // nothing could have shown either way
+  if (!hrLanded(t.target)) return false;
+  return !hrFaintHidesTargetSecondary();
+}
+
+// Whether the faint question has to be pulled FORWARD into the target's half, ahead of its
+// secondary question. A move that faints its victim spends the secondary roll and shows nothing,
+// so the order the interview used to ask in -- proc first, faint after -- put a question to the
+// player that their own next answer invalidated, and the `~` they had just reported was then
+// dropped on the floor (reported by Testare).
+//
+// Only when WE moved first, which is the only order in which the target's move can be what took
+// us down while we still had a move of our own to report: a target that moves first and faints us
+// is reported as the `X` action, and that settles the question before this block renders at all.
+//
+// The pulled-forward question is still the whole turn's -- end-of-turn residuals included -- and
+// answerable, because the player is reporting a turn they have already watched. So it is asked
+// once, here, and `hrInterview` skips its own copy.
+function hrFaintDueOnTargetsMove(){
+  const t = _hrTurn, info = hrTargetMoveInfo();
+  if (!info || !info.has_secondary || info.flinch_secondary || info.secondary_cannot_show)
+    return false;
+  if (!hrLanded(t.target)) return false;
+  if (t.action === "X" || !hrWeActFirst()) return false;
+  return hrCanFaint();
+}
+
+// The faint question itself, extracted so the two places that can ask it cannot word it
+// differently. "No" is already selected -- a faint is the rare case, and the question exists to be
+// corrected rather than answered -- so nothing waits on it.
+function hrFaintBlock(){
+  const t = _hrTurn, who = hrActive();
+  return hrChips(`Did ${who.name} faint?`, [
+    hrChip("No", "hrSet('fainted',false)", t.fainted === false),
+    hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
+  ], who.burn_tick > 0
+       ? `assumed no — burn takes ${who.burn_tick} off ${who.name} at end of turn`
+       : "assumed no");
 }
 
 // The HP an item implies, when the item is the ONLY thing that touched our HP this turn.
@@ -5718,11 +5794,11 @@ function hrTurnComplete(){
   if (!caught){
     if (!t.target) return false;
     if (!t.target.prevented){
-      const info = hrTargetMoveRows()[t.target.slot];
-      // `secondary_cannot_show` for the same reason as our half above: a proc that could not
-      // have shown is not asked about, so waiting on its answer hangs the button.
-      if (info.has_secondary && !info.flinch_secondary && !info.secondary_cannot_show
-          && hrLanded(t.target) && t.target.secondary === undefined) return false;
+      // **Delegated rather than restated**, the same lesson our own half above learned the hard
+      // way: a copy of the condition goes stale the moment the question grows a new gate, and the
+      // page then waits forever on an answer it is no longer asking for. `secondary_cannot_show`
+      // was that gate once; a faint the target's move caused is the latest one.
+      if (hrTargetSecondaryAsked() && t.target.secondary === undefined) return false;
       // Static's question is the one the player is most likely to be looking at, so the turn
       // must not report without it.
       if (hrStaticPossibleOnTarget() && t.target.static === undefined) return false;
@@ -6191,6 +6267,13 @@ function hrTargetBlocks(){
           turn and nothing can touch it until then. Nothing to report for it this turn.
         </div></div>`);
 
+    // **The faint question, ahead of the secondary one.** A move that faints its victim shows no
+    // extra-effect message at all, so asking the proc first and the faint afterwards put a
+    // question to the player that their own next answer invalidated. Pulled forward only when
+    // there is a secondary question for it to gate -- see `hrFaintDueOnTargetsMove`, and note
+    // `hrInterview` skips its own copy on exactly these turns.
+    if (hrFaintDueOnTargetsMove()) out.push(hrFaintBlock());
+
     // A flinch is the exception: it is announced on the victim's turn, so a flinching move that
     // went SECOND showed the player nothing at all. Asking anyway -- which is what this did for
     // every Zen Headbutt Latias used after us -- invites a guess and then filters the candidate
@@ -6209,7 +6292,7 @@ function hrTargetBlocks(){
       out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(hrSwitchTargetName())}
           is already ${esc(hrDefenderStatus())}, so ${esc(info.name)}'s extra effect could not
           land or show either way — nothing to report.</div></div>`);
-    } else if (info.has_secondary && hrLanded(t.target)){
+    } else if (hrTargetSecondaryAsked()){
       out.push(hrChips(`Did ${info.name}'s extra effect happen?`, [
         hrChip("No", `hrSet('target',${base},result:'${t.target.result}',secondary:false})`,
                t.target.secondary === false),
@@ -6218,8 +6301,19 @@ function hrTargetBlocks(){
         hrChip(hrSecondaryYes(info, s.target.name, hrActive().name),
                `hrSet('target',${base},result:'${t.target.result}',secondary:true})`,
                t.target.secondary === true),
-      ], `${info.effect_chance}% chance`));
+      ], `${info.effect_chance}% chance`
+         // Only reachable with a faint still on the table: `hrFaintHidesTargetSecondary` kept the
+         // question alive because something OTHER than the move could have been what finished us,
+         // and the message's presence is exactly how the two are told apart.
+         + (hrFainted() ? ` — it would have shown as the hit landed, before whatever `
+                        + `finished ${hrActive().name} off at the end of the turn` : "")));
       if (t.target.secondary === undefined) return {blocks: out, done: false};
+    } else if (info.has_secondary && hrLanded(t.target)){
+      // Reached only when the faint just reported hid it: the roll was spent and nothing was
+      // printed, so there is no observation to collect and `hrSecondaryMark` emits no `~`.
+      out.push(`<div class="hr-q"><div class="hr-q-label muted hr-small">${esc(hrSwitchTargetName())}
+          went down to ${esc(info.name)}, and a move that faints its victim prints no
+          extra-effect message — nothing to report.</div></div>`);
     }
     // ...and Static, which no move announces. Asked last because that is when it happened: the
     // contact ability fires after the move's own secondary.
@@ -6385,9 +6479,13 @@ function hrInterview(){
     if (!t.encore_ended) return blocks.join("");
   }
 
-  // 3b. The Future Sight banked two turns ago, which lands now. Asked after both halves and
-  // before the faint, which is the order it resolves in -- and before the faint for a second
-  // reason: it can be what put us down.
+  // 3b. The Future Sight banked two turns ago, which lands now. Asked after both halves, which is
+  // the order it resolves in, and before 3c's faint question -- it can be what put us down.
+  //
+  // Not before a faint question the target's half pulled forward, which is the one turn shape
+  // where the two come out the other way round. Nothing is lost by it: both blocks render in the
+  // same list, so the player answers them in whichever order they remember, and the faint chip is
+  // a whole-turn answer either way.
   if (hrFutureSightDue()){
     blocks.push(hrChips(`Did the Future Sight hit ${hrActive().name}?`, [
       hrChip("Hit", "hrSet('future_sight','h')", t.future_sight === "h"),
@@ -6397,19 +6495,12 @@ function hrInterview(){
   }
 
   // 3c. Did we go down? Asked before HP, because a faint REPLACES the HP token rather than
-  // joining it. Skipped when the action itself already said so.
-  if (!caught && hrCanFaint() && t.action !== "X"){
-    const who = hrActive();
-    // "No" is already selected -- a faint is the rare case, and the question exists to be
-    // corrected rather than answered. So nothing returns early here: the turn is reportable
-    // without touching it.
-    blocks.push(hrChips(`Did ${who.name} faint?`, [
-      hrChip("No", "hrSet('fainted',false)", t.fainted === false),
-      hrChip("Yes", "hrSet('fainted',true)", t.fainted === true),
-    ], who.burn_tick > 0
-         ? `assumed no — burn takes ${who.burn_tick} off ${who.name} at end of turn`
-         : "assumed no"));
-  }
+  // joining it. Skipped when the action itself already said so -- and when the target's half has
+  // already asked it, which it does whenever a secondary question of the target's needs gating on
+  // the answer (`hrFaintDueOnTargetsMove`). One question, two possible positions: the earliest
+  // point in the turn at which it is both answerable and needed.
+  if (!caught && hrCanFaint() && t.action !== "X" && !hrFaintDueOnTargetsMove())
+    blocks.push(hrFaintBlock());
   if (!caught && hrFainted()){
     const healthy = hrHealthyBench();
     if (!healthy.length){

@@ -1,3 +1,27 @@
+# Feedback 8
+
+* DONE (2026-11-04) Two interview questions with no right answer (the Dialga run):
+  * Interview does not understand the "must recharge" requirement of roar of time, and asks for
+    dialga's move on the following turn.
+    * The snapshot now publishes `target.recharging` and the interview settles the turn as
+      `Erch`, below the sleep case to match the ROM's before-move walk. Nothing can be asked:
+      no selection roll is spent, so every candidate renders that one token.
+  * Interview asks if discharge paralyzes an already status'd target.
+    * `move_info` now publishes `secondary_cannot_show` and both secondary questions drop out.
+      `sim._visible_tokens` was already suppressing the `~` for it, so the two turns rendered
+      identically and "Yes" eliminated every candidate.
+
+
+# Feedback 7 
+* DONE (2026-10-28) URGENT FIXES:
+  * Can't open battle compass because stopwatch isn't input - That should be an input during battle compass, not during configuration.
+    * The reading is no longer a configuration `hard_error`, so Start Run is reachable; the run
+      page takes it and Start is gated on it there, with a reason naming it.
+  * Can't input Cresselia's beginning parameters during configuration (HP, status conditions)
+    * When species is a roamer, we should disable/hide the target advances and vector ms field, but show fields for HP and status conditions (For now only support "No status" or "Paralyzed")
+    * Configure now has "What it walks in with" (HP + status, none/paralyzed only) for a roamer,
+      and hides Advances, Vector ms and the starting advance frame.
+
 # Feedback 6
 
 * PARTLY DONE: Hunt doesn't seem to be saving the seed A +/- delay/second parameter or parity match parameter for platinum hunts.

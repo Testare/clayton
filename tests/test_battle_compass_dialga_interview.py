@@ -295,12 +295,25 @@ class TestTheButtonGate(unittest.TestCase):
         self.assertIn("if (hrOurSecondaryPending()) return false;", gate)
         self.assertNotIn("t.ours.secondary === undefined", gate)
 
-    def test_the_target_half_reads_the_flag(self):
-        """It cannot delegate the same way -- there is no target-side pending helper -- so it
-        carries the flag explicitly."""
+    def test_the_target_half_delegates_too_now(self):
+        """It used to carry the flag explicitly, for want of a target-side pending helper. There
+        is one -- `hrTargetSecondaryAsked`, grown when a faint the target's move caused became a
+        second reason not to ask -- so the copy is gone the same way our half's went."""
         gate = self._gate()
-        self.assertIn("!info.secondary_cannot_show", gate)
-        self.assertIn("t.target.secondary === undefined", gate)
+        self.assertIn("if (hrTargetSecondaryAsked() && t.target.secondary === undefined) "
+                      "return false;", gate)
+        self.assertNotIn("!info.secondary_cannot_show", gate)
+
+    def test_the_two_gates_cannot_disagree_about_the_target_half_either(self):
+        """The same invariant our half holds: the predicate that decides whether to ASK is the
+        one the button waits on, and the one the `~` is emitted from."""
+        html = _html()
+        start = html.index("function hrTargetSecondaryAsked(){")
+        asked = html[start:html.index("\n}\n", start)]
+        self.assertIn("info.secondary_cannot_show", asked)
+        self.assertIn("hrFaintHidesTargetSecondary()", asked)
+        self.assertIn("} else if (hrTargetSecondaryAsked()){", html)
+        self.assertIn('if (side === "target" && hrFaintHidesTargetSecondary()) return "";', html)
 
     def test_the_two_gates_cannot_disagree_about_our_half(self):
         """The rendering gate and the button gate are now the same predicate, which is the

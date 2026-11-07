@@ -45,6 +45,27 @@ def hooh(**kw):
     return Battler(**fields)
 
 
+def latias(level=40, **kw):
+    """The configured Lv40 set. Mist Ball is slot 3, and its 50% Sp. Atk drop is the one
+    secondary in any moveset that is neither a flinch nor a non-volatile status -- so it is the
+    only one a faint can hide WITHOUT the mutually-exclusive-status rule hiding it first."""
+    moves = moveset("latias")
+    fields = dict(name="Latias", level=level, types=tuple(species("latias")["types"]),
+                  stats=derive_species_stats("latias", level, "Serious"), moves=moves,
+                  pp=tuple(resolve_move(m).pp for m in moves), ability="Levitate")
+    fields.update(kw)
+    return Battler(**fields)
+
+
+def smeargle(hp=153, **kw):
+    fields = dict(name="Smeargle", level=58, types=("Normal",),
+                  stats={"hp": 153, "atk": 82, "def": 66, "spa": 20, "spd": 70, "spe": 160},
+                  moves=("False Swipe", "Spore"), pp=(40, 15), ability="Technician",
+                  party_slot=1)
+    fields.update(kw)
+    return Battler(**fields).with_hp(hp)
+
+
 class TestTheSimulatorPredictsTheMissAlready(unittest.TestCase):
     """The half that was never broken, pinned first -- because it is what makes the missing chip
     a reporting bug rather than a modelling one."""
@@ -446,3 +467,90 @@ class TestTheBurnTickFollowsWhoIsOutAtTheEndOfTheTurn(unittest.TestCase):
         html = INDEX.read_text()
         self.assertIn("who.burn_tick > 0", html)
         self.assertIn("off ${who.name} at end of turn", html)
+
+
+# --- the faint question comes before the secondary one ------------------------------------------
+
+class TestAFaintIsAskedBeforeTheProcItHides(unittest.TestCase):
+    """A move that faints its victim spends the secondary roll and prints nothing at all, so
+    asking "did its extra effect happen?" before "did you faint?" put a question to the player
+    that their own next answer invalidated -- and the ``~`` they had just reported was then
+    dropped on the floor by `hrSecondaryMark` (reported by Testare).
+
+    The simulator half was already right, and the two tests below are what makes the page's half
+    a reporting bug rather than a modelling one. Note the SECOND of them, which is why the
+    suppression is keyed on the faint's CAUSE rather than on the turn having one: survive the hit
+    and go down to the end-of-turn burn tick and the message really was on screen.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = INDEX.read_text()
+
+    #: Mist Ball faints a 12 HP Smeargle. `M1hE3hX2` -- no ``~``, whatever the 50% rolled.
+    KO_SEED = 0x1003
+    #: Mist Ball leaves a burned 50 HP Smeargle standing, its Sp. Atk drop shows, and the burn
+    #: tick finishes it at the end of the turn. `M1hE3h~X2`.
+    RESIDUAL_SEED = 0x100A
+
+    def _turn(self, hp, seed, *, burned=False):
+        ours = smeargle(hp=hp)
+        if burned:
+            ours = ours.with_status(Status.BURN)
+        state = BattleState(ours=ours, target=latias(), rng=seed, phase=1,
+                            bench=(smeargle(party_slot=2),))
+        nxt = simulate_turn(state, Action.MOVE_1, HUNT, replacement=2)
+        return tok.render_turn(tok.normalise(nxt.log[-1])), nxt
+
+    def test_a_move_that_faints_us_emits_no_secondary_marker(self):
+        """Swept rather than spot-checked: the claim is about every seed, not a lucky one."""
+        rendered, nxt = self._turn(12, self.KO_SEED)
+        self.assertEqual(rendered, "M1hE3hX2")
+        marked = 0
+        for seed in range(0x1000, 0x1400):
+            rendered, nxt = self._turn(12, seed)
+            if nxt.faints and "~" in rendered:
+                marked += 1
+        self.assertEqual(marked, 0)
+
+    def test_but_a_hit_we_live_through_keeps_it_even_if_the_burn_tick_finishes_us(self):
+        """The exception the page's old gate got wrong. `sim._visible_tokens` reads the victim's
+        HP immediately after the move, which is the ROM's own point of decision."""
+        rendered, nxt = self._turn(50, self.RESIDUAL_SEED, burned=True)
+        self.assertEqual(rendered, "M1hE3h~X2")
+        self.assertTrue(nxt.faints)
+
+    def test_the_question_is_pulled_forward_into_the_targets_half(self):
+        """Positionally, which is the whole of the complaint: the faint chips have to render
+        above the extra-effect chips, not below them."""
+        block = self.html.split("function hrTargetBlocks(){")[1].split("\nfunction ")[0]
+        faint = block.index("if (hrFaintDueOnTargetsMove()) out.push(hrFaintBlock());")
+        secondary = block.index("} else if (hrTargetSecondaryAsked()){")
+        self.assertLess(faint, secondary)
+
+    def test_only_when_we_moved_first_and_only_to_gate_a_secondary(self):
+        """A target that moves first and faints us is the ``X`` action, which settles the question
+        before this block renders at all -- and with no secondary to gate there is nothing to
+        pull the question forward of."""
+        body = self.html.split("function hrFaintDueOnTargetsMove(){")[1].split("\n}")[0]
+        self.assertIn("info.has_secondary", body)
+        self.assertIn("info.flinch_secondary", body)
+        self.assertIn("info.secondary_cannot_show", body)
+        self.assertIn('if (t.action === "X" || !hrWeActFirst()) return false;', body)
+        self.assertIn("return hrCanFaint();", body)
+
+    def test_it_is_one_question_asked_once(self):
+        """Two copies of the chips would let the player answer one and leave the other showing
+        the default. So both positions call the same builder, and `hrInterview` stands down on
+        exactly the turns the target's half took over."""
+        self.assertEqual(self.html.count("faint?`, ["), 1, "only hrFaintBlock builds it")
+        self.assertIn("function hrFaintBlock(){", self.html)
+        self.assertIn('if (!caught && hrCanFaint() && t.action !== "X" '
+                      "&& !hrFaintDueOnTargetsMove())\n    blocks.push(hrFaintBlock());",
+                      self.html)
+
+    def test_a_faint_that_hid_the_proc_says_so_instead_of_asking(self):
+        """The same shape as the `secondary_cannot_show` note beside it: silence where a question
+        used to be reads as a missing question."""
+        self.assertIn("went down to ${esc(info.name)}, and a move that faints its victim prints "
+                      "no", self.html)
