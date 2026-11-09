@@ -302,17 +302,25 @@ class Battler:
     #: ``moveEffectsData.encoredMove``/``encoredMoveSlot`` pair, kept as a slot because that is
     #: what the M1-M4 and E1-E4 tokens speak in.
     #:
-    #: **The lock narrows selection; it does not skip it.** That is the one fact about Encore
-    #: that decides whether a run desynchronises, and it is the opposite of `charging_slot`,
-    #: `uproar_turns` and `recharging`: those three sit in `Battler_CanPickCommand`
-    #: (battle_lib.c:6224-6236), so no roll is spent at all, while Encore is nowhere in that
-    #: function. What it does instead is mark every OTHER slot invalid, unconditionally and
-    #: outside any `opMask` (`BattleSystem_CheckInvalidMoves`, battle_lib.c:2302-2305 -- the ROM
-    #: itself calls the flag "only implicit"), so the wild picker still rolls and still indexes:
-    #: ``validMoves[RandNext % 1]`` (battle_display.c:3611). One roll, one outcome.
+    #: **The lock SKIPS selection, and it used to be modelled as narrowing it.** That is the one
+    #: fact about Encore that decides whether a run desynchronises, and this comment had it
+    #: backwards for exactly the reason it looked careful: Encore really is nowhere in
+    #: `Battler_CanPickCommand` (battle_lib.c:6224-6236), unlike `charging_slot`, `uproar_turns`
+    #: and `recharging`, and `BattleSystem_CheckInvalidMoves` really does mark every other slot
+    #: invalid (battle_lib.c:2302-2305). Both true, and neither is the step that matters.
     #:
-    #: Which is why it lives here and is read by `usable_slots` rather than short-circuiting
-    #: `sim.select_target_move` the way the other three locks do.
+    #: The step in between is `COMMAND_SELECTION_SELECT`'s ``PLAYER_INPUT_FIGHT`` case
+    #: (battle_controller_player.c:431-456), which for ANY battler -- the loop is over all of
+    #: them (`:319`) and the branch is not player-gated -- sets `moveSlot` and `moveSelected`
+    #: straight from the Encore and routes to `COMMAND_SELECTION_WAIT` instead of
+    #: `COMMAND_SELECTION_MOVE_SELECT_INIT`. The wild's roll lives inside the task only that
+    #: third branch starts (``validMoves[RandNext % validMovesCount]``, battle_display.c:3611),
+    #: so it is never reached. ``% 1`` is what would happen if the menu were shown, and the
+    #: Encore branch is what stops it being shown [verified].
+    #:
+    #: So this is read by `usable_slots` AND short-circuits `sim.select_target_move`, like the
+    #: other three locks -- at a different point in the ROM, for a different reason, at the same
+    #: cost of zero.
     #:
     #: Ours to inflict. Quagsire's, as an egg move, and the first move of ours that takes the
     #: target's CHOICE away rather than changing what the choice is worth.

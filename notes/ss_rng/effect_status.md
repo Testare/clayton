@@ -83,17 +83,33 @@ RAND & 1 == 0 => Immobilized by love.
 
 While under the effect of encore, just like when it has no useable moves it skips the roll to determine which move to perform, and performs the last used move. If that move is not in the useable move pool, they struggle instead as they have no useable moves (see below).
 
-**Two corrections, both from the Platinum decomp, and the first is side-dependent — which is why
-the sentence above is right here and wrong for `battle_compass`.**
+**Two corrections from the Platinum decomp, and a third that corrects one of them.**
 
-*The skipped roll is OUR side's only.* Magikarp is the player's Pokémon, and an Encored player
-Pokémon really is forced at command selection with no roll
-(battle_controller_player.c:443-446). A WILD Encored Pokémon is not: `BattleSystem_CheckInvalidMoves`
-marks every other slot invalid — unconditionally, outside any `opMask`, which is why the ROM calls
-that flag "only implicit" (battle_lib.c:2302-2305 and constants/battle.h:129) — and the wild picker
-then still rolls, `validMoves[RandNext % 1]` (battle_display.c:3611). One roll, one outcome: the
-modulus collapses to one rather than the roll disappearing. Getting this backwards in Battle
-Compass would desynchronise every turn of a lock.
+*The sentence above is right for BOTH sides — the roll really does disappear.* This file used to
+claim the skip was the player's only, on the reasoning that an Encored player Pokémon is forced at
+command selection (battle_controller_player.c:443-446) while a WILD one merely has every other
+slot marked invalid (`BattleSystem_CheckInvalidMoves`, battle_lib.c:2302-2305, the flag the ROM
+itself calls "only implicit") and then still rolls `validMoves[RandNext % 1]`
+(battle_display.c:3611).
+
+Every clause of that is true and the conclusion does not follow, because `:443` is not
+player-gated. The loop at `:319` runs over every battler, and `COMMAND_SELECTION_SELECT`'s
+`PLAYER_INPUT_FIGHT` case has three branches in order: `STRUGGLING_ALL` → the struggle message;
+**`encoredMove` → set `moveSlot`/`moveSelected` from the Encore and go to
+`COMMAND_SELECTION_WAIT`**; otherwise → `COMMAND_SELECTION_MOVE_SELECT_INIT`. Only the third emits
+the move-select menu, and the wild's roll lives inside the task it starts. `% 1` is what would
+happen *if* the menu were reached; the Encore branch is exactly what stops it being reached. So an
+Encored wild spends **no** selection roll [verified].
+
+Getting this backwards desynchronises every turn of a lock after its first, which is how it was
+found: a player Encored a Regirock and the predictions drifted (clayton-957.44).
+
+*And the same step costs a ROAMER its escape.* `TrainerAI_Main` holds both `TrainerAI_Init`'s four
+rolls and the escape decision (`AI_STATUS_FLAG_ESCAPE`, trainer_ai.c:311-339), and it too is
+called from inside `Task_TrainerShowMoveSelectMenu`. An Encored roamer never starts that task, so
+it cannot decide to flee — trapped or not — and its turn costs nothing. Same chain as the no-PP
+Struggle case below, one link along, and reachable where that one is not: a party can carry Encore
+and Cresselia is a configured target. [derived; no capture covers it]
 
 *Encore does not cause a Struggle.* `MON_COND_CHECK_STATE_ENCORE` re-checks the move before the
 counter: if the slot is gone or `ppCur[slot] == 0` it zeroes `encoredTurns` and falls into the

@@ -8,8 +8,10 @@ is dead weight against them. Three quarters of the party survives anyway, and En
 be worth more than the Explosion lock was:
 
 * **Encore (90)** is the first move on either side that takes the target's CHOICE away rather
-  than changing what the choice is worth. While it runs the selection roll is still spent but its
-  modulus is one, so the target's half of every turn is predictable.
+  than changing what the choice is worth. While it runs the selection roll is not spent at all,
+  so the target's half of every turn is both predictable and one advance cheaper -- see
+  `TestTheLockItself`, which asserted the opposite of that until a real run turned it up
+  (clayton-957.44).
 * **Yawn (187)** was already wired in both directions and only lacked permission -- the one way
   to sleep a Clear Body target without an accuracy roll.
 * **Recover (32)** is the first self-heal of ours, and the only move whose ADVANCE COUNT the
@@ -222,11 +224,27 @@ class TestTheLastMoveRecord(unittest.TestCase):
 
 
 class TestTheLockItself(unittest.TestCase):
-    def test_it_collapses_the_selection_modulus_without_skipping_the_roll(self):
-        """**The fact a run desynchronises on if it is got wrong.** Encore is nowhere in
-        `Battler_CanPickCommand`, so unlike a charge or an Uproar the roll is still spent -- the
-        ROM marks every other slot invalid and the wild picker does
-        ``validMoves[RandNext % 1]`` (battle_display.c:3611)."""
+    def test_it_skips_the_selection_roll_entirely(self):
+        """**The fact a run desynchronises on if it is got wrong, and it was got wrong.**
+
+        This test used to assert the opposite -- that Encore collapses the modulus to one while
+        still spending the roll -- on the reasoning that Encore is nowhere in
+        `Battler_CanPickCommand`, so the wild would reach the picker and roll ``% 1``. The step
+        that reasoning misses is the one in between.
+
+        ``PLAYER_INPUT_FIGHT`` in `COMMAND_SELECTION_SELECT`
+        (battle_controller_player.c:431-456) has three branches in this order: `STRUGGLING_ALL`
+        routes to the struggle message; an **`encoredMove` sets `moveSlot` and `moveSelected`
+        straight from the Encore and routes to `COMMAND_SELECTION_WAIT`**; everything else goes to
+        `COMMAND_SELECTION_MOVE_SELECT_INIT`. Only the third branch emits the move-select menu,
+        and the wild's roll lives inside the task that starts --
+        ``validMoves[BattleSystem_RandNext(...) % validMovesCount]`` (battle_display.c:3600-3611).
+
+        And the loop is over every battler, the wild one included (`:319`); the branch is not
+        player-gated. `CheckInvalidMoves` narrowing the list to one slot is what WOULD happen if
+        the menu were reached, and the Encore branch is exactly what stops it being reached.
+        Reported from a real run (clayton-957.44).
+        """
         locked = _titan(encored_slot=CURSE, encored_turns=4)
         self.assertEqual(locked.usable_slots(), (CURSE,))
         seed = 0xABCDEF01
@@ -234,13 +252,84 @@ class TestTheLockItself(unittest.TestCase):
             with self.subTest(offset):
                 rng, slot = select_target_move(seed + offset, locked)
                 self.assertEqual(slot, CURSE)
-                self.assertNotEqual(rng, seed + offset)     # the roll WAS spent
+                self.assertEqual(rng, seed + offset)       # no roll was spent
 
-    def test_a_charge_lock_does_skip_the_roll_which_is_the_contrast(self):
-        """Stated beside the test above because the two look alike and cost differently."""
+    def test_a_charge_lock_skips_it_too_but_for_a_different_reason(self):
+        """Both cost zero and the reasons do not interchange: a charge is `CanPickCommand` being
+        FALSE, so no command is picked at all, while Encore picks a command and skips only the
+        move menu. Worth keeping apart because the next lock added will be one or the other."""
         seed = 0xABCDEF01
         rng, slot = select_target_move(seed, _titan(charging_slot=STOMP))
         self.assertEqual((rng, slot), (seed, STOMP))
+
+    def test_a_taunt_lock_is_the_contrast_that_DOES_still_roll(self):
+        """The shape the old reading of Encore was really describing. A Taunt narrows the valid
+        list and the menu is still reached, so the roll is spent at the narrower modulus."""
+        taunted = _titan(taunted_turns=3)
+        self.assertEqual(taunted.usable_slots(), (STOMP, ROCK_THROW, SUPERPOWER))
+        seed = 0xABCDEF01
+        rng, slot = select_target_move(seed, taunted)
+        self.assertNotEqual(rng, seed)
+        self.assertIn(slot, (STOMP, ROCK_THROW, SUPERPOWER))
+
+    def test_an_encored_ROAMER_spends_nothing_and_cannot_flee(self):
+        """The same ROM step one link along, and the consequence is startling enough to pin.
+
+        `TrainerAI_Main` holds both `TrainerAI_Init`'s four rolls AND the escape decision
+        (`AI_STATUS_FLAG_ESCAPE`, trainer_ai.c:311-339), and it is called from inside
+        `Task_TrainerShowMoveSelectMenu`. An Encored battler never starts that task, so an
+        Encored roamer cannot decide to leave -- trapped or not -- and its turn costs no rolls.
+
+        Reachable in a way the Struggle case beside it is not: our own party can carry Encore and
+        Cresselia is a configured target. Modelling it the other way would predict a flee the
+        game never rolls for. [derived -- the ROM chain is unambiguous at every link, but no
+        capture covers it (clayton-c3c4)]
+        """
+        locked = _titan(encored_slot=STOMP, encored_turns=4)
+        seed = 0xABCDEF01
+        for trapped in (False, True):
+            with self.subTest(trapped=trapped):
+                choice = select_roamer_action(seed, locked, trapped=trapped)
+                self.assertEqual(choice.slot, STOMP)
+                self.assertFalse(choice.fled, "an Encored roamer never reaches the escape")
+                self.assertEqual(choice.rolls, 0)
+                self.assertEqual(choice.rng, seed)
+
+    def test_an_untrapped_roamer_with_no_encore_still_flees(self):
+        """So the test above is about the Encore and not about the fixture."""
+        choice = select_roamer_action(0xABCDEF01, _titan(), trapped=False)
+        self.assertTrue(choice.fled)
+        self.assertEqual(choice.rolls, 4)
+
+    def test_the_before_move_checks_still_run_on_a_locked_turn(self):
+        """Encore takes the CHOICE away and nothing else. The before-move walk is downstream of
+        command selection, so sleep, a flinch, confusion and full paralysis all still apply --
+        and paralysis is the one with a roll, so its ``% 4`` has to still be there.
+
+        Worth pinning next to the skipped selection roll, because "Encore skips the roll" is one
+        sentence away from "an Encored turn spends nothing".
+        """
+        outcomes = {}
+        for seed in range(0x1000, 0x1100):
+            state = _state(target=_titan(encored_slot=STOMP, encored_turns=4,
+                                         status=Status.PARALYSIS), seed=seed)
+            state = simulate_turn(state, Action.MOVE_4, _config())
+            marker = next(t for t in tok.tokenise(_rendered(state)) if t.startswith("E"))
+            outcomes[marker] = outcomes.get(marker, 0) + 1
+        self.assertIn("Epar", outcomes, outcomes)
+        # Roughly a quarter, which is the paralysis modulus and not a coincidence worth asserting
+        # tightly -- the point is that the check is reached at all.
+        self.assertGreater(outcomes["Epar"], 30)
+        # ...and every turn it DID move, it moved with the encored slot.
+        self.assertEqual({k[:2] for k in outcomes if k != "Epar"}, {f"E{STOMP + 1}"})
+
+    def test_an_encored_turn_costs_one_advance_fewer_than_a_free_one(self):
+        """End to end, on the stream rather than on the picker: the whole point is the offset."""
+        free = _state(target=_titan())
+        free = simulate_turn(free, Action.MOVE_4, _config())
+        locked = _state(target=_titan(encored_slot=STOMP, encored_turns=4))
+        locked = simulate_turn(locked, Action.MOVE_4, _config())
+        self.assertEqual(locked.rng_offset, free.rng_offset - 1)
 
     def test_the_lock_runs_for_exactly_the_rolled_number_of_turns_after_the_encore(self):
         """A rolled D locks turns T+1..T+D and the wear-off lands at the end of T+D. The counter

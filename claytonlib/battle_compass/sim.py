@@ -1710,10 +1710,11 @@ def struggle_move() -> Move:
     return move
 
 #: Encore (BATTLE_EFFECT_ENCORE), and the second move of ours that changes what the target's turn
-#: costs -- but in the opposite direction from Taunt. Taunt shrinks the selection modulus from
-#: four to two; Encore shrinks it to **one**, which makes the target's half of the turn fully
-#: predictable while still spending its roll. See `Battler.encored_slot` for why the roll
-#: survives, which is the fact a run desynchronises on if it is got wrong.
+#: costs -- but in the opposite direction from Taunt, and more sharply than Taunt. Taunt shrinks
+#: the selection modulus from four to two and the roll is still spent. Encore removes the roll:
+#: the target's half of the turn becomes fully predictable AND one advance cheaper. See
+#: `Battler.encored_slot` for the ROM chain, which is the fact a run desynchronises on if it is
+#: got wrong -- and which this file had backwards until a real run turned it up.
 #:
 #: **The lock has two halves and they act at different moments.**
 #: `BattleSystem_CheckInvalidMoves` is the selection half, above. The other is
@@ -3487,8 +3488,9 @@ def party_order(bench: tuple[Battler, ...]) -> tuple[Battler, ...]:
 def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     """The wild move-selection roll: ``RANDOM % (moves with PP)``, indexing the survivors.
 
-    One roll per turn **except while the target is locked into a multi-turn move or an Uproar**,
-    and the modulus shrinks as PP runs out — so its entropy decays from 2.00
+    One roll per turn **except while the target is locked into a multi-turn move, an Uproar or an
+    Encore** -- the first two because `Battler_CanPickCommand` is FALSE, the third because the
+    FIGHT branch fills the slot in and skips the menu -- and the modulus shrinks as PP runs out — so its entropy decays from 2.00
     bits to 1.58 to 1.00 and then to nothing (sec 5.2 R4, verified). Returns (rng, slot), with
     slot None when nothing is usable and the target would have to Struggle.
 
@@ -3522,6 +3524,27 @@ def select_target_move(rng: int, target: Battler) -> tuple[int, int | None]:
     usable = target.usable_slots()
     if not usable:
         return rng, None
+    if target.encored_slot is not None:
+        # **An Encored battler spends NO selection roll**, and this is checked AFTER the Struggle
+        # branch above because the ROM checks it in that order.
+        #
+        # `COMMAND_SELECTION_SELECT`'s ``PLAYER_INPUT_FIGHT`` case
+        # (battle_controller_player.c:431-456) has three branches, in this order: `STRUGGLING_ALL`
+        # routes to the struggle message; **an `encoredMove` sets `moveSlot` and `moveSelected`
+        # straight from the Encore and routes to `COMMAND_SELECTION_WAIT`**; everything else goes
+        # to `COMMAND_SELECTION_MOVE_SELECT_INIT`. Only that third branch emits the move-select
+        # menu, and the wild's roll lives inside the task it starts --
+        # ``validMoves[BattleSystem_RandNext(...) % validMovesCount]``
+        # (battle_display.c:3600-3611). So an Encored battler never reaches the roll [verified].
+        #
+        # **This loop runs over every battler, the wild one included** (`:319`), and the branch is
+        # not player-gated. That is what the old reading of this got wrong: it had
+        # `BattleSystem_CheckInvalidMoves` narrowing the valid list to one and the wild then
+        # rolling ``% 1``, which is what would happen IF the menu were reached -- and the Encore
+        # branch is precisely what stops it being reached. The cost of being wrong here is one
+        # spurious advance per locked turn, which desynchronises the whole lock after its first
+        # turn; reported from a real run (clayton-957.44).
+        return rng, usable[0]
     rng, roll = advance(rng)
     return rng, usable[roll % len(usable)]
 
@@ -3686,6 +3709,19 @@ def select_roamer_action(rng: int, target: Battler, *, trapped: bool) -> RoamerC
         # four rolls and the escape decision live -- is inside it. So the turn costs nothing at
         # all and the roamer cannot even flee. See the docstring.
         return RoamerChoice(rng, None, False, 0)
+    if target.encored_slot is not None:
+        # **The same zero, for the same reason, and with the same startling consequence.** An
+        # `encoredMove` routes command selection to `COMMAND_SELECTION_WAIT` rather than to
+        # `COMMAND_SELECTION_MOVE_SELECT_INIT` (battle_controller_player.c:443-455), so
+        # `Task_TrainerShowMoveSelectMenu` never starts -- and `TrainerAI_Main`, which holds both
+        # `TrainerAI_Init`'s four rolls AND the escape decision, is inside it.
+        #
+        # So **an Encored roamer cannot decide to flee**, trapped or not, and its turn costs
+        # nothing. That is the Struggle case above one step along: the ROM chain is the same at
+        # every link, and no capture covers either (clayton-c3c4). It is reachable in a way the
+        # Struggle case is not -- our own party can carry Encore and Cresselia is a configured
+        # target -- so modelling it the other way would promise a flee the game does not roll.
+        return RoamerChoice(rng, usable[0], False, 0)
     rolls = ROAMER_AI_ADVANCES
     for _ in range(ROAMER_AI_ADVANCES):
         rng = advance_rng(rng)
