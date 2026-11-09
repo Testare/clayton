@@ -1,5 +1,17 @@
 
-* Loading from path has trouble with turns pokemon fainted because the simulator picks a different pokemon than I did. e.g., "P0E4hX4" fails because the simulator predicts "P0E4hX1".
+* DONE (2026-11-08) Loading from path has trouble with turns pokemon fainted because the simulator picks a different pokemon than I did. e.g., "P0E4hX4" fails because the simulator predicts "P0E4hX1".
+  * The slot was being thrown away before the simulator ever saw it. A faint is not an ACTION —
+    it is something the turn did to us, resolving at the end of it — so an `X` token can follow a
+    ball, a move, an item or a switch. `_action_from_tokens` scans for the turn's leading action,
+    and only the one shape that LEADS with `X` (the target outsped us, so we never acted) handed
+    the slot over. Every other shape replayed with `replacement=None`, and `sim._send_out` then
+    falls back to the first healthy bench member — which reads as the simulator disagreeing about
+    the turn rather than as a dropped field.
+  * `_replacement_from_tokens` reads it off the whole turn now, for every action, and the
+    reproduction is pinned both ways: the turn replays clean, and with the field dropped again the
+    prediction differs from the report in exactly the X number and nothing else.
+  * No translation needed, unlike the switch slot fixed in round 9: `replacement` is a party slot
+    on both sides of the wire. `XX` carries none, because there was nobody to send.
 * DONE (2026-11-08) I think encore is throwing things off. An encored pokemon does NOT roll to determine the move it uses - It doesn't need to. If it is encored into a move with no PP, encore ends immediately I believe. Normal paralysis and stuff can still happen though.
   * **You were right and this repo's notes were wrong, with citations.** `notes/ss_rng/effect_status.md`
     carried a "correction" claiming the skip was the player's side only: an Encored wild has every

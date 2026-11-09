@@ -669,6 +669,33 @@ def field_conditions(state) -> list[dict]:
     return out
 
 
+def _replacement_from_tokens(tokens: "list[str] | tuple[str, ...]") -> dict:
+    """``{"replacement": party_slot}`` from the turn's ``X`` token, or ``{}``.
+
+    Read off the WHOLE turn rather than off its leading action, because **a faint is not an
+    action**: it is something the turn did to us, it resolves at the end of it, and it can follow
+    any action at all. Only the one turn shape that LEADS with ``X`` -- the target outsped us and
+    we never acted -- was handing the slot over, so `P0E4hX4` replayed with no replacement and
+    `_send_out` fell back to the first healthy bench member: the player's report said `X4` and the
+    simulator predicted `X1`, which looks like a mismatched turn rather than a dropped field
+    (clayton-fag, round 10 feedback).
+
+    A party SLOT, which is what `simulate_turn` wants here and what the token carries, so unlike
+    a switch's bench index this needs no translating -- see `sim.bench_slot_for_party_number` for
+    the pair that does.
+
+    `tokens.WIPED` (``XX``) carries no slot because there was nobody to send, and comes back as
+    ``{}`` for that reason rather than by accident.
+    """
+    for token in tokens:
+        if token == tok.WIPED or not token.startswith(Action.FAINTED.value):
+            continue
+        digits = "".join(c for c in token[len(Action.FAINTED.value):] if c.isdigit())
+        if digits:
+            return {"replacement": int(digits)}
+    return {}
+
+
 def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
     """``(action, kwargs)`` for `HuntSession.observe`, read off a turn's first token.
 
@@ -700,16 +727,22 @@ def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
                   if any(t.startswith(a.value) for a in ours)), None)
     if first is None:
         raise ValueError(f"no action of ours in {tokens}")
+    # Collected for EVERY action rather than only for the turn that leads with `X`. A faint can
+    # follow a ball, a move, an item or a switch, and all of those were dropping it -- see
+    # `_replacement_from_tokens`.
+    extra = _replacement_from_tokens(tokens)
     for action in (Action.ITEM_CURE, Action.ITEM):
         if first.startswith(action.value):
             # The item CODE follows the prefix (`Ihp`, `Ifr`), and an `I` on its own is an
             # unspecified item -- legal in the grammar, so it must not be forced to a code here.
             code = first[len(action.value):] or None
-            return action, ({"item_code": code} if code else {})
+            if code:
+                extra["item_code"] = code
+            return action, extra
     for action in (Action.MOVE_1, Action.MOVE_2, Action.MOVE_3, Action.MOVE_4,
                    Action.CAPTURE_BALL, Action.STANDARD_BALL):
         if first.startswith(action.value):
-            return action, {}
+            return action, extra
     for action in (Action.SWITCH, Action.REVIVE):
         if first.startswith(action.value):
             digits = "".join(c for c in first[len(action.value):] if c.isdigit())
@@ -721,10 +754,12 @@ def _action_from_tokens(tokens: list[str]) -> tuple[Action, dict]:
             # `bench_slot` and the revive's as `replacement`, and both were wrong: the first by
             # one number system, the second by one question (a `replacement` is who came in after
             # a FAINT, which a Revive is not).
-            return action, {"party_slot": int(digits)}
+            extra["party_slot"] = int(digits)
+            return action, extra
     if first.startswith(Action.FAINTED.value):
-        digits = "".join(c for c in first[len(Action.FAINTED.value):] if c.isdigit())
-        return Action.FAINTED, ({"replacement": int(digits)} if digits else {})
+        # The replacement is already in `extra`: `X3` is both the action and the outcome on a turn
+        # the target outsped us, and `_replacement_from_tokens` reads it from the same token.
+        return Action.FAINTED, extra
     raise ValueError(f"{first!r} is not one of our actions")
 
 

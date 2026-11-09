@@ -246,6 +246,114 @@ class TestASwitchInThePathReplays(unittest.TestCase):
         self.assertIsNone(bench_slot_for_party_number(bench, 99))
 
 
+class TestAFaintInThePathKeepsWhoCameIn(unittest.TestCase):
+    """Reported (round 10 feedback): "`P0E4hX4` fails because the simulator predicts `P0E4hX1`".
+
+    A faint is not an ACTION -- it is something the turn did to us, resolving at the end of it --
+    so an `X` token can follow a ball, a move, an item or a switch. `_action_from_tokens` scans
+    for the turn's leading action and only the one shape that LEADS with `X` (the target outsped
+    us, so we never acted) was handing the slot over. Every other shape replayed with no
+    replacement, and `sim._send_out` then falls back to the first healthy bench member -- which
+    reads as the simulator disagreeing about the turn rather than as a dropped field.
+    """
+
+    SHAPES = {
+        "P0E4hX4": 4,      # the reported one
+        "M1hE2hX5": 5,
+        "IhpE2hX3": 3,
+        "C0E1hX2": 2,
+        "E3!X3": 3,        # the one shape that always worked
+        "R2E3hX6": 6,
+        "S3E1X4": 4,
+    }
+
+    def test_the_slot_is_read_off_the_turn_whatever_led_it(self):
+        for turn, slot in self.SHAPES.items():
+            with self.subTest(turn):
+                _, extra = _action_from_tokens(tok.tokenise(turn))
+                self.assertEqual(extra.get("replacement"), slot)
+
+    def test_a_wipe_carries_no_slot_because_there_was_nobody_to_send(self):
+        """`XX` is terminal and the absence is meaningful, not incidental."""
+        self.assertNotIn("replacement", _action_from_tokens(tok.tokenise("P0E4hXX"))[1])
+        self.assertNotIn("replacement", _action_from_tokens(tok.tokenise("M1hE2hXX"))[1])
+
+    def test_a_turn_with_no_faint_carries_no_slot_either(self):
+        self.assertEqual(_action_from_tokens(tok.tokenise("C0E1"))[1], {})
+
+    def test_a_switch_that_then_faints_carries_both_numbers(self):
+        """And they are different KINDS of number on purpose: the switch's is a bench index once
+        `replay_path` has translated it, the faint's is a party slot all the way through."""
+        action, extra = _action_from_tokens(tok.tokenise("S3E1X4"))
+        self.assertEqual(action, Action.SWITCH)
+        self.assertEqual(extra, {"party_slot": 3, "replacement": 4})
+
+    def test_an_items_code_survives_beside_it(self):
+        """The item branch used to RETURN its dict, so merging the replacement in had to not lose
+        the code."""
+        self.assertEqual(_action_from_tokens(tok.tokenise("IhpE2hX3"))[1],
+                         {"replacement": 3, "item_code": "hp"})
+
+    # --- and end to end ---------------------------------------------------------------------
+
+    @staticmethod
+    def _with_bench():
+        """Us on 1 HP with two on the bench, at party slots 2 and 4. The replacement the run
+        actually used is the SECOND of those, so the fallback would pick the other one."""
+        def mon(name, slot):
+            return Battler(name=name, level=30, types=("Normal",),
+                           stats={"hp": 120, "atk": 60, "def": 60, "spa": 60, "spd": 60,
+                                  "spe": 40},
+                           moves=("Tackle",), pp=(35,), party_slot=slot).with_hp(120)
+
+        session = _session()
+        bench = (mon("A", 2), mon("B", 4))
+        session.bench = bench
+        session.ours = session.ours.with_hp(1)
+        for state in session._session.states.values():
+            state.bench = bench
+            state.ours = state.ours.with_hp(1)
+        return session
+
+    def _faint_turn(self, session):
+        from claytonlib.battle_compass.sim import simulate_turn
+        from claytonlib.battle_compass.state import BattleState
+
+        state = BattleState(rng=session._session.states[SEED].rng, ours=session.ours,
+                            target=session.target, bench=session.bench)
+        nxt = simulate_turn(state, Action.STANDARD_BALL, session.config, replacement=4)
+        return tok.render_turn(tok.normalise(list(nxt.log[-1])))
+
+    def test_the_fixture_really_sends_in_the_non_default_member(self):
+        """Otherwise the test below would pass with the field still dropped."""
+        self.assertTrue(self._faint_turn(self._with_bench()).endswith("X4"))
+
+    def test_and_replaying_it_does_not_substitute_the_other_one(self):
+        turn = self._faint_turn(self._with_bench())
+        session = self._with_bench()
+        snap = session.replay_path(turn)
+        self.assertIsNone(session.contradiction, snap.get("contradiction"))
+        self.assertEqual(session.turns[0].rendered, turn)
+
+    def test_dropping_the_field_reproduces_the_reported_failure(self):
+        """So the test above is about the field and not about the fixture: with the slot thrown
+        away the replay contradicts, and the prediction differs from the report in exactly the
+        way the report said -- the X number, nothing else."""
+        from claytonlib.battle_compass import hunt_session
+
+        turn = self._faint_turn(self._with_bench())
+        session = self._with_bench()
+        original = hunt_session._replacement_from_tokens
+        hunt_session._replacement_from_tokens = lambda tokens: {}
+        try:
+            snap = session.replay_path(turn)
+        finally:
+            hunt_session._replacement_from_tokens = original
+        self.assertIsNotNone(session.contradiction)
+        predicted = [row["predicted"] for row in snap["contradiction"]["predicted"]]
+        self.assertIn(turn[:-1] + "2", predicted, predicted)
+
+
 class TestItStopsAtTheFirstBadTurn(unittest.TestCase):
     """Pressing on would report later turns against a state the game never reached, and the
     candidate set would end up confidently wrong rather than visibly stuck."""
