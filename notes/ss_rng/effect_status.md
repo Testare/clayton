@@ -106,6 +106,23 @@ end-of-turn condition walk and is gated on nothing. Unlike confusion (below), sl
 paralysis **spend** Encore turns rather than preserving them — so a Yawn aimed at an Encored
 target wastes the lock.
 
+*And the force happens TWICE, at two different moments.* `BattleSystem_CheckInvalidMoves` is the
+selection half. The other is `BattleControllerPlayer_FightCommand`
+(battle_controller_player.c:1861-1896), which decides what the attacker actually uses and replaces
+the move with the encored one outright — above every "use the selected slot" case and below only
+Struggle. On every turn but one the two halves agree, so the second is easy to miss; the exception
+is **the turn the Encore lands with the Encorer moving first**. The victim had already chosen,
+from all four slots, so the selection roll was spent at the full modulus — and then the override
+throws that verdict away and the encored move is used anyway. Reported from a real run: Encore on
+a Regirock that had just used Superpower forced Superpower, while `battle_compass` predicted
+whatever the roll had picked (clayton-957.44).
+
+Two consequences worth keeping separate. **PP follows the move used, not the one chosen** —
+`BattleControllerPlayer_DecrementPP` looks the slot up from `moveTemp` (:2271). But **turn order
+does not**: `CalcTurnOrder` runs before the override and reads the priority of the move in
+`moveSlot` (`BattleSystem_CompareBattlerSpeed`, battle_lib.c:1188-1300), so a victim that selected
+a priority move and got overridden still moves in the bracket it chose.
+
 ## NO USEABLE MOVES
 If the user has no useable moves when it comes time to select a move, the usual roll is not performed, and Magikarp uses Struggle. This move always hits, but still rolls crit and damage, and counts as successful. If magikarp's move is prevented after it has chosen that move, it fails, but does not struggle that turn.
 

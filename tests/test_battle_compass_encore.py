@@ -76,6 +76,20 @@ def _rendered(state: BattleState) -> str:
     return tok.render_turn(tok.normalise(state.log[-1]))
 
 
+def _sim_source(name: str) -> str:
+    """One function's source out of `sim`, for the one assertion that is about ORDER.
+
+    Encore's override must stay below the turn-order calculation, and no state the simulator can
+    reach proves that: none of the titan's moves carries a priority of its own, so a test that
+    tried to observe it would pass either way.
+    """
+    import inspect
+
+    from claytonlib.battle_compass import sim
+
+    return inspect.getsource(getattr(sim, name))
+
+
 class TestThePremiseThatStartedThis(unittest.TestCase):
     def test_the_titans_have_no_explosion_to_lock_them_into(self):
         """Asserted rather than assumed, because the whole Damp plan rested on the opposite and
@@ -293,6 +307,98 @@ class TestTheLockItself(unittest.TestCase):
         for _ in range(3):
             state = simulate_turn(state, Action.MOVE_4, _config())
             self.assertIn(f"E{locked_slot + 1}", _rendered(state))
+
+
+class TestTheLockOverridesTheMoveAtExecutionTime(unittest.TestCase):
+    """The half of Encore that was missing, and the turn it is visible on is the first one.
+
+    `BattleSystem_CheckInvalidMoves` narrowing the selection to one slot is only half the lock.
+    `BattleControllerPlayer_FightCommand` (battle_controller_player.c:1861-1896) picks what the
+    attacker actually USES, and its second branch -- above every "use the selected slot" case and
+    below only Struggle -- replaces the move with the encored one outright [verified].
+
+    On every turn but one the two halves agree. The exception is the turn the Encore lands with
+    us moving first: the target had already chosen, from all four slots, so the selection roll was
+    spent at the full modulus -- and then the override throws that verdict away. Reported from a
+    real run (clayton-957.44): an Encore on a Regirock that had just used Superpower forced
+    Superpower, while the simulator predicted whatever the roll had picked.
+    """
+
+    def test_we_do_outspeed_the_titan_which_is_what_makes_this_reachable(self):
+        """Stated first, because the whole case is "the Encorer moved first"."""
+        from claytonlib.battle_compass.sim import effective_speed
+
+        self.assertGreater(effective_speed(_quagsire()), effective_speed(_titan()))
+
+    def test_the_encore_turn_itself_uses_the_encored_move_for_every_seed(self):
+        """Swept, because the bug was invisible on the seeds where the roll happened to agree:
+        one slot in four looked correct."""
+        used = set()
+        for seed in range(0x1000, 0x1100):
+            state = _state(target=_titan(last_move_slot=SUPERPOWER), seed=seed)
+            state = simulate_turn(state, Action.MOVE_1, _config())
+            self.assertIsNotNone(state.target.encored_slot, "the fixture must land the Encore")
+            used.add(next(t[:2] for t in tok.tokenise(_rendered(state)) if t.startswith("E")))
+        self.assertEqual(used, {f"E{SUPERPOWER + 1}"})
+
+    def test_the_roll_is_still_spent_at_the_FULL_modulus_and_its_verdict_discarded(self):
+        """Nothing about the stream moves. The Encore does not exist when the target picks, so
+        the roll is taken over all four slots exactly as it always was -- and then the override
+        throws the answer away. Both halves are asserted, because getting the first one wrong
+        instead would desynchronise every turn of the lock rather than mispredicting one move.
+        """
+        rolled, executed = set(), set()
+        for seed in range(0x1000, 0x1100):
+            state = _state(target=_titan(last_move_slot=SUPERPOWER), seed=seed)
+            # What the target picked, read off the pre-turn state: it is not encored yet, so the
+            # modulus really is four.
+            self.assertIsNone(state.target.encored_slot)
+            rolled.add(select_target_move(state.rng, state.target)[1])
+            state = simulate_turn(state, Action.MOVE_1, _config())
+            executed.add(next(t[:2] for t in tok.tokenise(_rendered(state))
+                              if t.startswith("E")))
+        self.assertEqual(rolled, {STOMP, ROCK_THROW, CURSE, SUPERPOWER},
+                         "the selection roll must still range over every slot")
+        self.assertEqual(executed, {f"E{SUPERPOWER + 1}"},
+                         "and every one of those turns must still USE the encored move")
+
+    def test_pp_comes_off_the_move_used_and_not_the_one_chosen(self):
+        """`BattleControllerPlayer_DecrementPP` looks the slot up from `moveTemp`, the move
+        actually used (battle_controller_player.c:2271) [verified]."""
+        for seed in range(0x1000, 0x1040):
+            state = _state(target=_titan(last_move_slot=SUPERPOWER), seed=seed)
+            before = state.target.pp
+            state = simulate_turn(state, Action.MOVE_1, _config())
+            spent = [i for i, (a, b) in enumerate(zip(before, state.target.pp)) if a != b]
+            with self.subTest(seed=seed):
+                self.assertEqual(spent, [SUPERPOWER], state.target.pp)
+
+    def test_the_turn_ORDER_still_reads_the_move_that_was_CHOSEN(self):
+        """`CalcTurnOrder` runs before the override and reads the priority of the move in
+        `moveSlot` (`BattleSystem_CompareBattlerSpeed`, battle_lib.c:1188-1300) [verified]. None
+        of the titan's four moves has a priority of its own, so this is a guard on the shape of
+        the fix rather than a live case: the override must not reach `_we_move_first`."""
+        body = _sim_source("simulate_turn")
+        order = body.index("_we_move_first(new, action, target_slot)")
+        override = body.index("acting_slot = new.target.encored_slot")
+        self.assertLess(order, override)
+
+    def test_a_struggling_target_is_not_overridden(self):
+        """Struggle is the ROM's FIRST branch, above the Encore one -- and it is reachable the
+        other way round in principle, since `CheckInvalidMoves` marks a 0-PP encored slot invalid
+        too."""
+        out_of_pp = _titan(encored_slot=SUPERPOWER, encored_turns=3, pp=(0, 0, 0, 0))
+        self.assertEqual(out_of_pp.usable_slots(), ())
+        state = _state(target=out_of_pp)
+        state = simulate_turn(state, Action.MOVE_4, _config())
+        self.assertIn(f"E{tok.STRUGGLE_SLOT + 1}", _rendered(state))
+
+    def test_the_later_turns_were_right_all_along(self):
+        """The regression guard. Selection narrows to the encored slot from the turn after, so
+        those turns never depended on the override -- and must not start to."""
+        state = _state(target=_titan(encored_slot=CURSE, encored_turns=4))
+        state = simulate_turn(state, Action.MOVE_4, _config())
+        self.assertIn(f"E{CURSE + 1}", _rendered(state))
 
 
 class TestTheWearOffToken(unittest.TestCase):

@@ -1715,6 +1715,15 @@ def struggle_move() -> Move:
 #: predictable while still spending its roll. See `Battler.encored_slot` for why the roll
 #: survives, which is the fact a run desynchronises on if it is got wrong.
 #:
+#: **The lock has two halves and they act at different moments.**
+#: `BattleSystem_CheckInvalidMoves` is the selection half, above. The other is
+#: `BattleControllerPlayer_FightCommand` (battle_controller_player.c:1861-1896), which decides
+#: what the attacker actually USES and replaces the move with the encored one outright -- above
+#: every "use the selected slot" case and below only Struggle. On every turn but one the two
+#: agree, and the exception is the turn the Encore LANDS with the Encorer moving first: the victim
+#: had already chosen from all four slots, so the roll was spent at the full modulus, and the
+#: override then discards that verdict. See `simulate_turn`'s `act_target` (clayton-957.44).
+#:
 #: `BtlCmd_TryEncore` (battle_script.c:4725-4749), read in its own order:
 #:
 #: * `Battler_SlotForMove(&DEFENDING_MON, DEFENDER_LAST_MOVE)` -- the victim must still KNOW the
@@ -4824,6 +4833,38 @@ def simulate_turn(state: BattleState, action: Action, config: HuntConfig, *,
         # depend on which side happened to move first.
         struggling = target_slot is None
         acting_slot = tok.STRUGGLE_SLOT if struggling else target_slot
+        # **An Encore overrides the move at EXECUTION time, not only at selection.**
+        #
+        # `BattleControllerPlayer_FightCommand` (battle_controller_player.c:1861-1896) picks what
+        # the attacker actually uses, and its second branch -- above every "use the selected
+        # slot" case and below only Struggle -- is "attacker is locked into one of its moves by
+        # Encore", which replaces `moveTemp` outright [verified]. `BattleSystem_CheckInvalidMoves`
+        # narrowing the selection to one slot is the OTHER half of the lock, and on every turn
+        # but one the two agree.
+        #
+        # The turn they disagree on is the turn the Encore lands with us moving first. The target
+        # had already chosen, from all four slots, so the selection roll was spent at the full
+        # modulus -- and then the override throws that verdict away and the encored move is used
+        # anyway. Reported from a real run: Encore on a Regirock that had just used Superpower
+        # forced Superpower, while the simulator predicted whatever the roll had picked, which is
+        # three slots out of four wrong (clayton-957.44).
+        #
+        # Deliberately NOT applied to the turn ORDER: `CalcTurnOrder` runs before this and reads
+        # the priority of the move in `moveSlot`, i.e. the SELECTED one
+        # (`BattleSystem_CompareBattlerSpeed`, battle_lib.c:1188-1300) [verified]. So
+        # `_we_move_first` above keeps the rolled slot, and only what executes changes.
+        #
+        # Nothing of the RNG stream moves here. The roll happened at selection; this is the
+        # verdict being discarded, not a roll being added. PP follows the move used rather than
+        # the one chosen, which falls out of `acting_slot` -- the ROM looks the slot up from
+        # `moveTemp` (`BattleControllerPlayer_DecrementPP`, :2271) [verified].
+        #
+        # The ROM's third branch -- Encored into a move the attacker does not know, which
+        # releases the lock -- is unreachable here: `encored_slot` is always set from the victim's
+        # own `last_move_slot`, and nothing changes a moveset mid-battle.
+        if not struggling and new.target.encored_slot is not None \
+                and new.target.move(new.target.encored_slot) is not None:
+            acting_slot = new.target.encored_slot
         # Cleared here and set again below if the move executes -- the mirror of the block in
         # `act_ours`, and the LIVE direction: this is the record our own Encore reads through
         # `will_fail`. So a target that spent its turn asleep, flinched, fully paralyzed, hurt by
