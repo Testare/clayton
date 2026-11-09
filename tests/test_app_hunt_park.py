@@ -258,6 +258,77 @@ class TestThePageOffersIt(unittest.TestCase):
         self.assertIn("function huntResumeParked(){", self.html)
         self.assertIn("function huntDiscardParked(){", self.html)
 
+    def test_resuming_goes_through_the_same_state_builder_as_starting(self):
+        """The bug that made resuming look like it did nothing (round 10 feedback).
+
+        A run page needs half a dozen page globals, and `_hrTurn` is the sharp one: it starts
+        null and `hrTurnReset` is what fills it, so the interview threw on `t.action`,
+        `renderHuntRun` threw with it, and the page stayed on whatever was there before. A render
+        that throws leaves no error on screen, so it reads as "resume does nothing" rather than
+        as a failure.
+
+        The fix is structural rather than a longer list of assignments: the state-building half of
+        `huntRunStart` has a name now, and both routes call it. So a global added there is not a
+        thing resume has to remember separately.
+        """
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        self.assertIn("async function huntRunLoadState(id){", self.html)
+        for caller in ("huntRunStart", "huntResumeParked"):
+            self.assertIn("huntRunLoadState(", _function_body(caller), caller)
+        # And the one global the builder deliberately does NOT own, because it is per turn.
+        self.assertIn("hrTurnReset();", _function_body("huntResumeParked"))
+
+    def test_the_interview_cannot_be_blanked_by_a_missing_turn_reset_again(self):
+        """Defence in depth on the same failure: the route is fixed, and the next one cannot fail
+        silently the same way."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        self.assertIn("if (!_hrTurn) hrTurnReset();", _function_body("hrInterview"))
+
+    def test_the_state_builder_sets_everything_the_run_page_reads(self):
+        """Named one by one, because each was a separate silent failure: `_hrTurn` blanked the
+        page, `_huntRunHunt` broke End run, `_huntSetup` made a resumed roamer look static, and
+        `_hunt` meant a resumed winning run could not be marked complete."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        body = _function_body("huntRunLoadState")
+        for name in ("_huntRunHunt = id", "_huntSetup = await api(", "_hsaSignal =",
+                     "_hsa = {", '_hunt = await api("get_hunt"'):
+            self.assertIn(name, body, name)
+
+    def test_it_says_it_is_working_rather_than_going_quiet(self):
+        """The other half of the report: "needs a loading bar if it is running". Resuming
+        regenerates the candidate window and replays every turn against every candidate, which is
+        seconds with no output."""
+        self.assertIn("function renderHuntResuming(parked){", self.html)
+        self.assertIn("progress-bar indeterminate", self.html)
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        body = _function_body("huntResumeParked")
+        shown = body.index("renderHuntResuming(parked)")
+        worked = body.index('api("hunt_session_resume")')
+        self.assertLess(shown, worked, "the progress bar has to go up BEFORE the slow call")
+
+    def test_a_failure_does_not_leave_the_progress_bar_up_for_ever(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_app_web_ui import _function_body
+
+        body = _function_body("huntResumeParked")
+        self.assertIn("} catch (e) {", body)
+        self.assertIn("renderHunts();", body)
+        # An empty window is not a resume failure, so it lands where the window controls are.
+        self.assertIn("renderHuntSetup();", body)
+
     def test_discarding_asks_first(self):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent))

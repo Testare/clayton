@@ -4228,50 +4228,67 @@ async function huntAdviceLoad(){
 // targeting fields in front of you, not a locked door. Same shape as every other compass.
 async function huntRunStart(_owner, id){
   try {
-    _huntRunHunt = id;
-    _huntRun = _huntSnap = _huntWindow = null;
-    huntAdviceInvalidate();
-    _huntSetup = await api("hunt_run_setup", id);
-    const d = _huntSetup.seed_a_defaults || {};
-    // Which Seed A signal this hunt's game offers, asked of the descriptor the facade builds --
-    // the same predicate Glass uses, so neither page branches on a game NAME.
-    _hsaSignal = _huntSetup.seed_a_signal || {};
-    _hsa = {
-      startrel: d.startrel || "",
-      secondsWindow: d.seconds_window ?? 2,
-      delayWindow: d.delay_window ?? 10,
-      matchParity: !!d.match_parity,
-      seedAParams: null, candidates: null, seedA: null, editing: false, keyInfo: null,
-      // Deliberately NOT prefilled from the hunt's configured spread. That spread is the one the
-      // KEY SEED produces, so on the only path that asks for this -- a Seed A that is not the key
-      // seed -- it is wrong by definition. Prefilling it would validate instantly and enable
-      // Start with the wrong Suicune's stats, which is worse than an empty field. The configured
-      // values are shown in the panel as reference instead.
-      nature: "", ivs: "", spread: null, spreadConfirmed: false,
-      // Seed A's own ADVANCE FRAME, which is a different question from which seed it is. For a
-      // static encounter the frame decides which Suicune the A-press generates, so it is what
-      // tells the player either how to reach the one they planned (key-seed hit) or which one
-      // they are about to get (anything else).
-      frameObserved: "", framePrefill: "", frameCandidates: null,
-      pinnedFrame: null, frameGuide: null,
-      // Platinum: the flips typed to narrow the seed, and nothing to pin -- the advance frame is
-      // counted from the venue's starting frame, which the hunt carries.
-      observedFlips: "",
-    };
-    // A Platinum run is on its starting frame the moment it loads; there is no frame to find.
-    if (huntIsPlatinum()) _hsa.pinnedFrame = _huntSetup.start_frame ?? 0;
-    // A ROAMER has no Seed A step at all -- nothing about the target is generated at the
-    // encounter, so there is no seed worth identifying and no frame to route to. The whole
-    // left-hand half of this page is skipped and `_hsa` is pre-satisfied so that nothing
-    // downstream waits on a step that will never happen (notes/roamers.md sec 1).
-    if (huntIsRoamer()){
-      _hsa.pinnedFrame = 0;
-      _hsa.seedA = null;
-      _hsa.spreadConfirmed = true;
-    }
+    await huntRunLoadState(id);
     renderHuntSetup();
     huntSeedAFocus();
   } catch (e) { toast(String(e.message || e)); }
+}
+
+// Everything a run page needs in page state, and no rendering. Split out of `huntRunStart` so
+// that resuming a parked run goes through the SAME function: a run page that is missing one of
+// these globals fails in a way that looks like the resume never ran at all, which is exactly what
+// happened (round 10 feedback). One place knows the list, and a global added here is not a thing
+// resume has to remember separately.
+async function huntRunLoadState(id){
+  _huntRunHunt = id;
+  _huntRun = _huntSnap = _huntWindow = null;
+  huntAdviceInvalidate();
+  _huntSetup = await api("hunt_run_setup", id);
+  const d = _huntSetup.seed_a_defaults || {};
+  // Which Seed A signal this hunt's game offers, asked of the descriptor the facade builds --
+  // the same predicate Glass uses, so neither page branches on a game NAME.
+  _hsaSignal = _huntSetup.seed_a_signal || {};
+  _hsa = {
+    startrel: d.startrel || "",
+    secondsWindow: d.seconds_window ?? 2,
+    delayWindow: d.delay_window ?? 10,
+    matchParity: !!d.match_parity,
+    seedAParams: null, candidates: null, seedA: null, editing: false, keyInfo: null,
+    // Deliberately NOT prefilled from the hunt's configured spread. That spread is the one the
+    // KEY SEED produces, so on the only path that asks for this -- a Seed A that is not the key
+    // seed -- it is wrong by definition. Prefilling it would validate instantly and enable
+    // Start with the wrong Suicune's stats, which is worse than an empty field. The configured
+    // values are shown in the panel as reference instead.
+    nature: "", ivs: "", spread: null, spreadConfirmed: false,
+    // Seed A's own ADVANCE FRAME, which is a different question from which seed it is. For a
+    // static encounter the frame decides which Suicune the A-press generates, so it is what
+    // tells the player either how to reach the one they planned (key-seed hit) or which one
+    // they are about to get (anything else).
+    frameObserved: "", framePrefill: "", frameCandidates: null,
+    pinnedFrame: null, frameGuide: null,
+    // Platinum: the flips typed to narrow the seed, and nothing to pin -- the advance frame is
+    // counted from the venue's starting frame, which the hunt carries.
+    observedFlips: "",
+  };
+  // A Platinum run is on its starting frame the moment it loads; there is no frame to find.
+  if (huntIsPlatinum()) _hsa.pinnedFrame = _huntSetup.start_frame ?? 0;
+  // A ROAMER has no Seed A step at all -- nothing about the target is generated at the
+  // encounter, so there is no seed worth identifying and no frame to route to. The whole
+  // left-hand half of this page is skipped and `_hsa` is pre-satisfied so that nothing
+  // downstream waits on a step that will never happen (notes/roamers.md sec 1).
+  if (huntIsRoamer()){
+    _hsa.pinnedFrame = 0;
+    _hsa.seedA = null;
+    _hsa.spreadConfirmed = true;
+  }
+  // The hunt itself, which the normal route happens to have loaded already (you reach Start Run
+  // from `openHuntHome`) and resume does not: it can be started from the Hunts list, where
+  // nothing has opened a hunt. `huntJustFinishedIt` and `huntMarkCompleteFromRun` read these,
+  // so without them a resumed winning run could not be marked complete.
+  if (!_hunt || _hunt.id !== id){
+    _hunt = await api("get_hunt", id);
+    _huntProfile = await api("get_profile", _hunt.profile_id);
+  }
 }
 
 // On opening: the first thing missing, in the order a run needs it.
@@ -6460,6 +6477,12 @@ function hrTargetBlocks(){
 }
 
 function hrInterview(){
+  // `_hrTurn` starts null and `hrTurnReset` is what fills it, so every route onto this page has
+  // to call that first. One did not, and the failure was silent and total: the interview threw on
+  // `t.action`, `renderHuntRun` threw with it, and the page stayed on whatever was there before
+  // -- which reads as "resuming does nothing" rather than as an error (round 10 feedback). The
+  // route is fixed; this is here so the next one cannot fail the same way.
+  if (!_hrTurn) hrTurnReset();
   const s = _huntSnap, t = _hrTurn;
   const blocks = [];
 
@@ -6998,27 +7021,56 @@ async function huntParkRun(){
   } catch (e) { toast(String(e.message || e)); }
 }
 
+// Resuming is SLOW and it looked like nothing: `hunt_session_resume` regenerates the candidate
+// window and then replays every reported turn against every candidate, which is seconds of work
+// with no output until it lands. So the page says what it is doing first (round 10 feedback).
+function renderHuntResuming(parked){
+  const n = parked.turns || 0;
+  mount(`<div class="head"><h2>Battle Compass</h2></div>
+    <div class="notice"><b>Resuming ${esc(parked.hunt_name || "the parked run")}…</b>
+      <div class="hr-small">Replaying ${n} reported turn${n === 1 ? "" : "s"} against the
+        candidate window. Every turn is simulated for every candidate, so this takes about as
+        long as narrowing the window did the first time.</div>
+      <div class="progress-wrap"><div class="progress-bar indeterminate"></div></div></div>`);
+}
+
 async function huntResumeParked(){
-  let out;
-  try { out = await api("hunt_session_resume"); }
-  catch (e) { toast(String(e.message || e)); return; }
-  if (!out.session_id){
-    // The window came back empty, which is a window problem and not a resume problem.
-    toast(out.problem || "That run's window no longer finds any candidates.");
-    return;
+  const parked = _huntParked;
+  if (!parked || !parked.hunt_id){ toast("There is no parked run."); return; }
+  renderHuntResuming(parked);
+  try {
+    // The same state-building the normal route does. Without it the run page renders against
+    // half-set globals -- and `_hrTurn` in particular is null until `hrTurnReset`, which the
+    // interview dereferences, so the whole render threw and the page simply stayed blank. That
+    // is the "I'm not sure it runs at all" in the report.
+    await huntRunLoadState(parked.hunt_id);
+    const out = await api("hunt_session_resume");
+    if (!out.session_id){
+      // The window came back empty, which is a window problem rather than a resume problem --
+      // so land on the setup page, where the window controls are, instead of a dead end.
+      _huntWindow = out.window || _huntWindow;
+      renderHuntSetup();
+      toast(out.problem || "That run's window no longer finds any candidates.");
+      return;
+    }
+    // The parked page state goes on TOP of the freshly loaded defaults, because that is the half
+    // the run had earned: the identified Seed A, its pinned frame, the confirmed spread.
+    const page = out.page || {};
+    if (page.hsa) _hsa = page.hsa;
+    if (page.signal) _hsaSignal = page.signal;
+    _huntRun = out.session_id;
+    _huntSnap = out.snapshot;
+    hrTurnReset();
+    huntAdviceInvalidate();
+    renderHuntRun();
+    huntAdviceLoad();          // after the page is up, never before
+    const n = out.snapshot.turns.length;
+    toast(`Resumed ${n} reported turn${n === 1 ? "" : "s"}.`);
+  } catch (e) {
+    toast(String(e.message || e));
+    // Back to somewhere with controls on it rather than the progress bar for ever.
+    renderHunts();
   }
-  const page = out.page || {};
-  if (page.hsa) _hsa = page.hsa;
-  if (page.signal) _hsaSignal = page.signal;
-  _huntRun = out.session_id;
-  _huntSnap = out.snapshot;
-  _huntParked = await api("hunt_session_parked");
-  huntAdviceInvalidate();
-  setView("huntrun");
-  renderHuntRun();
-  huntAdviceLoad();
-  toast(`Resumed ${out.snapshot.turns.length} reported `
-      + `turn${out.snapshot.turns.length === 1 ? "" : "s"}.`);
 }
 
 async function huntDiscardParked(){
